@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 4;
+    private static final int DATABASE_VERSION = 5;
 
     // Table customers
     public static final String TABLE_CUSTOMERS = "customers";
@@ -46,6 +46,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_TOTAL_HARGA = "total_harga";
     public static final String COL_TANGGAL = "tanggal";
     public static final String COL_CATATAN = "catatan";
+    public static final String COL_ONGKIR = "ongkir";
+
+    // Table settings
+    public static final String TABLE_SETTINGS = "settings";
+    public static final String COL_SETTING_KEY = "key";
+    public static final String COL_SETTING_VALUE = "value";
 
     private static final String CREATE_TABLE_CUSTOMERS =
             "CREATE TABLE " + TABLE_CUSTOMERS + " (" +
@@ -86,10 +92,17 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_JUMLAH_GALON + " INTEGER NOT NULL, " +
                     COL_HARGA_PER_GALON + " REAL DEFAULT 0, " +
                     COL_TOTAL_HARGA + " REAL DEFAULT 0, " +
+                    COL_ONGKIR + " REAL DEFAULT 0, " +
                     COL_TANGGAL + " TEXT DEFAULT (datetime('now','localtime')), " +
                     COL_CATATAN + " TEXT, " +
                     "FOREIGN KEY(" + COL_CUSTOMER_ID + ") REFERENCES " +
                     TABLE_CUSTOMERS + "(" + COL_ID + ") ON DELETE CASCADE" +
+                    ");";
+
+    private static final String CREATE_TABLE_SETTINGS =
+            "CREATE TABLE " + TABLE_SETTINGS + " (" +
+                    COL_SETTING_KEY + " TEXT PRIMARY KEY, " +
+                    COL_SETTING_VALUE + " TEXT" +
                     ");";
 
     private static DatabaseHelper instance;
@@ -111,6 +124,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.execSQL(CREATE_TABLE_PRODUCTS);
         db.execSQL(CREATE_TABLE_GALON_STOCK);
         db.execSQL(CREATE_TABLE_TRANSACTIONS);
+        db.execSQL(CREATE_TABLE_SETTINGS);
     }
 
     @Override
@@ -128,6 +142,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
         if (oldVersion < 4) {
             db.execSQL(CREATE_TABLE_GALON_STOCK);
+        }
+        if (oldVersion < 5) {
+            db.execSQL(CREATE_TABLE_SETTINGS);
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_TRANSACTIONS +
+                        " ADD COLUMN " + COL_ONGKIR + " REAL DEFAULT 0");
+            } catch (Exception ignored) {}
         }
     }
 

@@ -1,5 +1,6 @@
 package com.damiu.pos;
 
+import android.content.Intent;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -20,6 +21,7 @@ import com.damiu.pos.adapter.ProductAdapter;
 import com.damiu.pos.db.CustomerDao;
 import com.damiu.pos.db.DatabaseHelper;
 import com.damiu.pos.db.ProductDao;
+import com.damiu.pos.db.SettingsDao;
 import com.damiu.pos.db.TransactionDao;
 import com.damiu.pos.model.Customer;
 import com.damiu.pos.model.Product;
@@ -36,16 +38,18 @@ public class TransactionActivity extends AppCompatActivity {
 
     private MaterialButtonToggleGroup toggleType;
     private TextView tvSelectedCustomer, tvSelectedProduct, tvTotalHarga;
-    private TextInputEditText etJumlahGalon, etHargaPerGalon, etCatatan;
-    private TextInputLayout tilHarga;
+    private TextInputEditText etJumlahGalon, etHargaPerGalon, etOngkir, etCatatan;
+    private TextInputLayout tilHarga, tilOngkir;
     private View cardCustomer, cardProduct;
 
     private CustomerDao customerDao;
     private ProductDao productDao;
     private TransactionDao transactionDao;
+    private SettingsDao settingsDao;
 
     private long selectedCustomerId = -1;
     private String selectedCustomerName = "";
+    private String selectedCustomerPhone = "";
     private long selectedProductId = 0;
     private String selectedProductName = "";
 
@@ -62,6 +66,7 @@ public class TransactionActivity extends AppCompatActivity {
         customerDao = new CustomerDao(dbHelper);
         productDao = new ProductDao(dbHelper);
         transactionDao = new TransactionDao(dbHelper);
+        settingsDao = new SettingsDao(dbHelper);
 
         toggleType = findViewById(R.id.toggleType);
         tvSelectedCustomer = findViewById(R.id.tvSelectedCustomer);
@@ -69,10 +74,18 @@ public class TransactionActivity extends AppCompatActivity {
         tvTotalHarga = findViewById(R.id.tvTotalHarga);
         etJumlahGalon = findViewById(R.id.etJumlahGalon);
         etHargaPerGalon = findViewById(R.id.etHargaPerGalon);
+        etOngkir = findViewById(R.id.etOngkir);
         etCatatan = findViewById(R.id.etCatatan);
         tilHarga = findViewById(R.id.tilHarga);
+        tilOngkir = findViewById(R.id.tilOngkir);
         cardCustomer = findViewById(R.id.cardCustomer);
         cardProduct = findViewById(R.id.cardProduct);
+
+        // Set default ongkir from settings
+        double defaultOngkir = settingsDao.getDefaultOngkir();
+        if (defaultOngkir > 0) {
+            etOngkir.setText(String.valueOf((long) defaultOngkir));
+        }
 
         // Pre-select type from intent
         String type = getIntent().getStringExtra("type");
@@ -88,6 +101,7 @@ public class TransactionActivity extends AppCompatActivity {
             if (c != null) {
                 selectedCustomerId = c.getId();
                 selectedCustomerName = c.getName();
+                selectedCustomerPhone = c.getPhone();
                 tvSelectedCustomer.setText(c.getName());
             }
         }
@@ -116,6 +130,7 @@ public class TransactionActivity extends AppCompatActivity {
         };
         etJumlahGalon.addTextChangedListener(calcWatcher);
         etHargaPerGalon.addTextChangedListener(calcWatcher);
+        etOngkir.addTextChangedListener(calcWatcher);
 
         findViewById(R.id.btnSimpan).setOnClickListener(v -> save());
 
@@ -125,9 +140,11 @@ public class TransactionActivity extends AppCompatActivity {
     private void updateTypeUI(boolean isJual) {
         if (isJual) {
             tilHarga.setVisibility(View.VISIBLE);
+            tilOngkir.setVisibility(View.VISIBLE);
             cardProduct.setVisibility(View.VISIBLE);
         } else {
             tilHarga.setVisibility(View.GONE);
+            tilOngkir.setVisibility(View.GONE);
             cardProduct.setVisibility(View.GONE);
         }
         updateTotal();
@@ -145,7 +162,12 @@ public class TransactionActivity extends AppCompatActivity {
         try {
             int jumlah = Integer.parseInt(etJumlahGalon.getText().toString().trim());
             double harga = Double.parseDouble(etHargaPerGalon.getText().toString().trim());
-            double total = jumlah * harga;
+            double ongkir = 0;
+            String ongkirStr = etOngkir.getText().toString().trim();
+            if (!ongkirStr.isEmpty()) {
+                ongkir = Double.parseDouble(ongkirStr);
+            }
+            double total = jumlah * (harga + ongkir);
             NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
             tvTotalHarga.setText("Rp " + nf.format(total));
         } catch (NumberFormatException e) {
@@ -197,6 +219,7 @@ public class TransactionActivity extends AppCompatActivity {
         CustomerAdapter adapter = new CustomerAdapter(customer -> {
             selectedCustomerId = customer.getId();
             selectedCustomerName = customer.getName();
+            selectedCustomerPhone = customer.getPhone();
             tvSelectedCustomer.setText(customer.getName());
             dialog.dismiss();
         });
@@ -249,6 +272,7 @@ public class TransactionActivity extends AppCompatActivity {
 
         boolean isJual = isJualSelected();
         double hargaPerGalon = 0;
+        double ongkir = 0;
         double totalHarga = 0;
 
         if (isJual) {
@@ -264,7 +288,31 @@ public class TransactionActivity extends AppCompatActivity {
                 etHargaPerGalon.setError("Angka tidak valid");
                 return;
             }
-            totalHarga = jumlah * hargaPerGalon;
+            String ongkirStr = etOngkir.getText() != null
+                    ? etOngkir.getText().toString().trim() : "";
+            if (!ongkirStr.isEmpty()) {
+                try {
+                    ongkir = Double.parseDouble(ongkirStr);
+                } catch (NumberFormatException ignored) {}
+            }
+            totalHarga = jumlah * (hargaPerGalon + ongkir);
+        }
+
+        // Auto-exchange: if selling to customer who has gallons out, auto-return same qty
+        if (isJual) {
+            Customer cust = customerDao.getById(selectedCustomerId);
+            if (cust != null && cust.getSaldoGalon() > 0) {
+                int saldo = cust.getSaldoGalon();
+                int autoReturn = Math.min(jumlah, saldo);
+                if (autoReturn > 0) {
+                    Transaction kembali = new Transaction();
+                    kembali.setCustomerId(selectedCustomerId);
+                    kembali.setType(Transaction.TYPE_KEMBALI);
+                    kembali.setJumlahGalon(autoReturn);
+                    kembali.setCatatan("Tukar galon (otomatis)");
+                    transactionDao.insert(kembali);
+                }
+            }
         }
 
         Transaction trx = new Transaction();
@@ -273,6 +321,7 @@ public class TransactionActivity extends AppCompatActivity {
         trx.setType(isJual ? Transaction.TYPE_JUAL : Transaction.TYPE_KEMBALI);
         trx.setJumlahGalon(jumlah);
         trx.setHargaPerGalon(hargaPerGalon);
+        trx.setOngkir(ongkir);
         trx.setTotalHarga(totalHarga);
         String catatan = etCatatan.getText() != null
                 ? etCatatan.getText().toString().trim() : "";
@@ -282,11 +331,24 @@ public class TransactionActivity extends AppCompatActivity {
 
         transactionDao.insert(trx);
 
-        String msg = isJual
-                ? "Berhasil: Jual " + jumlah + " galon ke " + selectedCustomerName
-                : "Berhasil: " + jumlah + " galon kembali dari " + selectedCustomerName;
-        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
-
-        finish();
+        if (isJual) {
+            // Show receipt for sales
+            Intent receiptIntent = new Intent(this, ReceiptActivity.class);
+            receiptIntent.putExtra(ReceiptActivity.EXTRA_CUSTOMER_NAME, selectedCustomerName);
+            receiptIntent.putExtra(ReceiptActivity.EXTRA_CUSTOMER_PHONE, selectedCustomerPhone);
+            receiptIntent.putExtra(ReceiptActivity.EXTRA_PRODUCT_NAME, selectedProductName);
+            receiptIntent.putExtra(ReceiptActivity.EXTRA_JUMLAH, jumlah);
+            receiptIntent.putExtra(ReceiptActivity.EXTRA_HARGA_PER_GALON, hargaPerGalon);
+            receiptIntent.putExtra(ReceiptActivity.EXTRA_ONGKIR, ongkir);
+            receiptIntent.putExtra(ReceiptActivity.EXTRA_TOTAL_HARGA, totalHarga);
+            String catatanStr = etCatatan.getText() != null ? etCatatan.getText().toString().trim() : "";
+            receiptIntent.putExtra(ReceiptActivity.EXTRA_CATATAN, catatanStr);
+            startActivity(receiptIntent);
+            finish();
+        } else {
+            Toast.makeText(this, "Berhasil: " + jumlah + " galon kembali dari " + selectedCustomerName,
+                    Toast.LENGTH_SHORT).show();
+            finish();
+        }
     }
 }

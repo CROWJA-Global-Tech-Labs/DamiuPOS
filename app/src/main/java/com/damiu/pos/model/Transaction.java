@@ -13,6 +13,7 @@ public class Transaction {
     private int jumlahGalon;
     private double hargaPerGalon;
     private double totalHarga;
+    private double ongkir;
     private String tanggal;
     private String catatan;
 
@@ -44,6 +45,9 @@ public class Transaction {
 
     public double getTotalHarga() { return totalHarga; }
     public void setTotalHarga(double totalHarga) { this.totalHarga = totalHarga; }
+
+    public double getOngkir() { return ongkir; }
+    public void setOngkir(double ongkir) { this.ongkir = ongkir; }
 
     public String getTanggal() { return tanggal; }
     public void setTanggal(String tanggal) { this.tanggal = tanggal; }

@@ -307,6 +307,18 @@
                 app:icon="@android:drawable/ic_menu_save"
                 app:iconGravity="textStart" />
 
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnPengaturan"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Pengaturan"
+                android:textAllCaps="false"
+                app:cornerRadius="12dp"
+                app:icon="@android:drawable/ic_menu_preferences"
+                app:iconGravity="textStart" />
+
             <!-- Recent Transactions -->
             <TextView
                 android:layout_width="wrap_content"

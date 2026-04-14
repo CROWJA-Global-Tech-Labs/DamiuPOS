@@ -26,6 +26,7 @@ public class TransactionDao {
         values.put(DatabaseHelper.COL_JUMLAH_GALON, trx.getJumlahGalon());
         values.put(DatabaseHelper.COL_HARGA_PER_GALON, trx.getHargaPerGalon());
         values.put(DatabaseHelper.COL_TOTAL_HARGA, trx.getTotalHarga());
+        values.put(DatabaseHelper.COL_ONGKIR, trx.getOngkir());
         if (trx.getCatatan() != null) {
             values.put(DatabaseHelper.COL_CATATAN, trx.getCatatan());
         }
@@ -234,6 +235,10 @@ public class TransactionDao {
         t.setJumlahGalon(cursor.getInt(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_JUMLAH_GALON)));
         t.setHargaPerGalon(cursor.getDouble(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_HARGA_PER_GALON)));
         t.setTotalHarga(cursor.getDouble(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_TOTAL_HARGA)));
+        int ongkirIdx = cursor.getColumnIndex(DatabaseHelper.COL_ONGKIR);
+        if (ongkirIdx >= 0) {
+            t.setOngkir(cursor.getDouble(ongkirIdx));
+        }
         t.setTanggal(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_TANGGAL)));
         t.setCatatan(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_CATATAN)));
         int nameIdx = cursor.getColumnIndex("customer_name");

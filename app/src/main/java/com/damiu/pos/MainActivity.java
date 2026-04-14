@@ -86,6 +86,10 @@ public class MainActivity extends AppCompatActivity {
         findViewById(R.id.btnExport).setOnClickListener(v -> {
             startActivity(new Intent(this, ExportActivity.class));
         });
+
+        findViewById(R.id.btnPengaturan).setOnClickListener(v -> {
+            startActivity(new Intent(this, SettingsActivity.class));
+        });
     }
 
     @Override
