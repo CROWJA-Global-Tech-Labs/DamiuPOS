@@ -1,63 +1,93 @@
-# DAMIU POS - Aplikasi Point of Sale Depot Air Minum Isi Ulang
+# DAMIU POS - Aplikasi Point of Sale Depot Air Minum
 
-Aplikasi POS (Point of Sale) berbasis Android yang dirancang khusus untuk usaha **Depot Air Minum Isi Ulang (DAMIU)**. Aplikasi ini membantu pemilik depot mengelola penjualan, memantau galon yang dipinjamkan ke pelanggan, serta melacak seluruh histori transaksi secara detail.
+Aplikasi POS (Point of Sale) berbasis Android yang dirancang khusus untuk usaha **Depot Air Minum Isi Ulang (DAMIU)**. Aplikasi ini membantu pemilik depot mengelola penjualan, memantau galon yang dipinjamkan ke pelanggan, melacak stok galon, serta memberikan peringatan otomatis untuk pelanggan yang sudah lama tidak melakukan pembelian.
+
+> © **Depot Air Minum FREZ** — Aplikasi ini dikembangkan khusus untuk operasional Depot Air Minum FREZ.
 
 ## Fitur Utama
 
+### Wizard Setup Awal
+Saat pertama kali dibuka, aplikasi akan memandu pengguna melalui 6 langkah setup:
+1. **Selamat Datang**
+2. **Info Depot** — nama, alamat, dan no. HP (akan dicetak di struk)
+3. **Harga & Ongkir** — default ongkir per galon + harga botol galon kosong (untuk ganti rugi / pembelian botol)
+4. **Sistem Poin** — aktif/non-aktif dan konfigurasi poin loyalitas
+5. **Peringatan Otomatis** — ambang batas Follow Up pelanggan (hari) & peringatan stok galon
+6. **Impor Pelanggan** — opsional, impor dari kontak telepon
+
 ### Dashboard
-- Ringkasan pendapatan hari ini
-- Jumlah galon terjual hari ini
-- Total transaksi hari ini
-- Total galon yang masih beredar di pelanggan
-- Total pelanggan terdaftar
-- Daftar 10 transaksi terakhir
-- Akses cepat ke semua menu utama
+- Ringkasan pendapatan, galon terjual, dan jumlah transaksi hari ini
+- Total galon yang masih beredar di pelanggan + total pelanggan terdaftar
+- Daftar transaksi terakhir
+- **Tombol Jual Air Minum & Galon Kembali** sebagai aksi utama
+- Menu grid berwarna: Pelanggan, Follow Up, Stok Galon, Produk, Laporan, Export, Pengaturan
+- **Badge angka di pojok tombol Stok Galon & Follow Up** — menampilkan jumlah stok tersedia / kandidat follow up secara real-time
+- **Indikator berkedip** pada menu Follow Up / Stok Galon saat ambang batas terlewati
+- **Brand header** dengan ikon tetes air dan subtitle "Point-of-Sales Khusus Depot Air Minum"
 
 ### Manajemen Pelanggan
-- **CRUD lengkap** — Tambah, lihat, edit, dan hapus data pelanggan
-- **Pencarian** — Cari pelanggan berdasarkan nama, telepon, atau alamat
-- **Foto rumah** — Ambil foto lokasi rumah pelanggan langsung dari kamera
-- **Koordinat GPS** — Simpan titik lokasi pelanggan secara otomatis
-- **Saldo galon** — Tampilkan jumlah galon yang masih berada di pelanggan
-- **Chat WhatsApp** — Buka WhatsApp langsung ke nomor pelanggan (otomatis format ke +62)
+- CRUD lengkap + pencarian (nama / telepon / alamat)
+- **Urutkan** berdasarkan nama atau galon terbanyak
+- **Foto rumah** dari kamera (dapat di-tap untuk tampilan fullscreen)
+- **Peta Leaflet/OpenStreetMap** di halaman detail + tombol Navigasi (membuka Google Maps)
+- **Map picker** dengan GPS & pencarian alamat saat menambah pelanggan
+- **Chat WhatsApp** otomatis dengan format +62
+- **Impor dari kontak** HP (deduplikasi berdasarkan nomor telepon)
 
 ### Transaksi
-- **Jual Galon** — Catat penjualan galon ke pelanggan (galon keluar)
-- **Galon Kembali** — Catat pengembalian galon dari pelanggan (galon masuk)
-- Pilih pelanggan dari daftar dengan fitur pencarian
-- Input jumlah galon dan harga per galon
-- Kalkulasi total harga otomatis
-- Kolom catatan opsional untuk setiap transaksi
+- **Jual Air Minum** (botol galon keluar) dengan kalkulasi total harga + ongkir otomatis
+- **Botol Galon Kembali** (botol galon masuk) — pengurangan saldo galon di pelanggan + opsi **ganti rugi** untuk botol rusak
+- Pilih produk, jumlah botol galon, harga/galon, ongkir (per botol / flat / total)
+- **Opsi kepemilikan botol galon: Pinjam / Beli**
+  - **Pinjam** (default): botol tetap tercatat di akuisisi pelanggan
+  - **Beli**: tampil input harga botol; biaya beli ditambahkan ke total dan **tidak** menambah saldo galon di pelanggan
+  - Pilihan terakhir disimpan otomatis untuk transaksi berikutnya
+- Histori lengkap per pelanggan — **klik item untuk menampilkan struk** yang bisa di-share
+- **Daftar Transaksi**: ringkasan total mencakup penjualan + nilai ganti rugi (KEMBALI bernilai)
+- Catatan opsional per transaksi
 
-### Tracking Galon
-- Saldo galon per pelanggan = total galon keluar − total galon kembali
-- Total galon beredar di semua pelanggan ditampilkan di dashboard
-- Histori lengkap keluar-masuk galon di halaman detail pelanggan
+### Struk Penjualan
+- Struk berisi info depot (nama/alamat/no. HP dari pengaturan)
+- Detail pelanggan, item, total, ongkir, poin diperoleh
+- **Share via WhatsApp / Email / sebagai foto PNG**
+
+### Stok Galon
+- Pantau stok galon kosong & isi di depot
+- Histori penambahan / pengurangan stok
+- **Peringatan berkedip** di dashboard jika stok ≤ ambang batas
+
+### Follow Up Pelanggan
+- Daftar pelanggan yang belum bertransaksi dalam N hari terakhir (N dari Pengaturan)
+- **Menu berkedip** di dashboard saat ada kandidat
+- Tombol WhatsApp cepat per pelanggan
+
+### Sistem Poin Loyalitas
+- Opsional — diatur dari Wizard / Pengaturan
+- Konfigurasi: nilai transaksi per 1 poin + ambang poin untuk hadiah
+- Otomatis terakumulasi pada setiap transaksi JUAL
+- **Biaya pembelian botol galon dan ganti rugi tidak dihitung sebagai basis poin** — hanya nilai air murni yang berkontribusi pada loyalitas
+
+### Pengaturan Tambahan
+- **Harga Botol Galon Kosong** (default Rp 35.000) — dipakai sebagai harga ganti rugi botol rusak dan saat pelanggan membeli botol baru
 
 ### Laporan & Grafik
-- **Grafik penjualan bulanan** — Tren galon terjual 6 bulan terakhir
-- **Grafik penjualan harian** — Detail penjualan per hari di bulan berjalan
-- **Top 10 pelanggan** — Pelanggan dengan pembelian galon terbanyak
-- **Frekuensi pembelian** — Ranking pelanggan berdasarkan jumlah transaksi
-- Semua grafik menggunakan custom `SimpleBarChart` (tanpa library eksternal)
+- Grafik penjualan 6 bulan terakhir & harian bulan berjalan
+- Top 10 pelanggan + ranking frekuensi pembelian
+- Semua grafik dibangun dengan custom `SimpleBarChart` (tanpa library eksternal)
 
-### Export Penjualan
-- Pilihan periode:
-  - **Hari Ini**
-  - **Pekan Ini**
-  - **Bulan Ini**
-  - **Custom Range** — Pilih tanggal awal & akhir via DatePicker
-- Preview ringkasan sebelum export (total transaksi, galon, pendapatan)
-- Export ke file **CSV** (kompatibel Excel dengan BOM UTF-8)
-- **Bagikan** langsung via WhatsApp, Email, Google Drive, dll
+### Export Data
+- Periode: Hari Ini, Pekan Ini, Bulan Ini, atau Custom Range
+- Preview ringkasan sebelum export
+- **CSV UTF-8 (BOM)** kompatibel Excel — bisa langsung dibagikan
 
 ## Tech Stack
 
 | Komponen | Teknologi |
 |----------|-----------|
 | Bahasa | Java |
-| Database | SQLite (lokal) |
-| UI | Material Design (Material Components) |
+| Database | SQLite (lokal, tanpa cloud) |
+| UI | Material Design 3 Components |
+| Peta | Leaflet.js + OpenStreetMap (via WebView) |
 | Min SDK | Android 7.0 (API 24) |
 | Target SDK | Android 14 (API 34) |
 | Build System | Gradle 8.13 + AGP 8.13.2 |
@@ -70,75 +100,19 @@ com.google.android.material:material:1.11.0
 androidx.constraintlayout:constraintlayout:2.1.4
 androidx.recyclerview:recyclerview:1.3.2
 androidx.cardview:cardview:1.0.0
+androidx.gridlayout:gridlayout:1.0.0
+androidx.exifinterface:exifinterface:1.3.7
+androidx.webkit:webkit:1.8.0
 ```
-> Tidak ada library pihak ketiga tambahan — semua fitur (termasuk grafik) dibangun dari komponen Android native.
-
-## Struktur Project
-
-```
-app/src/main/
-├── AndroidManifest.xml
-├── java/com/damiu/pos/
-│   ├── MainActivity.java              # Dashboard utama
-│   ├── CustomerListActivity.java      # Daftar pelanggan + pencarian
-│   ├── CustomerFormActivity.java      # Tambah/edit pelanggan + foto + GPS
-│   ├── CustomerDetailActivity.java    # Detail pelanggan + histori + WhatsApp
-│   ├── TransactionActivity.java       # Form transaksi jual/kembali
-│   ├── ReportActivity.java            # Laporan & grafik penjualan
-│   ├── ExportActivity.java            # Export CSV dengan pilihan periode
-│   ├── adapter/
-│   │   ├── CustomerAdapter.java       # RecyclerView adapter daftar pelanggan
-│   │   ├── TransactionAdapter.java    # RecyclerView adapter daftar transaksi
-│   │   └── FrekuensiAdapter.java      # Adapter ranking frekuensi pembelian
-│   ├── db/
-│   │   ├── DatabaseHelper.java        # SQLite schema & singleton
-│   │   ├── CustomerDao.java           # CRUD + query pelanggan
-│   │   └── TransactionDao.java        # CRUD + statistik + query transaksi
-│   ├── model/
-│   │   ├── Customer.java              # Model pelanggan
-│   │   └── Transaction.java           # Model transaksi
-│   └── view/
-│       └── SimpleBarChart.java        # Custom bar chart view
-└── res/
-    ├── drawable/                       # Shape drawables (circle, badges)
-    ├── layout/                         # 11 layout XML files
-    ├── values/                         # Colors, strings, themes
-    └── xml/                            # FileProvider paths
-```
-
-## Database Schema
-
-### Tabel `customers`
-| Kolom | Tipe | Keterangan |
-|-------|------|------------|
-| `_id` | INTEGER | Primary key, auto increment |
-| `name` | TEXT | Nama pelanggan (wajib) |
-| `phone` | TEXT | Nomor telepon |
-| `address` | TEXT | Alamat |
-| `photo_path` | TEXT | Path foto rumah pelanggan |
-| `latitude` | REAL | Koordinat latitude GPS |
-| `longitude` | REAL | Koordinat longitude GPS |
-| `created_at` | TEXT | Tanggal dibuat (otomatis) |
-
-### Tabel `transactions`
-| Kolom | Tipe | Keterangan |
-|-------|------|------------|
-| `_id` | INTEGER | Primary key, auto increment |
-| `customer_id` | INTEGER | Foreign key ke `customers._id` (CASCADE delete) |
-| `type` | TEXT | `JUAL` (galon keluar) atau `KEMBALI` (galon masuk) |
-| `jumlah_galon` | INTEGER | Jumlah galon dalam transaksi |
-| `harga_per_galon` | REAL | Harga per galon (untuk tipe JUAL) |
-| `total_harga` | REAL | Total harga transaksi |
-| `tanggal` | TEXT | Tanggal & waktu transaksi (otomatis) |
-| `catatan` | TEXT | Catatan tambahan (opsional) |
 
 ## Permissions
 
 | Permission | Kegunaan |
 |------------|----------|
-| `CAMERA` | Mengambil foto rumah pelanggan |
-| `ACCESS_FINE_LOCATION` | Mendapatkan koordinat GPS lokasi pelanggan |
-| `ACCESS_COARSE_LOCATION` | Fallback lokasi via network provider |
+| `CAMERA` | Ambil foto rumah pelanggan |
+| `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION` | Koordinat GPS pelanggan |
+| `READ_CONTACTS` / `WRITE_CONTACTS` | Impor daftar kontak sebagai pelanggan |
+| `INTERNET` | Memuat tile peta (Leaflet/OpenStreetMap) |
 
 Semua permission bersifat **runtime** — diminta saat dibutuhkan dan aplikasi tetap berfungsi jika ditolak.
 
@@ -146,48 +120,25 @@ Semua permission bersifat **runtime** — diminta saat dibutuhkan dan aplikasi t
 
 ### Prasyarat
 - [Android Studio](https://developer.android.com/studio) (versi terbaru)
-- JDK 8 atau lebih baru
+- JDK 17 (disarankan)
 - Android SDK API 34
 
-### Langkah
-1. Clone repository:
-   ```bash
-   git clone https://github.com/Hantechno-Indonesia/DamiuPOS.git
-   ```
-2. Buka project di Android Studio
-3. Tunggu Gradle sync selesai
-4. Hubungkan perangkat Android atau jalankan emulator
-5. Klik **Run** atau tekan `Shift + F10`
+### Build APK (Debug — untuk tester)
+```bash
+./gradlew assembleDebug
+```
+APK akan tersedia di `app/build/outputs/apk/debug/app-debug.apk`.
 
-### Build APK
+### Build APK (Release)
 ```bash
 ./gradlew assembleRelease
 ```
 APK akan tersedia di `app/build/outputs/apk/release/`.
 
-## Alur Penggunaan
-
-```
-┌─────────────────────────────────────────────────────┐
-│                    DASHBOARD                         │
-│  Pendapatan | Galon Terjual | Transaksi | Beredar   │
-├──────────┬──────────┬───────────┬───────────────────┤
-│ Jual     │ Galon    │ Daftar    │ Laporan  │ Export │
-│ Galon    │ Kembali  │ Pelanggan │ & Grafik │ CSV    │
-└────┬─────┴────┬─────┴─────┬─────┴────┬─────┴───┬───┘
-     │          │           │          │         │
-     ▼          ▼           ▼          ▼         ▼
-  Pilih      Pilih      CRUD      Grafik     Pilih
-  Pelanggan  Pelanggan  Pelanggan  Bulanan   Periode
-  → Jumlah   → Jumlah   + Foto    Harian    → Preview
-  → Harga    → Simpan   + GPS     Top 10    → CSV
-  → Simpan              + WA      Frekuensi → Share
-```
-
 ## Lisensi
 
-Hak cipta dilindungi. Aplikasi ini dikembangkan untuk penggunaan internal Depot Air Minum.
+Hak cipta dilindungi. Aplikasi ini dikembangkan untuk penggunaan internal Depot Air Minum FREZ.
 
 ---
 
-Dikembangkan oleh [Hantechno Indonesia](https://github.com/Hantechno-Indonesia)
+© **Depot Air Minum FREZ**
