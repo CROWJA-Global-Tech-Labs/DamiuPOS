@@ -5,5 +5,20 @@
         <item name="colorPrimaryDark">@color/primary_dark</item>
         <item name="colorAccent">@color/accent</item>
         <item name="android:statusBarColor">@color/primary_dark</item>
+        <!-- Default toolbar title color: white on primary background -->
+        <item name="toolbarStyle">@style/DAMIUToolbar</item>
+        <item name="titleTextColor">@color/white</item>
+        <item name="actionMenuTextColor">@color/white</item>
+    </style>
+
+    <style name="DAMIUToolbar" parent="Widget.MaterialComponents.Toolbar">
+        <item name="titleTextColor">@color/white</item>
+        <item name="subtitleTextColor">@color/white</item>
+        <item name="android:background">@color/primary</item>
+    </style>
+
+    <style name="CircleImageView">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">50%</item>
     </style>
 </resources>
