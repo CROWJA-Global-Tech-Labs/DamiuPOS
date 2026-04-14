@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 5;
+    private static final int DATABASE_VERSION = 9;
 
     // Table customers
     public static final String TABLE_CUSTOMERS = "customers";
@@ -34,6 +34,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_STOCK_JUMLAH = "jumlah";
     public static final String COL_STOCK_CATATAN = "catatan";
     public static final String COL_STOCK_TANGGAL = "tanggal";
+    public static final String COL_STOCK_PHOTO_PATH = "photo_path";
 
     // Table transactions
     public static final String TABLE_TRANSACTIONS = "transactions";
@@ -47,6 +48,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_TANGGAL = "tanggal";
     public static final String COL_CATATAN = "catatan";
     public static final String COL_ONGKIR = "ongkir";
+    public static final String COL_ONGKIR_TYPE = "ongkir_type";
+    public static final String COL_ITEMS_JSON = "items_json";
+    public static final String COL_GALON_OWNERSHIP = "galon_ownership";
+    public static final String COL_HARGA_BOTOL = "harga_botol";
 
     // Table settings
     public static final String TABLE_SETTINGS = "settings";
@@ -80,6 +85,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_STOCK_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
                     COL_STOCK_JUMLAH + " INTEGER NOT NULL, " +
                     COL_STOCK_CATATAN + " TEXT, " +
+                    COL_STOCK_PHOTO_PATH + " TEXT, " +
                     COL_STOCK_TANGGAL + " TEXT DEFAULT (datetime('now','localtime'))" +
                     ");";
 
@@ -93,6 +99,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_HARGA_PER_GALON + " REAL DEFAULT 0, " +
                     COL_TOTAL_HARGA + " REAL DEFAULT 0, " +
                     COL_ONGKIR + " REAL DEFAULT 0, " +
+                    COL_ONGKIR_TYPE + " TEXT DEFAULT 'per_galon', " +
+                    COL_ITEMS_JSON + " TEXT, " +
+                    COL_GALON_OWNERSHIP + " TEXT DEFAULT 'PINJAM', " +
+                    COL_HARGA_BOTOL + " REAL DEFAULT 0, " +
                     COL_TANGGAL + " TEXT DEFAULT (datetime('now','localtime')), " +
                     COL_CATATAN + " TEXT, " +
                     "FOREIGN KEY(" + COL_CUSTOMER_ID + ") REFERENCES " +
@@ -148,6 +158,34 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             try {
                 db.execSQL("ALTER TABLE " + TABLE_TRANSACTIONS +
                         " ADD COLUMN " + COL_ONGKIR + " REAL DEFAULT 0");
+            } catch (Exception ignored) {}
+        }
+        if (oldVersion < 6) {
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_TRANSACTIONS +
+                        " ADD COLUMN " + COL_ONGKIR_TYPE + " TEXT DEFAULT 'per_galon'");
+            } catch (Exception ignored) {}
+        }
+        if (oldVersion < 7) {
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_TRANSACTIONS +
+                        " ADD COLUMN " + COL_ITEMS_JSON + " TEXT");
+            } catch (Exception ignored) {}
+        }
+        if (oldVersion < 8) {
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_GALON_STOCK +
+                        " ADD COLUMN " + COL_STOCK_PHOTO_PATH + " TEXT");
+            } catch (Exception ignored) {}
+        }
+        if (oldVersion < 9) {
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_TRANSACTIONS +
+                        " ADD COLUMN " + COL_GALON_OWNERSHIP + " TEXT DEFAULT 'PINJAM'");
+            } catch (Exception ignored) {}
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_TRANSACTIONS +
+                        " ADD COLUMN " + COL_HARGA_BOTOL + " REAL DEFAULT 0");
             } catch (Exception ignored) {}
         }
     }

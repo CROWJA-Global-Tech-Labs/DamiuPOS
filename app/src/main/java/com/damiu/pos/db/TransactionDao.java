@@ -5,6 +5,7 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 
 import com.damiu.pos.model.Transaction;
+import com.damiu.pos.model.TransactionItem;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +28,15 @@ public class TransactionDao {
         values.put(DatabaseHelper.COL_HARGA_PER_GALON, trx.getHargaPerGalon());
         values.put(DatabaseHelper.COL_TOTAL_HARGA, trx.getTotalHarga());
         values.put(DatabaseHelper.COL_ONGKIR, trx.getOngkir());
+        values.put(DatabaseHelper.COL_ONGKIR_TYPE,
+                trx.getOngkirType() != null ? trx.getOngkirType() : Transaction.ONGKIR_PER_GALON);
+        values.put(DatabaseHelper.COL_GALON_OWNERSHIP,
+                trx.getGalonOwnership() != null ? trx.getGalonOwnership() : Transaction.OWNERSHIP_PINJAM);
+        values.put(DatabaseHelper.COL_HARGA_BOTOL, trx.getHargaBotolGalon());
+        String itemsJson = TransactionItem.listToJson(trx.getItems());
+        if (itemsJson != null) {
+            values.put(DatabaseHelper.COL_ITEMS_JSON, itemsJson);
+        }
         if (trx.getCatatan() != null) {
             values.put(DatabaseHelper.COL_CATATAN, trx.getCatatan());
         }
@@ -38,6 +48,28 @@ public class TransactionDao {
         return db.delete(DatabaseHelper.TABLE_TRANSACTIONS,
                 DatabaseHelper.COL_TRX_ID + "=?",
                 new String[]{String.valueOf(id)});
+    }
+
+    /** Get a single transaction by id, or null */
+    public Transaction getById(long id) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String query = "SELECT t.*, c.name AS customer_name, c.phone AS customer_phone, " +
+                "p.name AS product_name " +
+                "FROM transactions t " +
+                "JOIN customers c ON t.customer_id = c._id " +
+                "LEFT JOIN products p ON t.product_id = p._id " +
+                "WHERE t._id = ? LIMIT 1";
+        Cursor cursor = db.rawQuery(query, new String[]{String.valueOf(id)});
+        Transaction t = null;
+        if (cursor.moveToFirst()) {
+            t = cursorToTransaction(cursor);
+            int phoneIdx = cursor.getColumnIndex("customer_phone");
+            if (phoneIdx >= 0) {
+                // We'll stash phone into productName isn't a thing; skip — caller can lookup via CustomerDao
+            }
+        }
+        cursor.close();
+        return t;
     }
 
     /** Get all transactions for a specific customer, newest first */
@@ -91,6 +123,42 @@ public class TransactionDao {
         }
         cursor.close();
         return list;
+    }
+
+    /** Total nilai penjualan (JUAL) untuk customer, sepanjang waktu */
+    public double getTotalJualByCustomer(long customerId) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String query = "SELECT COALESCE(SUM(total_harga),0) FROM transactions " +
+                "WHERE type='JUAL' AND customer_id=?";
+        Cursor cursor = db.rawQuery(query, new String[]{String.valueOf(customerId)});
+        double total = 0;
+        if (cursor.moveToFirst()) {
+            total = cursor.getDouble(0);
+        }
+        cursor.close();
+        return total;
+    }
+
+    /**
+     * Total nilai penjualan (JUAL) untuk customer yang berkontribusi pada program
+     * loyalitas. Biaya beli botol galon (harga_botol * jumlah_galon) dikurangi
+     * karena menurut ketentuan, pembelian botol dan ganti rugi tidak menambah poin.
+     * Transaksi KEMBALI (ganti rugi) secara otomatis sudah tidak terhitung karena
+     * filter type='JUAL'.
+     */
+    public double getTotalJualPointsBasisByCustomer(long customerId) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String query = "SELECT COALESCE(SUM(" +
+                "total_harga - COALESCE(harga_botol,0) * jumlah_galon" +
+                "),0) FROM transactions " +
+                "WHERE type='JUAL' AND customer_id=?";
+        Cursor cursor = db.rawQuery(query, new String[]{String.valueOf(customerId)});
+        double total = 0;
+        if (cursor.moveToFirst()) {
+            total = cursor.getDouble(0);
+        }
+        cursor.close();
+        return Math.max(0, total);
     }
 
     /** Total pendapatan hari ini */
@@ -238,6 +306,25 @@ public class TransactionDao {
         int ongkirIdx = cursor.getColumnIndex(DatabaseHelper.COL_ONGKIR);
         if (ongkirIdx >= 0) {
             t.setOngkir(cursor.getDouble(ongkirIdx));
+        }
+        int ongkirTypeIdx = cursor.getColumnIndex(DatabaseHelper.COL_ONGKIR_TYPE);
+        if (ongkirTypeIdx >= 0) {
+            String ot = cursor.getString(ongkirTypeIdx);
+            if (ot != null && !ot.isEmpty()) t.setOngkirType(ot);
+        }
+        int ownIdx = cursor.getColumnIndex(DatabaseHelper.COL_GALON_OWNERSHIP);
+        if (ownIdx >= 0) {
+            String own = cursor.getString(ownIdx);
+            if (own != null && !own.isEmpty()) t.setGalonOwnership(own);
+        }
+        int hbIdx = cursor.getColumnIndex(DatabaseHelper.COL_HARGA_BOTOL);
+        if (hbIdx >= 0) {
+            t.setHargaBotolGalon(cursor.getDouble(hbIdx));
+        }
+        int itemsIdx = cursor.getColumnIndex(DatabaseHelper.COL_ITEMS_JSON);
+        if (itemsIdx >= 0) {
+            String itemsJson = cursor.getString(itemsIdx);
+            t.setItems(TransactionItem.listFromJson(itemsJson));
         }
         t.setTanggal(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_TANGGAL)));
         t.setCatatan(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_CATATAN)));
