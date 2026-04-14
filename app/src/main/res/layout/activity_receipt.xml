@@ -58,34 +58,42 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:padding="12dp"
         android:background="@color/white"
         android:elevation="8dp">
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnPrint"
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginEnd="4dp"
             android:text="Cetak"
             android:textAllCaps="false"
+            android:visibility="gone"
             app:cornerRadius="10dp"
             app:icon="@android:drawable/ic_menu_send"
             app:iconGravity="textStart" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnShare"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="4dp"
             android:text="Bagikan"
             android:textAllCaps="false"
             app:cornerRadius="10dp"
             app:icon="@android:drawable/ic_menu_share"
+            app:iconGravity="textStart" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnExportWa"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Export ke WA"
+            android:textAllCaps="false"
+            app:cornerRadius="10dp"
+            app:icon="@android:drawable/sym_action_chat"
             app:iconGravity="textStart" />
     </LinearLayout>
 </LinearLayout>
