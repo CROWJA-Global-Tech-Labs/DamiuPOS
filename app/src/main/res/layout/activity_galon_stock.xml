@@ -223,6 +223,46 @@
                             android:layout_height="wrap_content"
                             android:inputType="text" />
                     </com.google.android.material.textfield.TextInputLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnFotoStruk"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Foto Struk Pembelian"
+                            android:textAllCaps="false"
+                            app:cornerRadius="8dp"
+                            app:icon="@android:drawable/ic_menu_camera"
+                            app:iconGravity="textStart" />
+
+                        <ImageView
+                            android:id="@+id/ivStrukPreview"
+                            android:layout_width="56dp"
+                            android:layout_height="56dp"
+                            android:layout_marginStart="8dp"
+                            android:scaleType="centerCrop"
+                            android:background="@color/grey_light"
+                            android:visibility="gone"
+                            android:contentDescription="Preview foto struk" />
+
+                        <ImageButton
+                            android:id="@+id/btnRemoveStruk"
+                            android:layout_width="40dp"
+                            android:layout_height="40dp"
+                            android:layout_marginStart="4dp"
+                            android:background="?attr/selectableItemBackgroundBorderless"
+                            android:src="@android:drawable/ic_menu_close_clear_cancel"
+                            android:visibility="gone"
+                            android:contentDescription="Hapus foto" />
+                    </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 

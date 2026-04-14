@@ -56,5 +56,16 @@
             android:layout_height="wrap_content"
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
+
+        <ImageView
+            android:id="@+id/ivStockPhoto"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="8dp"
+            android:padding="4dp"
+            android:src="@android:drawable/ic_menu_gallery"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:visibility="gone"
+            android:contentDescription="Lihat foto struk" />
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

@@ -3,6 +3,7 @@ package com.damiu.pos.adapter;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -16,14 +17,27 @@ import java.util.List;
 public class StockHistoryAdapter extends RecyclerView.Adapter<StockHistoryAdapter.ViewHolder> {
 
     private List<String[]> items = new ArrayList<>();
-    private OnItemLongClickListener longClickListener;
+    private final Listener listener;
 
+    public interface Listener {
+        void onItemLongClick(long id, int position);
+        void onPhotoClick(String photoPath);
+    }
+
+    /** Backwards-compatible single-method listener */
     public interface OnItemLongClickListener {
         void onItemLongClick(long id, int position);
     }
 
-    public StockHistoryAdapter(OnItemLongClickListener listener) {
-        this.longClickListener = listener;
+    public StockHistoryAdapter(Listener listener) {
+        this.listener = listener;
+    }
+
+    public StockHistoryAdapter(OnItemLongClickListener legacy) {
+        this.listener = new Listener() {
+            @Override public void onItemLongClick(long id, int position) { legacy.onItemLongClick(id, position); }
+            @Override public void onPhotoClick(String photoPath) {}
+        };
     }
 
     public void setData(List<String[]> items) {
@@ -51,18 +65,20 @@ public class StockHistoryAdapter extends RecyclerView.Adapter<StockHistoryAdapte
 
     class ViewHolder extends RecyclerView.ViewHolder {
         TextView tvStockJumlah, tvStockCatatan, tvStockTanggal;
+        ImageView ivStockPhoto;
 
         ViewHolder(@NonNull View itemView) {
             super(itemView);
             tvStockJumlah = itemView.findViewById(R.id.tvStockJumlah);
             tvStockCatatan = itemView.findViewById(R.id.tvStockCatatan);
             tvStockTanggal = itemView.findViewById(R.id.tvStockTanggal);
+            ivStockPhoto = itemView.findViewById(R.id.ivStockPhoto);
 
             itemView.setOnLongClickListener(v -> {
                 int pos = getAdapterPosition();
-                if (pos != RecyclerView.NO_POSITION && longClickListener != null) {
+                if (pos != RecyclerView.NO_POSITION && listener != null) {
                     long id = Long.parseLong(items.get(pos)[0]);
-                    longClickListener.onItemLongClick(id, pos);
+                    listener.onItemLongClick(id, pos);
                     return true;
                 }
                 return false;
@@ -85,6 +101,19 @@ public class StockHistoryAdapter extends RecyclerView.Adapter<StockHistoryAdapte
                 tvStockTanggal.setText(tanggal.substring(0, 10));
             } else {
                 tvStockTanggal.setText(tanggal);
+            }
+
+            String photoPath = item.length > 4 ? item[4] : null;
+            if (ivStockPhoto != null) {
+                if (photoPath != null && !photoPath.isEmpty() && new java.io.File(photoPath).exists()) {
+                    ivStockPhoto.setVisibility(View.VISIBLE);
+                    ivStockPhoto.setOnClickListener(v -> {
+                        if (listener != null) listener.onPhotoClick(photoPath);
+                    });
+                } else {
+                    ivStockPhoto.setVisibility(View.GONE);
+                    ivStockPhoto.setOnClickListener(null);
+                }
             }
         }
     }

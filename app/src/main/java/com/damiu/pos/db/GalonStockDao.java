@@ -16,10 +16,15 @@ public class GalonStockDao {
     }
 
     public long addStock(int jumlah, String catatan) {
+        return addStock(jumlah, catatan, null);
+    }
+
+    public long addStock(int jumlah, String catatan, String photoPath) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues values = new ContentValues();
         values.put(DatabaseHelper.COL_STOCK_JUMLAH, jumlah);
         values.put(DatabaseHelper.COL_STOCK_CATATAN, catatan);
+        values.put(DatabaseHelper.COL_STOCK_PHOTO_PATH, photoPath);
         return db.insert(DatabaseHelper.TABLE_GALON_STOCK, null, values);
     }
 
@@ -84,7 +89,7 @@ public class GalonStockDao {
         List<String[]> list = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         Cursor cursor = db.rawQuery(
-                "SELECT _id, jumlah, catatan, tanggal FROM " +
+                "SELECT _id, jumlah, catatan, tanggal, photo_path FROM " +
                         DatabaseHelper.TABLE_GALON_STOCK +
                         " ORDER BY tanggal DESC", null);
         while (cursor.moveToNext()) {
@@ -92,7 +97,8 @@ public class GalonStockDao {
                     String.valueOf(cursor.getLong(0)),  // id
                     String.valueOf(cursor.getInt(1)),    // jumlah
                     cursor.getString(2),                 // catatan
-                    cursor.getString(3)                  // tanggal
+                    cursor.getString(3),                 // tanggal
+                    cursor.getString(4)                  // photo_path
             });
         }
         cursor.close();
