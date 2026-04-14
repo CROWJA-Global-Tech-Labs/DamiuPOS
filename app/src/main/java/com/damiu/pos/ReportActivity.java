@@ -1,5 +1,6 @@
 package com.damiu.pos;
 
+import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.TextView;
@@ -22,9 +23,9 @@ import java.util.List;
 
 public class ReportActivity extends AppCompatActivity {
 
-    private SimpleBarChart chartBulanan, chartHarian, chartTopCustomer;
+    private SimpleBarChart chartBulanan, chartHarian;
     private TextView tvEmptyBulanan, tvEmptyHarian, tvEmptyTop;
-    private RecyclerView rvFrekuensi;
+    private RecyclerView rvFrekuensi, rvTopCustomer;
 
     private TransactionDao transactionDao;
     private CustomerDao customerDao;
@@ -44,13 +45,14 @@ public class ReportActivity extends AppCompatActivity {
 
         chartBulanan = findViewById(R.id.chartBulanan);
         chartHarian = findViewById(R.id.chartHarian);
-        chartTopCustomer = findViewById(R.id.chartTopCustomer);
         tvEmptyBulanan = findViewById(R.id.tvEmptyBulanan);
         tvEmptyHarian = findViewById(R.id.tvEmptyHarian);
         tvEmptyTop = findViewById(R.id.tvEmptyTop);
         rvFrekuensi = findViewById(R.id.rvFrekuensi);
+        rvTopCustomer = findViewById(R.id.rvTopCustomer);
 
         rvFrekuensi.setLayoutManager(new LinearLayoutManager(this));
+        rvTopCustomer.setLayoutManager(new LinearLayoutManager(this));
 
         loadCharts();
     }
@@ -97,26 +99,30 @@ public class ReportActivity extends AppCompatActivity {
             chartHarian.setData(dailyData);
         }
 
-        // 3. Top 10 customers by galon purchased
+        // 3. Top 10 customers by galon purchased (horizontal bar list, clickable)
         List<Customer> topCustomers = customerDao.getTopCustomers(10);
         if (topCustomers.isEmpty()) {
-            chartTopCustomer.setVisibility(View.GONE);
+            rvTopCustomer.setVisibility(View.GONE);
             tvEmptyTop.setVisibility(View.VISIBLE);
         } else {
-            chartTopCustomer.setVisibility(View.VISIBLE);
+            rvTopCustomer.setVisibility(View.VISIBLE);
             tvEmptyTop.setVisibility(View.GONE);
-            List<SimpleBarChart.BarData> topData = new ArrayList<>();
-            for (Customer c : topCustomers) {
-                String shortName = c.getName().length() > 6
-                        ? c.getName().substring(0, 6) : c.getName();
-                topData.add(new SimpleBarChart.BarData(shortName, c.getGalonKeluar(), colorGreen));
-            }
-            chartTopCustomer.setData(topData);
+            FrekuensiAdapter topAdapter = new FrekuensiAdapter(FrekuensiAdapter.MODE_GALON);
+            topAdapter.setOnItemClickListener(this::openCustomerDetail);
+            rvTopCustomer.setAdapter(topAdapter);
+            topAdapter.setData(topCustomers);
         }
 
         // 4. Frequency table (reuse top customers)
-        FrekuensiAdapter frekuensiAdapter = new FrekuensiAdapter();
+        FrekuensiAdapter frekuensiAdapter = new FrekuensiAdapter(FrekuensiAdapter.MODE_FREKUENSI);
+        frekuensiAdapter.setOnItemClickListener(this::openCustomerDetail);
         rvFrekuensi.setAdapter(frekuensiAdapter);
         frekuensiAdapter.setData(topCustomers);
+    }
+
+    private void openCustomerDetail(Customer c) {
+        Intent intent = new Intent(this, CustomerDetailActivity.class);
+        intent.putExtra("customer_id", c.getId());
+        startActivity(intent);
     }
 }

@@ -17,16 +17,34 @@ import java.util.List;
 
 public class FrekuensiAdapter extends RecyclerView.Adapter<FrekuensiAdapter.ViewHolder> {
 
+    public static final int MODE_FREKUENSI = 0;
+    public static final int MODE_GALON = 1;
+
+    public interface OnItemClickListener { void onClick(Customer c); }
+
     private List<Customer> customers = new ArrayList<>();
     private int maxCount = 1;
+    private int mode = MODE_FREKUENSI;
+    private OnItemClickListener listener;
+
+    public FrekuensiAdapter() {}
+
+    public FrekuensiAdapter(int mode) {
+        this.mode = mode;
+    }
+
+    public void setOnItemClickListener(OnItemClickListener l) { this.listener = l; }
+
+    private int valueOf(Customer c) {
+        return mode == MODE_GALON ? c.getGalonKeluar() : c.getTotalTransaksi();
+    }
 
     public void setData(List<Customer> customers) {
         this.customers = customers;
         maxCount = 1;
         for (Customer c : customers) {
-            if (c.getTotalTransaksi() > maxCount) {
-                maxCount = c.getTotalTransaksi();
-            }
+            int v = valueOf(c);
+            if (v > maxCount) maxCount = v;
         }
         notifyDataSetChanged();
     }
@@ -42,18 +60,23 @@ public class FrekuensiAdapter extends RecyclerView.Adapter<FrekuensiAdapter.View
     @Override
     public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
         Customer c = customers.get(position);
+        int value = valueOf(c);
         holder.tvRank.setText(String.valueOf(position + 1));
         holder.tvName.setText(c.getName());
-        holder.tvCount.setText(c.getTotalTransaksi() + "x");
+        holder.tvCount.setText(mode == MODE_GALON ? (value + " galon") : (value + "x"));
 
         // Set bar width proportionally
         holder.viewBar.post(() -> {
             FrameLayout parent = (FrameLayout) holder.viewBar.getParent();
             int parentWidth = parent.getWidth();
-            float ratio = (float) c.getTotalTransaksi() / maxCount;
+            float ratio = (float) value / maxCount;
             ViewGroup.LayoutParams lp = holder.viewBar.getLayoutParams();
             lp.width = (int) (parentWidth * ratio);
             holder.viewBar.setLayoutParams(lp);
+        });
+
+        holder.itemView.setOnClickListener(v -> {
+            if (listener != null) listener.onClick(c);
         });
     }
 
