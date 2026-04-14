@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DAMIU POS</string>
+    <string name="dashboard">Dashboard</string>
+    <string name="pelanggan">Pelanggan</string>
+    <string name="transaksi_baru">Transaksi Baru</string>
+    <string name="tambah_pelanggan">Tambah Pelanggan</string>
+    <string name="edit_pelanggan">Edit Pelanggan</string>
+    <string name="detail_pelanggan">Detail Pelanggan</string>
+    <string name="nama">Nama</string>
+    <string name="telepon">No. Telepon</string>
+    <string name="alamat">Alamat</string>
+    <string name="simpan">Simpan</string>
+    <string name="batal">Batal</string>
+    <string name="hapus">Hapus</string>
+    <string name="cari_pelanggan">Cari pelanggan...</string>
+    <string name="jual_galon">Jual Galon</string>
+    <string name="galon_kembali">Galon Kembali</string>
+    <string name="jumlah_galon">Jumlah Galon</string>
+    <string name="harga_per_galon">Harga per Galon</string>
+    <string name="total_harga">Total Harga</string>
+    <string name="catatan">Catatan (opsional)</string>
+    <string name="pendapatan_hari_ini">Pendapatan Hari Ini</string>
+    <string name="transaksi_hari_ini">Transaksi Hari Ini</string>
+    <string name="galon_terjual_hari_ini">Galon Terjual Hari Ini</string>
+    <string name="galon_beredar">Galon Beredar</string>
+    <string name="total_pelanggan">Total Pelanggan</string>
+    <string name="saldo_galon">Saldo Galon</string>
+    <string name="histori_transaksi">Histori Transaksi</string>
+    <string name="belum_ada_transaksi">Belum ada transaksi</string>
+    <string name="belum_ada_pelanggan">Belum ada pelanggan</string>
+    <string name="transaksi_terakhir">Transaksi Terakhir</string>
+    <string name="chat_whatsapp">Chat WhatsApp</string>
+    <string name="konfirmasi_hapus">Konfirmasi Hapus</string>
+    <string name="yakin_hapus_pelanggan">Yakin ingin menghapus pelanggan ini beserta semua riwayat transaksinya?</string>
+    <string name="pilih_pelanggan">Pilih Pelanggan</string>
+    <string name="wa_tidak_tersedia">WhatsApp tidak terinstall</string>
+    <string name="no_telepon_kosong">Nomor telepon pelanggan kosong</string>
+</resources>
