@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
@@ -31,6 +32,9 @@
         <activity android:name=".TransactionActivity" />
         <activity android:name=".ReportActivity" />
         <activity android:name=".ExportActivity" />
+        <activity android:name=".ProductListActivity" />
+        <activity android:name=".ProductFormActivity" />
+        <activity android:name=".GalonStockActivity" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

@@ -147,6 +147,25 @@ public class CustomerDao {
         return list;
     }
 
+    /** Check if customer with this phone number exists */
+    public boolean existsByPhone(String phone) {
+        if (phone == null || phone.isEmpty()) return false;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        // Normalize: match last 8+ digits to handle prefix variations
+        String normalized = phone.replaceAll("[^0-9]", "");
+        if (normalized.length() < 4) return false;
+        String suffix = normalized.substring(normalized.length() - Math.min(normalized.length(), 8));
+        Cursor cursor = db.rawQuery(
+                "SELECT COUNT(*) FROM customers WHERE REPLACE(REPLACE(REPLACE(phone,' ',''),'-',''),'+','') LIKE ?",
+                new String[]{"%" + suffix});
+        boolean exists = false;
+        if (cursor.moveToFirst()) {
+            exists = cursor.getInt(0) > 0;
+        }
+        cursor.close();
+        return exists;
+    }
+
     public int getTotalCustomers() {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         Cursor cursor = db.rawQuery("SELECT COUNT(*) FROM customers", null);
