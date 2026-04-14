@@ -71,6 +71,14 @@ public class MainActivity extends AppCompatActivity {
             startActivity(new Intent(this, CustomerListActivity.class));
         });
 
+        findViewById(R.id.btnStokGalon).setOnClickListener(v -> {
+            startActivity(new Intent(this, GalonStockActivity.class));
+        });
+
+        findViewById(R.id.btnProduk).setOnClickListener(v -> {
+            startActivity(new Intent(this, ProductListActivity.class));
+        });
+
         findViewById(R.id.btnLaporan).setOnClickListener(v -> {
             startActivity(new Intent(this, ReportActivity.class));
         });
