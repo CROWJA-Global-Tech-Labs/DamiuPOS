@@ -29,6 +29,17 @@
             android:id="@+id/webView"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
+
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/btnMyLocation"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="16dp"
+            android:contentDescription="Lokasi saya"
+            app:srcCompat="@android:drawable/ic_menu_mylocation"
+            app:tint="@color/white"
+            app:backgroundTint="@color/primary" />
     </FrameLayout>
 
     <com.google.android.material.button.MaterialButton

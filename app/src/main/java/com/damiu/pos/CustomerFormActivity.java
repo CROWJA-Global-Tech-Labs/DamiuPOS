@@ -9,9 +9,11 @@ import android.graphics.Matrix;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.content.ContentProviderOperation;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.ContactsContract;
 import android.provider.MediaStore;
 import android.widget.ImageView;
 import android.widget.TextView;
@@ -33,6 +35,7 @@ import com.google.android.material.textfield.TextInputEditText;
 import java.io.File;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.Locale;
 
@@ -42,6 +45,10 @@ public class CustomerFormActivity extends AppCompatActivity {
     private static final int REQUEST_PERMISSION_CAMERA = 101;
     private static final int REQUEST_PERMISSION_LOCATION = 102;
     private static final int REQUEST_PICK_MAP = 103;
+    private static final int REQUEST_PERMISSION_CONTACTS = 104;
+
+    private String pendingContactName;
+    private String pendingContactPhone;
 
     private TextInputEditText etNama, etTelepon, etAlamat;
     private ImageView ivFotoRumah;
@@ -182,8 +189,10 @@ public class CustomerFormActivity extends AppCompatActivity {
 
     private void pickFromMap() {
         Intent intent = new Intent(this, MapPickerActivity.class);
-        intent.putExtra(MapPickerActivity.EXTRA_LATITUDE, latitude != 0 ? latitude : -6.2);
-        intent.putExtra(MapPickerActivity.EXTRA_LONGITUDE, longitude != 0 ? longitude : 106.8);
+        if (latitude != 0 || longitude != 0) {
+            intent.putExtra(MapPickerActivity.EXTRA_LATITUDE, latitude);
+            intent.putExtra(MapPickerActivity.EXTRA_LONGITUDE, longitude);
+        }
         startActivityForResult(intent, REQUEST_PICK_MAP);
     }
 
@@ -242,9 +251,21 @@ public class CustomerFormActivity extends AppCompatActivity {
                 takePhoto();
             } else if (requestCode == REQUEST_PERMISSION_LOCATION) {
                 getLocation();
+            } else if (requestCode == REQUEST_PERMISSION_CONTACTS) {
+                if (pendingContactName != null && pendingContactPhone != null) {
+                    writeContact(pendingContactName, pendingContactPhone);
+                    pendingContactName = null;
+                    pendingContactPhone = null;
+                }
             }
         } else {
-            Toast.makeText(this, "Permission ditolak", Toast.LENGTH_SHORT).show();
+            if (requestCode == REQUEST_PERMISSION_CONTACTS) {
+                Toast.makeText(this, "Izin kontak ditolak, tidak disimpan ke HP",
+                        Toast.LENGTH_SHORT).show();
+                finish();
+            } else {
+                Toast.makeText(this, "Permission ditolak", Toast.LENGTH_SHORT).show();
+            }
         }
     }
 
@@ -268,11 +289,63 @@ public class CustomerFormActivity extends AppCompatActivity {
             customer.setId(editId);
             customerDao.update(customer);
             Toast.makeText(this, "Pelanggan berhasil diupdate", Toast.LENGTH_SHORT).show();
+            finish();
         } else {
             customerDao.insert(customer);
             Toast.makeText(this, "Pelanggan berhasil ditambahkan", Toast.LENGTH_SHORT).show();
+            // Auto-save to phone contacts (new customers only, with phone number)
+            if (!telepon.isEmpty()) {
+                saveToContacts(nama, telepon);
+                // finish() handled inside contact-save flow
+            } else {
+                finish();
+            }
         }
+    }
 
+    private void saveToContacts(String name, String phone) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_CONTACTS)
+                != PackageManager.PERMISSION_GRANTED) {
+            pendingContactName = name;
+            pendingContactPhone = phone;
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.WRITE_CONTACTS},
+                    REQUEST_PERMISSION_CONTACTS);
+            return;
+        }
+        writeContact(name, phone);
+    }
+
+    private void writeContact(String name, String phone) {
+        try {
+            ArrayList<ContentProviderOperation> ops = new ArrayList<>();
+            ops.add(ContentProviderOperation
+                    .newInsert(ContactsContract.RawContacts.CONTENT_URI)
+                    .withValue(ContactsContract.RawContacts.ACCOUNT_TYPE, null)
+                    .withValue(ContactsContract.RawContacts.ACCOUNT_NAME, null)
+                    .build());
+            ops.add(ContentProviderOperation
+                    .newInsert(ContactsContract.Data.CONTENT_URI)
+                    .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                    .withValue(ContactsContract.Data.MIMETYPE,
+                            ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+                    .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name)
+                    .build());
+            ops.add(ContentProviderOperation
+                    .newInsert(ContactsContract.Data.CONTENT_URI)
+                    .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
+                    .withValue(ContactsContract.Data.MIMETYPE,
+                            ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)
+                    .withValue(ContactsContract.CommonDataKinds.Phone.NUMBER, phone)
+                    .withValue(ContactsContract.CommonDataKinds.Phone.TYPE,
+                            ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE)
+                    .build());
+            getContentResolver().applyBatch(ContactsContract.AUTHORITY, ops);
+            Toast.makeText(this, "Disimpan ke kontak HP", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Gagal simpan ke kontak: " + e.getMessage(),
+                    Toast.LENGTH_LONG).show();
+        }
         finish();
     }
 }

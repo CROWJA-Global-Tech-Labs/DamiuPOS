@@ -1,11 +1,20 @@
 package com.damiu.pos;
 
+import android.annotation.SuppressLint;
 import android.content.Intent;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
+import android.webkit.WebView;
+import android.webkit.WebSettings;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import com.google.android.material.card.MaterialCardView;
+import com.google.android.material.imageview.ShapeableImageView;
+
+import java.io.File;
 
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
@@ -33,6 +42,10 @@ public class CustomerDetailActivity extends AppCompatActivity {
     private TextView tvEmptyHistory;
     private RecyclerView rvTransactions;
     private TransactionAdapter adapter;
+    private ShapeableImageView ivFoto;
+    private MaterialCardView cardMap;
+    private WebView webMap;
+    private boolean mapLoaded;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -56,6 +69,9 @@ public class CustomerDetailActivity extends AppCompatActivity {
         tvNama = findViewById(R.id.tvNama);
         tvTelepon = findViewById(R.id.tvTelepon);
         tvAlamat = findViewById(R.id.tvAlamat);
+        ivFoto = findViewById(R.id.ivFoto);
+        cardMap = findViewById(R.id.cardMap);
+        webMap = findViewById(R.id.webMap);
         tvGalonKeluar = findViewById(R.id.tvGalonKeluar);
         tvGalonKembali = findViewById(R.id.tvGalonKembali);
         tvSaldoGalon = findViewById(R.id.tvSaldoGalon);
@@ -65,6 +81,19 @@ public class CustomerDetailActivity extends AppCompatActivity {
         adapter = new TransactionAdapter(false);
         rvTransactions.setLayoutManager(new LinearLayoutManager(this));
         rvTransactions.setAdapter(adapter);
+
+        adapter.setOnItemClickListener(trx -> {
+            boolean hasStruk = Transaction.TYPE_JUAL.equals(trx.getType())
+                    || trx.getTotalHarga() > 0; // ganti rugi KEMBALI
+            if (!hasStruk) {
+                Toast.makeText(this, "Struk hanya tersedia untuk transaksi penjualan atau ganti rugi",
+                        Toast.LENGTH_SHORT).show();
+                return;
+            }
+            Intent intent = new Intent(this, ReceiptActivity.class);
+            intent.putExtra(ReceiptActivity.EXTRA_TRANSACTION_ID, trx.getId());
+            startActivity(intent);
+        });
 
         // WhatsApp button
         findViewById(R.id.btnWhatsapp).setOnClickListener(v -> openWhatsApp());
@@ -107,6 +136,9 @@ public class CustomerDetailActivity extends AppCompatActivity {
         tvAlamat.setText(customer.getAddress() != null && !customer.getAddress().isEmpty()
                 ? customer.getAddress() : "-");
 
+        loadPhoto(customer.getPhotoPath());
+        loadMap(customer);
+
         tvGalonKeluar.setText(String.valueOf(customer.getGalonKeluar()));
         tvGalonKembali.setText(String.valueOf(customer.getGalonKembali()));
         tvSaldoGalon.setText(String.valueOf(customer.getSaldoGalon()));
@@ -122,6 +154,89 @@ public class CustomerDetailActivity extends AppCompatActivity {
             tvEmptyHistory.setVisibility(View.GONE);
             rvTransactions.setVisibility(View.VISIBLE);
         }
+    }
+
+    private void loadPhoto(String path) {
+        if (path != null && !path.isEmpty()) {
+            File f = new File(path);
+            if (f.exists()) {
+                try {
+                    ivFoto.setImageBitmap(BitmapFactory.decodeFile(path));
+                    final String finalPath = path;
+                    ivFoto.setOnClickListener(v -> showFullScreenPhoto(finalPath));
+                    return;
+                } catch (Exception ignored) {}
+            }
+        }
+        ivFoto.setImageResource(android.R.drawable.ic_menu_gallery);
+        ivFoto.setOnClickListener(null);
+    }
+
+    private void showFullScreenPhoto(String path) {
+        android.graphics.Bitmap bmp = BitmapFactory.decodeFile(path);
+        if (bmp == null) {
+            Toast.makeText(this, "Foto tidak dapat dimuat", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        android.widget.ImageView iv = new android.widget.ImageView(this);
+        iv.setImageBitmap(bmp);
+        iv.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        iv.setBackgroundColor(android.graphics.Color.BLACK);
+        iv.setAdjustViewBounds(true);
+
+        android.app.Dialog dialog = new android.app.Dialog(this,
+                android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+        dialog.setContentView(iv, new android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+        iv.setOnClickListener(v -> dialog.dismiss());
+        dialog.show();
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private void loadMap(Customer customer) {
+        double lat = customer.getLatitude();
+        double lng = customer.getLongitude();
+        if (lat == 0 && lng == 0) {
+            cardMap.setVisibility(View.GONE);
+            return;
+        }
+        cardMap.setVisibility(View.VISIBLE);
+
+        findViewById(R.id.btnNavigate).setOnClickListener(v -> {
+            try {
+                Uri geo = Uri.parse("geo:" + lat + "," + lng + "?q=" + lat + "," + lng
+                        + "(" + Uri.encode(customer.getName()) + ")");
+                Intent intent = new Intent(Intent.ACTION_VIEW, geo);
+                startActivity(intent);
+            } catch (Exception e) {
+                Toast.makeText(this, "Aplikasi peta tidak tersedia", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        if (mapLoaded) return;
+        mapLoaded = true;
+
+        WebSettings ws = webMap.getSettings();
+        ws.setJavaScriptEnabled(true);
+        ws.setDomStorageEnabled(true);
+        webMap.setOnClickListener(v -> findViewById(R.id.btnNavigate).performClick());
+
+        String html = "<!DOCTYPE html><html><head>"
+                + "<meta charset='utf-8'>"
+                + "<meta name='viewport' content='width=device-width, initial-scale=1.0, user-scalable=no'>"
+                + "<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css' />"
+                + "<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>"
+                + "<style>html,body,#map{height:100%;margin:0;padding:0;}</style>"
+                + "</head><body><div id='map'></div>"
+                + "<script>"
+                + "var map = L.map('map', {zoomControl:false, attributionControl:false, dragging:false,"
+                + " scrollWheelZoom:false, doubleClickZoom:false, touchZoom:false, boxZoom:false, keyboard:false})"
+                + ".setView([" + lat + "," + lng + "], 16);"
+                + "L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);"
+                + "L.marker([" + lat + "," + lng + "]).addTo(map);"
+                + "</script></body></html>";
+        webMap.loadDataWithBaseURL("https://openstreetmap.org/", html, "text/html", "utf-8", null);
     }
 
     private void openWhatsApp() {

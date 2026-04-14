@@ -41,6 +41,7 @@ public class CustomerListActivity extends AppCompatActivity implements CustomerA
     private EditText etSearch;
     private CustomerAdapter adapter;
     private CustomerDao customerDao;
+    private int sortMode = CustomerDao.SORT_NAME;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -84,9 +85,9 @@ public class CustomerListActivity extends AppCompatActivity implements CustomerA
     private void loadCustomers(String keyword) {
         List<Customer> list;
         if (keyword.isEmpty()) {
-            list = customerDao.getAll();
+            list = customerDao.getAll(sortMode);
         } else {
-            list = customerDao.search(keyword);
+            list = customerDao.search(keyword, sortMode);
         }
         adapter.setData(list);
 
@@ -101,7 +102,9 @@ public class CustomerListActivity extends AppCompatActivity implements CustomerA
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
-        menu.add(0, 1, 0, "Sinkronisasi dari Kontak")
+        menu.add(0, 2, 0, "Urutkan")
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
+        menu.add(0, 1, 1, "Sinkronisasi dari Kontak")
                 .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
         return true;
     }
@@ -112,7 +115,24 @@ public class CustomerListActivity extends AppCompatActivity implements CustomerA
             syncFromContacts();
             return true;
         }
+        if (item.getItemId() == 2) {
+            showSortDialog();
+            return true;
+        }
         return super.onOptionsItemSelected(item);
+    }
+
+    private void showSortDialog() {
+        String[] options = {"Nama (A-Z)", "Galon Terbanyak"};
+        new AlertDialog.Builder(this)
+                .setTitle("Urutkan Pelanggan")
+                .setSingleChoiceItems(options, sortMode, (dialog, which) -> {
+                    sortMode = which;
+                    loadCustomers(etSearch.getText().toString().trim());
+                    dialog.dismiss();
+                })
+                .setNegativeButton("Batal", null)
+                .show();
     }
 
     private void syncFromContacts() {
