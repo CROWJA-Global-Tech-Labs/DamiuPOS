@@ -10,6 +10,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.damiu.pos.R;
 import com.damiu.pos.model.Transaction;
+import com.damiu.pos.model.TransactionItem;
 
 import java.text.NumberFormat;
 import java.util.ArrayList;
@@ -18,8 +19,13 @@ import java.util.Locale;
 
 public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.ViewHolder> {
 
+    public interface OnItemClickListener { void onClick(Transaction trx); }
+
     private List<Transaction> transactions = new ArrayList<>();
     private boolean showCustomerName = true;
+    private OnItemClickListener onItemClickListener;
+
+    public void setOnItemClickListener(OnItemClickListener l) { this.onItemClickListener = l; }
 
     public TransactionAdapter() {}
 
@@ -72,18 +78,39 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
                 tvTypeIcon.setBackgroundResource(R.drawable.bg_type_jual);
                 tvTypeIcon.setText("\u2191"); // arrow up
                 String typeLabel = "Jual";
-                if (trx.getProductName() != null && !trx.getProductName().isEmpty()) {
+                List<TransactionItem> items = trx.getItems();
+                if (items != null && items.size() > 1) {
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0; i < items.size(); i++) {
+                        if (i > 0) sb.append(" + ");
+                        sb.append(items.get(i).productName);
+                    }
+                    typeLabel = sb.toString();
+                } else if (items != null && items.size() == 1) {
+                    typeLabel = items.get(0).productName;
+                } else if (trx.getProductName() != null && !trx.getProductName().isEmpty()) {
                     typeLabel = trx.getProductName();
                 }
                 tvType.setText(typeLabel);
                 tvType.setTextColor(itemView.getContext().getResources().getColor(R.color.primary));
                 tvGalonCount.setTextColor(itemView.getContext().getResources().getColor(R.color.primary));
             } else {
-                tvTypeIcon.setBackgroundResource(R.drawable.bg_type_kembali);
-                tvTypeIcon.setText("\u2193"); // arrow down
-                tvType.setText("Kembali");
-                tvType.setTextColor(itemView.getContext().getResources().getColor(R.color.green));
-                tvGalonCount.setTextColor(itemView.getContext().getResources().getColor(R.color.green));
+                boolean isGantiRugi = trx.getTotalHarga() > 0
+                        || (trx.getCatatan() != null && trx.getCatatan().contains("[GANTI RUGI"));
+                if (isGantiRugi) {
+                    tvTypeIcon.setBackgroundResource(R.drawable.bg_type_kembali);
+                    tvTypeIcon.setText("\u26A0"); // warning sign
+                    tvType.setText("Kembali — Ganti Rugi");
+                    int orange = android.graphics.Color.parseColor("#E65100");
+                    tvType.setTextColor(orange);
+                    tvGalonCount.setTextColor(orange);
+                } else {
+                    tvTypeIcon.setBackgroundResource(R.drawable.bg_type_kembali);
+                    tvTypeIcon.setText("\u2193"); // arrow down
+                    tvType.setText("Kembali");
+                    tvType.setTextColor(itemView.getContext().getResources().getColor(R.color.green));
+                    tvGalonCount.setTextColor(itemView.getContext().getResources().getColor(R.color.green));
+                }
             }
 
             if (showCustomerName && trx.getCustomerName() != null) {
@@ -96,13 +123,17 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
             tvDate.setText(trx.getTanggal() != null ? trx.getTanggal() : "");
             tvGalonCount.setText(trx.getJumlahGalon() + " galon");
 
-            if (isJual) {
+            if (isJual || trx.getTotalHarga() > 0) {
                 NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
                 tvHarga.setText("Rp " + nf.format(trx.getTotalHarga()));
                 tvHarga.setVisibility(View.VISIBLE);
             } else {
                 tvHarga.setVisibility(View.GONE);
             }
+
+            itemView.setOnClickListener(v -> {
+                if (onItemClickListener != null) onItemClickListener.onClick(trx);
+            });
         }
     }
 }
