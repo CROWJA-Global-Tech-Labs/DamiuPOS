@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
@@ -35,6 +36,7 @@
         <activity android:name=".ProductListActivity" />
         <activity android:name=".ProductFormActivity" />
         <activity android:name=".GalonStockActivity" />
+        <activity android:name=".MapPickerActivity" />
 
         <provider
             android:name="androidx.core.content.FileProvider"
