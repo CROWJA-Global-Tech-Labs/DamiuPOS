@@ -71,7 +71,11 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
             if (isJual) {
                 tvTypeIcon.setBackgroundResource(R.drawable.bg_type_jual);
                 tvTypeIcon.setText("\u2191"); // arrow up
-                tvType.setText("Jual");
+                String typeLabel = "Jual";
+                if (trx.getProductName() != null && !trx.getProductName().isEmpty()) {
+                    typeLabel = trx.getProductName();
+                }
+                tvType.setText(typeLabel);
                 tvType.setTextColor(itemView.getContext().getResources().getColor(R.color.primary));
                 tvGalonCount.setTextColor(itemView.getContext().getResources().getColor(R.color.primary));
             } else {

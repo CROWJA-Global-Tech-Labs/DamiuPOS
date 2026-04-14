@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 1;
+    private static final int DATABASE_VERSION = 4;
 
     // Table customers
     public static final String TABLE_CUSTOMERS = "customers";
@@ -20,10 +20,26 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_LONGITUDE = "longitude";
     public static final String COL_CREATED_AT = "created_at";
 
+    // Table products
+    public static final String TABLE_PRODUCTS = "products";
+    public static final String COL_PRODUCT_ID = "_id";
+    public static final String COL_PRODUCT_NAME = "name";
+    public static final String COL_HARGA_JUAL = "harga_jual";
+    public static final String COL_HARGA_MODAL = "harga_modal";
+    public static final String COL_COLOR = "color";
+
+    // Table galon stock
+    public static final String TABLE_GALON_STOCK = "galon_stock";
+    public static final String COL_STOCK_ID = "_id";
+    public static final String COL_STOCK_JUMLAH = "jumlah";
+    public static final String COL_STOCK_CATATAN = "catatan";
+    public static final String COL_STOCK_TANGGAL = "tanggal";
+
     // Table transactions
     public static final String TABLE_TRANSACTIONS = "transactions";
     public static final String COL_TRX_ID = "_id";
     public static final String COL_CUSTOMER_ID = "customer_id";
+    public static final String COL_TRX_PRODUCT_ID = "product_id";
     public static final String COL_TYPE = "type";
     public static final String COL_JUMLAH_GALON = "jumlah_galon";
     public static final String COL_HARGA_PER_GALON = "harga_per_galon";
@@ -43,10 +59,29 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_CREATED_AT + " TEXT DEFAULT (datetime('now','localtime'))" +
                     ");";
 
+    private static final String CREATE_TABLE_PRODUCTS =
+            "CREATE TABLE " + TABLE_PRODUCTS + " (" +
+                    COL_PRODUCT_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    COL_PRODUCT_NAME + " TEXT NOT NULL, " +
+                    COL_HARGA_JUAL + " REAL NOT NULL DEFAULT 0, " +
+                    COL_HARGA_MODAL + " REAL NOT NULL DEFAULT 0, " +
+                    COL_COLOR + " TEXT DEFAULT '#1565C0', " +
+                    COL_CREATED_AT + " TEXT DEFAULT (datetime('now','localtime'))" +
+                    ");";
+
+    private static final String CREATE_TABLE_GALON_STOCK =
+            "CREATE TABLE " + TABLE_GALON_STOCK + " (" +
+                    COL_STOCK_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    COL_STOCK_JUMLAH + " INTEGER NOT NULL, " +
+                    COL_STOCK_CATATAN + " TEXT, " +
+                    COL_STOCK_TANGGAL + " TEXT DEFAULT (datetime('now','localtime'))" +
+                    ");";
+
     private static final String CREATE_TABLE_TRANSACTIONS =
             "CREATE TABLE " + TABLE_TRANSACTIONS + " (" +
                     COL_TRX_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
                     COL_CUSTOMER_ID + " INTEGER NOT NULL, " +
+                    COL_TRX_PRODUCT_ID + " INTEGER DEFAULT 0, " +
                     COL_TYPE + " TEXT NOT NULL, " +
                     COL_JUMLAH_GALON + " INTEGER NOT NULL, " +
                     COL_HARGA_PER_GALON + " REAL DEFAULT 0, " +
@@ -73,14 +108,27 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     @Override
     public void onCreate(SQLiteDatabase db) {
         db.execSQL(CREATE_TABLE_CUSTOMERS);
+        db.execSQL(CREATE_TABLE_PRODUCTS);
+        db.execSQL(CREATE_TABLE_GALON_STOCK);
         db.execSQL(CREATE_TABLE_TRANSACTIONS);
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        db.execSQL("DROP TABLE IF EXISTS " + TABLE_TRANSACTIONS);
-        db.execSQL("DROP TABLE IF EXISTS " + TABLE_CUSTOMERS);
-        onCreate(db);
+        if (oldVersion < 2) {
+            db.execSQL(CREATE_TABLE_PRODUCTS);
+            db.execSQL("ALTER TABLE " + TABLE_TRANSACTIONS +
+                    " ADD COLUMN " + COL_TRX_PRODUCT_ID + " INTEGER DEFAULT 0");
+        }
+        if (oldVersion < 3) {
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_PRODUCTS +
+                        " ADD COLUMN " + COL_COLOR + " TEXT DEFAULT '#1565C0'");
+            } catch (Exception ignored) {}
+        }
+        if (oldVersion < 4) {
+            db.execSQL(CREATE_TABLE_GALON_STOCK);
+        }
     }
 
     @Override

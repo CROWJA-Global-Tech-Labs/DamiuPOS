@@ -7,6 +7,8 @@ public class Transaction {
     private long id;
     private long customerId;
     private String customerName; // for display purposes
+    private long productId;
+    private String productName;  // for display purposes
     private String type;         // JUAL or KEMBALI
     private int jumlahGalon;
     private double hargaPerGalon;
@@ -24,6 +26,12 @@ public class Transaction {
 
     public String getCustomerName() { return customerName; }
     public void setCustomerName(String customerName) { this.customerName = customerName; }
+
+    public long getProductId() { return productId; }
+    public void setProductId(long productId) { this.productId = productId; }
+
+    public String getProductName() { return productName; }
+    public void setProductName(String productName) { this.productName = productName; }
 
     public String getType() { return type; }
     public void setType(String type) { this.type = type; }

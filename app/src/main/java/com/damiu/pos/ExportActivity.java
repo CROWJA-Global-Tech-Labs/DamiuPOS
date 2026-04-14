@@ -192,7 +192,7 @@ public class ExportActivity extends AppCompatActivity {
         csv.append("\n");
 
         // Detail header
-        csv.append("No,Tanggal,Pelanggan,Jenis,Jumlah Galon,Harga/Galon,Total Harga,Catatan\n");
+        csv.append("No,Tanggal,Pelanggan,Jenis Air,Tipe,Jumlah Galon,Harga/Galon,Total Harga,Catatan\n");
 
         // Detail rows
         int no = 1;
@@ -200,6 +200,7 @@ public class ExportActivity extends AppCompatActivity {
             csv.append(no++).append(",");
             csv.append(escapeCsv(trx.getTanggal())).append(",");
             csv.append(escapeCsv(trx.getCustomerName())).append(",");
+            csv.append(escapeCsv(trx.getProductName() != null ? trx.getProductName() : "-")).append(",");
             csv.append(trx.getType()).append(",");
             csv.append(trx.getJumlahGalon()).append(",");
 

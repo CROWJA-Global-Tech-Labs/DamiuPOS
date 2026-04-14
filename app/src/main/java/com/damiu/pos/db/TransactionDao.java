@@ -21,6 +21,7 @@ public class TransactionDao {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues values = new ContentValues();
         values.put(DatabaseHelper.COL_CUSTOMER_ID, trx.getCustomerId());
+        values.put(DatabaseHelper.COL_TRX_PRODUCT_ID, trx.getProductId());
         values.put(DatabaseHelper.COL_TYPE, trx.getType());
         values.put(DatabaseHelper.COL_JUMLAH_GALON, trx.getJumlahGalon());
         values.put(DatabaseHelper.COL_HARGA_PER_GALON, trx.getHargaPerGalon());
@@ -42,9 +43,10 @@ public class TransactionDao {
     public List<Transaction> getByCustomerId(long customerId) {
         List<Transaction> list = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
-        String query = "SELECT t.*, c.name AS customer_name " +
+        String query = "SELECT t.*, c.name AS customer_name, p.name AS product_name " +
                 "FROM transactions t " +
                 "JOIN customers c ON t.customer_id = c._id " +
+                "LEFT JOIN products p ON t.product_id = p._id " +
                 "WHERE t.customer_id = ? " +
                 "ORDER BY t.tanggal DESC";
         Cursor cursor = db.rawQuery(query, new String[]{String.valueOf(customerId)});
@@ -59,9 +61,10 @@ public class TransactionDao {
     public List<Transaction> getAll() {
         List<Transaction> list = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
-        String query = "SELECT t.*, c.name AS customer_name " +
+        String query = "SELECT t.*, c.name AS customer_name, p.name AS product_name " +
                 "FROM transactions t " +
                 "JOIN customers c ON t.customer_id = c._id " +
+                "LEFT JOIN products p ON t.product_id = p._id " +
                 "ORDER BY t.tanggal DESC";
         Cursor cursor = db.rawQuery(query, null);
         while (cursor.moveToNext()) {
@@ -75,9 +78,10 @@ public class TransactionDao {
     public List<Transaction> getRecent(int limit) {
         List<Transaction> list = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
-        String query = "SELECT t.*, c.name AS customer_name " +
+        String query = "SELECT t.*, c.name AS customer_name, p.name AS product_name " +
                 "FROM transactions t " +
                 "JOIN customers c ON t.customer_id = c._id " +
+                "LEFT JOIN products p ON t.product_id = p._id " +
                 "ORDER BY t.tanggal DESC " +
                 "LIMIT ?";
         Cursor cursor = db.rawQuery(query, new String[]{String.valueOf(limit)});
@@ -134,9 +138,10 @@ public class TransactionDao {
     public List<Transaction> getByDateRange(String startDate, String endDate) {
         List<Transaction> list = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
-        String query = "SELECT t.*, c.name AS customer_name " +
+        String query = "SELECT t.*, c.name AS customer_name, p.name AS product_name " +
                 "FROM transactions t " +
                 "JOIN customers c ON t.customer_id = c._id " +
+                "LEFT JOIN products p ON t.product_id = p._id " +
                 "WHERE date(t.tanggal) >= ? AND date(t.tanggal) <= ? " +
                 "ORDER BY t.tanggal ASC";
         Cursor cursor = db.rawQuery(query, new String[]{startDate, endDate});
@@ -221,6 +226,10 @@ public class TransactionDao {
         Transaction t = new Transaction();
         t.setId(cursor.getLong(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_TRX_ID)));
         t.setCustomerId(cursor.getLong(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_CUSTOMER_ID)));
+        int pidIdx = cursor.getColumnIndex(DatabaseHelper.COL_TRX_PRODUCT_ID);
+        if (pidIdx >= 0) {
+            t.setProductId(cursor.getLong(pidIdx));
+        }
         t.setType(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_TYPE)));
         t.setJumlahGalon(cursor.getInt(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_JUMLAH_GALON)));
         t.setHargaPerGalon(cursor.getDouble(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_HARGA_PER_GALON)));
@@ -230,6 +239,10 @@ public class TransactionDao {
         int nameIdx = cursor.getColumnIndex("customer_name");
         if (nameIdx >= 0) {
             t.setCustomerName(cursor.getString(nameIdx));
+        }
+        int prodNameIdx = cursor.getColumnIndex("product_name");
+        if (prodNameIdx >= 0) {
+            t.setProductName(cursor.getString(prodNameIdx));
         }
         return t;
     }

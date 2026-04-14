@@ -16,10 +16,13 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.damiu.pos.adapter.CustomerAdapter;
+import com.damiu.pos.adapter.ProductAdapter;
 import com.damiu.pos.db.CustomerDao;
 import com.damiu.pos.db.DatabaseHelper;
+import com.damiu.pos.db.ProductDao;
 import com.damiu.pos.db.TransactionDao;
 import com.damiu.pos.model.Customer;
+import com.damiu.pos.model.Product;
 import com.damiu.pos.model.Transaction;
 import com.google.android.material.button.MaterialButtonToggleGroup;
 import com.google.android.material.textfield.TextInputEditText;
@@ -32,16 +35,19 @@ import java.util.Locale;
 public class TransactionActivity extends AppCompatActivity {
 
     private MaterialButtonToggleGroup toggleType;
-    private TextView tvSelectedCustomer, tvTotalHarga;
+    private TextView tvSelectedCustomer, tvSelectedProduct, tvTotalHarga;
     private TextInputEditText etJumlahGalon, etHargaPerGalon, etCatatan;
     private TextInputLayout tilHarga;
-    private View cardCustomer;
+    private View cardCustomer, cardProduct;
 
     private CustomerDao customerDao;
+    private ProductDao productDao;
     private TransactionDao transactionDao;
 
     private long selectedCustomerId = -1;
     private String selectedCustomerName = "";
+    private long selectedProductId = 0;
+    private String selectedProductName = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -54,16 +60,19 @@ public class TransactionActivity extends AppCompatActivity {
 
         DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
         customerDao = new CustomerDao(dbHelper);
+        productDao = new ProductDao(dbHelper);
         transactionDao = new TransactionDao(dbHelper);
 
         toggleType = findViewById(R.id.toggleType);
         tvSelectedCustomer = findViewById(R.id.tvSelectedCustomer);
+        tvSelectedProduct = findViewById(R.id.tvSelectedProduct);
         tvTotalHarga = findViewById(R.id.tvTotalHarga);
         etJumlahGalon = findViewById(R.id.etJumlahGalon);
         etHargaPerGalon = findViewById(R.id.etHargaPerGalon);
         etCatatan = findViewById(R.id.etCatatan);
         tilHarga = findViewById(R.id.tilHarga);
         cardCustomer = findViewById(R.id.cardCustomer);
+        cardProduct = findViewById(R.id.cardProduct);
 
         // Pre-select type from intent
         String type = getIntent().getStringExtra("type");
@@ -93,6 +102,9 @@ public class TransactionActivity extends AppCompatActivity {
         // Customer selector
         cardCustomer.setOnClickListener(v -> showCustomerPicker());
 
+        // Product selector
+        cardProduct.setOnClickListener(v -> showProductPicker());
+
         // Price calculation
         TextWatcher calcWatcher = new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -113,8 +125,10 @@ public class TransactionActivity extends AppCompatActivity {
     private void updateTypeUI(boolean isJual) {
         if (isJual) {
             tilHarga.setVisibility(View.VISIBLE);
+            cardProduct.setVisibility(View.VISIBLE);
         } else {
             tilHarga.setVisibility(View.GONE);
+            cardProduct.setVisibility(View.GONE);
         }
         updateTotal();
     }
@@ -137,6 +151,34 @@ public class TransactionActivity extends AppCompatActivity {
         } catch (NumberFormatException e) {
             tvTotalHarga.setText("Rp 0");
         }
+    }
+
+    private void showProductPicker() {
+        List<Product> products = productDao.getAll();
+        if (products.isEmpty()) {
+            Toast.makeText(this, "Belum ada jenis air. Tambahkan di menu Jenis Air Minum.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        String[] names = new String[products.size()];
+        for (int i = 0; i < products.size(); i++) {
+            Product p = products.get(i);
+            NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
+            names[i] = p.getName() + " — Rp " + nf.format(p.getHargaJual());
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Pilih Jenis Air")
+                .setItems(names, (dialog, which) -> {
+                    Product selected = products.get(which);
+                    selectedProductId = selected.getId();
+                    selectedProductName = selected.getName();
+                    tvSelectedProduct.setText(selected.getName());
+                    // Auto-fill harga jual
+                    etHargaPerGalon.setText(String.valueOf((long) selected.getHargaJual()));
+                })
+                .setNegativeButton("Batal", null)
+                .show();
     }
 
     private void showCustomerPicker() {
@@ -162,10 +204,8 @@ public class TransactionActivity extends AppCompatActivity {
         rvCustomers.setLayoutManager(new LinearLayoutManager(this));
         rvCustomers.setAdapter(adapter);
 
-        // Load initial data
         adapter.setData(customerDao.getAll());
 
-        // Search filter
         etSearch.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
@@ -229,6 +269,7 @@ public class TransactionActivity extends AppCompatActivity {
 
         Transaction trx = new Transaction();
         trx.setCustomerId(selectedCustomerId);
+        trx.setProductId(selectedProductId);
         trx.setType(isJual ? Transaction.TYPE_JUAL : Transaction.TYPE_KEMBALI);
         trx.setJumlahGalon(jumlah);
         trx.setHargaPerGalon(hargaPerGalon);
