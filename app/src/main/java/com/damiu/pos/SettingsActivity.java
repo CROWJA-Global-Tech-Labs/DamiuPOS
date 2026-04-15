@@ -1,5 +1,6 @@
 package com.damiu.pos;
 
+import android.content.Intent;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.LinearLayout;
@@ -69,6 +70,19 @@ public class SettingsActivity extends AppCompatActivity {
                 pointsConfigContainer.setVisibility(isChecked ? View.VISIBLE : View.GONE));
 
         findViewById(R.id.btnSimpan).setOnClickListener(v -> save());
+
+        View cardUpgrade = findViewById(R.id.cardUpgradePro);
+        if (cardUpgrade != null) {
+            cardUpgrade.setOnClickListener(v ->
+                    startActivity(new Intent(this, UpgradeActivity.class)));
+            // Update card text jika sudah Pro
+            android.widget.TextView tvTitle = findViewById(R.id.tvUpgradeTitle);
+            android.widget.TextView tvSub = findViewById(R.id.tvUpgradeSubtitle);
+            if (settingsDao.isProActive()) {
+                if (tvTitle != null) tvTitle.setText("DAMIU POS Pro Aktif");
+                if (tvSub != null) tvSub.setText("Kelola langganan");
+            }
+        }
 
         findViewById(R.id.btnGenerateDemo).setOnClickListener(v -> {
             new AlertDialog.Builder(this)

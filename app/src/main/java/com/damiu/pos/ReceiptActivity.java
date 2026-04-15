@@ -72,7 +72,11 @@ public class ReceiptActivity extends AppCompatActivity {
 
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
-        toolbar.setNavigationOnClickListener(v -> finish());
+        toolbar.setNavigationOnClickListener(v -> {
+            com.damiu.pos.ads.AdManager.getInstance(this)
+                    .maybeShowInterstitialAfterTransaction(this);
+            finish();
+        });
 
         tvReceiptContent = findViewById(R.id.tvReceiptContent);
         receiptContainer = findViewById(R.id.receiptContainer);

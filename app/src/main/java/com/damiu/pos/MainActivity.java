@@ -153,6 +153,12 @@ public class MainActivity extends AppCompatActivity {
                 startActivity(i);
             });
         }
+
+        // Banner ad di dashboard (auto-hide saat Pro)
+        android.view.ViewGroup adContainer = findViewById(R.id.adContainer);
+        if (adContainer != null) {
+            com.damiu.pos.ads.AdManager.getInstance(this).attachBanner(this, adContainer);
+        }
     }
 
     @Override

@@ -18,6 +18,9 @@ public class SettingsDao {
     public static final String KEY_STOCK_ALERT = "stock_alert";
     public static final String KEY_HARGA_BOTOL_GALON = "harga_botol_galon";
     public static final String KEY_LAST_GALON_OWNERSHIP = "last_galon_ownership";
+    public static final String KEY_PRO_ACTIVE = "pro_active";
+    public static final String KEY_PRO_PURCHASE_TOKEN = "pro_purchase_token";
+    public static final String KEY_PRO_LAST_VERIFIED_AT = "pro_last_verified_at";
 
     private final DatabaseHelper dbHelper;
 
@@ -147,5 +150,32 @@ public class SettingsDao {
 
     public void setLastGalonOwnership(String v) {
         set(KEY_LAST_GALON_OWNERSHIP, v != null ? v : "PINJAM");
+    }
+
+    // ---------------- Pro / subscription status (cached locally) ----------------
+
+    public boolean isProActive() {
+        return "1".equals(get(KEY_PRO_ACTIVE, "0"));
+    }
+
+    public void setProActive(boolean active) {
+        set(KEY_PRO_ACTIVE, active ? "1" : "0");
+        set(KEY_PRO_LAST_VERIFIED_AT, String.valueOf(System.currentTimeMillis()));
+    }
+
+    public String getProPurchaseToken() {
+        return get(KEY_PRO_PURCHASE_TOKEN, "");
+    }
+
+    public void setProPurchaseToken(String token) {
+        set(KEY_PRO_PURCHASE_TOKEN, token != null ? token : "");
+    }
+
+    public long getProLastVerifiedAt() {
+        try {
+            return Long.parseLong(get(KEY_PRO_LAST_VERIFIED_AT, "0"));
+        } catch (NumberFormatException e) {
+            return 0L;
+        }
     }
 }

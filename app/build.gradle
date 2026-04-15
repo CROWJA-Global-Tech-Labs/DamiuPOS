@@ -10,8 +10,25 @@ android {
         applicationId "com.damiu.pos"
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "1.1.0"
+
+        // AdMob Application ID (test ID — ganti saat rilis)
+        manifestPlaceholders = [
+            admobAppId: "ca-app-pub-3940256099942544~3347511713"
+        ]
+
+        // Subscription product IDs (match Google Play Console)
+        buildConfigField "String", "SUB_PRODUCT_MONTHLY", "\"damiu_pro_monthly\""
+        buildConfigField "String", "SUB_PRODUCT_YEARLY",  "\"damiu_pro_yearly\""
+
+        // Test Ad Unit IDs — ganti dengan production IDs di release
+        buildConfigField "String", "ADMOB_BANNER_ID",       "\"ca-app-pub-3940256099942544/6300978111\""
+        buildConfigField "String", "ADMOB_INTERSTITIAL_ID", "\"ca-app-pub-3940256099942544/1033173712\""
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     buildTypes {
@@ -36,4 +53,10 @@ dependencies {
     implementation 'androidx.gridlayout:gridlayout:1.0.0'
     implementation 'androidx.exifinterface:exifinterface:1.3.7'
     implementation 'androidx.webkit:webkit:1.8.0'
+
+    // Google AdMob
+    implementation 'com.google.android.gms:play-services-ads:23.6.0'
+
+    // Google Play Billing (subscriptions)
+    implementation 'com.android.billingclient:billing:7.1.1'
 }
