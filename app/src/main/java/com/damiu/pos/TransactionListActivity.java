@@ -30,6 +30,10 @@ import java.util.Locale;
 
 public class TransactionListActivity extends AppCompatActivity {
 
+    /** Intent extra untuk set filter tanggal awal. Nilai: "TODAY". */
+    public static final String EXTRA_DATE_FILTER = "extra_date_filter";
+    public static final String DATE_FILTER_TODAY = "TODAY";
+
     private TransactionDao transactionDao;
     private TransactionAdapter adapter;
     private RecyclerView rv;
@@ -94,6 +98,23 @@ public class TransactionListActivity extends AppCompatActivity {
                 reload();
             }
         });
+
+        // Apply preset filter dari Intent (mis. dibuka dari card Pendapatan Hari Ini)
+        applyPresetDateFilter();
+    }
+
+    private void applyPresetDateFilter() {
+        String preset = getIntent().getStringExtra(EXTRA_DATE_FILTER);
+        if (DATE_FILTER_TODAY.equals(preset)) {
+            Calendar cal = Calendar.getInstance();
+            String today = String.format(Locale.US, "%04d-%02d-%02d",
+                    cal.get(Calendar.YEAR),
+                    cal.get(Calendar.MONTH) + 1,
+                    cal.get(Calendar.DAY_OF_MONTH));
+            startDate = today;
+            endDate = today;
+            btnDateRange.setText("Hari Ini");
+        }
     }
 
     @Override
