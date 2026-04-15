@@ -142,6 +142,17 @@ public class MainActivity extends AppCompatActivity {
         findViewById(R.id.btnPengaturan).setOnClickListener(v -> {
             startActivity(new Intent(this, SettingsActivity.class));
         });
+
+        // Tap card Pendapatan Hari Ini → Daftar Transaksi dengan filter Hari Ini
+        View cardPendapatan = findViewById(R.id.cardPendapatan);
+        if (cardPendapatan != null) {
+            cardPendapatan.setOnClickListener(v -> {
+                Intent i = new Intent(this, TransactionListActivity.class);
+                i.putExtra(TransactionListActivity.EXTRA_DATE_FILTER,
+                        TransactionListActivity.DATE_FILTER_TODAY);
+                startActivity(i);
+            });
+        }
     }
 
     @Override
