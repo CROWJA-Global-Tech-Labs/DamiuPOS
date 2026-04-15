@@ -72,11 +72,12 @@ public class ReceiptActivity extends AppCompatActivity {
 
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
-        toolbar.setNavigationOnClickListener(v -> {
-            com.damiu.pos.ads.AdManager.getInstance(this)
-                    .maybeShowInterstitialAfterTransaction(this);
-            finish();
-        });
+        toolbar.setNavigationOnClickListener(v -> finish());
+
+        // Popup iklan 5 detik setelah transaksi selesai (struk terbuka).
+        // Otomatis di-cancel kalau activity di-destroy duluan atau user Pro.
+        com.damiu.pos.ads.AdManager.getInstance(this)
+                .scheduleInterstitialAfterDelay(this, 5000L);
 
         tvReceiptContent = findViewById(R.id.tvReceiptContent);
         receiptContainer = findViewById(R.id.receiptContainer);

@@ -2,6 +2,8 @@ package com.damiu.pos.ads;
 
 import android.app.Activity;
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.ViewGroup;
 
@@ -32,7 +34,10 @@ public class AdManager {
     private InterstitialAd interstitialAd;
     private boolean interstitialLoading = false;
     private int transactionsSinceLastAd = 0;
-    private static final int INTERSTITIAL_FREQ = 3; // 1x interstitial setiap 3 transaksi
+    private static final int INTERSTITIAL_FREQ = 3; // 1x interstitial setiap 3 transaksi (fallback)
+
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private Runnable pendingInterstitialRunnable;
 
     private AdManager() {}
 
@@ -142,8 +147,76 @@ public class AdManager {
         }
     }
 
+    /**
+     * Jadwalkan interstitial muncul setelah delay tertentu.
+     * Dipakai setelah transaksi selesai: panggil dengan delayMs=5000 agar
+     * user sempat melihat struk dulu sebelum iklan muncul.
+     *
+     * Otomatis:
+     * - No-op saat user Pro
+     * - Cancel & reschedule bila dipanggil berulang sebelum yang sebelumnya fire
+     * - Warm-up iklan bila belum ready
+     */
+    public void scheduleInterstitialAfterDelay(@NonNull final Activity activity,
+                                               long delayMs) {
+        if (isPro(activity)) return;
+
+        // Batalkan scheduled sebelumnya (supaya tidak numpuk)
+        cancelScheduledInterstitial();
+
+        // Pre-load kalau belum ada
+        if (interstitialAd == null) {
+            preloadInterstitial(activity);
+        }
+
+        pendingInterstitialRunnable = () -> {
+            pendingInterstitialRunnable = null;
+            if (isPro(activity)) return;
+            if (activity.isFinishing() || activity.isDestroyed()) return;
+            showInterstitialNow(activity);
+        };
+        mainHandler.postDelayed(pendingInterstitialRunnable, delayMs);
+    }
+
+    /** Batalkan interstitial yang ter-schedule (mis. activity di-destroy duluan). */
+    public void cancelScheduledInterstitial() {
+        if (pendingInterstitialRunnable != null) {
+            mainHandler.removeCallbacks(pendingInterstitialRunnable);
+            pendingInterstitialRunnable = null;
+        }
+    }
+
+    /** Tampilkan interstitial sekarang juga tanpa throttling. */
+    private void showInterstitialNow(@NonNull Activity activity) {
+        if (interstitialAd == null) {
+            preloadInterstitial(activity);
+            return;
+        }
+        try {
+            interstitialAd.setFullScreenContentCallback(new FullScreenContentCallback() {
+                @Override
+                public void onAdDismissedFullScreenContent() {
+                    interstitialAd = null;
+                    transactionsSinceLastAd = 0;
+                    preloadInterstitial(activity);
+                }
+
+                @Override
+                public void onAdFailedToShowFullScreenContent(
+                        @NonNull com.google.android.gms.ads.AdError adError) {
+                    interstitialAd = null;
+                    preloadInterstitial(activity);
+                }
+            });
+            interstitialAd.show(activity);
+        } catch (Throwable t) {
+            Log.w(TAG, "show interstitial failed", t);
+        }
+    }
+
     /** Dipanggil saat user baru membeli Pro agar ads langsung berhenti tampil di layar. */
     public void clearAds() {
+        cancelScheduledInterstitial();
         interstitialAd = null;
     }
 }
