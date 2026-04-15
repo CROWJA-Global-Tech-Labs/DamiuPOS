@@ -62,6 +62,14 @@
                 </LinearLayout>
             </LinearLayout>
         </androidx.appcompat.widget.Toolbar>
+
+        <FrameLayout
+            android:id="@+id/adContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/grey_light"
+            android:gravity="center"
+            android:visibility="gone" />
     </com.google.android.material.appbar.AppBarLayout>
 
     <androidx.core.widget.NestedScrollView
@@ -705,14 +713,6 @@
                 android:gravity="center"
                 android:text="@string/belum_ada_transaksi"
                 android:textColor="@color/grey_medium"
-                android:visibility="gone" />
-
-            <FrameLayout
-                android:id="@+id/adContainer"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:gravity="center"
                 android:visibility="gone" />
 
         </LinearLayout>
