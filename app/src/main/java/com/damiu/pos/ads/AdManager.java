@@ -52,6 +52,7 @@ public class AdManager {
 
     private boolean isPro(Context ctx) {
         try {
+            if (ctx == null) return false;
             return new SettingsDao(DatabaseHelper.getInstance(ctx.getApplicationContext()))
                     .isProActive();
         } catch (Throwable t) {
@@ -169,13 +170,46 @@ public class AdManager {
             preloadInterstitial(activity);
         }
 
+        final Context appContext = activity.getApplicationContext();
         pendingInterstitialRunnable = () -> {
             pendingInterstitialRunnable = null;
-            if (isPro(activity)) return;
-            if (activity.isFinishing() || activity.isDestroyed()) return;
-            showInterstitialNow(activity);
+            if (isPro(appContext)) return;
+            // Tampilkan di activity foreground saat ini — tetap fire walaupun
+            // user sudah menekan Back dari halaman struk.
+            Activity target = com.damiu.pos.DamiuApplication.get() != null
+                    ? com.damiu.pos.DamiuApplication.get().getCurrentActivity()
+                    : null;
+            if (target == null || target.isFinishing() || target.isDestroyed()) {
+                // App di-background / tidak ada activity; reschedule sebentar
+                // sampai ada activity yang aktif (max 10 detik).
+                mainHandler.postDelayed(this::retryShowInterstitial, 500L);
+                return;
+            }
+            showInterstitialNow(target);
         };
         mainHandler.postDelayed(pendingInterstitialRunnable, delayMs);
+    }
+
+    private int retryCount = 0;
+    private void retryShowInterstitial() {
+        if (isPro(null != com.damiu.pos.DamiuApplication.get()
+                ? com.damiu.pos.DamiuApplication.get() : null)) {
+            retryCount = 0;
+            return;
+        }
+        Activity target = com.damiu.pos.DamiuApplication.get() != null
+                ? com.damiu.pos.DamiuApplication.get().getCurrentActivity()
+                : null;
+        if (target != null && !target.isFinishing() && !target.isDestroyed()) {
+            retryCount = 0;
+            showInterstitialNow(target);
+            return;
+        }
+        if (retryCount++ < 20) { // 20 * 500ms = 10 detik max
+            mainHandler.postDelayed(this::retryShowInterstitial, 500L);
+        } else {
+            retryCount = 0;
+        }
     }
 
     /** Batalkan interstitial yang ter-schedule (mis. activity di-destroy duluan). */

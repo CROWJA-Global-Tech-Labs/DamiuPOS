@@ -585,19 +585,4 @@ public class ReceiptActivity extends AppCompatActivity {
         return bitmap;
     }
 
-    @Override
-    protected void onStop() {
-        super.onStop();
-        // Batalkan iklan yang ter-schedule jika user meninggalkan halaman struk
-        // sebelum 5 detik habis (mis. tekan tombol Back).
-        if (isFinishing()) {
-            com.damiu.pos.ads.AdManager.getInstance(this).cancelScheduledInterstitial();
-        }
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        com.damiu.pos.ads.AdManager.getInstance(this).cancelScheduledInterstitial();
-    }
 }
