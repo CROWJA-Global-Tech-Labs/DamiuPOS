@@ -1,9 +1,9 @@
-# Tambahkan Iklan (AdMob) dan Versi Berbayar untuk Google Play Store
+# Tambahkan Iklan (AdMob) dan Versi Berbayar Berlangganan Bulanan untuk Google Play Store
 
 ## Ringkasan
 Persiapkan DAMIU POS untuk dirilis ke Google Play Store dengan dua model monetisasi:
 1. **Versi Gratis** — didanai oleh iklan (Google AdMob).
-2. **Versi Berbayar / In-App Purchase** — menghilangkan iklan dan membuka fitur tambahan.
+2. **Versi Pro — Berlangganan Bulanan** — subscription recurring yang menghilangkan iklan dan membuka fitur tambahan. Model ini dipilih untuk menghasilkan recurring revenue yang lebih stabil dibanding one-time purchase.
 
 ## Latar Belakang
 Saat ini aplikasi hanya didistribusikan sebagai APK debug untuk penggunaan internal. Untuk menjangkau pasar yang lebih luas (pemilik depot air minum di seluruh Indonesia), aplikasi perlu dipublikasikan ke Google Play Store dengan strategi monetisasi yang jelas.
@@ -24,20 +24,33 @@ Saat ini aplikasi hanya didistribusikan sebagai APK debug untuk penggunaan inter
 - [ ] Hormati kebijakan AdMob: tidak ada iklan di dialog, tidak menutup tombol aksi utama
 - [ ] Taruh Ad Unit IDs di `BuildConfig` lewat `gradle.properties` agar tidak ter-commit
 
-### B. In-App Purchase / Versi Berbayar (Remove Ads + Pro)
-- [ ] Integrasi **Google Play Billing Library** (`com.android.billingclient:billing`)
-- [ ] Produk yang dijual:
-  - `damiu_pro_lifetime` — satu kali bayar, seumur hidup (Rp 99.000 – 149.000, TBD)
-  - Opsional: `damiu_pro_monthly` subscription (Rp 15.000/bulan)
-- [ ] Fitur yang di-unlock di versi Pro:
+### B. Subscription Bulanan (Versi Pro)
+- [ ] Integrasi **Google Play Billing Library** (`com.android.billingclient:billing`) dengan dukungan subscription (`ProductType.SUBS`)
+- [ ] Produk subscription yang dijual:
+  - `damiu_pro_monthly` — **Rp 25.000 / bulan** (TBD, disesuaikan market)
+  - Opsional `damiu_pro_yearly` — Rp 250.000 / tahun (diskon 2 bulan) sebagai opsi hemat
+  - **Free trial 7 hari** untuk first-time subscriber (via Play Console base plan)
+- [ ] Setup base plan + offer di Google Play Console (monthly base plan, yearly base plan, free trial offer)
+- [ ] Fitur yang di-unlock selama subscription aktif:
   - Hilangkan semua iklan
-  - (Opsional) Backup otomatis ke Google Drive
-  - (Opsional) Export laporan ke PDF
-  - (Opsional) Multi-device sync
+  - Backup otomatis ke Google Drive
+  - Export laporan ke PDF
+  - Multi-device sync (opsional, roadmap lanjutan)
   - Batas pelanggan & transaksi tidak terbatas (jika versi gratis di-cap)
-- [ ] Simpan status Pro di `SettingsDao` dengan verifikasi purchase token
-- [ ] Halaman "Upgrade ke Pro" dengan daftar benefit + tombol beli
-- [ ] Handle refund / cancellation via `BillingClient.queryPurchasesAsync` saat app start
+- [ ] Lifecycle subscription:
+  - Query `queryPurchasesAsync(SUBS)` saat app start untuk verifikasi status aktif
+  - Handle state: `SUBSCRIBED`, `IN_GRACE_PERIOD`, `ON_HOLD`, `PAUSED`, `EXPIRED`, `CANCELED`
+  - Tampilkan banner reminder saat masuk grace period / on hold
+  - Saat EXPIRED → otomatis revert ke mode gratis + tampilkan iklan lagi
+- [ ] Acknowledge purchase dalam 3 hari (wajib Google, jika tidak purchase akan di-refund otomatis)
+- [ ] Simpan status subscription di `SettingsDao` (cache) + selalu re-verify saat online
+- [ ] Halaman **"Upgrade ke Pro"**:
+  - Daftar benefit (iklan hilang, backup, PDF export, dst.)
+  - Pilihan plan: Bulanan / Tahunan dengan highlight "Hemat 2 bulan"
+  - Tombol "Mulai Trial 7 Hari Gratis" → launch billing flow
+  - Link ke "Kelola langganan" (buka Play Store subscription page) untuk user yang sudah subscribe
+- [ ] Handle user flow: cancel, resubscribe, upgrade/downgrade plan (monthly ↔ yearly) via `SubscriptionUpdateParams`
+- [ ] (Rekomendasi) Server-side receipt verification via Google Play Developer API untuk anti-piracy — bisa jadi follow-up issue
 
 ### C. Persiapan Rilis Play Store
 - [ ] Generate **keystore release** dan simpan aman (JANGAN commit)
@@ -65,9 +78,12 @@ Saat ini aplikasi hanya didistribusikan sebagai APK debug untuk penggunaan inter
 ## Acceptance Criteria
 - [ ] Build debug tetap berjalan tanpa iklan (gunakan flavor `debug` vs `release` atau test ad unit IDs)
 - [ ] Versi release menampilkan iklan dengan benar
-- [ ] User bisa membeli Pro dan iklan langsung hilang setelah pembayaran berhasil
-- [ ] Restore purchase berfungsi di device baru
-- [ ] Lolos review Google Play Store
+- [ ] User bisa subscribe bulanan/tahunan dan iklan langsung hilang setelah subscription aktif
+- [ ] Free trial 7 hari berjalan dengan benar tanpa ter-charge
+- [ ] Saat subscription dibatalkan / expired → iklan kembali muncul otomatis
+- [ ] Grace period & on-hold ditangani dengan UX yang jelas (banner + reminder)
+- [ ] Restore subscription berfungsi di device baru (login akun Google yang sama)
+- [ ] Lolos review Google Play Store (subscription disclosure, cancel instructions di listing wajib ada)
 
 ## Catatan Teknis
 - Branch kerja: `feat/ads-and-playstore-purchase`
