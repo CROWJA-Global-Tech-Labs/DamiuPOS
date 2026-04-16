@@ -46,13 +46,13 @@ import java.util.Locale;
 
 public class TransactionActivity extends AppCompatActivity {
 
-    private MaterialButtonToggleGroup toggleType, toggleOngkirMode, toggleOwnership;
+    private MaterialButtonToggleGroup toggleType, toggleOngkirMode, toggleOwnership, toggleReturnMode;
     private TextView tvSelectedCustomer, tvTotalHarga, tvEmptyItems;
     private TextInputEditText etJumlahKembali, etOngkir, etCatatan;
     private TextInputEditText etHargaGantiRugi, etJumlahRusak;
     private TextInputEditText etHargaBotol;
     private TextInputLayout tilOngkir, tilJumlahKembali, tilHargaBotol;
-    private View ongkirModeContainer, cardCustomer, cardItems, cardOwnership, gantiRugiContainer;
+    private View ongkirModeContainer, cardCustomer, cardItems, cardOwnership, gantiRugiContainer, returnModeContainer;
     private LinearLayout llItems;
 
     private boolean syncingKembali = false;
@@ -101,6 +101,8 @@ public class TransactionActivity extends AppCompatActivity {
         llItems = findViewById(R.id.llItems);
         tvEmptyItems = findViewById(R.id.tvEmptyItems);
         gantiRugiContainer = findViewById(R.id.gantiRugiContainer);
+        returnModeContainer = findViewById(R.id.returnModeContainer);
+        toggleReturnMode = findViewById(R.id.toggleReturnMode);
         etHargaGantiRugi = findViewById(R.id.etHargaGantiRugi);
         etJumlahRusak = findViewById(R.id.etJumlahRusak);
         cardOwnership = findViewById(R.id.cardOwnership);
@@ -131,6 +133,13 @@ public class TransactionActivity extends AppCompatActivity {
 
         toggleOngkirMode.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
             if (isChecked) updateOngkirUI();
+        });
+
+        toggleReturnMode.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
+            if (isChecked) {
+                updateReturnModeUI();
+                updateTotal();
+            }
         });
 
         // Pre-select type from intent
@@ -197,6 +206,7 @@ public class TransactionActivity extends AppCompatActivity {
             cardItems.setVisibility(View.VISIBLE);
             tilJumlahKembali.setVisibility(View.VISIBLE);
             ongkirModeContainer.setVisibility(View.VISIBLE);
+            returnModeContainer.setVisibility(View.GONE);
             gantiRugiContainer.setVisibility(View.GONE);
             cardOwnership.setVisibility(View.VISIBLE);
             updateOngkirUI();
@@ -207,10 +217,19 @@ public class TransactionActivity extends AppCompatActivity {
             tilJumlahKembali.setHint("Jumlah Botol Galon Kembali");
             tilOngkir.setVisibility(View.GONE);
             ongkirModeContainer.setVisibility(View.GONE);
-            gantiRugiContainer.setVisibility(View.VISIBLE);
+            returnModeContainer.setVisibility(View.VISIBLE);
             cardOwnership.setVisibility(View.GONE);
+            updateReturnModeUI();
         }
         updateTotal();
+    }
+
+    private boolean isGantiRugiSelected() {
+        return toggleReturnMode.getCheckedButtonId() == R.id.btnReturnGantiRugi;
+    }
+
+    private void updateReturnModeUI() {
+        gantiRugiContainer.setVisibility(isGantiRugiSelected() ? View.VISIBLE : View.GONE);
     }
 
     private boolean isBeliSelected() {
@@ -272,14 +291,20 @@ public class TransactionActivity extends AppCompatActivity {
 
     private void updateTotal() {
         if (!isJualSelected()) {
-            // KEMBALI mode: total = jumlah_rusak * harga ganti rugi
+            // KEMBALI mode
+            NumberFormat nfK = NumberFormat.getInstance(new Locale("id", "ID"));
+            if (!isGantiRugiSelected()) {
+                // Dikembalikan: tidak ada biaya, total selalu 0
+                tvTotalHarga.setText("Rp 0");
+                return;
+            }
+            // Ganti rugi: total = jumlah_rusak * harga ganti rugi
             double harga = parseDoubleOr(etHargaGantiRugi, 0);
             int jumlahKembali = parseIntOr(etJumlahKembali, 0);
             int jumlahRusak = parseIntOr(etJumlahRusak, -1);
             if (jumlahRusak < 0) jumlahRusak = jumlahKembali;
             if (jumlahRusak > jumlahKembali) jumlahRusak = jumlahKembali;
             double total = harga * jumlahRusak;
-            NumberFormat nfK = NumberFormat.getInstance(new Locale("id", "ID"));
             tvTotalHarga.setText("Rp " + nfK.format(total));
             return;
         }
@@ -558,9 +583,13 @@ public class TransactionActivity extends AppCompatActivity {
                 etJumlahKembali.setError("Harus > 0");
                 return;
             }
-            // Ganti rugi galon rusak
-            double hargaGR = parseDoubleOr(etHargaGantiRugi, 0);
-            if (hargaGR > 0) {
+            // Ganti rugi galon rusak — hanya dihitung jika mode "Ganti Rugi"
+            if (isGantiRugiSelected()) {
+                double hargaGR = parseDoubleOr(etHargaGantiRugi, 0);
+                if (hargaGR <= 0) {
+                    etHargaGantiRugi.setError("Harga ganti rugi harus > 0");
+                    return;
+                }
                 int rusak = parseIntOr(etJumlahRusak, -1);
                 if (rusak < 0) rusak = totalJumlah;
                 if (rusak <= 0) {

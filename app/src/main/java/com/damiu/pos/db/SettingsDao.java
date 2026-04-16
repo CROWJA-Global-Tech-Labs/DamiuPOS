@@ -21,6 +21,8 @@ public class SettingsDao {
     public static final String KEY_PRO_ACTIVE = "pro_active";
     public static final String KEY_PRO_PURCHASE_TOKEN = "pro_purchase_token";
     public static final String KEY_PRO_LAST_VERIFIED_AT = "pro_last_verified_at";
+    public static final String KEY_PRO_PRODUCT_ID = "pro_product_id";
+    public static final String KEY_PRO_EXPIRY_AT = "pro_expiry_at";
 
     private final DatabaseHelper dbHelper;
 
@@ -177,5 +179,27 @@ public class SettingsDao {
         } catch (NumberFormatException e) {
             return 0L;
         }
+    }
+
+    /** Product ID dari subscription yang aktif (mis. damiu_pro_monthly / damiu_pro_yearly). */
+    public String getProProductId() {
+        return get(KEY_PRO_PRODUCT_ID, "");
+    }
+
+    public void setProProductId(String productId) {
+        set(KEY_PRO_PRODUCT_ID, productId != null ? productId : "");
+    }
+
+    /** Estimasi kapan subscription akan habis (millis since epoch). 0 = tidak diketahui. */
+    public long getProExpiryAt() {
+        try {
+            return Long.parseLong(get(KEY_PRO_EXPIRY_AT, "0"));
+        } catch (NumberFormatException e) {
+            return 0L;
+        }
+    }
+
+    public void setProExpiryAt(long millis) {
+        set(KEY_PRO_EXPIRY_AT, String.valueOf(millis));
     }
 }

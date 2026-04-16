@@ -16,6 +16,15 @@
         android:textStyle="bold" />
 
     <TextView
+        android:id="@+id/tvAboutVersion"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:text="v1.1.0"
+        android:textColor="@color/text_secondary"
+        android:textSize="12sp" />
+
+    <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
@@ -28,7 +37,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
         android:gravity="center"
-        android:text="DEPOT AIR FREZ"
+        android:text="CROWJA Global Tech Labs"
         android:textColor="@color/text_primary"
         android:textSize="16sp"
         android:textStyle="bold" />
@@ -36,29 +45,77 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
         android:gravity="center"
-        android:text="NGEMPLAK - BOYOLALI"
-        android:textColor="@color/text_primary"
-        android:textSize="14sp" />
-
-    <TextView
-        android:id="@+id/tvAboutPhone"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:text="081321559518"
+        android:text="© CROWJA Global Tech Labs"
         android:textColor="@color/text_secondary"
-        android:textSize="14sp" />
+        android:textSize="12sp" />
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnAboutWa"
-        android:layout_width="wrap_content"
+    <!-- Subscription status block -->
+    <LinearLayout
+        android:id="@+id/llSubscription"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="20dp"
-        android:text="Pesan WhatsApp"
+        android:orientation="vertical"
+        android:background="#F1F8E9"
+        android:padding="12dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Status Langganan"
+            android:textColor="@color/text_secondary"
+            android:textSize="11sp"
+            android:textAllCaps="true"
+            android:letterSpacing="0.08" />
+
+        <TextView
+            android:id="@+id/tvSubStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Gratis"
+            android:textColor="@color/text_primary"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvSubPlan"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tvSubExpiry"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnAboutUpgrade"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Upgrade ke Pro"
         android:textAllCaps="false"
         app:cornerRadius="24dp"
-        app:backgroundTint="@color/green"
-        app:icon="@android:drawable/sym_action_chat"
-        app:iconTint="@color/white" />
+        app:backgroundTint="@color/accent" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnAboutManage"
+        style="@style/Widget.MaterialComponents.Button.TextButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="Kelola Langganan"
+        android:textAllCaps="false"
+        android:visibility="gone" />
 </LinearLayout>

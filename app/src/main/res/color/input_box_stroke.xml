@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Stroke color for TextInputLayout OutlineBox.
+     Visible at rest (unfocused) so the border doesn't disappear into the fill. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_enabled="false" android:color="#BDBDBD" />
+    <item android:state_focused="true"  android:color="@color/primary" />
+    <item android:state_hovered="true"  android:color="@color/primary" />
+    <item android:color="#455A64" />
+</selector>

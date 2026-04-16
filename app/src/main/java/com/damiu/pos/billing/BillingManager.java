@@ -30,14 +30,15 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Wrapper di atas Google Play Billing Library untuk produk subscription:
- * - damiu_pro_monthly
- * - damiu_pro_yearly
+ * Wrapper di atas Google Play Billing Library untuk 2 SKU subscription:
+ *  - {@link BuildConfig#SUB_PRODUCT_MONTHLY}  (Rp 20.000 / bulan)
+ *  - {@link BuildConfig#SUB_PRODUCT_YEARLY}   (Rp 200.000 / tahun, bayar 10 bulan gratis 2 bulan)
  *
  * Cara pakai:
- * - Di Application.onCreate(): new BillingManager(ctx).start()
- * - Di UpgradeActivity: ambil instance dari DamiuApplication, panggil launchPurchase(activity, productId, offerToken)
- * - Subscribe ke listener untuk dapat notifikasi status Pro berubah
+ *  - Di Application.onCreate(): {@code new BillingManager(ctx).start()}
+ *  - Di UpgradeActivity: ambil instance dari {@link com.damiu.pos.DamiuApplication},
+ *    panggil {@link #launchPurchase(Activity, String, String)}.
+ *  - Subscribe ke {@link Listener} untuk notifikasi status Pro berubah.
  */
 public class BillingManager implements PurchasesUpdatedListener, BillingClientStateListener {
 
@@ -157,19 +158,10 @@ public class BillingManager implements PurchasesUpdatedListener, BillingClientSt
                 .build();
         billingClient.queryPurchasesAsync(params, (billingResult, purchases) -> {
             boolean anyActive = false;
-            long latestExpiry = 0L;
             if (billingResult.getResponseCode() == BillingClient.BillingResponseCode.OK
                     && purchases != null) {
                 for (Purchase p : purchases) {
-                    if (p.getPurchaseState() == Purchase.PurchaseState.PURCHASED
-                            && p.isAutoRenewing()) {
-                        anyActive = true;
-                        latestExpiry = Math.max(latestExpiry, p.getPurchaseTime());
-                        handlePurchase(p);
-                    } else if (p.getPurchaseState() == Purchase.PurchaseState.PURCHASED) {
-                        // Still PURCHASED but not auto-renewing → masih aktif sampai masa akhir,
-                        // tetap perlakukan sebagai Pro. Cancel akan tercermin di expiry date via server;
-                        // di client kita percaya status PURCHASED.
+                    if (p.getPurchaseState() == Purchase.PurchaseState.PURCHASED) {
                         anyActive = true;
                         handlePurchase(p);
                     }
@@ -182,7 +174,7 @@ public class BillingManager implements PurchasesUpdatedListener, BillingClientSt
     // ---------------- Purchase flow ----------------
 
     /**
-     * Launch billing flow untuk product tertentu.
+     * Launch billing flow untuk subscription tertentu.
      * @param productId salah satu BuildConfig.SUB_PRODUCT_*
      * @param offerToken offer token dari ProductDetails (pilih offer yang diinginkan, mis. free trial)
      */
@@ -233,26 +225,52 @@ public class BillingManager implements PurchasesUpdatedListener, BillingClientSt
     private void handlePurchase(Purchase purchase) {
         if (purchase.getPurchaseState() != Purchase.PurchaseState.PURCHASED) return;
 
-        // WAJIB: acknowledge dalam 3 hari, kalau tidak refund otomatis
+        // WAJIB acknowledge dalam 3 hari, kalau tidak refund otomatis
         if (!purchase.isAcknowledged()) {
             AcknowledgePurchaseParams ackParams = AcknowledgePurchaseParams.newBuilder()
                     .setPurchaseToken(purchase.getPurchaseToken())
                     .build();
             billingClient.acknowledgePurchase(ackParams, billingResult -> {
                 if (billingResult.getResponseCode() == BillingClient.BillingResponseCode.OK) {
-                    setProActive(true);
-                    settingsDao.setProPurchaseToken(purchase.getPurchaseToken());
+                    persistProPurchase(purchase);
                 }
             });
         } else {
-            setProActive(true);
-            settingsDao.setProPurchaseToken(purchase.getPurchaseToken());
+            persistProPurchase(purchase);
         }
+    }
+
+    /**
+     * Simpan token + product id + estimasi expiry ke SettingsDao, lalu set Pro aktif.
+     * Expiry dihitung dari {@link Purchase#getPurchaseTime()} + durasi siklus:
+     *  - monthly: +30 hari
+     *  - yearly : +365 hari
+     * Ini estimasi UI-only; sumber kebenaran tetap Google Play saat re-query.
+     */
+    private void persistProPurchase(Purchase purchase) {
+        String productId = purchase.getProducts() != null && !purchase.getProducts().isEmpty()
+                ? purchase.getProducts().get(0) : "";
+        long purchaseTime = purchase.getPurchaseTime();
+        long expiry = 0L;
+        if (BuildConfig.SUB_PRODUCT_MONTHLY.equals(productId)) {
+            expiry = purchaseTime + 30L * 24L * 60L * 60L * 1000L;
+        } else if (BuildConfig.SUB_PRODUCT_YEARLY.equals(productId)) {
+            expiry = purchaseTime + 365L * 24L * 60L * 60L * 1000L;
+        }
+        settingsDao.setProPurchaseToken(purchase.getPurchaseToken());
+        settingsDao.setProProductId(productId);
+        settingsDao.setProExpiryAt(expiry);
+        setProActive(true);
     }
 
     private void setProActive(boolean active) {
         boolean prev = settingsDao.isProActive();
         settingsDao.setProActive(active);
+        if (!active) {
+            // Bersihkan cache expiry/product biar About dialog tidak menampilkan tanggal stale
+            settingsDao.setProExpiryAt(0L);
+            settingsDao.setProProductId("");
+        }
         if (prev != active) {
             for (Listener l : listeners) l.onProStatusChanged(active);
         }

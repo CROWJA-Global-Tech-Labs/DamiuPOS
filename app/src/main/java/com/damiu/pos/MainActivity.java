@@ -182,22 +182,65 @@ public class MainActivity extends AppCompatActivity {
                 .setView(view)
                 .setPositiveButton("Tutup", null)
                 .create();
-        view.findViewById(R.id.btnAboutWa).setOnClickListener(v -> {
-            String num = "6281321559518";
-            try {
-                Intent i = new Intent(Intent.ACTION_VIEW,
-                        Uri.parse("https://wa.me/" + num));
-                try { getPackageManager().getPackageInfo("com.whatsapp", 0);
-                    i.setPackage("com.whatsapp"); } catch (Exception ignored) {
-                    try { getPackageManager().getPackageInfo("com.whatsapp.w4b", 0);
-                        i.setPackage("com.whatsapp.w4b"); } catch (Exception ignored2) {}
-                }
-                startActivity(i);
-                dialog.dismiss();
-            } catch (Exception e) {
-                Toast.makeText(this, "Tidak dapat membuka WhatsApp", Toast.LENGTH_SHORT).show();
+
+        TextView tvVersion = view.findViewById(R.id.tvAboutVersion);
+        TextView tvSubStatus = view.findViewById(R.id.tvSubStatus);
+        TextView tvSubPlan = view.findViewById(R.id.tvSubPlan);
+        TextView tvSubExpiry = view.findViewById(R.id.tvSubExpiry);
+        com.google.android.material.button.MaterialButton btnUpgrade =
+                view.findViewById(R.id.btnAboutUpgrade);
+        com.google.android.material.button.MaterialButton btnManage =
+                view.findViewById(R.id.btnAboutManage);
+
+        tvVersion.setText("v" + BuildConfig.VERSION_NAME);
+
+        boolean pro = settingsDao.isProActive();
+        if (pro) {
+            tvSubStatus.setText("Pro Aktif");
+            tvSubStatus.setTextColor(getResources().getColor(R.color.green));
+
+            String productId = settingsDao.getProProductId();
+            if (BuildConfig.SUB_PRODUCT_MONTHLY.equals(productId)) {
+                tvSubPlan.setText("Paket: Bulanan");
+                tvSubPlan.setVisibility(View.VISIBLE);
+            } else if (BuildConfig.SUB_PRODUCT_YEARLY.equals(productId)) {
+                tvSubPlan.setText("Paket: Tahunan");
+                tvSubPlan.setVisibility(View.VISIBLE);
             }
-        });
+
+            long expiry = settingsDao.getProExpiryAt();
+            if (expiry > 0) {
+                java.text.SimpleDateFormat sdf =
+                        new java.text.SimpleDateFormat("d MMM yyyy", new Locale("id", "ID"));
+                tvSubExpiry.setText("Berlaku hingga: " + sdf.format(new java.util.Date(expiry)));
+                tvSubExpiry.setVisibility(View.VISIBLE);
+            }
+
+            btnUpgrade.setText("Status: Pro");
+            btnUpgrade.setEnabled(false);
+            btnManage.setVisibility(View.VISIBLE);
+            btnManage.setOnClickListener(v -> {
+                try {
+                    Uri uri = Uri.parse(
+                            "https://play.google.com/store/account/subscriptions?sku="
+                                    + (productId == null ? "" : productId)
+                                    + "&package=" + getPackageName());
+                    startActivity(new Intent(Intent.ACTION_VIEW, uri));
+                    dialog.dismiss();
+                } catch (Exception e) {
+                    Toast.makeText(this, "Tidak dapat membuka Play Store",
+                            Toast.LENGTH_SHORT).show();
+                }
+            });
+        } else {
+            tvSubStatus.setText("Gratis");
+            tvSubStatus.setTextColor(getResources().getColor(R.color.text_primary));
+            btnUpgrade.setOnClickListener(v -> {
+                startActivity(new Intent(this, UpgradeActivity.class));
+                dialog.dismiss();
+            });
+        }
+
         dialog.show();
     }
 

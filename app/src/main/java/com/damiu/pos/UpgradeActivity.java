@@ -18,13 +18,18 @@ import com.google.android.material.card.MaterialCardView;
 
 import java.util.Map;
 
+/**
+ * Paywall UI: user pilih salah satu subscription
+ *  - Bulanan ({@link BuildConfig#SUB_PRODUCT_MONTHLY})  — Rp 20.000 / bulan
+ *  - Tahunan ({@link BuildConfig#SUB_PRODUCT_YEARLY})   — Rp 200.000 / tahun (gratis 2 bulan)
+ */
 public class UpgradeActivity extends AppCompatActivity implements BillingManager.Listener {
 
     private MaterialCardView cardMonthly, cardYearly;
     private TextView tvMonthlyPrice, tvYearlyPrice, tvMonthlyTrial, tvProBadge;
     private MaterialButton btnSubscribe, btnManageSubscription;
 
-    private String selectedProductId = BuildConfig.SUB_PRODUCT_YEARLY; // default highlighting tahunan
+    private String selectedProductId = BuildConfig.SUB_PRODUCT_YEARLY; // default highlight tahunan
     private BillingManager billing;
 
     @Override
@@ -105,7 +110,7 @@ public class UpgradeActivity extends AppCompatActivity implements BillingManager
         String offerToken = null;
         if (pd != null && pd.getSubscriptionOfferDetails() != null
                 && !pd.getSubscriptionOfferDetails().isEmpty()) {
-            // Pilih offer dengan free trial kalau ada, else offer pertama
+            // Pilih offer dengan free trial (harga pertama = 0) kalau ada, else offer pertama
             for (ProductDetails.SubscriptionOfferDetails offer : pd.getSubscriptionOfferDetails()) {
                 if (offer.getPricingPhases() != null
                         && !offer.getPricingPhases().getPricingPhaseList().isEmpty()) {
@@ -154,9 +159,7 @@ public class UpgradeActivity extends AppCompatActivity implements BillingManager
             ProductDetails yearly = products.get(BuildConfig.SUB_PRODUCT_YEARLY);
             if (monthly != null) {
                 tvMonthlyPrice.setText(formatPrice(monthly) + " / bulan");
-                if (hasFreeTrial(monthly)) {
-                    tvMonthlyTrial.setVisibility(View.VISIBLE);
-                }
+                tvMonthlyTrial.setVisibility(hasFreeTrial(monthly) ? View.VISIBLE : View.GONE);
             }
             if (yearly != null) {
                 tvYearlyPrice.setText(formatPrice(yearly) + " / tahun");

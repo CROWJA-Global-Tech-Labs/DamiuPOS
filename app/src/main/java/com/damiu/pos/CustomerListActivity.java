@@ -1,12 +1,9 @@
 package com.damiu.pos;
 
 import android.Manifest;
-import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.database.Cursor;
 import android.os.Bundle;
-import android.provider.ContactsContract;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Menu;
@@ -142,72 +139,7 @@ public class CustomerListActivity extends AppCompatActivity implements CustomerA
                     new String[]{Manifest.permission.READ_CONTACTS}, REQUEST_PERMISSION_CONTACTS);
             return;
         }
-
-        new AlertDialog.Builder(this)
-                .setTitle("Sinkronisasi Kontak")
-                .setMessage("Semua kontak dari telepon yang memiliki nomor telepon akan diimpor sebagai pelanggan baru. Kontak yang sudah ada (berdasarkan nomor telepon) akan dilewati.\n\nLanjutkan?")
-                .setPositiveButton("Sinkronisasi", (dialog, which) -> doSyncContacts())
-                .setNegativeButton("Batal", null)
-                .show();
-    }
-
-    private void doSyncContacts() {
-        ContentResolver cr = getContentResolver();
-        Cursor cursor = cr.query(
-                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                new String[]{
-                        ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-                        ContactsContract.CommonDataKinds.Phone.NUMBER
-                },
-                null, null,
-                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC");
-
-        if (cursor == null) {
-            Toast.makeText(this, "Gagal membaca kontak", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        int imported = 0;
-        int skipped = 0;
-        java.util.Set<String> processedPhones = new java.util.HashSet<>();
-
-        while (cursor.moveToNext()) {
-            String name = cursor.getString(0);
-            String phone = cursor.getString(1);
-
-            if (name == null || name.isEmpty() || phone == null || phone.isEmpty()) {
-                continue;
-            }
-
-            // Normalize phone for dedup within this import
-            String normalized = phone.replaceAll("[^0-9]", "");
-            if (normalized.length() < 4) continue;
-
-            String suffix = normalized.substring(normalized.length() - Math.min(normalized.length(), 8));
-            if (processedPhones.contains(suffix)) {
-                continue;
-            }
-            processedPhones.add(suffix);
-
-            // Check if already exists in database
-            if (customerDao.existsByPhone(phone)) {
-                skipped++;
-                continue;
-            }
-
-            Customer customer = new Customer(name, phone, "");
-            customerDao.insert(customer);
-            imported++;
-        }
-        cursor.close();
-
-        String msg = "Sinkronisasi selesai!\n" + imported + " kontak diimpor";
-        if (skipped > 0) {
-            msg += ", " + skipped + " sudah ada";
-        }
-        Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
-
-        loadCustomers(etSearch.getText().toString().trim());
+        startActivity(new Intent(this, ContactPickerActivity.class));
     }
 
     @Override

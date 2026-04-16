@@ -18,7 +18,9 @@ android {
             admobAppId: "ca-app-pub-3940256099942544~3347511713"
         ]
 
-        // Subscription product IDs (match Google Play Console)
+        // Subscription product IDs (harus match Google Play Console):
+        //  - damiu_pro_monthly : Rp 20.000 / bulan
+        //  - damiu_pro_yearly  : Rp 200.000 / tahun (bayar 10 bulan, gratis 2 bulan)
         buildConfigField "String", "SUB_PRODUCT_MONTHLY", "\"damiu_pro_monthly\""
         buildConfigField "String", "SUB_PRODUCT_YEARLY",  "\"damiu_pro_yearly\""
 

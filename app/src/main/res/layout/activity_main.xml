@@ -56,26 +56,27 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Point-of-Sales Khusus Depot Air Minum"
+                        android:text="Point of Sales Khusus Depot Air Minum"
                         android:textColor="#CCFFFFFF"
                         android:textSize="10sp" />
                 </LinearLayout>
             </LinearLayout>
         </androidx.appcompat.widget.Toolbar>
-
-        <FrameLayout
-            android:id="@+id/adContainer"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@color/grey_light"
-            android:gravity="center"
-            android:visibility="gone" />
     </com.google.android.material.appbar.AppBarLayout>
+
+    <!-- Main content + sticky bottom banner.
+         Wrapped in a vertical LinearLayout so the banner is pinned to the bottom
+         (scroll view takes remaining space) while still respecting the AppBar. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
     <androidx.core.widget.NestedScrollView
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        app:layout_behavior="@string/appbar_scrolling_view_behavior">
+        android:layout_height="0dp"
+        android:layout_weight="1">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -717,5 +718,15 @@
 
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
+
+        <!-- Sticky bottom banner ad (auto-hide saat Pro) -->
+        <FrameLayout
+            android:id="@+id/adContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/grey_light"
+            android:gravity="center"
+            android:visibility="gone" />
+    </LinearLayout>
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
