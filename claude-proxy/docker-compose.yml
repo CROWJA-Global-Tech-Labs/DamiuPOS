@@ -1,0 +1,70 @@
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    expose:
+      - "5678"
+    environment:
+      - N8N_HOST=202-155-157-70.domainesia.io
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://202-155-157-70.domainesia.io/
+      - N8N_SECURE_COOKIE=true
+      - N8N_PROXY_HOPS=1
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_RUNNERS_ENABLED=true
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - n8n_net
+
+  claude-proxy:
+    build: ./claude-proxy
+    container_name: claude-proxy
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      - PROXY_TOKEN=${PROXY_TOKEN}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-haiku-4-5}
+      - PORT=3000
+    volumes:
+      # OAuth credentials from `claude login` persist here.
+      # Run once after first start: docker exec -it claude-proxy claude login
+      - claude_creds:/home/node/.claude
+    networks:
+      - n8n_net
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - n8n_net
+    depends_on:
+      - n8n
+      - claude-proxy
+
+volumes:
+  n8n_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+  claude_creds:
+    driver: local
+
+networks:
+  n8n_net:
+    driver: bridge
