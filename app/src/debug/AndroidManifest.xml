@@ -9,7 +9,7 @@
 
     <application>
         <!-- Debug-only seed activity: demo data + complete wizard.
-             Launch via: adb shell am start -n com.damiu.pos/.DebugSeedActivity -->
+             Launch via: adb shell am start -n com.crowja.damiupos/.DebugSeedActivity -->
         <activity android:name=".DebugSeedActivity"        android:exported="true" />
 
         <activity android:name=".CustomerListActivity"     android:exported="true" tools:replace="android:exported" />

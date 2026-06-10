@@ -20,7 +20,7 @@
 set -u
 
 ADB="${ADB:-/c/Users/ardi/AppData/Local/Android/Sdk/platform-tools/adb.exe}"
-PKG="com.damiu.pos"
+PKG="com.crowja.damiupos"
 OUT_DIR="$(cd "$(dirname "$0")" && pwd)/screenshots/phone"
 mkdir -p "$OUT_DIR"
 

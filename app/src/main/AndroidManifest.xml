@@ -11,6 +11,11 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
     <uses-permission android:name="com.android.vending.BILLING" />
+    <!-- Notifikasi alert pesanan WA — foreground service play sound -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
@@ -29,6 +34,9 @@
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS" />
         </intent>
     </queries>
 
@@ -69,8 +77,54 @@
         <activity android:name=".SettingsActivity" />
         <activity android:name=".WizardActivity" />
         <activity android:name=".FollowUpActivity" />
+        <activity android:name=".FollowUpMapActivity" />
         <activity android:name=".UpgradeActivity" />
         <activity android:name=".ContactPickerActivity" />
+        <activity android:name=".OrderInboxActivity" />
+        <activity android:name=".ExpenseListActivity" />
+        <activity android:name=".ExpenseFormActivity" />
+        <activity android:name=".ExpenseDetailActivity" />
+        <activity android:name=".ResellerListActivity" />
+        <activity android:name=".ResellerDetailActivity" />
+
+        <!--
+            NotificationListenerService untuk auto-detect pesan WA.
+            User HARUS enable manual via:
+            Settings → Notifications → Special access → Notification access
+        -->
+        <service
+            android:name=".wa.WaListenerService"
+            android:exported="true"
+            android:label="DAMIU POS — Auto Detect Pesanan WA"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!--
+            Test injection receiver — hanya berfungsi di debug build
+            (lihat WaTestInjectionReceiver.onReceive). Dipakai untuk
+            simulasi pesan WA via `adb shell am broadcast` tanpa harus
+            kirim WA real.
+        -->
+        <receiver
+            android:name=".wa.WaTestInjectionReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.crowja.damiupos.TEST_PARSE" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            Foreground service untuk play nada dering loop saat ada
+            pesanan WA pending. Berjalan di background → suara tetap
+            bunyi walau app tidak di foreground.
+        -->
+        <service
+            android:name=".wa.OrderAlertService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

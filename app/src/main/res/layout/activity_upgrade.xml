@@ -66,7 +66,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:lineSpacingExtra="6dp"
-                android:text="✓ Hilangkan semua iklan\n✓ Backup otomatis ke Google Drive\n✓ Export laporan ke PDF\n✓ Tanpa batas jumlah pelanggan &amp; transaksi\n✓ Prioritas support\n✓ Fitur baru duluan"
+                android:text="✓ Hilangkan semua iklan\n✓ Export laporan ke PDF\n✓ Tambah pelanggan tanpa batas (Gratis: maks 30)\n✓ Catat transaksi tanpa batas (Gratis: maks 100/bulan)\n✓ Prioritas support via WhatsApp\n✓ Fitur baru duluan"
                 android:textColor="@color/text_primary"
                 android:textSize="14sp" />
 
@@ -218,6 +218,80 @@
                 android:layout_marginTop="8dp"
                 android:text="Kelola Langganan"
                 android:visibility="gone" />
+
+            <!-- Rewarded ad: gratis Pro 24 jam (1x / 24 jam) -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardRewarded"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:clickable="true"
+                android:focusable="true"
+                app:cardBackgroundColor="#FFF8E1"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="1dp"
+                app:strokeColor="#FFD54F"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🎁 Coba Pro Gratis 24 Jam"
+                        android:textColor="#5D4037"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvRewardedSubtitle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="Tonton 1 iklan singkat (~30 detik) → semua fitur Pro aktif 24 jam. Maks 1x/hari."
+                        android:textColor="#6D4C41"
+                        android:textSize="12sp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnWatchRewarded"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:text="Tonton Iklan Sekarang"
+                        android:textAllCaps="false"
+                        app:backgroundTint="#FF8F00"
+                        app:cornerRadius="8dp" />
+
+                    <TextView
+                        android:id="@+id/tvRewardedCooldown"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:gravity="center"
+                        android:text=""
+                        android:textColor="#6D4C41"
+                        android:textSize="11sp"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- WhatsApp prioritas support (Pro) -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnContactSupport"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="💬 Hubungi Support WhatsApp"
+                android:textAllCaps="false"
+                android:textColor="#25D366"
+                app:cornerRadius="10dp"
+                app:strokeColor="#25D366"
+                app:strokeWidth="1dp" />
 
             <TextView
                 android:layout_width="match_parent"

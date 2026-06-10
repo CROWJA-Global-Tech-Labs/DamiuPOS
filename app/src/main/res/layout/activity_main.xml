@@ -19,7 +19,7 @@
             android:contentInsetStartWithNavigation="0dp">
 
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
@@ -39,26 +39,34 @@
                 </FrameLayout>
 
                 <LinearLayout
-                    android:layout_width="wrap_content"
+                    android:id="@+id/toolbarTextWrap"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_weight="1"
                     android:layout_marginStart="10dp"
                     android:orientation="vertical">
 
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:id="@+id/tvToolbarTitle"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:letterSpacing="0.05"
                         android:text="@string/app_name"
                         android:textColor="@color/white"
                         android:textSize="18sp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
                         android:textStyle="bold" />
 
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:id="@+id/tvToolbarSubtitle"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="Point of Sales Khusus Depot Air Minum"
                         android:textColor="#CCFFFFFF"
-                        android:textSize="10sp" />
+                        android:textSize="10sp"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
                 </LinearLayout>
             </LinearLayout>
         </androidx.appcompat.widget.Toolbar>
@@ -83,6 +91,22 @@
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:padding="16dp">
+
+            <!-- Pro Temp chip — visible only saat user dapat Pro 24 jam dari rewarded ad -->
+            <TextView
+                android:id="@+id/chipProTemp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:background="#FFF59D"
+                android:drawablePadding="6dp"
+                android:gravity="center"
+                android:padding="8dp"
+                android:text="🎁 Pro Trial: 23h 45m sisa"
+                android:textColor="#5D4037"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
 
             <!-- Summary Cards Row 1 -->
             <LinearLayout
@@ -151,10 +175,14 @@
                 </com.google.android.material.card.MaterialCardView>
 
                 <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardGalonTerjual"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:layout_marginStart="8dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
                     app:cardCornerRadius="16dp"
                     app:cardElevation="4dp">
 
@@ -213,10 +241,14 @@
                 android:weightSum="3">
 
                 <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardTransaksi"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:layout_marginEnd="4dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
                     app:cardCornerRadius="16dp"
                     app:cardElevation="3dp">
 
@@ -592,7 +624,7 @@
                     android:paddingBottom="8dp"
                     android:maxLines="1"
                     android:ellipsize="end"
-                    android:text="Daftar Transaksi"
+                    android:text="Transaksi"
                     android:textAllCaps="false"
                     android:textColor="@color/white"
                     android:textSize="13sp"
@@ -618,7 +650,7 @@
                     android:paddingBottom="8dp"
                     android:maxLines="1"
                     android:ellipsize="end"
-                    android:text="Laporan &amp; Grafik"
+                    android:text="Report &amp; Grafik"
                     android:textAllCaps="false"
                     android:textColor="@color/white"
                     android:textSize="13sp"
@@ -644,7 +676,7 @@
                     android:paddingBottom="8dp"
                     android:maxLines="1"
                     android:ellipsize="end"
-                    android:text="Export Penjualan"
+                    android:text="Export"
                     android:textAllCaps="false"
                     android:textColor="@color/white"
                     android:textSize="13sp"
@@ -653,6 +685,58 @@
                     app:cornerRadius="14dp"
                     app:elevation="3dp"
                     app:icon="@android:drawable/ic_menu_save"
+                    app:iconGravity="textStart"
+                    app:iconPadding="8dp"
+                    app:iconSize="22dp"
+                    app:iconTint="@color/white"
+                    grid:layout_columnWeight="1"
+                    grid:layout_gravity="fill_horizontal" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnReseller"
+                    android:layout_width="0dp"
+                    android:layout_height="64dp"
+                    android:layout_margin="4dp"
+                    android:minHeight="60dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:text="Reseller"
+                    android:textAllCaps="false"
+                    android:textColor="@color/white"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    app:backgroundTint="#AB47BC"
+                    app:cornerRadius="14dp"
+                    app:elevation="3dp"
+                    app:icon="@android:drawable/ic_menu_share"
+                    app:iconGravity="textStart"
+                    app:iconPadding="8dp"
+                    app:iconSize="22dp"
+                    app:iconTint="@color/white"
+                    grid:layout_columnWeight="1"
+                    grid:layout_gravity="fill_horizontal" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPengeluaran"
+                    android:layout_width="0dp"
+                    android:layout_height="64dp"
+                    android:layout_margin="4dp"
+                    android:minHeight="60dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:text="Pengeluaran"
+                    android:textAllCaps="false"
+                    android:textColor="@color/white"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    app:backgroundTint="#EF5350"
+                    app:cornerRadius="14dp"
+                    app:elevation="3dp"
+                    app:icon="@android:drawable/ic_menu_directions"
                     app:iconGravity="textStart"
                     app:iconPadding="8dp"
                     app:iconSize="22dp"

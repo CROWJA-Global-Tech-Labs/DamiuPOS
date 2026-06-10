@@ -99,6 +99,30 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- Tanggal Daftar -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnTanggalDaftar"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="start|center_vertical"
+                android:text="Tanggal Daftar: Hari ini"
+                android:textAllCaps="false"
+                app:cornerRadius="8dp"
+                app:icon="@android:drawable/ic_menu_today"
+                app:iconGravity="textStart"
+                app:iconSize="18dp" />
+
+            <!-- Reseller -->
+            <com.google.android.material.checkbox.MaterialCheckBox
+                android:id="@+id/cbReseller"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Jadikan Reseller (dapat komisi per galon)"
+                android:textSize="14sp" />
+
             <!-- Foto Rumah -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
@@ -207,6 +231,19 @@
                             app:icon="@android:drawable/ic_dialog_map"
                             app:iconGravity="textStart" />
                     </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnBukaMaps"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="Buka di Google Maps"
+                        android:textAllCaps="false"
+                        android:visibility="gone"
+                        app:icon="@android:drawable/ic_menu_directions"
+                        app:iconGravity="textStart"
+                        app:iconSize="18dp" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 

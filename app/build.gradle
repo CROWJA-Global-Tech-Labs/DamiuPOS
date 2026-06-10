@@ -2,21 +2,36 @@ plugins {
     id 'com.android.application'
 }
 
+// Load release signing credentials from local.properties (NOT committed to git)
+def signingProps = new Properties()
+def signingPropsFile = rootProject.file('local.properties')
+if (signingPropsFile.exists()) {
+    signingPropsFile.withInputStream { signingProps.load(it) }
+}
+
 android {
-    namespace 'com.damiu.pos'
+    namespace 'com.crowja.damiupos'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.damiu.pos"
+        applicationId "com.crowja.damiupos"
         minSdk 24
         targetSdk 34
-        versionCode 2
-        versionName "1.1.0"
+        versionCode 9
+        versionName "1.2.6"
 
         // AdMob Application ID (test ID — ganti saat rilis)
         manifestPlaceholders = [
             admobAppId: "ca-app-pub-3940256099942544~3347511713"
         ]
+
+        // ============================================================
+        // DEV FLAG: bypass PRO check.
+        // Set ke "true" supaya app berjalan dengan semua fitur Pro
+        // tanpa perlu subscription. Ganti ke "false" untuk build rilis.
+        // Ini SATU-SATUNYA tempat untuk toggle bypass Pro.
+        // ============================================================
+        buildConfigField "boolean", "BYPASS_PRO", "true"
 
         // Subscription product IDs (harus match Google Play Console):
         //  - damiu_pro_monthly : Rp 20.000 / bulan
@@ -24,19 +39,43 @@ android {
         buildConfigField "String", "SUB_PRODUCT_MONTHLY", "\"damiu_pro_monthly\""
         buildConfigField "String", "SUB_PRODUCT_YEARLY",  "\"damiu_pro_yearly\""
 
+        // Free tier limits — over → user kena paywall (subscribe / rewarded ad)
+        buildConfigField "int", "FREE_MAX_CUSTOMERS",       "30"
+        buildConfigField "int", "FREE_MAX_TRX_PER_MONTH",   "100"
+
+        // Rewarded ad: tonton 1 ad → Pro temp 24 jam (1x/24h cooldown)
+        buildConfigField "long", "REWARD_DURATION_MS",      "86400000L"  // 24h
+        buildConfigField "long", "REWARD_COOLDOWN_MS",      "86400000L"  // 1x/24h
+
+        // WhatsApp support untuk Pro subscriber
+        buildConfigField "String", "PRO_SUPPORT_WA",        "\"6282xxxxxxxxx\""
+
         // Test Ad Unit IDs — ganti dengan production IDs di release
         buildConfigField "String", "ADMOB_BANNER_ID",       "\"ca-app-pub-3940256099942544/6300978111\""
         buildConfigField "String", "ADMOB_INTERSTITIAL_ID", "\"ca-app-pub-3940256099942544/1033173712\""
+        buildConfigField "String", "ADMOB_REWARDED_ID",     "\"ca-app-pub-3940256099942544/5224354917\""
     }
 
     buildFeatures {
         buildConfig true
     }
 
+    signingConfigs {
+        release {
+            if (signingProps.getProperty('RELEASE_STORE_FILE') != null) {
+                storeFile rootProject.file(signingProps.getProperty('RELEASE_STORE_FILE'))
+                storePassword signingProps.getProperty('RELEASE_STORE_PASSWORD')
+                keyAlias signingProps.getProperty('RELEASE_KEY_ALIAS')
+                keyPassword signingProps.getProperty('RELEASE_KEY_PASSWORD')
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
         }
     }
 
