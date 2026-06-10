@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 14;
+    private static final int DATABASE_VERSION = 16;
 
     // Table customers
     public static final String TABLE_CUSTOMERS = "customers";
@@ -24,6 +24,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     /** Timestamp sejak kapan jadi reseller — komisi dihitung dari transaksi
      *  JUAL setelah tanggal ini saja. */
     public static final String COL_RESELLER_SINCE = "reseller_since";
+    /** Timestamp saat pelanggan di-"Remove" dari daftar Follow Up. NULL = tidak
+     *  dikecualikan. Pelanggan otomatis muncul lagi kalau beli setelah tanggal ini. */
+    public static final String COL_FOLLOWUP_EXCLUDED_AT = "followup_excluded_at";
+    /** Alasan pelanggan dikeluarkan dari Follow Up (wajib diisi saat remove). */
+    public static final String COL_FOLLOWUP_EXCLUDE_REASON = "followup_exclude_reason";
 
     // Table products
     public static final String TABLE_PRODUCTS = "products";
@@ -96,6 +101,25 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_RR_PRODUCT_ID = "product_id";
     public static final String COL_RR_KOMISI = "komisi";
 
+    // Table users — multi user (kasir/operator) dengan PIN login
+    public static final String TABLE_USERS = "users";
+    public static final String COL_USER_ID = "_id";
+    public static final String COL_USER_NAME = "name";
+    public static final String COL_USER_PIN = "pin";
+    public static final String COL_USER_ROLE = "role";         // 'admin' | 'staf'
+    public static final String COL_USER_ACTIVE = "is_active";  // 1 = bisa login
+    public static final String COL_USER_CREATED_AT = "created_at";
+
+    // Table attendance — log absensi per user. Event:
+    //   IN    = clock in (login / kembali dari istirahat)
+    //   BREAK = mulai istirahat (app idle sampai clock in lagi)
+    //   OUT   = clock out (akhir shift, kirim laporan ke admin)
+    public static final String TABLE_ATTENDANCE = "attendance";
+    public static final String COL_ATT_ID = "_id";
+    public static final String COL_ATT_USER_ID = "user_id";
+    public static final String COL_ATT_EVENT = "event";
+    public static final String COL_ATT_TS = "ts";
+
     // Table reseller_withdrawals — pencairan komisi reseller (air atau uang)
     public static final String TABLE_RESELLER_WD = "reseller_withdrawals";
     public static final String COL_WD_ID = "_id";
@@ -117,6 +141,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_LONGITUDE + " REAL DEFAULT 0, " +
                     COL_IS_RESELLER + " INTEGER DEFAULT 0, " +
                     COL_RESELLER_SINCE + " TEXT, " +
+                    COL_FOLLOWUP_EXCLUDED_AT + " TEXT, " +
+                    COL_FOLLOWUP_EXCLUDE_REASON + " TEXT, " +
                     COL_CREATED_AT + " TEXT DEFAULT (datetime('now','localtime'))" +
                     ");";
 
@@ -214,6 +240,26 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     TABLE_CUSTOMERS + "(" + COL_ID + ") ON DELETE CASCADE" +
                     ");";
 
+    private static final String CREATE_TABLE_USERS =
+            "CREATE TABLE " + TABLE_USERS + " (" +
+                    COL_USER_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    COL_USER_NAME + " TEXT NOT NULL, " +
+                    COL_USER_PIN + " TEXT NOT NULL, " +
+                    COL_USER_ROLE + " TEXT NOT NULL DEFAULT 'staf', " +
+                    COL_USER_ACTIVE + " INTEGER NOT NULL DEFAULT 1, " +
+                    COL_USER_CREATED_AT + " TEXT DEFAULT (datetime('now','localtime'))" +
+                    ");";
+
+    private static final String CREATE_TABLE_ATTENDANCE =
+            "CREATE TABLE " + TABLE_ATTENDANCE + " (" +
+                    COL_ATT_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    COL_ATT_USER_ID + " INTEGER NOT NULL, " +
+                    COL_ATT_EVENT + " TEXT NOT NULL, " +
+                    COL_ATT_TS + " TEXT DEFAULT (datetime('now','localtime')), " +
+                    "FOREIGN KEY(" + COL_ATT_USER_ID + ") REFERENCES " +
+                    TABLE_USERS + "(" + COL_USER_ID + ") ON DELETE CASCADE" +
+                    ");";
+
     private static DatabaseHelper instance;
 
     public static synchronized DatabaseHelper getInstance(Context context) {
@@ -256,6 +302,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.execSQL(CREATE_TABLE_EXPENSES);
         db.execSQL(CREATE_TABLE_RESELLER_WD);
         db.execSQL(CREATE_TABLE_RESELLER_RATES);
+        db.execSQL(CREATE_TABLE_USERS);
+        db.execSQL(CREATE_TABLE_ATTENDANCE);
     }
 
     @Override
@@ -334,6 +382,20 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
         if (oldVersion < 14) {
             try { db.execSQL(CREATE_TABLE_RESELLER_RATES); } catch (Exception ignored) {}
+        }
+        if (oldVersion < 15) {
+            try { db.execSQL(CREATE_TABLE_USERS); } catch (Exception ignored) {}
+            try { db.execSQL(CREATE_TABLE_ATTENDANCE); } catch (Exception ignored) {}
+        }
+        if (oldVersion < 16) {
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_CUSTOMERS +
+                        " ADD COLUMN " + COL_FOLLOWUP_EXCLUDED_AT + " TEXT");
+            } catch (Exception ignored) {}
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_CUSTOMERS +
+                        " ADD COLUMN " + COL_FOLLOWUP_EXCLUDE_REASON + " TEXT");
+            } catch (Exception ignored) {}
         }
     }
 

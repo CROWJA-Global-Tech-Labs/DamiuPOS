@@ -124,7 +124,7 @@ public class CustomerAdapter extends RecyclerView.Adapter<CustomerAdapter.ViewHo
     }
 
     class ViewHolder extends RecyclerView.ViewHolder {
-        TextView tvInitial, tvName, tvPhone, tvSaldoGalon, tvStats;
+        TextView tvInitial, tvName, tvPhone, tvSaldoGalon, tvStats, tvResellerBadge;
         MaterialCardView card;
         int defaultStrokeColor;
         int defaultStrokeWidth;
@@ -137,6 +137,7 @@ public class CustomerAdapter extends RecyclerView.Adapter<CustomerAdapter.ViewHo
             tvPhone = itemView.findViewById(R.id.tvPhone);
             tvSaldoGalon = itemView.findViewById(R.id.tvSaldoGalon);
             tvStats = itemView.findViewById(R.id.tvStats);
+            tvResellerBadge = itemView.findViewById(R.id.tvResellerBadge);
             defaultStrokeColor = card.getStrokeColor();
             defaultStrokeWidth = card.getStrokeWidth();
 
@@ -171,6 +172,11 @@ public class CustomerAdapter extends RecyclerView.Adapter<CustomerAdapter.ViewHo
             tvName.setText(name);
             tvPhone.setText(customer.getPhone() != null ? customer.getPhone() : "-");
             tvSaldoGalon.setText(String.valueOf(customer.getSaldoGalon()));
+
+            // Penanda reseller pada card pelanggan.
+            if (tvResellerBadge != null) {
+                tvResellerBadge.setVisibility(customer.isReseller() ? View.VISIBLE : View.GONE);
+            }
 
             // Stats: total galon yang diberi · konsumsi gl/hr.
             // Selalu tampil supaya info konsisten di tiap kartu pelanggan.

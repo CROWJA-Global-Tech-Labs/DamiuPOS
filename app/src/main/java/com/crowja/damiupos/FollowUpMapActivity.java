@@ -1,7 +1,12 @@
 package com.crowja.damiupos;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
@@ -12,8 +17,11 @@ import android.webkit.WebViewClient;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
@@ -31,13 +39,26 @@ import java.util.List;
  * Tiap pin bernama pelanggan; tap pin → popup nama + tombol "Navigasi" yang
  * membuka Google Maps intent ke pelanggan tersebut.
  *
- * <p>Dipakai dari {@link FollowUpActivity} via tombol "Peta" → pilihan
- * "Lihat Semua di Peta".
+ * <p>Juga menampilkan posisi live device sebagai ikon pengendara motor
+ * (top-down) yang bergerak & berotasi mengikuti GPS.
+ *
+ * <p>Dipakai dari {@link FollowUpActivity} via tombol "Peta" (langsung dibuka,
+ * tanpa dialog pilihan).
  */
 public class FollowUpMapActivity extends AppCompatActivity {
 
+    private static final int REQUEST_PERMISSION_LOCATION = 401;
+
     private WebView webView;
     private final List<Customer> mapCustomers = new ArrayList<>();
+
+    // Live location: posisi device ditampilkan sebagai ikon pengendara motor
+    // (top-down) yang bergerak/berotasi mengikuti GPS.
+    private LocationManager locationManager;
+    private LocationListener locationListener;
+    private boolean mapActive = false;   // false saat empty-state (WebView GONE)
+    private boolean pageReady = false;   // true setelah onPageFinished
+    private Location pendingLocation;    // fix yang datang sebelum page siap
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -69,6 +90,7 @@ public class FollowUpMapActivity extends AppCompatActivity {
             tvEmpty.setVisibility(View.VISIBLE);
             return;
         }
+        mapActive = true;
 
         toolbar.setTitle("Peta Follow Up (" + mapCustomers.size() + ")");
 
@@ -76,10 +98,141 @@ public class FollowUpMapActivity extends AppCompatActivity {
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         webView.addJavascriptInterface(new MapBridge(), "Android");
-        webView.setWebViewClient(new WebViewClient());
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                pageReady = true;
+                if (pendingLocation != null) {
+                    pushLocationToMap(pendingLocation);
+                    pendingLocation = null;
+                }
+            }
+        });
 
         String html = buildMapHtml();
         webView.loadDataWithBaseURL("https://unpkg.com", html, "text/html", "UTF-8", null);
+
+        locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
+        ensureLocationPermissionThenTrack();
+    }
+
+    // ---------------------------------------------------------------- lokasi
+
+    private void ensureLocationPermissionThenTrack() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED) {
+            startLocationUpdates();
+        } else {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION},
+                    REQUEST_PERMISSION_LOCATION);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode,
+                                           @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_PERMISSION_LOCATION) {
+            if (grantResults.length > 0
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                startLocationUpdates();
+            } else {
+                Toast.makeText(this,
+                        "Izin lokasi ditolak — posisi Anda tidak ditampilkan di peta",
+                        Toast.LENGTH_LONG).show();
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission") // dipanggil hanya setelah permission granted
+    private void startLocationUpdates() {
+        if (!mapActive || locationManager == null || locationListener != null) return;
+
+        locationListener = new LocationListener() {
+            @Override
+            public void onLocationChanged(@NonNull Location location) {
+                pushLocationToMap(location);
+            }
+
+            @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
+            @Override public void onProviderEnabled(@NonNull String provider) {}
+            @Override public void onProviderDisabled(@NonNull String provider) {}
+        };
+
+        boolean any = false;
+        try {
+            if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                locationManager.requestLocationUpdates(
+                        LocationManager.GPS_PROVIDER, 2000L, 3f, locationListener);
+                any = true;
+            }
+            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                locationManager.requestLocationUpdates(
+                        LocationManager.NETWORK_PROVIDER, 2000L, 3f, locationListener);
+                any = true;
+            }
+            // Tampilkan posisi terakhir yang diketahui dulu supaya ikon langsung
+            // muncul tanpa menunggu fix GPS pertama.
+            Location last = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+            if (last == null) {
+                last = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+            }
+            if (last != null) pushLocationToMap(last);
+        } catch (Exception ignored) {}
+
+        if (!any) {
+            Toast.makeText(this,
+                    "GPS tidak aktif — nyalakan lokasi untuk melihat posisi Anda",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void stopLocationUpdates() {
+        if (locationManager != null && locationListener != null) {
+            try {
+                locationManager.removeUpdates(locationListener);
+            } catch (Exception ignored) {}
+            locationListener = null;
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Re-attach listener kalau sebelumnya dilepas onPause (dan izin sudah ada).
+        if (mapActive && locationListener == null
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED) {
+            startLocationUpdates();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        stopLocationUpdates(); // hemat baterai saat layar peta tidak terlihat
+    }
+
+    /** Kirim posisi device ke peta (marker pengendara motor) via JS. */
+    private void pushLocationToMap(Location loc) {
+        if (loc == null || webView == null) return;
+        if (!pageReady) {
+            pendingLocation = loc;
+            return;
+        }
+        float bearing = loc.hasBearing() ? loc.getBearing() : -1f;
+        String js = "updateMe(" + loc.getLatitude() + "," + loc.getLongitude()
+                + "," + bearing + ");";
+        webView.evaluateJavascript(js, null);
+    }
+
+    @Override
+    protected void onDestroy() {
+        stopLocationUpdates();
+        super.onDestroy();
     }
 
     /** JS bridge: dipanggil dari popup "Navigasi" untuk buka Google Maps. */
@@ -140,9 +293,15 @@ public class FollowUpMapActivity extends AppCompatActivity {
                 "  .leaflet-popup-content a.navbtn{display:block;margin-top:8px;padding:9px 12px;background:#1565C0;color:#ffffff !important;border-radius:6px;text-decoration:none;font-size:13px;font-weight:bold;text-align:center;}\n" +
                 "  .pname{font-size:14px;font-weight:bold;color:#222;}\n" +
                 "  .pphone{font-size:12px;color:#666;margin-top:2px;}\n" +
+                // Marker posisi device: divIcon polos (tanpa kotak putih default),
+                // inner div dirotasi sesuai bearing GPS.
+                "  .meicon{background:none !important;border:none !important;}\n" +
+                "  #merot{width:44px;height:44px;transform-origin:50% 50%;transition:transform .4s linear;}\n" +
+                "  #btnme{position:fixed;right:14px;bottom:22px;width:48px;height:48px;border-radius:24px;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;font-size:24px;z-index:1000;cursor:pointer;}\n" +
                 "</style>\n" +
                 "</head><body>\n" +
                 "<div id='map'></div>\n" +
+                "<div id='btnme' onclick='goMe()' title='Posisi Saya'>&#127949;</div>\n" +
                 "<script>\n" +
                 "var pts = " + pointsJson + ";\n" +
                 "var map = L.map('map',{zoomControl:true}).setView([" + centerLat + "," + centerLng + "], 14);\n" +
@@ -162,6 +321,33 @@ public class FollowUpMapActivity extends AppCompatActivity {
                 "function nav(lat,lng,name){\n" +
                 "  if(window.Android&&Android.navigate){Android.navigate(lat,lng,name);}\n" +
                 "}\n" +
+                // ---- posisi live device: ikon pengendara motor (top-down) ----
+                "var RIDER='<svg width=\"44\" height=\"44\" viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\">'+\n" +
+                "  '<circle cx=\"24\" cy=\"24\" r=\"22\" fill=\"#ffffff\" fill-opacity=\"0.92\" stroke=\"#1565C0\" stroke-width=\"2\"/>'+\n" +
+                "  '<rect x=\"21\" y=\"4\" width=\"6\" height=\"9\" rx=\"3\" fill=\"#263238\"/>'+\n" +          // roda depan
+                "  '<rect x=\"21\" y=\"35\" width=\"6\" height=\"9\" rx=\"3\" fill=\"#263238\"/>'+\n" +         // roda belakang
+                "  '<rect x=\"19\" y=\"10\" width=\"10\" height=\"28\" rx=\"5\" fill=\"#1565C0\"/>'+\n" +       // bodi motor
+                "  '<rect x=\"11\" y=\"12\" width=\"26\" height=\"3.5\" rx=\"1.75\" fill=\"#37474F\"/>'+\n" +   // stang
+                "  '<line x1=\"17\" y1=\"24\" x2=\"13\" y2=\"15\" stroke=\"#2E7D32\" stroke-width=\"3.5\" stroke-linecap=\"round\"/>'+\n" +
+                "  '<line x1=\"31\" y1=\"24\" x2=\"35\" y2=\"15\" stroke=\"#2E7D32\" stroke-width=\"3.5\" stroke-linecap=\"round\"/>'+\n" +
+                "  '<ellipse cx=\"24\" cy=\"26\" rx=\"9.5\" ry=\"7\" fill=\"#43A047\"/>'+\n" +                  // bahu/badan
+                "  '<circle cx=\"24\" cy=\"24\" r=\"5.5\" fill=\"#F44336\"/>'+\n" +                             // helm
+                "  '<rect x=\"21\" y=\"19.5\" width=\"6\" height=\"2\" rx=\"1\" fill=\"#ffffff\" opacity=\"0.9\"/>'+\n" + // visor (penanda arah depan)
+                "  '</svg>';\n" +
+                "var meIcon=L.divIcon({className:'meicon',html:'<div id=\"merot\">'+RIDER+'</div>',iconSize:[44,44],iconAnchor:[22,22]});\n" +
+                "var meMarker=null;\n" +
+                // Dipanggil dari Java (evaluateJavascript) tiap update GPS.
+                // bearing<0 = tidak ada data arah → pertahankan rotasi terakhir.
+                "function updateMe(lat,lng,bearing){\n" +
+                "  if(!meMarker){\n" +
+                "    meMarker=L.marker([lat,lng],{icon:meIcon,zIndexOffset:1000,interactive:false}).addTo(map);\n" +
+                "  }else{meMarker.setLatLng([lat,lng]);}\n" +
+                "  if(bearing>=0){\n" +
+                "    var el=document.getElementById('merot');\n" +
+                "    if(el){el.style.transform='rotate('+bearing+'deg)';}\n" +
+                "  }\n" +
+                "}\n" +
+                "function goMe(){if(meMarker){map.setView(meMarker.getLatLng(),16);}}\n" +
                 "</script></body></html>";
     }
 }

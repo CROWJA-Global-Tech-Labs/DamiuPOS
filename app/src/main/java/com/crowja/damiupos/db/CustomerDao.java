@@ -270,6 +270,10 @@ public class CustomerDao {
                 "WHERE c.name <> ? " +
                 "GROUP BY c._id " +
                 "HAVING last_jual IS NOT NULL AND date(last_jual) < date(?) " +
+                // Kecualikan pelanggan yang di-"Remove" dari follow-up, KECUALI
+                // mereka beli lagi setelah dikeluarkan (last_jual lebih baru).
+                "AND (c." + DatabaseHelper.COL_FOLLOWUP_EXCLUDED_AT + " IS NULL " +
+                "     OR last_jual > c." + DatabaseHelper.COL_FOLLOWUP_EXCLUDED_AT + ") " +
                 "ORDER BY last_jual ASC";
         Cursor cursor = db.rawQuery(query, new String[]{UMUM_NAME, cutoff});
         while (cursor.moveToNext()) {
@@ -284,6 +288,21 @@ public class CustomerDao {
         return list;
     }
 
+    /**
+     * "Remove" pelanggan dari daftar Follow Up dengan alasan (wajib). Disimpan
+     * sebagai timestamp + alasan; pelanggan otomatis muncul lagi kalau beli
+     * setelah ini ({@link #getFollowUpCandidates}).
+     */
+    public void excludeFromFollowUp(long customerId, String reason) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        android.content.ContentValues v = new android.content.ContentValues();
+        v.put(DatabaseHelper.COL_FOLLOWUP_EXCLUDED_AT,
+                new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new java.util.Date()));
+        v.put(DatabaseHelper.COL_FOLLOWUP_EXCLUDE_REASON, reason);
+        db.update(DatabaseHelper.TABLE_CUSTOMERS, v,
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
+    }
+
     /** Count of customers needing follow-up (last JUAL > days ago). */
     public int countFollowUpCandidates(int days) {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
@@ -294,7 +313,9 @@ public class CustomerDao {
                 "FROM customers c LEFT JOIN transactions t ON c._id = t.customer_id " +
                 "WHERE c.name <> ? " +
                 "GROUP BY c._id " +
-                "HAVING last_jual IS NOT NULL AND date(last_jual) < date(?))";
+                "HAVING last_jual IS NOT NULL AND date(last_jual) < date(?) " +
+                "AND (c." + DatabaseHelper.COL_FOLLOWUP_EXCLUDED_AT + " IS NULL " +
+                "     OR last_jual > c." + DatabaseHelper.COL_FOLLOWUP_EXCLUDED_AT + "))";
         Cursor cursor = db.rawQuery(query, new String[]{UMUM_NAME, cutoff});
         int count = 0;
         if (cursor.moveToFirst()) count = cursor.getInt(0);

@@ -5,6 +5,8 @@ import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
@@ -50,6 +52,12 @@ public class ResellerListActivity extends AppCompatActivity {
 
     private static final NumberFormat NF = NumberFormat.getInstance(new Locale("id", "ID"));
 
+    // Mode urutan daftar reseller.
+    private static final int SORT_KOMISI = 0;   // jumlah komisi didapatkan
+    private static final int SORT_GALON = 1;    // jumlah galon terjual
+    private static final int SORT_BERGABUNG = 2; // waktu bergabung (terbaru dulu)
+    private int sortMode = SORT_KOMISI;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -76,6 +84,40 @@ public class ResellerListActivity extends AppCompatActivity {
     }
 
     @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        menu.add(0, 1, 0, "Urutkan")
+                .setIcon(android.R.drawable.ic_menu_sort_by_size)
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == 1) {
+            showSortDialog();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    private void showSortDialog() {
+        String[] options = {
+                "Jumlah komisi didapatkan",
+                "Jumlah galon terjual",
+                "Waktu bergabung (terbaru)"
+        };
+        new AlertDialog.Builder(this)
+                .setTitle("Urutkan Reseller")
+                .setSingleChoiceItems(options, sortMode, (dialog, which) -> {
+                    sortMode = which;
+                    dialog.dismiss();
+                    refresh();
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         refresh();
@@ -99,6 +141,7 @@ public class ResellerListActivity extends AppCompatActivity {
             totalSaldo += r.saldo;
             rows.add(r);
         }
+        sortRows(rows);
         adapter.setData(rows);
 
         tvSummary.setText(resellers.size() + " reseller  ·  Komisi default Rp "
@@ -177,6 +220,28 @@ public class ResellerListActivity extends AppCompatActivity {
         // Langsung buka detail supaya bisa atur komisi per jenis air
         startActivity(new Intent(this, ResellerDetailActivity.class)
                 .putExtra(ResellerDetailActivity.EXTRA_CUSTOMER_ID, c.getId()));
+    }
+
+    /** Urutkan rows sesuai {@link #sortMode} (semua descending/terbaru dulu). */
+    private void sortRows(List<Row> rows) {
+        java.util.Collections.sort(rows, (a, b) -> {
+            switch (sortMode) {
+                case SORT_GALON:
+                    return Integer.compare(b.galon, a.galon);
+                case SORT_BERGABUNG:
+                    // resellerSince ISO "yyyy-MM-dd HH:mm:ss" → string compare,
+                    // terbaru dulu. Null (tanpa tanggal) ditaruh paling akhir.
+                    String sa = a.customer.getResellerSince();
+                    String sb = b.customer.getResellerSince();
+                    if (sa == null && sb == null) return 0;
+                    if (sa == null) return 1;
+                    if (sb == null) return -1;
+                    return sb.compareTo(sa);
+                case SORT_KOMISI:
+                default:
+                    return Double.compare(b.earned, a.earned);
+            }
+        });
     }
 
     private static class Row {

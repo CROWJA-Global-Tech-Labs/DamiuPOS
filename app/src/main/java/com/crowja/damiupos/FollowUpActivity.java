@@ -1,6 +1,9 @@
 package com.crowja.damiupos;
 
 import android.content.Intent;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.LayoutInflater;
@@ -8,6 +11,8 @@ import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -16,6 +21,7 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
+import androidx.recyclerview.widget.ItemTouchHelper;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -23,6 +29,7 @@ import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.model.Customer;
+import com.crowja.damiupos.model.Transaction;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -63,11 +70,17 @@ public class FollowUpActivity extends AppCompatActivity {
         adapter = new FollowUpAdapter();
         rv.setLayoutManager(new LinearLayoutManager(this));
         rv.setAdapter(adapter);
+
+        attachSwipeToRemove();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        loadData();
+    }
+
+    private void loadData() {
         thresholdDays = settingsDao.getFollowupDays();
         List<Customer> list = customerDao.getFollowUpCandidates(thresholdDays);
         currentList = list;
@@ -76,6 +89,96 @@ public class FollowUpActivity extends AppCompatActivity {
         tvEmpty.setVisibility(list.isEmpty() ? View.VISIBLE : View.GONE);
         rv.setVisibility(list.isEmpty() ? View.GONE : View.VISIBLE);
         invalidateOptionsMenu(); // enable/disable tombol Peta sesuai ketersediaan koordinat
+    }
+
+    /**
+     * Swipe card ke kiri → munculkan background merah "Hapus" → lepas →
+     * dialog konfirmasi + alasan (wajib). Kalau batal, card dikembalikan.
+     */
+    private void attachSwipeToRemove() {
+        final Paint bgPaint = new Paint();
+        bgPaint.setColor(Color.parseColor("#E53935")); // merah
+        final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        textPaint.setColor(Color.WHITE);
+        textPaint.setTextSize(14 * getResources().getDisplayMetrics().scaledDensity);
+        textPaint.setFakeBoldText(true);
+        textPaint.setTextAlign(Paint.Align.RIGHT);
+
+        ItemTouchHelper.SimpleCallback cb = new ItemTouchHelper.SimpleCallback(
+                0, ItemTouchHelper.LEFT) {
+            @Override
+            public boolean onMove(@NonNull RecyclerView rv,
+                                  @NonNull RecyclerView.ViewHolder vh,
+                                  @NonNull RecyclerView.ViewHolder target) {
+                return false;
+            }
+
+            @Override
+            public void onSwiped(@NonNull RecyclerView.ViewHolder vh, int direction) {
+                int pos = vh.getBindingAdapterPosition();
+                if (pos == RecyclerView.NO_POSITION) return;
+                Customer c = adapter.getItem(pos);
+                if (c != null) showRemoveDialog(c, pos);
+            }
+
+            @Override
+            public void onChildDraw(@NonNull Canvas canvas, @NonNull RecyclerView rv,
+                                    @NonNull RecyclerView.ViewHolder vh,
+                                    float dX, float dY, int actionState, boolean isActive) {
+                View item = vh.itemView;
+                if (dX < 0) {
+                    // Background merah di area yang tersingkap saat swipe kiri.
+                    canvas.drawRect(item.getRight() + dX, item.getTop(),
+                            item.getRight(), item.getBottom(), bgPaint);
+                    float cy = item.getTop() + item.getHeight() / 2f
+                            + textPaint.getTextSize() / 3f;
+                    canvas.drawText("HAPUS  ›",
+                            item.getRight() - 32f, cy, textPaint);
+                }
+                super.onChildDraw(canvas, rv, vh, dX, dY, actionState, isActive);
+            }
+        };
+        new ItemTouchHelper(cb).attachToRecyclerView(rv);
+    }
+
+    /** Konfirmasi remove dari follow-up + alasan wajib. */
+    private void showRemoveDialog(Customer c, int position) {
+        final EditText input = new EditText(this);
+        input.setHint("Alasan (wajib): mis. pindah rumah, langganan tempat lain");
+        input.setMinLines(2);
+        input.setGravity(android.view.Gravity.TOP | android.view.Gravity.START);
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        FrameLayout wrap = new FrameLayout(this);
+        wrap.setPadding(pad, pad / 2, pad, 0);
+        wrap.addView(input);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Hapus dari Follow Up")
+                .setMessage("Keluarkan \"" + (c.getName() != null ? c.getName() : "pelanggan")
+                        + "\" dari daftar follow up? Akan muncul lagi otomatis kalau "
+                        + "pelanggan membeli lagi.")
+                .setView(wrap)
+                // Batal → kembalikan card yang ter-swipe.
+                .setNegativeButton("Batal", (d, w) -> adapter.notifyItemChanged(position))
+                .setPositiveButton("Hapus", null)
+                .setOnCancelListener(d -> adapter.notifyItemChanged(position))
+                .create();
+
+        dialog.setOnShowListener(dlg ->
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                    String reason = input.getText().toString().trim();
+                    if (reason.isEmpty()) {
+                        input.setError("Alasan wajib diisi");
+                        return;
+                    }
+                    customerDao.excludeFromFollowUp(c.getId(), reason);
+                    dialog.dismiss();
+                    Toast.makeText(this,
+                            c.getName() + " dikeluarkan dari follow up",
+                            Toast.LENGTH_SHORT).show();
+                    loadData();
+                }));
+        dialog.show();
     }
 
     @Override
@@ -89,143 +192,24 @@ public class FollowUpActivity extends AppCompatActivity {
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         if (item.getItemId() == 1) {
-            showPetaModeDialog();
+            // Langsung buka peta OSM dengan semua pin pelanggan follow-up
+            // + posisi live device. Navigasi per pelanggan ada di card.
+            startActivity(new Intent(this, FollowUpMapActivity.class));
             return true;
         }
         return super.onOptionsItemSelected(item);
-    }
-
-    /**
-     * Tombol "Peta" → dialog pilihan tampilan:
-     *   1. Lihat Semua di Peta — buka {@link FollowUpMapActivity} (OSM), semua
-     *      pin pelanggan follow-up dalam satu layar.
-     *   2. Per Pelanggan — picker → buka Google Maps intent (1 pin bernama).
-     */
-    private void showPetaModeDialog() {
-        // Cek dulu apakah ada pelanggan dengan koordinat.
-        int withCoords = 0;
-        for (Customer c : currentList) {
-            if (c.getLatitude() != 0 || c.getLongitude() != 0) withCoords++;
-        }
-        if (withCoords == 0) {
-            Toast.makeText(this,
-                    "Belum ada pelanggan follow-up yang punya koordinat lokasi",
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
-        new AlertDialog.Builder(this)
-                .setTitle("Tampilkan Peta")
-                .setItems(new CharSequence[]{
-                        "Lihat Semua di Peta (" + withCoords + " pelanggan)",
-                        "Per Pelanggan (Google Maps)"
-                }, (dialog, which) -> {
-                    if (which == 0) {
-                        startActivity(new Intent(this, FollowUpMapActivity.class));
-                    } else {
-                        showPetaPicker();
-                    }
-                })
-                .setNegativeButton("Batal", null)
-                .show();
-    }
-
-    /**
-     * Picker per-pelanggan: tiap pelanggan ditampilkan sebagai card di dalam
-     * container scrollable (RecyclerView). Tap card → buka Google Maps dengan
-     * pin bernama pelanggan tsb (1 pin per buka).
-     */
-    private void showPetaPicker() {
-        List<Customer> withCoords = new ArrayList<>();
-        for (Customer c : currentList) {
-            if (c.getLatitude() != 0 || c.getLongitude() != 0) withCoords.add(c);
-        }
-        if (withCoords.isEmpty()) {
-            Toast.makeText(this,
-                    "Belum ada pelanggan follow-up yang punya koordinat lokasi",
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
-
-        View content = LayoutInflater.from(this)
-                .inflate(R.layout.dialog_peta_picker, null, false);
-        TextView title = content.findViewById(R.id.tvPickerTitle);
-        title.setText("Buka Peta Pelanggan (" + withCoords.size() + ")");
-
-        RecyclerView rvPicker = content.findViewById(R.id.rvPetaPicker);
-        rvPicker.setLayoutManager(new LinearLayoutManager(this));
-
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setView(content)
-                .setNegativeButton("Batal", null)
-                .create();
-
-        rvPicker.setAdapter(new PetaPickerAdapter(withCoords, c -> {
-            dialog.dismiss();
-            openCustomerInMaps(c);
-        }));
-
-        // Cap tinggi RecyclerView ke ~55% layar supaya list panjang tetap muat
-        // & internal-scroll (RecyclerView abaikan android:maxHeight, jadi set
-        // di code setelah ukuran layar diketahui).
-        int maxH = (int) (getResources().getDisplayMetrics().heightPixels * 0.55f);
-        rvPicker.post(() -> {
-            if (rvPicker.getHeight() > maxH) {
-                ViewGroup.LayoutParams lp = rvPicker.getLayoutParams();
-                lp.height = maxH;
-                rvPicker.setLayoutParams(lp);
-            }
-        });
-
-        dialog.show();
-    }
-
-    /** Adapter card untuk dialog Peta picker. */
-    private static class PetaPickerAdapter
-            extends RecyclerView.Adapter<PetaPickerAdapter.VH> {
-        interface OnPick { void pick(Customer c); }
-        private final List<Customer> items;
-        private final OnPick onPick;
-
-        PetaPickerAdapter(List<Customer> items, OnPick onPick) {
-            this.items = items;
-            this.onPick = onPick;
-        }
-
-        @NonNull
-        @Override
-        public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-            View v = LayoutInflater.from(parent.getContext())
-                    .inflate(R.layout.item_peta_picker, parent, false);
-            return new VH(v);
-        }
-
-        @Override
-        public void onBindViewHolder(@NonNull VH h, int position) {
-            Customer c = items.get(position);
-            h.tvName.setText(c.getName());
-            String addr = c.getAddress() != null && !c.getAddress().isEmpty()
-                    ? c.getAddress() : "(tanpa alamat)";
-            h.tvAddress.setText(addr);
-            h.itemView.setOnClickListener(v -> onPick.pick(c));
-        }
-
-        @Override
-        public int getItemCount() { return items.size(); }
-
-        static class VH extends RecyclerView.ViewHolder {
-            final TextView tvName, tvAddress;
-            VH(@NonNull View v) {
-                super(v);
-                tvName = v.findViewById(R.id.tvPickerName);
-                tvAddress = v.findViewById(R.id.tvPickerAddress);
-            }
-        }
     }
 
     /** Buka Google Maps dengan pin pada koordinat pelanggan, label = nama. */
     private void openCustomerInMaps(Customer c) {
         double lat = c.getLatitude();
         double lng = c.getLongitude();
+        if (lat == 0 && lng == 0) {
+            Toast.makeText(this,
+                    "Pelanggan belum punya koordinat lokasi. Atur lewat form pelanggan.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
         String label = c.getName() != null ? c.getName() : "Pelanggan";
         // geo: URI dengan query berlabel → pin bernama di Google Maps.
         String uri = "geo:" + lat + "," + lng + "?q=" + lat + "," + lng
@@ -246,6 +230,10 @@ public class FollowUpActivity extends AppCompatActivity {
         private List<Customer> data = new java.util.ArrayList<>();
 
         void setData(List<Customer> list) { this.data = list; notifyDataSetChanged(); }
+
+        Customer getItem(int pos) {
+            return pos >= 0 && pos < data.size() ? data.get(pos) : null;
+        }
 
         @NonNull
         @Override
@@ -285,23 +273,14 @@ public class FollowUpActivity extends AppCompatActivity {
             h.tvGalon.setText(saldo + " galon");
             h.tvGalon.setVisibility(saldo > 0 ? View.VISIBLE : View.GONE);
 
-            boolean hasPhone = c.getPhone() != null && !c.getPhone().isEmpty();
-            h.btnCall.setVisibility(hasPhone ? View.VISIBLE : View.GONE);
-            h.btnCall.setOnClickListener(v -> openWhatsAppForFollowUp(c));
+            // 2 tombol aksi: amplop = kirim pesan follow-up, panah = navigasi.
+            h.btnMessage.setOnClickListener(v -> openWhatsAppForFollowUp(c));
+            h.btnNavigate.setOnClickListener(v -> openCustomerInMaps(c));
 
-            // Klik baris pelanggan langsung buka WhatsApp dengan template follow-up.
-            // Kalau no HP kosong, fallback ke detail pelanggan.
-            h.itemView.setOnClickListener(v -> {
-                if (hasPhone) {
-                    openWhatsAppForFollowUp(c);
-                } else {
-                    Intent i = new Intent(FollowUpActivity.this, CustomerDetailActivity.class);
-                    i.putExtra("customer_id", c.getId());
-                    startActivity(i);
-                }
-            });
+            // Tap card (di luar tombol) → dialog pilih aksi.
+            h.itemView.setOnClickListener(v -> showActionDialog(c));
 
-            // Long-press tetap menuju detail pelanggan untuk yang punya HP.
+            // Long-press tetap menuju detail pelanggan.
             h.itemView.setOnLongClickListener(v -> {
                 Intent i = new Intent(FollowUpActivity.this, CustomerDetailActivity.class);
                 i.putExtra("customer_id", c.getId());
@@ -316,7 +295,7 @@ public class FollowUpActivity extends AppCompatActivity {
         class VH extends RecyclerView.ViewHolder {
             TextView tvName, tvPhone, tvDays, tvGalon, tvLastPurchase, tvInitial;
             android.widget.ImageView ivAvatar;
-            ImageButton btnCall;
+            ImageButton btnMessage, btnNavigate;
             VH(View v) {
                 super(v);
                 tvName = v.findViewById(R.id.tvName);
@@ -326,9 +305,40 @@ public class FollowUpActivity extends AppCompatActivity {
                 tvLastPurchase = v.findViewById(R.id.tvLastPurchase);
                 tvInitial = v.findViewById(R.id.tvInitial);
                 ivAvatar = v.findViewById(R.id.ivAvatar);
-                btnCall = v.findViewById(R.id.btnCall);
+                btnMessage = v.findViewById(R.id.btnMessage);
+                btnNavigate = v.findViewById(R.id.btnNavigate);
             }
         }
+    }
+
+    /** Dialog pilihan aksi saat card pelanggan ditekan (bukan tombolnya). */
+    private void showActionDialog(Customer c) {
+        new AlertDialog.Builder(this)
+                .setTitle(c.getName() != null ? c.getName() : "Pelanggan")
+                .setItems(new CharSequence[]{
+                        "Kirim Pesan Follow Up (WhatsApp)",
+                        "Navigasi (Google Maps)",
+                        "Buat Transaksi",
+                        "Lihat Detail Pelanggan"
+                }, (dialog, which) -> {
+                    if (which == 0) {
+                        openWhatsAppForFollowUp(c);
+                    } else if (which == 1) {
+                        openCustomerInMaps(c);
+                    } else if (which == 2) {
+                        // Buat transaksi JUAL dengan pelanggan ini terpilih.
+                        Intent i = new Intent(this, TransactionActivity.class);
+                        i.putExtra("type", Transaction.TYPE_JUAL);
+                        i.putExtra("customer_id", c.getId());
+                        startActivity(i);
+                    } else {
+                        Intent i = new Intent(this, CustomerDetailActivity.class);
+                        i.putExtra("customer_id", c.getId());
+                        startActivity(i);
+                    }
+                })
+                .setNegativeButton("Batal", null)
+                .show();
     }
 
     /**
