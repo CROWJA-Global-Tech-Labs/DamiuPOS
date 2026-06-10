@@ -26,12 +26,14 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.crowja.damiupos.adapter.TransactionAdapter;
+import com.crowja.damiupos.db.AttendanceDao;
 import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.GalonStockDao;
 import com.crowja.damiupos.db.OrderInboxDao;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.db.TransactionDao;
+import com.crowja.damiupos.model.Attendance;
 import com.crowja.damiupos.model.OrderInbox;
 import com.crowja.damiupos.model.Transaction;
 import com.crowja.damiupos.wa.NotificationAlertHelper;
@@ -56,9 +58,7 @@ public class MainActivity extends AppCompatActivity {
     private GalonStockDao galonStockDao;
     private OrderInboxDao orderInboxDao;
     private com.google.android.material.button.MaterialButton btnFollowUp;
-    private com.google.android.material.button.MaterialButton btnStokGalon;
     private ColorStateList originalFollowUpTint;
-    private ColorStateList originalStokGalonTint;
     private TextView tvToolbarTitle, tvToolbarSubtitle;
     private Toolbar mainToolbar;
     private int originalToolbarColor;
@@ -80,6 +80,13 @@ public class MainActivity extends AppCompatActivity {
         settingsDao = new SettingsDao(DatabaseHelper.getInstance(this));
         if (!settingsDao.isWizardCompleted()) {
             startActivity(new Intent(this, WizardActivity.class));
+            finish();
+            return;
+        }
+
+        // Gate multi user & absensi: wajib login (clock in) sebelum pakai app.
+        if (settingsDao.isMultiUserEnabled() && settingsDao.getCurrentUserId() <= 0) {
+            startActivity(new Intent(this, LoginActivity.class));
             finish();
             return;
         }
@@ -147,25 +154,6 @@ public class MainActivity extends AppCompatActivity {
             startActivity(new Intent(this, FollowUpActivity.class));
         });
 
-        findViewById(R.id.btnPelanggan).setOnClickListener(v -> {
-            startActivity(new Intent(this, CustomerListActivity.class));
-        });
-
-        btnStokGalon = findViewById(R.id.btnStokGalon);
-        originalStokGalonTint = btnStokGalon.getBackgroundTintList();
-        btnStokGalon.setOnClickListener(v -> {
-            btnStokGalon.clearAnimation();
-            startActivity(new Intent(this, GalonStockActivity.class));
-        });
-
-        findViewById(R.id.btnProduk).setOnClickListener(v -> {
-            startActivity(new Intent(this, ProductListActivity.class));
-        });
-
-        findViewById(R.id.btnDaftarTransaksi).setOnClickListener(v -> {
-            startActivity(new Intent(this, TransactionListActivity.class));
-        });
-
         findViewById(R.id.btnLaporan).setOnClickListener(v -> {
             startActivity(new Intent(this, ReportActivity.class));
         });
@@ -200,11 +188,170 @@ public class MainActivity extends AppCompatActivity {
         View cardTransaksi = findViewById(R.id.cardTransaksi);
         if (cardTransaksi != null) cardTransaksi.setOnClickListener(todayListClick);
 
+        // Card statistik menggantikan tile menu yang redundan:
+        // Galon Beredar → Stok Galon, Total Pelanggan → daftar Pelanggan.
+        View cardGalonBeredar = findViewById(R.id.cardGalonBeredar);
+        if (cardGalonBeredar != null) {
+            cardGalonBeredar.setOnClickListener(v -> {
+                cardGalonBeredar.clearAnimation();
+                startActivity(new Intent(this, GalonStockActivity.class));
+            });
+        }
+        View cardTotalPelanggan = findViewById(R.id.cardTotalPelanggan);
+        if (cardTotalPelanggan != null) {
+            cardTotalPelanggan.setOnClickListener(v ->
+                    startActivity(new Intent(this, CustomerListActivity.class)));
+        }
+
         // Banner ad di dashboard (auto-hide saat Pro)
         android.view.ViewGroup adContainer = findViewById(R.id.adContainer);
         if (adContainer != null) {
             com.crowja.damiupos.ads.AdManager.getInstance(this).attachBanner(this, adContainer);
         }
+
+        // Operator bar (multi user & absensi)
+        View btnIstirahat = findViewById(R.id.btnIstirahat);
+        View btnClockOut = findViewById(R.id.btnClockOut);
+        if (btnIstirahat != null) btnIstirahat.setOnClickListener(v -> doIstirahat());
+        // Pulang langsung (tanpa dialog konfirmasi) → laporan auto-kirim ke email admin.
+        if (btnClockOut != null) btnClockOut.setOnClickListener(v -> doClockOut());
+    }
+
+    /** Update bar operator: tampil hanya saat multi user aktif & sudah login. */
+    private void refreshOperatorBar() {
+        View card = findViewById(R.id.cardOperator);
+        if (card == null) return;
+        boolean show = settingsDao.isMultiUserEnabled() && settingsDao.getCurrentUserId() > 0;
+        card.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (!show) return;
+
+        TextView tvName = findViewById(R.id.tvOperatorName);
+        TextView tvShift = findViewById(R.id.tvOperatorShift);
+        tvName.setText(settingsDao.getCurrentUserName());
+        try {
+            ShiftReporter.Shift s = ShiftReporter.computeShift(
+                    DatabaseHelper.getInstance(this), settingsDao.getCurrentUserId());
+            String info = "Kerja " + ShiftReporter.formatDuration(s.workMillis);
+            if (s.breakCount > 0) info += " • Istirahat " + s.breakCount + "x";
+            tvShift.setText(info);
+        } catch (Exception e) {
+            tvShift.setText("Sedang bekerja");
+        }
+    }
+
+    /**
+     * Tombol Istirahat: catat event BREAK, lepas sesi (current user → 0),
+     * lalu kembali ke layar login. App jadi idle — wajib clock in lagi.
+     */
+    private void doIstirahat() {
+        long uid = settingsDao.getCurrentUserId();
+        if (uid <= 0) return;
+        new AlertDialog.Builder(this)
+                .setTitle("Istirahat?")
+                .setMessage("Aplikasi akan terkunci. Anda perlu clock in lagi (PIN) "
+                        + "untuk melanjutkan bekerja.")
+                .setPositiveButton("Ya, Istirahat", (d, w) -> {
+                    new AttendanceDao(DatabaseHelper.getInstance(this))
+                            .log(uid, Attendance.EVENT_BREAK);
+                    settingsDao.clearCurrentUser();
+                    Intent i = new Intent(this, LoginActivity.class);
+                    i.putExtra(LoginActivity.EXTRA_FROM_BREAK, true);
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                    startActivity(i);
+                    finish();
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /**
+     * Tombol Pulang (clock out): langsung (tanpa dialog) → export laporan shift
+     * sebagai XLSX terenkripsi (password = PIN admin), auto-kirim ke email admin
+     * via SMTP di background, catat OUT, lepas sesi, kembali ke login.
+     */
+    private void doClockOut() {
+        long uid = settingsDao.getCurrentUserId();
+        String uname = settingsDao.getCurrentUserName();
+        if (uid <= 0) return;
+        DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
+        String adminPin = new com.crowja.damiupos.db.UserDao(dbHelper).getPrimaryAdminPin();
+        String summary = ShiftReporter.buildSummaryText(this, dbHelper, uid, uname);
+
+        // 1) Export laporan shift → XLSX terenkripsi dengan PIN admin (fallback CSV).
+        //    Dibuat SEBELUM event OUT karena dihitung dari shift yang masih berjalan.
+        java.io.File report = ShiftReporter.exportEncryptedShiftXlsx(
+                this, dbHelper, uid, uname, adminPin);
+        if (report == null) {
+            report = ShiftReporter.exportShiftCsv(this, dbHelper, uid, uname);
+        }
+
+        // 2) Auto-kirim laporan shift ke email admin via SMTP (background).
+        if (settingsDao.isShiftEmailConfigured()) {
+            String depot = settingsDao.getDepotName();
+            if (depot == null || depot.isEmpty()) depot = "DAMIU POS";
+            String stamp = new java.text.SimpleDateFormat("dd MMM yyyy HH:mm",
+                    new Locale("id", "ID")).format(new java.util.Date());
+            String subject = "Laporan Shift - " + depot + " - " + uname + " - " + stamp;
+            String body = summary
+                    + "\n\n---\nFile laporan (XLSX) terlampir & dilindungi password (PIN admin)."
+                    + "\nDikirim otomatis oleh DAMIU POS.";
+            ShiftEmailSender.sendAsync(getApplicationContext(),
+                    settingsDao.getSmtpHost(), settingsDao.getSmtpPort(),
+                    settingsDao.getSmtpUser(), settingsDao.getSmtpPass(),
+                    settingsDao.getAdminEmail(), subject, body, report);
+            Toast.makeText(this, "Mengirim laporan ke email admin…",
+                    Toast.LENGTH_SHORT).show();
+        } else {
+            Toast.makeText(this,
+                    "Email/SMTP admin belum diatur di Pengaturan — laporan tersimpan di perangkat",
+                    Toast.LENGTH_LONG).show();
+        }
+
+        // 3) Catat OUT (supaya shift hari ini lengkap di data rekap di bawah).
+        new AttendanceDao(dbHelper).log(uid, Attendance.EVENT_OUT);
+
+        // 4) Rekap absensi bulanan otomatis kalau hari ini tanggal cut-off.
+        maybeSendMonthlyRecap(dbHelper, adminPin);
+
+        // 5) Lepas sesi + kembali ke login.
+        settingsDao.clearCurrentUser();
+        Intent i = new Intent(this, LoginActivity.class);
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(i);
+        finish();
+    }
+
+    /**
+     * Di tanggal cut-off (configurable), kirim sekali rekap absensi bulanan
+     * (periode cutoff+1 bulan lalu s/d cutoff bulan ini) sebagai XLSX terenkripsi
+     * ke email admin. Guard {@code lastRecapPeriod} mencegah kirim berulang
+     * walau banyak staff Pulang di hari yang sama.
+     */
+    private void maybeSendMonthlyRecap(DatabaseHelper dbHelper, String adminPin) {
+        int cutoff = settingsDao.getPayrollCutoffDay();
+        if (!AttendanceRecap.isCutoffToday(cutoff)) return;
+        if (!settingsDao.isShiftEmailConfigured()) return;
+        String[] period = AttendanceRecap.monthlyPeriod(cutoff);
+        String periodId = period[1]; // tanggal akhir = identitas periode
+        if (periodId.equals(settingsDao.getLastRecapPeriod())) return; // sudah terkirim
+
+        java.io.File recap = AttendanceRecap.exportEncrypted(this, dbHelper,
+                period[0], period[1], settingsDao.getDailyNormalHours(), adminPin);
+        if (recap == null) return;
+
+        String depot = settingsDao.getDepotName();
+        if (depot == null || depot.isEmpty()) depot = "DAMIU POS";
+        String subject = "Rekap Absensi - " + depot + " - " + period[0] + " s/d " + period[1];
+        String body = "Rekapitulasi absensi staff periode " + period[0] + " s/d "
+                + period[1] + ".\n\nFile XLSX terlampir & dilindungi password (PIN admin)."
+                + "\nDikirim otomatis oleh DAMIU POS.";
+        ShiftEmailSender.sendAsync(getApplicationContext(),
+                settingsDao.getSmtpHost(), settingsDao.getSmtpPort(),
+                settingsDao.getSmtpUser(), settingsDao.getSmtpPass(),
+                settingsDao.getAdminEmail(), subject, body, recap);
+        settingsDao.setLastRecapPeriod(periodId);
+        Toast.makeText(this, "Mengirim rekap absensi bulanan ke email admin…",
+                Toast.LENGTH_LONG).show();
     }
 
     @Override
@@ -351,25 +498,21 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateStockIndicator() {
-        if (btnStokGalon == null) return;
+        // Indikator stok sekarang menempel di card "Galon Beredar"
+        // (tile Stok Galon sudah dihapus, card jadi pintu masuknya).
+        TextView tvStokBadge = findViewById(R.id.tvStokBadge);
+        if (tvStokBadge == null) return;
         int threshold = settingsDao.getStockAlert();
         int stok = galonStockDao.getStokTersedia();
 
-        btnStokGalon.setText("Stok Galon");
-
-        TextView tvStokBadge = findViewById(R.id.tvStokBadge);
-        if (tvStokBadge != null) {
-            tvStokBadge.setText(String.valueOf(stok));
-        }
+        tvStokBadge.setText("Stok: " + stok);
 
         if (stok <= threshold) {
-            btnStokGalon.setBackgroundTintList(ColorStateList.valueOf(Color.parseColor("#D32F2F")));
-            startBlink(btnStokGalon);
+            tvStokBadge.setTextColor(Color.parseColor("#D32F2F"));
+            startBlink(tvStokBadge);
         } else {
-            btnStokGalon.clearAnimation();
-            if (originalStokGalonTint != null) {
-                btnStokGalon.setBackgroundTintList(originalStokGalonTint);
-            }
+            tvStokBadge.clearAnimation();
+            tvStokBadge.setTextColor(Color.parseColor("#26A69A"));
         }
     }
 
@@ -413,6 +556,7 @@ public class MainActivity extends AppCompatActivity {
         // Blinking indicators
         updateFollowUpIndicator();
         updateStockIndicator();
+        refreshOperatorBar();
 
         // Recent transactions
         List<Transaction> recent = transactionDao.getRecent(10);

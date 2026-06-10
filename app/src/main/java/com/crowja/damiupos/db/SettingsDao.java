@@ -61,6 +61,34 @@ public class SettingsDao {
      *  latest pending id <= ini. Reset ke 0 = belum ada yg diakui. */
     public static final String KEY_WA_LAST_ALERT_ID = "wa_last_alert_id";
 
+    /** 1 = fitur multi user & absensi aktif (wajib login PIN + clock in). */
+    public static final String KEY_MULTIUSER_ENABLED = "multiuser_enabled";
+    /** Nomor WA admin tujuan laporan otomatis saat clock out. */
+    public static final String KEY_ADMIN_WA_NUMBER = "admin_wa_number";
+    /** Email tujuan laporan shift (auto-kirim SMTP saat Pulang). */
+    public static final String KEY_ADMIN_EMAIL = "admin_email";
+    /** Konfigurasi SMTP pengirim (akun yang dipakai mengirim laporan). */
+    public static final String KEY_SMTP_HOST = "smtp_host";
+    public static final String KEY_SMTP_PORT = "smtp_port";
+    public static final String KEY_SMTP_USER = "smtp_user";
+    public static final String KEY_SMTP_PASS = "smtp_pass";
+    public static final String DEFAULT_SMTP_HOST = "smtp.gmail.com";
+    public static final String DEFAULT_SMTP_PORT = "587";
+    /** Jam kerja normal per HARI (ambang lembur harian & basis normalisasi
+     *  bulanan: jam wajib = hari kerja × ini). Default 7. */
+    public static final String KEY_DAILY_NORMAL_HOURS = "daily_normal_hours";
+    public static final double DEFAULT_DAILY_NORMAL_HOURS = 7;
+    /** Tanggal cut-off rekap absensi bulanan (1..31). Default 28. Periode =
+     *  (cutoff+1 bulan lalu) s/d (cutoff bulan ini). */
+    public static final String KEY_PAYROLL_CUTOFF_DAY = "payroll_cutoff_day";
+    public static final int DEFAULT_PAYROLL_CUTOFF_DAY = 28;
+    /** Periode rekap terakhir yang sudah terkirim otomatis (mis. "2026-06-28")
+     *  — guard supaya tidak kirim berkali-kali di hari cut-off. */
+    public static final String KEY_LAST_RECAP_PERIOD = "last_recap_period";
+    /** Id user yang sedang login (clock in). 0 = tidak ada (idle/istirahat). */
+    public static final String KEY_CURRENT_USER_ID = "current_user_id";
+    public static final String KEY_CURRENT_USER_NAME = "current_user_name";
+
     public static final String PARSE_MODE_DEFAULT = "default"; // regex saja
     public static final String PARSE_MODE_AI = "ai";           // AI saja
     public static final String PARSE_MODE_HYBRID = "hybrid";   // regex dulu, AI fallback
@@ -391,6 +419,101 @@ public class SettingsDao {
     public void setResellerKomisi(double v) {
         set(KEY_RESELLER_KOMISI, String.valueOf(v >= 0 ? v : DEFAULT_RESELLER_KOMISI));
     }
+
+    // ---------------- Multi user & absensi ----------------
+
+    public boolean isMultiUserEnabled() {
+        return "1".equals(get(KEY_MULTIUSER_ENABLED, "0"));
+    }
+    public void setMultiUserEnabled(boolean enabled) {
+        set(KEY_MULTIUSER_ENABLED, enabled ? "1" : "0");
+    }
+
+    /** Nomor WA admin (apa adanya, dinormalisasi saat kirim). */
+    public String getAdminWaNumber() { return get(KEY_ADMIN_WA_NUMBER, ""); }
+    public void setAdminWaNumber(String v) {
+        set(KEY_ADMIN_WA_NUMBER, v != null ? v.trim() : "");
+    }
+
+    /** Email tujuan laporan shift. */
+    public String getAdminEmail() { return get(KEY_ADMIN_EMAIL, ""); }
+    public void setAdminEmail(String v) { set(KEY_ADMIN_EMAIL, v != null ? v.trim() : ""); }
+
+    /** SMTP host pengirim (default Gmail). */
+    public String getSmtpHost() {
+        String v = get(KEY_SMTP_HOST, DEFAULT_SMTP_HOST);
+        return v != null && !v.isEmpty() ? v : DEFAULT_SMTP_HOST;
+    }
+    public void setSmtpHost(String v) {
+        set(KEY_SMTP_HOST, v != null && !v.trim().isEmpty() ? v.trim() : DEFAULT_SMTP_HOST);
+    }
+
+    /** SMTP port (default 587 STARTTLS). */
+    public int getSmtpPort() {
+        try {
+            int p = Integer.parseInt(get(KEY_SMTP_PORT, DEFAULT_SMTP_PORT));
+            return p > 0 ? p : Integer.parseInt(DEFAULT_SMTP_PORT);
+        } catch (NumberFormatException e) { return Integer.parseInt(DEFAULT_SMTP_PORT); }
+    }
+    public void setSmtpPort(int v) {
+        set(KEY_SMTP_PORT, String.valueOf(v > 0 ? v : Integer.parseInt(DEFAULT_SMTP_PORT)));
+    }
+
+    /** Username/email akun SMTP pengirim. */
+    public String getSmtpUser() { return get(KEY_SMTP_USER, ""); }
+    public void setSmtpUser(String v) { set(KEY_SMTP_USER, v != null ? v.trim() : ""); }
+
+    /** Password / app-password akun SMTP pengirim. */
+    public String getSmtpPass() { return get(KEY_SMTP_PASS, ""); }
+    public void setSmtpPass(String v) { set(KEY_SMTP_PASS, v != null ? v : ""); }
+
+    /** True kalau email admin + akun SMTP cukup untuk auto-kirim laporan. */
+    public boolean isShiftEmailConfigured() {
+        return !getAdminEmail().isEmpty()
+                && !getSmtpUser().isEmpty()
+                && !getSmtpPass().isEmpty()
+                && !getSmtpHost().isEmpty();
+    }
+
+    /** Jam kerja normal per hari (ambang lembur harian + basis normalisasi bulanan). */
+    public double getDailyNormalHours() {
+        try {
+            double v = Double.parseDouble(get(KEY_DAILY_NORMAL_HOURS,
+                    String.valueOf(DEFAULT_DAILY_NORMAL_HOURS)));
+            return v > 0 ? v : DEFAULT_DAILY_NORMAL_HOURS;
+        } catch (NumberFormatException e) { return DEFAULT_DAILY_NORMAL_HOURS; }
+    }
+    public void setDailyNormalHours(double v) {
+        set(KEY_DAILY_NORMAL_HOURS, String.valueOf(v > 0 ? v : DEFAULT_DAILY_NORMAL_HOURS));
+    }
+
+    /** Tanggal cut-off rekap absensi bulanan (1..31). */
+    public int getPayrollCutoffDay() {
+        try {
+            int v = Integer.parseInt(get(KEY_PAYROLL_CUTOFF_DAY,
+                    String.valueOf(DEFAULT_PAYROLL_CUTOFF_DAY)));
+            return (v >= 1 && v <= 31) ? v : DEFAULT_PAYROLL_CUTOFF_DAY;
+        } catch (NumberFormatException e) { return DEFAULT_PAYROLL_CUTOFF_DAY; }
+    }
+    public void setPayrollCutoffDay(int v) {
+        set(KEY_PAYROLL_CUTOFF_DAY, String.valueOf((v >= 1 && v <= 31) ? v : DEFAULT_PAYROLL_CUTOFF_DAY));
+    }
+
+    public String getLastRecapPeriod() { return get(KEY_LAST_RECAP_PERIOD, ""); }
+    public void setLastRecapPeriod(String v) { set(KEY_LAST_RECAP_PERIOD, v != null ? v : ""); }
+
+    /** Id user yang sedang clock in. 0 = belum login / istirahat / sudah out. */
+    public long getCurrentUserId() {
+        try { return Long.parseLong(get(KEY_CURRENT_USER_ID, "0")); }
+        catch (NumberFormatException e) { return 0L; }
+    }
+    public String getCurrentUserName() { return get(KEY_CURRENT_USER_NAME, ""); }
+
+    public void setCurrentUser(long id, String name) {
+        set(KEY_CURRENT_USER_ID, String.valueOf(id));
+        set(KEY_CURRENT_USER_NAME, name != null ? name : "");
+    }
+    public void clearCurrentUser() { setCurrentUser(0, ""); }
 
     /** Template pesan follow-up. Lihat {@link #KEY_FOLLOWUP_TEMPLATE} untuk placeholder. */
     public String getFollowUpTemplate() {

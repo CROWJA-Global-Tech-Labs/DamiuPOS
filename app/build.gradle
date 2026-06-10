@@ -15,7 +15,10 @@ android {
 
     defaultConfig {
         applicationId "com.crowja.damiupos"
-        minSdk 24
+        // minSdk 26 (Android 8.0): Apache POI (enkripsi XLSX laporan shift)
+        // memakai MethodHandle.invoke & java.nio.file yang baru tersedia native
+        // di API 26+.
+        minSdk 26
         targetSdk 34
         versionCode 9
         versionName "1.2.6"
@@ -83,6 +86,19 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+
+    // POI & JavaMail membawa file lisensi/notice META-INF yang bentrok saat
+    // merge. Exclude file metadata itu — JANGAN exclude META-INF/javamail.* /
+    // mailcap karna dipakai JavaMail untuk menemukan provider SMTP saat runtime.
+    packaging {
+        resources {
+            excludes += [
+                    'META-INF/LICENSE.md', 'META-INF/LICENSE.txt', 'META-INF/LICENSE',
+                    'META-INF/NOTICE.md', 'META-INF/NOTICE.txt', 'META-INF/NOTICE',
+                    'META-INF/DEPENDENCIES', 'META-INF/*.kotlin_module'
+            ]
+        }
+    }
 }
 
 dependencies {
@@ -100,4 +116,14 @@ dependencies {
 
     // Google Play Billing (subscriptions)
     implementation 'com.android.billingclient:billing:7.1.1'
+
+    // Apache POI (core) — hanya untuk enkripsi XLSX agile (ECMA-376) saat
+    // laporan shift dikirim ke admin. Workbook dibangun manual (XlsxWriter),
+    // jadi poi-ooxml/xmlbeans tidak diperlukan. Butuh minSdk 26.
+    implementation 'org.apache.poi:poi:5.2.5'
+
+    // JavaMail (Android port) — auto-kirim laporan shift via email SMTP saat
+    // Pulang (clock out), background, tanpa membuka app email.
+    implementation 'com.sun.mail:android-mail:1.6.7'
+    implementation 'com.sun.mail:android-activation:1.6.7'
 }
