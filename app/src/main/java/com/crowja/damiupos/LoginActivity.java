@@ -30,9 +30,12 @@ public class LoginActivity extends AppCompatActivity {
     /** Extra: dibuka karena tombol Istirahat (tampilkan pesan istirahat). */
     public static final String EXTRA_FROM_BREAK = "from_break";
 
+    private static final int REQ_SELFIE_LOGIN = 701;
+
     private UserDao userDao;
     private SettingsDao settingsDao;
     private List<User> users;
+    private User pendingUser; // user yang sudah lolos PIN, menunggu selfie
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -96,17 +99,47 @@ public class LoginActivity extends AppCompatActivity {
                 etPin.setError("PIN salah");
                 return;
             }
-            // Clock in + simpan sesi.
-            new AttendanceDao(DatabaseHelper.getInstance(this))
-                    .log(auth.getId(), Attendance.EVENT_IN);
-            settingsDao.setCurrentUser(auth.getId(), auth.getName());
-            Toast.makeText(this, "Selamat bekerja, " + auth.getName() + " 👋",
-                    Toast.LENGTH_SHORT).show();
-            goToMain();
+            if (auth.isAdmin()) {
+                // Admin: login biasa tanpa absensi (tanpa clock in / selfie).
+                settingsDao.setCurrentUser(auth.getId(), auth.getName());
+                goToMain();
+                return;
+            }
+            // Staf: ambil selfie wajah dulu, baru clock in.
+            pendingUser = auth;
+            Intent cam = new Intent(this, CameraCaptureActivity.class);
+            cam.putExtra(CameraCaptureActivity.EXTRA_LABEL, "Clock In");
+            startActivityForResult(cam, REQ_SELFIE_LOGIN);
         });
     }
 
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_SELFIE_LOGIN && pendingUser != null) {
+            // Foto boleh null (kamera gagal/ditolak) — absensi tetap jalan.
+            String photo = data != null
+                    ? data.getStringExtra(CameraCaptureActivity.EXTRA_PHOTO_PATH) : null;
+            new AttendanceDao(DatabaseHelper.getInstance(this))
+                    .log(pendingUser.getId(), Attendance.EVENT_IN, photo);
+            settingsDao.setCurrentUser(pendingUser.getId(), pendingUser.getName());
+            Toast.makeText(this, "Selamat bekerja, " + pendingUser.getName() + " 👋",
+                    Toast.LENGTH_SHORT).show();
+            pendingUser = null;
+            goToMain();
+        }
+    }
+
     private void goToMain() {
+        // Kirim/retry rekap absensi yang tertunda saat karyawan login. Kalau di
+        // tanggal cut-off tidak ada yang login, ini yang menyusulkan di hari
+        // berikutnya (hingga email berhasil). Internal-guard: no-op kalau fitur
+        // mati / email belum diatur / sudah terkirim.
+        AttendanceRecap.maybeSendDueRecap(getApplicationContext(),
+                DatabaseHelper.getInstance(this), false);
+        AttendanceRecap.maybeSendDueWeeklyRecap(getApplicationContext(),
+                DatabaseHelper.getInstance(this), false);
+
         Intent i = new Intent(this, MainActivity.class);
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         startActivity(i);

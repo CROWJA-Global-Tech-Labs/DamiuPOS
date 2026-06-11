@@ -303,6 +303,29 @@ public class CustomerDao {
                 DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
     }
 
+    /** Tandai pelanggan baru saja di-follow-up (kirim pesan WA). */
+    public void markFollowedUp(long customerId) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        android.content.ContentValues v = new android.content.ContentValues();
+        v.put(DatabaseHelper.COL_LAST_FOLLOWUP_AT,
+                new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new java.util.Date()));
+        db.update(DatabaseHelper.TABLE_CUSTOMERS, v,
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
+    }
+
+    /** Pelanggan yang di-follow-up pada tanggal {@code date} ("yyyy-MM-dd"). */
+    public List<Customer> getFollowedUpOn(String date) {
+        List<Customer> list = new ArrayList<>();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor cursor = db.query(DatabaseHelper.TABLE_CUSTOMERS, null,
+                "date(" + DatabaseHelper.COL_LAST_FOLLOWUP_AT + ")=?",
+                new String[]{date}, null, null,
+                DatabaseHelper.COL_NAME + " COLLATE NOCASE ASC");
+        while (cursor.moveToNext()) list.add(cursorToCustomer(cursor));
+        cursor.close();
+        return list;
+    }
+
     /** Count of customers needing follow-up (last JUAL > days ago). */
     public int countFollowUpCandidates(int days) {
         SQLiteDatabase db = dbHelper.getReadableDatabase();

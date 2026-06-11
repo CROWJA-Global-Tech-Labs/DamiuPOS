@@ -49,10 +49,8 @@ public class SettingsActivity extends AppCompatActivity {
     private TextInputEditText etFollowupDays, etStockAlert, etFollowUpTemplate;
     private TextInputEditText etHargaBotolGalon, etResellerKomisi;
     private TextInputEditText etClaudeKey, etReplyTemplate, etAutoArchiveHours;
-    private TextInputEditText etAdminEmail, etSmtpUser, etSmtpPass, etSmtpHost, etSmtpPort;
-    private TextInputEditText etDailyNormalHours, etCutoffDay;
-    private SwitchMaterial switchPoints, switchWaAutoDetect, switchMultiUser;
-    private LinearLayout pointsConfigContainer, waAutoDetectConfig, multiUserConfig;
+    private SwitchMaterial switchPoints, switchWaAutoDetect;
+    private LinearLayout pointsConfigContainer, waAutoDetectConfig;
     private RadioGroup rgWaParseMode;
     private TextView tvNotifAccessStatus, tvRingtoneName, tvClaudeKeyStatus,
             tvClaudeLastStatus;
@@ -127,33 +125,9 @@ public class SettingsActivity extends AppCompatActivity {
             if (checked) updateNotifAccessStatus();
         });
 
-        // Multi user & absensi
-        switchMultiUser = findViewById(R.id.switchMultiUser);
-        multiUserConfig = findViewById(R.id.multiUserConfig);
-        etAdminEmail = findViewById(R.id.etAdminEmail);
-        etSmtpUser = findViewById(R.id.etSmtpUser);
-        etSmtpPass = findViewById(R.id.etSmtpPass);
-        etSmtpHost = findViewById(R.id.etSmtpHost);
-        etSmtpPort = findViewById(R.id.etSmtpPort);
-        boolean muEnabled = settingsDao.isMultiUserEnabled();
-        switchMultiUser.setChecked(muEnabled);
-        multiUserConfig.setVisibility(muEnabled ? View.VISIBLE : View.GONE);
-        etAdminEmail.setText(settingsDao.getAdminEmail());
-        etSmtpUser.setText(settingsDao.getSmtpUser());
-        etSmtpPass.setText(settingsDao.getSmtpPass());
-        etSmtpHost.setText(settingsDao.getSmtpHost());
-        etSmtpPort.setText(String.valueOf(settingsDao.getSmtpPort()));
-        etDailyNormalHours = findViewById(R.id.etDailyNormalHours);
-        etCutoffDay = findViewById(R.id.etCutoffDay);
-        double dnh = settingsDao.getDailyNormalHours();
-        etDailyNormalHours.setText(dnh == Math.rint(dnh)
-                ? String.valueOf((int) dnh) : String.valueOf(dnh));
-        etCutoffDay.setText(String.valueOf(settingsDao.getPayrollCutoffDay()));
-        switchMultiUser.setOnCheckedChangeListener((b, checked) ->
-                multiUserConfig.setVisibility(checked ? View.VISIBLE : View.GONE));
-        findViewById(R.id.btnKelolaUser).setOnClickListener(v ->
-                startActivity(new Intent(this, UserListActivity.class)));
-        findViewById(R.id.btnTestSmtp).setOnClickListener(v -> testSmtp());
+        // Multi user & absensi → pindah ke layar tersendiri (menu Karyawan).
+        findViewById(R.id.cardMultiUser).setOnClickListener(v ->
+                startActivity(new Intent(this, AttendanceSettingsActivity.class)));
 
         // Mode parsing
         String mode = settingsDao.getWaParseMode();
@@ -641,71 +615,6 @@ public class SettingsActivity extends AppCompatActivity {
         dialog.show();
     }
 
-    /**
-     * Tes konfigurasi SMTP pakai nilai yang sedang diisi (belum perlu disimpan):
-     * connect + auth + kirim email tes ke Email Admin (atau ke diri sendiri kalau
-     * kosong). Tampilkan progress, lalu hasil sukses/gagal beserta pesan error.
-     */
-    private void testSmtp() {
-        String host = etSmtpHost.getText() != null ? etSmtpHost.getText().toString().trim() : "";
-        String user = etSmtpUser.getText() != null ? etSmtpUser.getText().toString().trim() : "";
-        String pass = etSmtpPass.getText() != null ? etSmtpPass.getText().toString() : "";
-        String to = etAdminEmail.getText() != null ? etAdminEmail.getText().toString().trim() : "";
-        String portStr = etSmtpPort.getText() != null ? etSmtpPort.getText().toString().trim() : "";
-
-        if (host.isEmpty() || user.isEmpty() || pass.isEmpty()) {
-            Toast.makeText(this,
-                    "Lengkapi SMTP host, email pengirim, dan password dulu",
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
-        int port;
-        try {
-            port = portStr.isEmpty() ? 587 : Integer.parseInt(portStr);
-        } catch (NumberFormatException e) {
-            etSmtpPort.setError("Port tidak valid");
-            return;
-        }
-        final String dest = to.isEmpty() ? user : to;
-
-        // Progress indeterminate.
-        int pad = (int) (20 * getResources().getDisplayMetrics().density);
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        row.setPadding(pad, pad, pad, pad);
-        android.widget.ProgressBar pb = new android.widget.ProgressBar(this);
-        TextView tv = new TextView(this);
-        tv.setText("Menguji koneksi SMTP…");
-        tv.setPadding((int) (16 * getResources().getDisplayMetrics().density), 0, 0, 0);
-        row.addView(pb);
-        row.addView(tv);
-        AlertDialog progress = new AlertDialog.Builder(this)
-                .setView(row).setCancelable(false).create();
-        progress.show();
-
-        ShiftEmailSender.testAsync(host, port, user, pass, dest, (ok, msg) -> {
-            if (isFinishing() || isDestroyed()) return;
-            progress.dismiss();
-            if (ok) {
-                new AlertDialog.Builder(this)
-                        .setTitle("SMTP OK ✓")
-                        .setMessage("Koneksi & autentikasi berhasil.\n\nEmail tes terkirim ke "
-                                + dest + ". Cek inbox untuk memastikan.")
-                        .setPositiveButton("Tutup", null)
-                        .show();
-            } else {
-                new AlertDialog.Builder(this)
-                        .setTitle("SMTP Gagal")
-                        .setMessage((msg != null ? msg : "Error tidak diketahui")
-                                + "\n\nPeriksa host/port, email & password. Gmail wajib pakai "
-                                + "App Password (bukan password biasa) dengan 2FA aktif.")
-                        .setPositiveButton("Tutup", null)
-                        .show();
-            }
-        });
-    }
-
     private void save() {
         String ongkirStr = etDefaultOngkir.getText() != null
                 ? etDefaultOngkir.getText().toString().trim() : "";
@@ -724,66 +633,7 @@ public class SettingsActivity extends AppCompatActivity {
         settingsDao.setDepotAddress(etDepotAddress.getText() != null ? etDepotAddress.getText().toString().trim() : "");
         settingsDao.setDepotPhone(etDepotPhone.getText() != null ? etDepotPhone.getText().toString().trim() : "");
 
-        // Multi user & absensi
-        boolean multiUser = switchMultiUser.isChecked();
-        boolean adminJustCreated = false;
-        if (multiUser) {
-            // Anti-terkunci: pastikan selalu ada admin. Kalau belum ada,
-            // buat admin default (Admin / 00000) supaya owner bisa login.
-            adminJustCreated = userDao.ensureDefaultAdmin();
-        }
-        settingsDao.setMultiUserEnabled(multiUser);
-        // Email laporan shift + akun SMTP pengirim.
-        settingsDao.setAdminEmail(etAdminEmail.getText() != null
-                ? etAdminEmail.getText().toString().trim() : "");
-        settingsDao.setSmtpUser(etSmtpUser.getText() != null
-                ? etSmtpUser.getText().toString().trim() : "");
-        settingsDao.setSmtpPass(etSmtpPass.getText() != null
-                ? etSmtpPass.getText().toString() : "");
-        settingsDao.setSmtpHost(etSmtpHost.getText() != null
-                ? etSmtpHost.getText().toString().trim() : "");
-        String portStr = etSmtpPort.getText() != null
-                ? etSmtpPort.getText().toString().trim() : "";
-        if (!portStr.isEmpty()) {
-            try {
-                settingsDao.setSmtpPort(Integer.parseInt(portStr));
-            } catch (NumberFormatException e) {
-                etSmtpPort.setError("Port tidak valid");
-                return;
-            }
-        }
-        // Rekap absensi & lembur
-        String dnhStr = etDailyNormalHours.getText() != null
-                ? etDailyNormalHours.getText().toString().trim() : "";
-        if (!dnhStr.isEmpty()) {
-            try {
-                settingsDao.setDailyNormalHours(Double.parseDouble(dnhStr));
-            } catch (NumberFormatException e) {
-                etDailyNormalHours.setError("Jam tidak valid");
-                return;
-            }
-        }
-        String cutoffStr = etCutoffDay.getText() != null
-                ? etCutoffDay.getText().toString().trim() : "";
-        if (!cutoffStr.isEmpty()) {
-            try {
-                int cd = Integer.parseInt(cutoffStr);
-                if (cd < 1 || cd > 31) { etCutoffDay.setError("1–31"); return; }
-                settingsDao.setPayrollCutoffDay(cd);
-            } catch (NumberFormatException e) {
-                etCutoffDay.setError("Tanggal tidak valid");
-                return;
-            }
-        }
-        if (adminJustCreated) {
-            new AlertDialog.Builder(this)
-                    .setTitle("Admin default dibuat")
-                    .setMessage("Login admin dibuat otomatis:\n\nNama: "
-                            + User.DEFAULT_ADMIN_NAME + "\nPIN: " + User.DEFAULT_ADMIN_PIN
-                            + "\n\nSegera ganti PIN lewat Kelola Pengguna demi keamanan.")
-                    .setPositiveButton("Mengerti", null)
-                    .show();
-        }
+        // (Multi user & absensi dipindah ke AttendanceSettingsActivity.)
 
         // Points settings
         boolean pointsEnabled = switchPoints.isChecked();

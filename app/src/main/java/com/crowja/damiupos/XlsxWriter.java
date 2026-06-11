@@ -11,14 +11,31 @@ import java.util.zip.ZipOutputStream;
 /**
  * Penulis XLSX minimal tanpa dependensi (Apache POI tidak dipakai untuk
  * membangun workbook — hanya untuk enkripsi). Sebuah .xlsx hanyalah ZIP berisi
- * beberapa part XML; di sini kita tulis satu sheet dengan inline strings &
- * angka. Cukup untuk laporan shift, dan hasilnya valid dibuka Excel/LibreOffice.
+ * beberapa part XML; di sini kita tulis satu sheet dengan inline strings, angka,
+ * lebar kolom, border, dan style header tebal.
  *
- * <p>Sel: {@link Number} → numeric cell, selain itu → inline string.
+ * <p>Sel boleh berupa {@link Cell} (nilai + index style) atau objek biasa
+ * ({@link Number} → numeric, selain itu → inline string, style default).
  */
 public final class XlsxWriter {
 
     private XlsxWriter() {}
+
+    // Index style yang tersedia (lihat STYLES_XML / cellXfs).
+    public static final int STYLE_DEFAULT = 0; // normal, tanpa border
+    public static final int STYLE_TITLE = 1;   // tebal (judul)
+    public static final int STYLE_HEADER = 2;  // tebal + fill abu + border + center
+    public static final int STYLE_DATA = 3;    // border tipis semua sisi
+
+    /** Sel dengan style eksplisit. */
+    public static final class Cell {
+        final Object value;
+        final int style;
+        public Cell(Object value, int style) {
+            this.value = value;
+            this.style = style;
+        }
+    }
 
     private static final String CONTENT_TYPES =
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
@@ -27,6 +44,7 @@ public final class XlsxWriter {
             "<Default Extension=\"xml\" ContentType=\"application/xml\"/>" +
             "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>" +
             "<Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>" +
+            "<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>" +
             "</Types>";
 
     private static final String ROOT_RELS =
@@ -39,17 +57,70 @@ public final class XlsxWriter {
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
             "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
             "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>" +
+            "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>" +
             "</Relationships>";
 
-    /** Tulis satu sheet ke {@code out}. Tidak menutup {@code out}. */
+    // Fills: 0 none, 1 gray125 (wajib ada index ini per konvensi Excel),
+    // 2 solid abu untuk header. Borders: 0 kosong, 1 thin semua sisi.
+    private static final String STYLES_XML =
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
+            "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">" +
+            "<fonts count=\"2\">" +
+            "<font><sz val=\"11\"/><name val=\"Calibri\"/></font>" +
+            "<font><b/><sz val=\"11\"/><name val=\"Calibri\"/></font>" +
+            "</fonts>" +
+            "<fills count=\"3\">" +
+            "<fill><patternFill patternType=\"none\"/></fill>" +
+            "<fill><patternFill patternType=\"gray125\"/></fill>" +
+            "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFD9D9D9\"/><bgColor indexed=\"64\"/></patternFill></fill>" +
+            "</fills>" +
+            "<borders count=\"2\">" +
+            "<border><left/><right/><top/><bottom/><diagonal/></border>" +
+            "<border>" +
+            "<left style=\"thin\"><color indexed=\"64\"/></left>" +
+            "<right style=\"thin\"><color indexed=\"64\"/></right>" +
+            "<top style=\"thin\"><color indexed=\"64\"/></top>" +
+            "<bottom style=\"thin\"><color indexed=\"64\"/></bottom>" +
+            "<diagonal/></border>" +
+            "</borders>" +
+            "<cellStyleXfs count=\"1\">" +
+            "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/>" +
+            "</cellStyleXfs>" +
+            "<cellXfs count=\"4\">" +
+            // 0 default
+            "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>" +
+            // 1 title (bold)
+            "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyFont=\"1\"/>" +
+            // 2 header (bold + fill + border + center + wrap)
+            "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"2\" borderId=\"1\" xfId=\"0\" applyFont=\"1\" applyFill=\"1\" applyBorder=\"1\" applyAlignment=\"1\">" +
+            "<alignment horizontal=\"center\" vertical=\"center\" wrapText=\"1\"/></xf>" +
+            // 3 data (border)
+            "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"1\" xfId=\"0\" applyBorder=\"1\"/>" +
+            "</cellXfs>" +
+            "<cellStyles count=\"1\">" +
+            "<cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/>" +
+            "</cellStyles>" +
+            "</styleSheet>";
+
+    /** Tulis satu sheet ke {@code out} (tanpa lebar kolom). Tidak menutup {@code out}. */
     public static void write(OutputStream out, String sheetName, List<Object[]> rows)
             throws IOException {
+        write(out, sheetName, rows, null);
+    }
+
+    /**
+     * Tulis satu sheet ke {@code out} dengan {@code colWidths} (lebar kolom dalam
+     * satuan karakter Excel; null = default). Tidak menutup {@code out}.
+     */
+    public static void write(OutputStream out, String sheetName, List<Object[]> rows,
+                             double[] colWidths) throws IOException {
         ZipOutputStream zos = new ZipOutputStream(out);
         put(zos, "[Content_Types].xml", CONTENT_TYPES);
         put(zos, "_rels/.rels", ROOT_RELS);
         put(zos, "xl/workbook.xml", workbookXml(sheetName));
         put(zos, "xl/_rels/workbook.xml.rels", WORKBOOK_RELS);
-        put(zos, "xl/worksheets/sheet1.xml", sheetXml(rows));
+        put(zos, "xl/styles.xml", STYLES_XML);
+        put(zos, "xl/worksheets/sheet1.xml", sheetXml(rows, colWidths));
         zos.finish();
     }
 
@@ -66,24 +137,44 @@ public final class XlsxWriter {
                 "</workbook>";
     }
 
-    private static String sheetXml(List<Object[]> rows) {
+    private static String sheetXml(List<Object[]> rows, double[] colWidths) {
         StringBuilder sb = new StringBuilder();
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
         sb.append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
+
+        // <cols> harus sebelum <sheetData>.
+        if (colWidths != null && colWidths.length > 0) {
+            sb.append("<cols>");
+            for (int i = 0; i < colWidths.length; i++) {
+                int col = i + 1;
+                sb.append("<col min=\"").append(col).append("\" max=\"").append(col)
+                  .append("\" width=\"").append(colWidths[i]).append("\" customWidth=\"1\"/>");
+            }
+            sb.append("</cols>");
+        }
+
         sb.append("<sheetData>");
         int r = 1;
         for (Object[] row : rows) {
             sb.append("<row r=\"").append(r).append("\">");
             int col = 0;
             if (row != null) {
-                for (Object cell : row) {
+                for (Object raw : row) {
+                    Object value = raw;
+                    int style = STYLE_DEFAULT;
+                    if (raw instanceof Cell) {
+                        value = ((Cell) raw).value;
+                        style = ((Cell) raw).style;
+                    }
                     String ref = colName(col) + r;
-                    if (cell instanceof Number) {
-                        sb.append("<c r=\"").append(ref).append("\"><v>")
-                          .append(numStr((Number) cell)).append("</v></c>");
+                    String sAttr = style != 0 ? " s=\"" + style + "\"" : "";
+                    if (value instanceof Number) {
+                        sb.append("<c r=\"").append(ref).append("\"").append(sAttr)
+                          .append("><v>").append(numStr((Number) value)).append("</v></c>");
                     } else {
-                        String text = cell != null ? cell.toString() : "";
-                        sb.append("<c r=\"").append(ref).append("\" t=\"inlineStr\"><is><t xml:space=\"preserve\">")
+                        String text = value != null ? value.toString() : "";
+                        sb.append("<c r=\"").append(ref).append("\"").append(sAttr)
+                          .append(" t=\"inlineStr\"><is><t xml:space=\"preserve\">")
                           .append(xml(text)).append("</t></is></c>");
                     }
                     col++;
@@ -143,8 +234,13 @@ public final class XlsxWriter {
 
     /** Helper: bangun xlsx ke byte[] (dipakai sebelum enkripsi). */
     public static byte[] toBytes(String sheetName, List<Object[]> rows) throws IOException {
+        return toBytes(sheetName, rows, null);
+    }
+
+    public static byte[] toBytes(String sheetName, List<Object[]> rows, double[] colWidths)
+            throws IOException {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        write(bos, sheetName, rows);
+        write(bos, sheetName, rows, colWidths);
         return bos.toByteArray();
     }
 }

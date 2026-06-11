@@ -5,8 +5,6 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.LayoutInflater;
-import android.view.Menu;
-import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -74,22 +72,9 @@ public class UserListActivity extends AppCompatActivity {
         rv.setAdapter(adapter);
 
         findViewById(R.id.fabAddUser).setOnClickListener(v -> showUserForm(null));
-    }
-
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        menu.add(0, 1, 0, "Export Rekap Absensi")
-                .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
-        return true;
-    }
-
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        if (item.getItemId() == 1) {
-            showRecapExportDialog();
-            return true;
-        }
-        return super.onOptionsItemSelected(item);
+        findViewById(R.id.btnExportRekap).setOnClickListener(v -> showRecapExportDialog());
+        findViewById(R.id.btnPengaturanAbsensi).setOnClickListener(v ->
+                startActivity(new Intent(this, AttendanceSettingsActivity.class)));
     }
 
     private final SimpleDateFormat sdfDay = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
@@ -156,35 +141,43 @@ public class UserListActivity extends AppCompatActivity {
                     Toast.LENGTH_LONG).show();
             return;
         }
-        String adminPin = userDao.getPrimaryAdminPin();
-        if (adminPin == null || adminPin.isEmpty()) {
-            Toast.makeText(this, "Belum ada admin — tambah admin dulu untuk password file",
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
-        File f = AttendanceRecap.exportEncrypted(this, DatabaseHelper.getInstance(this),
-                start, end, settingsDao.getDailyNormalHours(), adminPin);
-        if (f == null) {
-            Toast.makeText(this, "Gagal membuat rekap (tidak ada data / error enkripsi)",
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
-        new AlertDialog.Builder(this)
-                .setTitle("Rekap dibuat ✓")
-                .setMessage("File terenkripsi (password = PIN admin):\n" + f.getName()
-                        + "\n\nBagikan sekarang?")
-                .setPositiveButton("Bagikan", (d, w) -> shareRecap(f))
-                .setNegativeButton("Tutup", null)
-                .show();
+        Toast.makeText(this, "Membuat rekap…", Toast.LENGTH_SHORT).show();
+        // Bisa berat (kumpulkan foto + zip) → jalankan di background.
+        final String s = start, e = end;
+        new Thread(() -> {
+            File f = AttendanceRecap.exportRecapZip(this, DatabaseHelper.getInstance(this),
+                    s, e, settingsDao.getDailyNormalHours());
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (f == null) {
+                    Toast.makeText(this, "Gagal membuat rekap (tidak ada data / error)",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
+                String sizeMb = String.format(Locale.US, "%.1f MB", f.length() / 1048576.0);
+                new AlertDialog.Builder(this)
+                        .setTitle("Rekap dibuat ✓")
+                        .setMessage("File ZIP (data XLSX + foto, " + sizeMb + "):\n" + f.getName()
+                                + "\n\nBagikan sekarang?")
+                        .setPositiveButton("Bagikan", (d, w) -> shareRecap(f))
+                        .setNegativeButton("Tutup", null)
+                        .show();
+            });
+        }, "recap-export").start();
     }
 
+    /** Bagikan file rekap ZIP (data + foto) lewat chooser sistem. */
     private void shareRecap(File f) {
         try {
             Uri uri = FileProvider.getUriForFile(this,
                     getPackageName() + ".fileprovider", f);
+            String mime = "application/zip";
             Intent i = new Intent(Intent.ACTION_SEND);
-            i.setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+            i.setType(mime);
             i.putExtra(Intent.EXTRA_STREAM, uri);
+            i.setClipData(new android.content.ClipData(
+                    "Rekap Absensi", new String[]{mime},
+                    new android.content.ClipData.Item(uri)));
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             startActivity(Intent.createChooser(i, "Bagikan Rekap Absensi"));
         } catch (Exception e) {

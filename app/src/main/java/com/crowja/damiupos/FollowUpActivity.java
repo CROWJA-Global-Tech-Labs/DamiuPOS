@@ -447,6 +447,8 @@ public class FollowUpActivity extends AppCompatActivity {
                 } catch (Exception ignored2) {}
             }
             startActivity(i);
+            // Catat: pelanggan ini di-follow-up hari ini (untuk laporan harian).
+            customerDao.markFollowedUp(c.getId());
         } catch (Exception e) {
             Toast.makeText(this, "Tidak dapat membuka WhatsApp", Toast.LENGTH_SHORT).show();
         }

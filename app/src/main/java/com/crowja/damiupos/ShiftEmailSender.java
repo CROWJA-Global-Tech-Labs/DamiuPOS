@@ -6,6 +6,7 @@ import android.os.Looper;
 import android.widget.Toast;
 
 import java.io.File;
+import java.util.List;
 import java.util.Properties;
 
 import javax.activation.DataHandler;
@@ -36,6 +37,31 @@ public final class ShiftEmailSender {
         void onResult(boolean ok, String message);
     }
 
+    /** Callback hasil kirim email (dipanggil di background thread pengirim). */
+    public interface SendCallback {
+        void onDone(boolean success, String error);
+    }
+
+    /**
+     * Versi sendAsync dengan callback hasil & TANPA toast — pemanggil yang
+     * menentukan tindak lanjut (mis. tandai rekap terkirim hanya kalau sukses,
+     * supaya retry di login berikutnya kalau gagal).
+     */
+    public static void sendAsync(Context ctx, String host, int port,
+                                 String user, String pass, String to,
+                                 String subject, String body, List<File> attachments,
+                                 SendCallback cb) {
+        new Thread(() -> {
+            String err = null;
+            try {
+                send(host, port, user, pass, to, subject, body, attachments);
+            } catch (Throwable t) {
+                err = t.getMessage() != null ? t.getMessage() : t.toString();
+            }
+            if (cb != null) cb.onDone(err == null, err);
+        }, "shift-email-cb").start();
+    }
+
     /**
      * Tes konfigurasi SMTP: connect + auth + kirim 1 email tes ke {@code to}.
      * Hasil (sukses/pesan error) dikirim ke {@code cb} di main thread.
@@ -50,7 +76,7 @@ public final class ShiftEmailSender {
                         "Ini email tes dari DAMIU POS.\n\nKalau Anda menerima pesan ini, "
                                 + "konfigurasi SMTP & email admin sudah benar dan laporan "
                                 + "shift akan terkirim otomatis saat Pulang.",
-                        null);
+                        (List<File>) null);
             } catch (Throwable t) {
                 err = t.getMessage() != null ? t.getMessage() : t.toString();
             }
@@ -62,32 +88,27 @@ public final class ShiftEmailSender {
 
     public static void sendAsync(Context ctx, String host, int port,
                                  String user, String pass, String to,
-                                 String subject, String body, File attachment) {
+                                 String subject, String body, List<File> attachments) {
         final Context app = ctx.getApplicationContext();
         new Thread(() -> {
             String err = null;
             try {
-                send(host, port, user, pass, to, subject, body, attachment);
+                send(host, port, user, pass, to, subject, body, attachments);
             } catch (Throwable t) {
                 err = t.getMessage() != null ? t.getMessage() : t.toString();
             }
             final String fErr = err;
-            new Handler(Looper.getMainLooper()).post(() -> {
-                if (fErr == null) {
-                    Toast.makeText(app, "Laporan shift terkirim ke email admin ✓",
-                            Toast.LENGTH_LONG).show();
-                } else {
-                    Toast.makeText(app,
-                            "Gagal kirim email laporan: " + fErr
-                                    + "\n(file tetap tersimpan di perangkat)",
-                            Toast.LENGTH_LONG).show();
-                }
-            });
+            // Sukses → diam (tanpa toast). Hanya tampilkan toast kalau gagal.
+            if (fErr != null) {
+                new Handler(Looper.getMainLooper()).post(() ->
+                        Toast.makeText(app, "Gagal kirim email laporan: " + fErr,
+                                Toast.LENGTH_LONG).show());
+            }
         }, "shift-email").start();
     }
 
     private static void send(String host, int port, String user, String pass,
-                             String to, String subject, String body, File attachment)
+                             String to, String subject, String body, List<File> attachments)
             throws Exception {
         Properties props = new Properties();
         props.put("mail.smtp.auth", "true");
@@ -123,11 +144,14 @@ public final class ShiftEmailSender {
         MimeMultipart mp = new MimeMultipart();
         mp.addBodyPart(textPart);
 
-        if (attachment != null && attachment.exists()) {
-            MimeBodyPart att = new MimeBodyPart();
-            att.setDataHandler(new DataHandler(new FileDataSource(attachment)));
-            att.setFileName(attachment.getName());
-            mp.addBodyPart(att);
+        if (attachments != null) {
+            for (File f : attachments) {
+                if (f == null || !f.exists()) continue;
+                MimeBodyPart att = new MimeBodyPart();
+                att.setDataHandler(new DataHandler(new FileDataSource(f)));
+                att.setFileName(f.getName());
+                mp.addBodyPart(att);
+            }
         }
 
         msg.setContent(mp);

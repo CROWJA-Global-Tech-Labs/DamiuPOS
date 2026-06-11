@@ -212,30 +212,71 @@ public class MainActivity extends AppCompatActivity {
         // Operator bar (multi user & absensi)
         View btnIstirahat = findViewById(R.id.btnIstirahat);
         View btnClockOut = findViewById(R.id.btnClockOut);
+        View btnAdminLogout = findViewById(R.id.btnAdminLogout);
         if (btnIstirahat != null) btnIstirahat.setOnClickListener(v -> doIstirahat());
-        // Pulang langsung (tanpa dialog konfirmasi) → laporan auto-kirim ke email admin.
-        if (btnClockOut != null) btnClockOut.setOnClickListener(v -> doClockOut());
+        // Pulang: ambil selfie dulu → catat OUT → kirim laporan ke email admin.
+        if (btnClockOut != null) btnClockOut.setOnClickListener(v -> startSelfieThenClockOut());
+        // Admin: logout biasa (tanpa absensi/laporan).
+        if (btnAdminLogout != null) btnAdminLogout.setOnClickListener(v -> doAdminLogout());
+
+        // Menu Karyawan (absensi) — admin only.
+        View cardKaryawan = findViewById(R.id.cardKaryawan);
+        if (cardKaryawan != null) {
+            cardKaryawan.setOnClickListener(v ->
+                    startActivity(new Intent(this, UserListActivity.class)));
+        }
     }
 
-    /** Update bar operator: tampil hanya saat multi user aktif & sudah login. */
+    /**
+     * Update bar operator: tampil saat multi user aktif & sudah login.
+     * Staf → tombol Istirahat + Pulang (+ info shift). Admin → tanpa absensi,
+     * hanya tombol Logout, + tile Karyawan.
+     */
     private void refreshOperatorBar() {
         View card = findViewById(R.id.cardOperator);
         if (card == null) return;
-        boolean show = settingsDao.isMultiUserEnabled() && settingsDao.getCurrentUserId() > 0;
+        long uid = settingsDao.getCurrentUserId();
+        boolean show = settingsDao.isMultiUserEnabled() && uid > 0;
         card.setVisibility(show ? View.VISIBLE : View.GONE);
+
+        boolean isAdmin = false;
+        if (show) {
+            com.crowja.damiupos.model.User cur =
+                    new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid);
+            isAdmin = cur != null && cur.isAdmin();
+        }
+
+        // Menu Karyawan hanya untuk admin yang sedang login.
+        View cardKaryawan = findViewById(R.id.cardKaryawan);
+        if (cardKaryawan != null) cardKaryawan.setVisibility(isAdmin ? View.VISIBLE : View.GONE);
+
         if (!show) return;
 
+        View btnIstirahat = findViewById(R.id.btnIstirahat);
+        View btnClockOut = findViewById(R.id.btnClockOut);
+        View btnAdminLogout = findViewById(R.id.btnAdminLogout);
         TextView tvName = findViewById(R.id.tvOperatorName);
         TextView tvShift = findViewById(R.id.tvOperatorShift);
         tvName.setText(settingsDao.getCurrentUserName());
-        try {
-            ShiftReporter.Shift s = ShiftReporter.computeShift(
-                    DatabaseHelper.getInstance(this), settingsDao.getCurrentUserId());
-            String info = "Kerja " + ShiftReporter.formatDuration(s.workMillis);
-            if (s.breakCount > 0) info += " • Istirahat " + s.breakCount + "x";
-            tvShift.setText(info);
-        } catch (Exception e) {
-            tvShift.setText("Sedang bekerja");
+
+        if (isAdmin) {
+            if (btnIstirahat != null) btnIstirahat.setVisibility(View.GONE);
+            if (btnClockOut != null) btnClockOut.setVisibility(View.GONE);
+            if (btnAdminLogout != null) btnAdminLogout.setVisibility(View.VISIBLE);
+            tvShift.setText("Admin");
+        } else {
+            if (btnIstirahat != null) btnIstirahat.setVisibility(View.VISIBLE);
+            if (btnClockOut != null) btnClockOut.setVisibility(View.VISIBLE);
+            if (btnAdminLogout != null) btnAdminLogout.setVisibility(View.GONE);
+            try {
+                ShiftReporter.Shift s = ShiftReporter.computeShift(
+                        DatabaseHelper.getInstance(this), uid);
+                String info = "Kerja " + ShiftReporter.formatDuration(s.workMillis);
+                if (s.breakCount > 0) info += " • Istirahat " + s.breakCount + "x";
+                tvShift.setText(info);
+            } catch (Exception e) {
+                tvShift.setText("Sedang bekerja");
+            }
         }
     }
 
@@ -264,28 +305,50 @@ public class MainActivity extends AppCompatActivity {
                 .show();
     }
 
-    /**
-     * Tombol Pulang (clock out): langsung (tanpa dialog) → export laporan shift
-     * sebagai XLSX terenkripsi (password = PIN admin), auto-kirim ke email admin
-     * via SMTP di background, catat OUT, lepas sesi, kembali ke login.
-     */
-    private void doClockOut() {
+    private static final int REQ_SELFIE_LOGOUT = 702;
+    private long pendingLogoutUid;
+    private String pendingLogoutName;
+
+    /** Tombol Pulang: ambil selfie wajah dulu, baru proses clock out. */
+    private void startSelfieThenClockOut() {
         long uid = settingsDao.getCurrentUserId();
-        String uname = settingsDao.getCurrentUserName();
+        if (uid <= 0) return;
+        pendingLogoutUid = uid;
+        pendingLogoutName = settingsDao.getCurrentUserName();
+        Intent cam = new Intent(this, CameraCaptureActivity.class);
+        cam.putExtra(CameraCaptureActivity.EXTRA_LABEL, "Pulang");
+        startActivityForResult(cam, REQ_SELFIE_LOGOUT);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_SELFIE_LOGOUT) {
+            String photo = data != null
+                    ? data.getStringExtra(CameraCaptureActivity.EXTRA_PHOTO_PATH) : null;
+            finishClockOut(photo);
+        }
+    }
+
+    /**
+     * Selesaikan Pulang: catat OUT (+foto), kirim laporan shift (teks + foto
+     * login & pulang) ke email admin, rekap bulanan kalau cut-off, lalu login.
+     */
+    private void finishClockOut(String logoutPhoto) {
+        long uid = pendingLogoutUid > 0 ? pendingLogoutUid : settingsDao.getCurrentUserId();
+        String uname = pendingLogoutName != null ? pendingLogoutName : settingsDao.getCurrentUserName();
         if (uid <= 0) return;
         DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
-        String adminPin = new com.crowja.damiupos.db.UserDao(dbHelper).getPrimaryAdminPin();
+        com.crowja.damiupos.db.AttendanceDao attDao = new AttendanceDao(dbHelper);
+
+        // Foto login diambil SEBELUM OUT (setelah OUT, shift berjalan tertutup).
+        String loginPhoto = attDao.getCurrentShiftLoginPhoto(uid);
         String summary = ShiftReporter.buildSummaryText(this, dbHelper, uid, uname);
 
-        // 1) Export laporan shift → XLSX terenkripsi dengan PIN admin (fallback CSV).
-        //    Dibuat SEBELUM event OUT karena dihitung dari shift yang masih berjalan.
-        java.io.File report = ShiftReporter.exportEncryptedShiftXlsx(
-                this, dbHelper, uid, uname, adminPin);
-        if (report == null) {
-            report = ShiftReporter.exportShiftCsv(this, dbHelper, uid, uname);
-        }
+        // Catat OUT + foto pulang.
+        attDao.log(uid, Attendance.EVENT_OUT, logoutPhoto);
 
-        // 2) Auto-kirim laporan shift ke email admin via SMTP (background).
+        // Kirim laporan shift (teks + foto login & pulang) ke email admin.
         if (settingsDao.isShiftEmailConfigured()) {
             String depot = settingsDao.getDepotName();
             if (depot == null || depot.isEmpty()) depot = "DAMIU POS";
@@ -293,27 +356,30 @@ public class MainActivity extends AppCompatActivity {
                     new Locale("id", "ID")).format(new java.util.Date());
             String subject = "Laporan Shift - " + depot + " - " + uname + " - " + stamp;
             String body = summary
-                    + "\n\n---\nFile laporan (XLSX) terlampir & dilindungi password (PIN admin)."
+                    + "\n\nFoto wajah saat Clock In & Pulang terlampir."
                     + "\nDikirim otomatis oleh DAMIU POS.";
+            java.util.List<java.io.File> atts = new java.util.ArrayList<>();
+            addIfExists(atts, loginPhoto);
+            addIfExists(atts, logoutPhoto);
             ShiftEmailSender.sendAsync(getApplicationContext(),
                     settingsDao.getSmtpHost(), settingsDao.getSmtpPort(),
                     settingsDao.getSmtpUser(), settingsDao.getSmtpPass(),
-                    settingsDao.getAdminEmail(), subject, body, report);
-            Toast.makeText(this, "Mengirim laporan ke email admin…",
-                    Toast.LENGTH_SHORT).show();
+                    settingsDao.getAdminEmail(), subject, body, atts);
         } else {
             Toast.makeText(this,
-                    "Email/SMTP admin belum diatur di Pengaturan — laporan tersimpan di perangkat",
+                    "Email/SMTP admin belum diatur — laporan tidak terkirim",
                     Toast.LENGTH_LONG).show();
         }
 
-        // 3) Catat OUT (supaya shift hari ini lengkap di data rekap di bawah).
-        new AttendanceDao(dbHelper).log(uid, Attendance.EVENT_OUT);
+        // Rekap absensi bulanan + rekap pekanan otomatis (periode terbaru yang
+        // selesai) — auto retry di hari berikutnya kalau di hari trigger tidak
+        // ada yang login.
+        AttendanceRecap.maybeSendDueRecap(getApplicationContext(), dbHelper, true);
+        AttendanceRecap.maybeSendDueWeeklyRecap(getApplicationContext(), dbHelper, true);
 
-        // 4) Rekap absensi bulanan otomatis kalau hari ini tanggal cut-off.
-        maybeSendMonthlyRecap(dbHelper, adminPin);
-
-        // 5) Lepas sesi + kembali ke login.
+        // Lepas sesi + kembali ke login.
+        pendingLogoutUid = 0;
+        pendingLogoutName = null;
         settingsDao.clearCurrentUser();
         Intent i = new Intent(this, LoginActivity.class);
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
@@ -321,38 +387,21 @@ public class MainActivity extends AppCompatActivity {
         finish();
     }
 
-    /**
-     * Di tanggal cut-off (configurable), kirim sekali rekap absensi bulanan
-     * (periode cutoff+1 bulan lalu s/d cutoff bulan ini) sebagai XLSX terenkripsi
-     * ke email admin. Guard {@code lastRecapPeriod} mencegah kirim berulang
-     * walau banyak staff Pulang di hari yang sama.
-     */
-    private void maybeSendMonthlyRecap(DatabaseHelper dbHelper, String adminPin) {
-        int cutoff = settingsDao.getPayrollCutoffDay();
-        if (!AttendanceRecap.isCutoffToday(cutoff)) return;
-        if (!settingsDao.isShiftEmailConfigured()) return;
-        String[] period = AttendanceRecap.monthlyPeriod(cutoff);
-        String periodId = period[1]; // tanggal akhir = identitas periode
-        if (periodId.equals(settingsDao.getLastRecapPeriod())) return; // sudah terkirim
-
-        java.io.File recap = AttendanceRecap.exportEncrypted(this, dbHelper,
-                period[0], period[1], settingsDao.getDailyNormalHours(), adminPin);
-        if (recap == null) return;
-
-        String depot = settingsDao.getDepotName();
-        if (depot == null || depot.isEmpty()) depot = "DAMIU POS";
-        String subject = "Rekap Absensi - " + depot + " - " + period[0] + " s/d " + period[1];
-        String body = "Rekapitulasi absensi staff periode " + period[0] + " s/d "
-                + period[1] + ".\n\nFile XLSX terlampir & dilindungi password (PIN admin)."
-                + "\nDikirim otomatis oleh DAMIU POS.";
-        ShiftEmailSender.sendAsync(getApplicationContext(),
-                settingsDao.getSmtpHost(), settingsDao.getSmtpPort(),
-                settingsDao.getSmtpUser(), settingsDao.getSmtpPass(),
-                settingsDao.getAdminEmail(), subject, body, recap);
-        settingsDao.setLastRecapPeriod(periodId);
-        Toast.makeText(this, "Mengirim rekap absensi bulanan ke email admin…",
-                Toast.LENGTH_LONG).show();
+    private static void addIfExists(java.util.List<java.io.File> list, String path) {
+        if (path == null || path.isEmpty()) return;
+        java.io.File f = new java.io.File(path);
+        if (f.exists()) list.add(f);
     }
+
+    /** Admin: logout biasa tanpa absensi/laporan. */
+    private void doAdminLogout() {
+        settingsDao.clearCurrentUser();
+        Intent i = new Intent(this, LoginActivity.class);
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(i);
+        finish();
+    }
+
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {

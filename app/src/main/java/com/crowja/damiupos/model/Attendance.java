@@ -11,6 +11,7 @@ public class Attendance {
     private long userId;
     private String event;
     private String ts; // "yyyy-MM-dd HH:mm:ss"
+    private String photoPath; // selfie wajah saat IN/OUT (nullable)
 
     public Attendance() {}
 
@@ -31,4 +32,7 @@ public class Attendance {
 
     public String getTs() { return ts; }
     public void setTs(String ts) { this.ts = ts; }
+
+    public String getPhotoPath() { return photoPath; }
+    public void setPhotoPath(String photoPath) { this.photoPath = photoPath; }
 }

@@ -21,15 +21,46 @@
                 android:layout_height="?attr/actionBarSize"
                 android:background="@color/primary"
                 app:navigationIcon="?attr/homeAsUpIndicator"
-                app:title="Pengguna &amp; Absensi"
+                app:title="Karyawan"
                 app:titleTextColor="@color/white" />
         </com.google.android.material.appbar.AppBarLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnPengaturanAbsensi"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="12dp"
+            android:text="Pengaturan Multi User &amp; Absensi"
+            android:textAllCaps="false"
+            app:cornerRadius="12dp"
+            app:icon="@android:drawable/ic_menu_preferences"
+            app:iconGravity="textStart" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnExportRekap"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="8dp"
+            android:text="Export Rekap Absensi"
+            android:textAllCaps="false"
+            app:backgroundTint="#00897B"
+            app:cornerRadius="12dp"
+            app:icon="@android:drawable/ic_menu_save"
+            app:iconGravity="textStart" />
 
         <TextView
             android:id="@+id/tvUserHint"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:padding="16dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="8dp"
             android:text="Tap pengguna untuk edit. Tap ikon jam untuk riwayat absensi."
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />

@@ -85,6 +85,11 @@ public class SettingsDao {
     /** Periode rekap terakhir yang sudah terkirim otomatis (mis. "2026-06-28")
      *  — guard supaya tidak kirim berkali-kali di hari cut-off. */
     public static final String KEY_LAST_RECAP_PERIOD = "last_recap_period";
+    /** Rekap pekanan: aktif, hari trigger (Calendar.DAY_OF_WEEK), guard. */
+    public static final String KEY_WEEKLY_RECAP_ENABLED = "weekly_recap_enabled";
+    public static final String KEY_WEEKLY_RECAP_DAY = "weekly_recap_day";
+    public static final int DEFAULT_WEEKLY_RECAP_DAY = 7; // Calendar.SATURDAY
+    public static final String KEY_LAST_WEEKLY_RECAP = "last_weekly_recap";
     /** Id user yang sedang login (clock in). 0 = tidak ada (idle/istirahat). */
     public static final String KEY_CURRENT_USER_ID = "current_user_id";
     public static final String KEY_CURRENT_USER_NAME = "current_user_name";
@@ -501,6 +506,30 @@ public class SettingsDao {
 
     public String getLastRecapPeriod() { return get(KEY_LAST_RECAP_PERIOD, ""); }
     public void setLastRecapPeriod(String v) { set(KEY_LAST_RECAP_PERIOD, v != null ? v : ""); }
+
+    // ---------------- Rekap pekanan (PDF export) ----------------
+
+    public boolean isWeeklyRecapEnabled() {
+        return "1".equals(get(KEY_WEEKLY_RECAP_ENABLED, "0"));
+    }
+    public void setWeeklyRecapEnabled(boolean enabled) {
+        set(KEY_WEEKLY_RECAP_ENABLED, enabled ? "1" : "0");
+    }
+
+    /** Hari trigger rekap pekanan (Calendar.DAY_OF_WEEK 1=Minggu..7=Sabtu). Default 7. */
+    public int getWeeklyRecapDay() {
+        try {
+            int v = Integer.parseInt(get(KEY_WEEKLY_RECAP_DAY,
+                    String.valueOf(DEFAULT_WEEKLY_RECAP_DAY)));
+            return (v >= 1 && v <= 7) ? v : DEFAULT_WEEKLY_RECAP_DAY;
+        } catch (NumberFormatException e) { return DEFAULT_WEEKLY_RECAP_DAY; }
+    }
+    public void setWeeklyRecapDay(int dow) {
+        set(KEY_WEEKLY_RECAP_DAY, String.valueOf((dow >= 1 && dow <= 7) ? dow : DEFAULT_WEEKLY_RECAP_DAY));
+    }
+
+    public String getLastWeeklyRecap() { return get(KEY_LAST_WEEKLY_RECAP, ""); }
+    public void setLastWeeklyRecap(String v) { set(KEY_LAST_WEEKLY_RECAP, v != null ? v : ""); }
 
     /** Id user yang sedang clock in. 0 = belum login / istirahat / sudah out. */
     public long getCurrentUserId() {

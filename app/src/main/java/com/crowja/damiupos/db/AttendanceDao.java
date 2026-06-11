@@ -19,11 +19,27 @@ public class AttendanceDao {
 
     /** Catat event absensi sekarang (timestamp dari SQLite localtime). */
     public long log(long userId, String event) {
+        return log(userId, event, null);
+    }
+
+    /** Catat event absensi + path foto wajah (nullable). */
+    public long log(long userId, String event, String photoPath) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_ATT_USER_ID, userId);
         v.put(DatabaseHelper.COL_ATT_EVENT, event);
+        if (photoPath != null) v.put(DatabaseHelper.COL_ATT_PHOTO_PATH, photoPath);
         return db.insert(DatabaseHelper.TABLE_ATTENDANCE, null, v);
+    }
+
+    /** Foto IN pertama (login) shift berjalan user — null kalau tidak ada. */
+    public String getCurrentShiftLoginPhoto(long userId) {
+        for (Attendance a : getCurrentShiftEvents(userId)) {
+            if (Attendance.EVENT_IN.equals(a.getEvent()) && a.getPhotoPath() != null) {
+                return a.getPhotoPath();
+            }
+        }
+        return null;
     }
 
     /** Event terakhir user (null kalau belum pernah absen). */
@@ -116,6 +132,8 @@ public class AttendanceDao {
         a.setUserId(c.getLong(c.getColumnIndexOrThrow(DatabaseHelper.COL_ATT_USER_ID)));
         a.setEvent(c.getString(c.getColumnIndexOrThrow(DatabaseHelper.COL_ATT_EVENT)));
         a.setTs(c.getString(c.getColumnIndexOrThrow(DatabaseHelper.COL_ATT_TS)));
+        int idxPhoto = c.getColumnIndex(DatabaseHelper.COL_ATT_PHOTO_PATH);
+        if (idxPhoto >= 0) a.setPhotoPath(c.getString(idxPhoto));
         return a;
     }
 }

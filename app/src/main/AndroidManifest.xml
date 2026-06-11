@@ -88,6 +88,10 @@
         <activity android:name=".ResellerDetailActivity" />
         <activity android:name=".LoginActivity" />
         <activity android:name=".UserListActivity" />
+        <activity android:name=".AttendanceSettingsActivity" />
+        <activity
+            android:name=".CameraCaptureActivity"
+            android:screenOrientation="portrait" />
 
         <!--
             NotificationListenerService untuk auto-detect pesan WA.

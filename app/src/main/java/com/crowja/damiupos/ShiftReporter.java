@@ -3,27 +3,29 @@ package com.crowja.damiupos;
 import android.content.Context;
 
 import com.crowja.damiupos.db.AttendanceDao;
+import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.ExpenseDao;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.db.TransactionDao;
 import com.crowja.damiupos.model.Attendance;
+import com.crowja.damiupos.model.Customer;
 import com.crowja.damiupos.model.Expense;
 import com.crowja.damiupos.model.Transaction;
+import com.crowja.damiupos.model.TransactionItem;
 
-import java.io.File;
-import java.io.FileWriter;
 import java.text.NumberFormat;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
- * Laporan shift saat clock out (fitur multi user & absensi):
- *  - ringkasan teks → dikirim ke WhatsApp nomor admin (configurable),
- *  - file CSV detail → disimpan di folder exports (sama dengan Export).
+ * Laporan shift saat Pulang (clock out): ringkasan TEKS yang dikirim ke email
+ * admin sebagai body (tanpa file XLSX). Memuat absensi shift, ringkasan
+ * penjualan + detail air minum per jenis, dan daftar follow-up hari ini.
  */
 public final class ShiftReporter {
 
@@ -36,7 +38,7 @@ public final class ShiftReporter {
     private static final SimpleDateFormat SDF_TIME =
             new SimpleDateFormat("HH:mm", Locale.US);
 
-    /** Hasil perhitungan shift untuk ringkasan & CSV. */
+    /** Hasil perhitungan shift untuk ringkasan. */
     public static class Shift {
         public String clockIn;      // ts IN pertama shift ini
         public int breakCount;      // berapa kali istirahat
@@ -74,17 +76,19 @@ public final class ShiftReporter {
         return s;
     }
 
-    /** Ringkasan teks untuk dikirim ke admin via WhatsApp. */
+    /** Ringkasan teks laporan shift (jadi body email ke admin). */
     public static String buildSummaryText(Context ctx, DatabaseHelper dbHelper,
                                           long userId, String userName) {
         SettingsDao settings = new SettingsDao(dbHelper);
         TransactionDao trxDao = new TransactionDao(dbHelper);
         ExpenseDao expenseDao = new ExpenseDao(dbHelper);
+        CustomerDao customerDao = new CustomerDao(dbHelper);
         NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
 
         String today = SDF_DATE.format(new Date());
         Shift shift = computeShift(dbHelper, userId);
         double[] sum = trxDao.getSummaryByDateRange(today, today);
+        List<Transaction> transactions = trxDao.getByDateRange(today, today);
         double totalExpense = 0;
         for (Expense e : expenseDao.getByDateRange(today, today)) {
             totalExpense += e.getAmount();
@@ -104,6 +108,7 @@ public final class ShiftReporter {
             sb.append("Istirahat: ").append(shift.breakCount).append("x (")
               .append(formatDuration(shift.breakMillis)).append(")\n");
         }
+
         sb.append("\n*Ringkasan Hari Ini*\n");
         sb.append("Transaksi: ").append((int) sum[0]).append("\n");
         sb.append("Galon Keluar: ").append((int) sum[1]).append("\n");
@@ -111,168 +116,92 @@ public final class ShiftReporter {
         sb.append("Pendapatan: Rp ").append(nf.format(sum[3])).append("\n");
         sb.append("Pengeluaran: Rp ").append(nf.format(totalExpense)).append("\n");
         sb.append("Laba Bersih: Rp ").append(nf.format(sum[3] - totalExpense)).append("\n");
+
+        // Detail air minum terjual per jenis.
+        appendWaterProducts(sb, transactions, nf);
+
+        // Rincian pembayaran per metode (Tunai/QRIS/Transfer).
+        appendPaymentMethods(sb, transactions, nf);
+
+        // Daftar pelanggan yang di-follow-up hari ini.
+        appendFollowUps(sb, customerDao.getFollowedUpOn(today));
+
         return sb.toString();
     }
 
-    /**
-     * Export CSV detail transaksi hari ini + ringkasan shift.
-     * Return file yang ditulis, atau null kalau gagal.
-     */
-    public static File exportShiftCsv(Context ctx, DatabaseHelper dbHelper,
-                                      long userId, String userName) {
-        TransactionDao trxDao = new TransactionDao(dbHelper);
-        ExpenseDao expenseDao = new ExpenseDao(dbHelper);
-        NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
+    /** Rincian galon + pendapatan per jenis air minum (transaksi JUAL hari ini). */
+    private static void appendWaterProducts(StringBuilder sb, List<Transaction> transactions,
+                                            NumberFormat nf) {
+        Map<String, double[]> agg = new LinkedHashMap<>(); // nama -> {galon, pendapatan}
+        for (Transaction t : transactions) {
+            if (!Transaction.TYPE_JUAL.equals(t.getType())) continue;
+            // Lewati transaksi jual botol kosong (bukan air minum).
+            if (t.getCatatan() != null && t.getCatatan().contains("[JUAL BOTOL KOSONG]")) continue;
 
-        String today = SDF_DATE.format(new Date());
-        Shift shift = computeShift(dbHelper, userId);
-        double[] sum = trxDao.getSummaryByDateRange(today, today);
-        List<Transaction> transactions = trxDao.getByDateRange(today, today);
-        double totalExpense = 0;
-        for (Expense e : expenseDao.getByDateRange(today, today)) {
-            totalExpense += e.getAmount();
-        }
-
-        StringBuilder csv = new StringBuilder();
-        csv.append("LAPORAN SHIFT DAMIU POS\n");
-        csv.append("Operator,").append(esc(userName)).append("\n");
-        csv.append("Tanggal,").append(today).append("\n");
-        csv.append("Clock In,").append(esc(shift.clockIn != null ? shift.clockIn : "-")).append("\n");
-        csv.append("Clock Out,").append(SDF_DB.format(new Date())).append("\n");
-        csv.append("Durasi Kerja,").append(formatDuration(shift.workMillis)).append("\n");
-        csv.append("Istirahat,").append(shift.breakCount).append("x (")
-           .append(formatDuration(shift.breakMillis)).append(")\n\n");
-
-        csv.append("RINGKASAN HARI INI\n");
-        csv.append("Total Transaksi,").append((int) sum[0]).append("\n");
-        csv.append("Galon Keluar,").append((int) sum[1]).append("\n");
-        csv.append("Galon Kembali,").append((int) sum[2]).append("\n");
-        csv.append("Total Pendapatan,Rp ").append(nf.format(sum[3])).append("\n");
-        csv.append("Total Pengeluaran,Rp ").append(nf.format(totalExpense)).append("\n");
-        csv.append("Laba Bersih,Rp ").append(nf.format(sum[3] - totalExpense)).append("\n\n");
-
-        if (!transactions.isEmpty()) {
-            csv.append("DETAIL TRANSAKSI\n");
-            csv.append("No,Tanggal,Pelanggan,Tipe,Jumlah Galon,Total Harga\n");
-            int no = 1;
-            for (Transaction t : transactions) {
-                csv.append(no++).append(",");
-                csv.append(esc(t.getTanggal())).append(",");
-                csv.append(esc(t.getCustomerName() != null ? t.getCustomerName() : "-")).append(",");
-                csv.append(t.getType()).append(",");
-                csv.append(t.getJumlahGalon()).append(",");
-                csv.append(Transaction.TYPE_JUAL.equals(t.getType())
-                        ? "Rp " + nf.format(t.getTotalHarga()) : "-");
-                csv.append("\n");
+            List<TransactionItem> items = t.getItems();
+            if (items != null && !items.isEmpty()) {
+                for (TransactionItem it : items) {
+                    String name = it.productName != null && !it.productName.isEmpty()
+                            ? it.productName : "Lainnya";
+                    double[] v = agg.get(name);
+                    if (v == null) { v = new double[2]; agg.put(name, v); }
+                    v[0] += it.jumlah;
+                    v[1] += it.getSubtotal();
+                }
+            } else {
+                String name = t.getProductName() != null && !t.getProductName().isEmpty()
+                        ? t.getProductName() : "Lainnya";
+                double[] v = agg.get(name);
+                if (v == null) { v = new double[2]; agg.put(name, v); }
+                v[0] += t.getJumlahGalon();
+                v[1] += t.getTotalHarga();
             }
         }
 
-        String safeName = userName != null
-                ? userName.replaceAll("[^A-Za-z0-9]", "_") : "user";
-        String fileName = "Shift_" + safeName + "_" + today + "_"
-                + new SimpleDateFormat("HHmm", Locale.US).format(new Date()) + ".csv";
-        File dir = new File(ctx.getExternalFilesDir(null), "exports");
-        if (!dir.exists() && !dir.mkdirs()) return null;
-        File file = new File(dir, fileName);
-        try (FileWriter w = new FileWriter(file)) {
-            w.write('\ufeff'); // BOM agar Excel baca UTF-8
-            w.write(csv.toString());
-            w.flush();
-            return file;
-        } catch (Exception e) {
-            return null;
+        sb.append("\n*Air Minum Terjual (per jenis)*\n");
+        if (agg.isEmpty()) {
+            sb.append("- (tidak ada)\n");
+            return;
+        }
+        for (Map.Entry<String, double[]> e : agg.entrySet()) {
+            sb.append("- ").append(e.getKey()).append(": ")
+              .append((int) e.getValue()[0]).append(" galon (Rp ")
+              .append(nf.format(e.getValue()[1])).append(")\n");
         }
     }
 
-    /**
-     * Export laporan shift sebagai XLSX **terenkripsi** (ECMA-376 agile) dengan
-     * {@code password} (PIN admin) → file di folder exports. Excel akan minta
-     * password saat membuka. Return file, atau null kalau gagal (caller fallback
-     * ke {@link #exportShiftCsv}).
-     *
-     * <p>Catch {@link Throwable} supaya kegagalan POI (mis. NoClassDefFoundError
-     * di device lama) tidak meng-crash alur Pulang.
-     */
-    public static File exportEncryptedShiftXlsx(Context ctx, DatabaseHelper dbHelper,
-                                                long userId, String userName,
-                                                String password) {
-        if (password == null || password.isEmpty()) return null;
-        try {
-            List<Object[]> rows = buildReportRows(dbHelper, userId, userName);
-            byte[] plain = XlsxWriter.toBytes("Laporan Shift", rows);
-
-            String today = SDF_DATE.format(new Date());
-            String safeName = userName != null
-                    ? userName.replaceAll("[^A-Za-z0-9]", "_") : "user";
-            String fileName = "Shift_" + safeName + "_" + today + "_"
-                    + new SimpleDateFormat("HHmm", Locale.US).format(new Date()) + ".xlsx";
-            File dir = new File(ctx.getExternalFilesDir(null), "exports");
-            if (!dir.exists() && !dir.mkdirs()) return null;
-            File file = new File(dir, fileName);
-
-            XlsxEncryptor.encrypt(plain, file, password);
-            return file;
-        } catch (Throwable t) {
-            return null;
+    /** Rincian pendapatan JUAL per metode pembayaran. */
+    private static void appendPaymentMethods(StringBuilder sb, List<Transaction> transactions,
+                                             NumberFormat nf) {
+        double tunai = 0, qris = 0, transfer = 0, lainnya = 0;
+        for (Transaction t : transactions) {
+            if (!Transaction.TYPE_JUAL.equals(t.getType())) continue;
+            double amt = t.getTotalHarga();
+            String pm = t.getPaymentMethod();
+            if (Transaction.PAY_TUNAI.equals(pm)) tunai += amt;
+            else if (Transaction.PAY_QRIS.equals(pm)) qris += amt;
+            else if (Transaction.PAY_TRANSFER.equals(pm)) transfer += amt;
+            else lainnya += amt; // transaksi lama tanpa metode tercatat
+        }
+        sb.append("\n*Pembayaran (JUAL)*\n");
+        sb.append("Tunai: Rp ").append(nf.format(tunai)).append("\n");
+        sb.append("QRIS: Rp ").append(nf.format(qris)).append("\n");
+        sb.append("Transfer: Rp ").append(nf.format(transfer)).append("\n");
+        if (lainnya > 0) {
+            sb.append("Tidak dicatat: Rp ").append(nf.format(lainnya)).append("\n");
         }
     }
 
-    /** Baris-baris laporan shift untuk workbook XLSX (mirip isi CSV). */
-    private static List<Object[]> buildReportRows(DatabaseHelper dbHelper,
-                                                  long userId, String userName) {
-        TransactionDao trxDao = new TransactionDao(dbHelper);
-        ExpenseDao expenseDao = new ExpenseDao(dbHelper);
-        NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
-        SettingsDao settings = new SettingsDao(dbHelper);
-
-        String today = SDF_DATE.format(new Date());
-        Shift shift = computeShift(dbHelper, userId);
-        double[] sum = trxDao.getSummaryByDateRange(today, today);
-        List<Transaction> transactions = trxDao.getByDateRange(today, today);
-        double totalExpense = 0;
-        for (Expense e : expenseDao.getByDateRange(today, today)) {
-            totalExpense += e.getAmount();
+    /** Jumlah + nama pelanggan yang di-follow-up hari ini. */
+    private static void appendFollowUps(StringBuilder sb, List<Customer> followed) {
+        sb.append("\n*Follow Up Hari Ini* (").append(followed.size()).append(")\n");
+        if (followed.isEmpty()) {
+            sb.append("- (tidak ada)\n");
+            return;
         }
-        String depot = settings.getDepotName();
-        if (depot == null || depot.isEmpty()) depot = "DAMIU POS";
-
-        List<Object[]> rows = new ArrayList<>();
-        rows.add(new Object[]{"LAPORAN SHIFT — " + depot});
-        rows.add(new Object[]{"Operator", userName});
-        rows.add(new Object[]{"Tanggal", today});
-        rows.add(new Object[]{"Clock In", shift.clockIn != null ? shift.clockIn : "-"});
-        rows.add(new Object[]{"Pulang", SDF_DB.format(new Date())});
-        rows.add(new Object[]{"Durasi Kerja", formatDuration(shift.workMillis)});
-        rows.add(new Object[]{"Istirahat",
-                shift.breakCount + "x (" + formatDuration(shift.breakMillis) + ")"});
-        rows.add(new Object[]{});
-        rows.add(new Object[]{"RINGKASAN HARI INI"});
-        rows.add(new Object[]{"Total Transaksi", (int) sum[0]});
-        rows.add(new Object[]{"Galon Keluar", (int) sum[1]});
-        rows.add(new Object[]{"Galon Kembali", (int) sum[2]});
-        rows.add(new Object[]{"Total Pendapatan", "Rp " + nf.format(sum[3])});
-        rows.add(new Object[]{"Total Pengeluaran", "Rp " + nf.format(totalExpense)});
-        rows.add(new Object[]{"Laba Bersih", "Rp " + nf.format(sum[3] - totalExpense)});
-
-        if (!transactions.isEmpty()) {
-            rows.add(new Object[]{});
-            rows.add(new Object[]{"DETAIL TRANSAKSI"});
-            rows.add(new Object[]{"No", "Tanggal", "Pelanggan", "Tipe",
-                    "Jumlah Galon", "Total Harga"});
-            int no = 1;
-            for (Transaction t : transactions) {
-                rows.add(new Object[]{
-                        no++,
-                        t.getTanggal() != null ? t.getTanggal() : "",
-                        t.getCustomerName() != null ? t.getCustomerName() : "-",
-                        t.getType(),
-                        t.getJumlahGalon(),
-                        Transaction.TYPE_JUAL.equals(t.getType())
-                                ? "Rp " + nf.format(t.getTotalHarga()) : "-"
-                });
-            }
+        for (Customer c : followed) {
+            sb.append("- ").append(c.getName() != null ? c.getName() : "(tanpa nama)").append("\n");
         }
-        return rows;
     }
 
     // ---------------------------------------------------------------- utils
@@ -314,13 +243,5 @@ public final class ShiftReporter {
         long h = totalMin / 60;
         long m = totalMin % 60;
         return h > 0 ? h + "j " + m + "m" : m + "m";
-    }
-
-    private static String esc(String v) {
-        if (v == null) return "";
-        if (v.contains(",") || v.contains("\"") || v.contains("\n")) {
-            return "\"" + v.replace("\"", "\"\"") + "\"";
-        }
-        return v;
     }
 }
