@@ -1035,9 +1035,38 @@ public class TransactionActivity extends AppCompatActivity {
         new AlertDialog.Builder(this)
                 .setTitle("Konfirmasi Transaksi")
                 .setMessage(msg)
-                .setPositiveButton("Simpan", (d, w) -> doSave(fIsJual, fTotalJumlah,
-                        fOngkir, fTotal, fJumlahKembali, fOngkirType,
-                        fOwnership, fHargaBotol))
+                .setPositiveButton(fIsJual ? "Lanjut" : "Simpan", (d, w) -> {
+                    if (fIsJual) {
+                        // JUAL: wajib pilih metode pembayaran dulu.
+                        showPaymentPicker(method -> {
+                            pendingPayment = method;
+                            doSave(fIsJual, fTotalJumlah, fOngkir, fTotal, fJumlahKembali,
+                                    fOngkirType, fOwnership, fHargaBotol);
+                        });
+                    } else {
+                        pendingPayment = null; // KEMBALI tidak ada pembayaran
+                        doSave(fIsJual, fTotalJumlah, fOngkir, fTotal, fJumlahKembali,
+                                fOngkirType, fOwnership, fHargaBotol);
+                    }
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /** Field: metode pembayaran yang dipilih sebelum simpan transaksi JUAL. */
+    private String pendingPayment;
+
+    /** Callback metode pembayaran. */
+    private interface OnPayment { void onPick(String method); }
+
+    /** Dialog pilih metode pembayaran: Tunai / QRIS / Transfer. */
+    private void showPaymentPicker(OnPayment cb) {
+        final String[] labels = {"Tunai", "QRIS", "Transfer"};
+        final String[] values = {Transaction.PAY_TUNAI, Transaction.PAY_QRIS,
+                Transaction.PAY_TRANSFER};
+        new AlertDialog.Builder(this)
+                .setTitle("Metode Pembayaran")
+                .setItems(labels, (d, which) -> cb.onPick(values[which]))
                 .setNegativeButton("Batal", null)
                 .show();
     }
@@ -1076,7 +1105,10 @@ public class TransactionActivity extends AppCompatActivity {
         new AlertDialog.Builder(this)
                 .setTitle("Konfirmasi Jual Botol")
                 .setMessage(msg)
-                .setPositiveButton("Simpan", (d, w) -> doSaveJualBotol(fQty, fHarga, fTotal))
+                .setPositiveButton("Lanjut", (d, w) -> showPaymentPicker(method -> {
+                    pendingPayment = method;
+                    doSaveJualBotol(fQty, fHarga, fTotal);
+                }))
                 .setNegativeButton("Batal", null)
                 .show();
     }
@@ -1120,6 +1152,7 @@ public class TransactionActivity extends AppCompatActivity {
         trx.setGalonOwnership(Transaction.OWNERSHIP_BELI);
         trx.setHargaBotolGalon(hargaBotol);
         trx.setHargaPerGalon(0);
+        trx.setPaymentMethod(pendingPayment);
         if (selectedTrxDate != null) trx.setTanggal(selectedTrxDate);
         // items intentionally kosong — penanda transaksi botol-only
         String catatan = etCatatan.getText() != null ? etCatatan.getText().toString().trim() : "";
@@ -1204,6 +1237,7 @@ public class TransactionActivity extends AppCompatActivity {
         if (isJual) {
             trx.setGalonOwnership(ownership);
             trx.setHargaBotolGalon(hargaBotol);
+            trx.setPaymentMethod(pendingPayment); // metode bayar dipilih sebelum simpan
         }
         double hargaGR = 0;
         int rusak = 0;

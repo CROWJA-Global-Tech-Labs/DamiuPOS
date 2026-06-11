@@ -19,6 +19,11 @@ public class Transaction {
     public static final String OWNERSHIP_BELI = "BELI";
     public static final String OWNERSHIP_BAWA_SENDIRI = "BAWA_SENDIRI";
 
+    // Metode pembayaran (untuk transaksi JUAL).
+    public static final String PAY_TUNAI = "TUNAI";
+    public static final String PAY_QRIS = "QRIS";
+    public static final String PAY_TRANSFER = "TRANSFER";
+
     private long id;
     private long customerId;
     private String customerName; // for display purposes
@@ -33,6 +38,7 @@ public class Transaction {
     private String ongkirType = ONGKIR_PER_GALON;
     private String galonOwnership = OWNERSHIP_PINJAM;
     private double hargaBotolGalon; // harga beli botol galon saat ownership=BELI
+    private String paymentMethod;   // TUNAI | QRIS | TRANSFER (untuk JUAL)
     private String tanggal;
     private String catatan;
     private List<TransactionItem> items = new ArrayList<>();
@@ -82,6 +88,9 @@ public class Transaction {
 
     public double getHargaBotolGalon() { return hargaBotolGalon; }
     public void setHargaBotolGalon(double v) { this.hargaBotolGalon = v; }
+
+    public String getPaymentMethod() { return paymentMethod; }
+    public void setPaymentMethod(String v) { this.paymentMethod = v; }
 
     public String getTanggal() { return tanggal; }
     public void setTanggal(String tanggal) { this.tanggal = tanggal; }

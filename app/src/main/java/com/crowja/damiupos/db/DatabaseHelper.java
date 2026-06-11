@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 16;
+    private static final int DATABASE_VERSION = 18;
 
     // Table customers
     public static final String TABLE_CUSTOMERS = "customers";
@@ -29,6 +29,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_FOLLOWUP_EXCLUDED_AT = "followup_excluded_at";
     /** Alasan pelanggan dikeluarkan dari Follow Up (wajib diisi saat remove). */
     public static final String COL_FOLLOWUP_EXCLUDE_REASON = "followup_exclude_reason";
+    /** Timestamp terakhir pelanggan di-follow-up (kirim pesan WA follow-up).
+     *  Dipakai laporan harian: konsumen yang di-follow-up hari tsb. */
+    public static final String COL_LAST_FOLLOWUP_AT = "last_followup_at";
 
     // Table products
     public static final String TABLE_PRODUCTS = "products";
@@ -62,6 +65,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_ITEMS_JSON = "items_json";
     public static final String COL_GALON_OWNERSHIP = "galon_ownership";
     public static final String COL_HARGA_BOTOL = "harga_botol";
+    /** Metode pembayaran transaksi JUAL: TUNAI | QRIS | TRANSFER. */
+    public static final String COL_PAYMENT_METHOD = "payment_method";
 
     // Table settings
     public static final String TABLE_SETTINGS = "settings";
@@ -119,6 +124,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_ATT_USER_ID = "user_id";
     public static final String COL_ATT_EVENT = "event";
     public static final String COL_ATT_TS = "ts";
+    /** Path foto wajah (selfie) saat clock in / pulang. */
+    public static final String COL_ATT_PHOTO_PATH = "photo_path";
 
     // Table reseller_withdrawals — pencairan komisi reseller (air atau uang)
     public static final String TABLE_RESELLER_WD = "reseller_withdrawals";
@@ -143,6 +150,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_RESELLER_SINCE + " TEXT, " +
                     COL_FOLLOWUP_EXCLUDED_AT + " TEXT, " +
                     COL_FOLLOWUP_EXCLUDE_REASON + " TEXT, " +
+                    COL_LAST_FOLLOWUP_AT + " TEXT, " +
                     COL_CREATED_AT + " TEXT DEFAULT (datetime('now','localtime'))" +
                     ");";
 
@@ -179,6 +187,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_ITEMS_JSON + " TEXT, " +
                     COL_GALON_OWNERSHIP + " TEXT DEFAULT 'PINJAM', " +
                     COL_HARGA_BOTOL + " REAL DEFAULT 0, " +
+                    COL_PAYMENT_METHOD + " TEXT, " +
                     COL_TANGGAL + " TEXT DEFAULT (datetime('now','localtime')), " +
                     COL_CATATAN + " TEXT, " +
                     "FOREIGN KEY(" + COL_CUSTOMER_ID + ") REFERENCES " +
@@ -255,6 +264,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_ATT_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
                     COL_ATT_USER_ID + " INTEGER NOT NULL, " +
                     COL_ATT_EVENT + " TEXT NOT NULL, " +
+                    COL_ATT_PHOTO_PATH + " TEXT, " +
                     COL_ATT_TS + " TEXT DEFAULT (datetime('now','localtime')), " +
                     "FOREIGN KEY(" + COL_ATT_USER_ID + ") REFERENCES " +
                     TABLE_USERS + "(" + COL_USER_ID + ") ON DELETE CASCADE" +
@@ -395,6 +405,22 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             try {
                 db.execSQL("ALTER TABLE " + TABLE_CUSTOMERS +
                         " ADD COLUMN " + COL_FOLLOWUP_EXCLUDE_REASON + " TEXT");
+            } catch (Exception ignored) {}
+        }
+        if (oldVersion < 17) {
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_ATTENDANCE +
+                        " ADD COLUMN " + COL_ATT_PHOTO_PATH + " TEXT");
+            } catch (Exception ignored) {}
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_CUSTOMERS +
+                        " ADD COLUMN " + COL_LAST_FOLLOWUP_AT + " TEXT");
+            } catch (Exception ignored) {}
+        }
+        if (oldVersion < 18) {
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_TRANSACTIONS +
+                        " ADD COLUMN " + COL_PAYMENT_METHOD + " TEXT");
             } catch (Exception ignored) {}
         }
     }

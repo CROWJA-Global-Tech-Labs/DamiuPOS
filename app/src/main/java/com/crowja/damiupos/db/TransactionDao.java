@@ -33,6 +33,9 @@ public class TransactionDao {
         values.put(DatabaseHelper.COL_GALON_OWNERSHIP,
                 trx.getGalonOwnership() != null ? trx.getGalonOwnership() : Transaction.OWNERSHIP_PINJAM);
         values.put(DatabaseHelper.COL_HARGA_BOTOL, trx.getHargaBotolGalon());
+        if (trx.getPaymentMethod() != null) {
+            values.put(DatabaseHelper.COL_PAYMENT_METHOD, trx.getPaymentMethod());
+        }
         String itemsJson = TransactionItem.listToJson(trx.getItems());
         if (itemsJson != null) {
             values.put(DatabaseHelper.COL_ITEMS_JSON, itemsJson);
@@ -363,6 +366,10 @@ public class TransactionDao {
         int hbIdx = cursor.getColumnIndex(DatabaseHelper.COL_HARGA_BOTOL);
         if (hbIdx >= 0) {
             t.setHargaBotolGalon(cursor.getDouble(hbIdx));
+        }
+        int payIdx = cursor.getColumnIndex(DatabaseHelper.COL_PAYMENT_METHOD);
+        if (payIdx >= 0) {
+            t.setPaymentMethod(cursor.getString(payIdx));
         }
         int itemsIdx = cursor.getColumnIndex(DatabaseHelper.COL_ITEMS_JSON);
         if (itemsIdx >= 0) {
