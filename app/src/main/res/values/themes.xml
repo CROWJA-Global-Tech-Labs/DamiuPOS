@@ -9,12 +9,49 @@
         <item name="toolbarStyle">@style/DAMIUToolbar</item>
         <item name="titleTextColor">@color/white</item>
         <item name="actionMenuTextColor">@color/white</item>
+        <!-- White 3-dot overflow icon on primary-colored toolbar -->
+        <item name="actionOverflowButtonStyle">@style/DAMIUOverflowButton</item>
+        <!-- Darker default background for all input fields (TextInputLayout/EditText) -->
+        <item name="textInputStyle">@style/DAMIUTextInputLayout</item>
+        <item name="editTextStyle">@style/DAMIUEditText</item>
+        <item name="android:editTextStyle">@style/DAMIUEditText</item>
+    </style>
+
+    <!-- Tint the overflow (3-dot) icon white so it reads on the primary toolbar -->
+    <style name="DAMIUOverflowButton" parent="Widget.AppCompat.ActionButton.Overflow">
+        <item name="android:tint">@color/white</item>
+        <item name="tint">@color/white</item>
+    </style>
+
+    <!-- Material outlined-box input: visible border at all times + darker fill -->
+    <style name="DAMIUTextInputLayout" parent="Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+        <item name="boxBackgroundColor">@color/input_field_bg</item>
+        <item name="boxStrokeColor">@color/input_box_stroke</item>
+        <item name="boxStrokeWidth">1dp</item>
+        <item name="boxStrokeWidthFocused">2dp</item>
+        <item name="hintTextColor">@color/text_secondary</item>
+        <item name="android:textColorHint">@color/text_secondary</item>
+    </style>
+
+    <!-- Plain EditText (non-Material) — give it the same darker fill -->
+    <style name="DAMIUEditText" parent="Widget.AppCompat.EditText">
+        <item name="android:background">@color/input_field_bg</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textColorHint">@color/text_secondary</item>
+        <item name="android:padding">12dp</item>
     </style>
 
     <style name="DAMIUToolbar" parent="Widget.MaterialComponents.Toolbar">
         <item name="titleTextColor">@color/white</item>
         <item name="subtitleTextColor">@color/white</item>
         <item name="android:background">@color/primary</item>
+        <!-- Make sure action/overflow icons inherit white tint on the primary toolbar -->
+        <item name="android:theme">@style/DAMIUToolbarOverlay</item>
+    </style>
+
+    <!-- Overlay that forces the toolbar's icon color (nav + overflow) to white -->
+    <style name="DAMIUToolbarOverlay" parent="ThemeOverlay.MaterialComponents.Dark.ActionBar">
+        <item name="colorControlNormal">@color/white</item>
     </style>
 
     <style name="CircleImageView">

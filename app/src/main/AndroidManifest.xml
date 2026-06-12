@@ -9,6 +9,15 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
+    <uses-permission android:name="com.android.vending.BILLING" />
+    <!-- Notifikasi alert pesanan WA — foreground service play sound -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Re-arm pengingat jam kerja setelah reboot perangkat. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
@@ -28,15 +37,23 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
         </intent>
+        <intent>
+            <action android:name="android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS" />
+        </intent>
     </queries>
 
     <application
+        android:name=".DamiuApplication"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.DAMIUPOS">
+
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="${admobAppId}" />
 
         <activity
             android:name=".MainActivity"
@@ -62,6 +79,78 @@
         <activity android:name=".SettingsActivity" />
         <activity android:name=".WizardActivity" />
         <activity android:name=".FollowUpActivity" />
+        <activity android:name=".FollowUpMapActivity" />
+        <activity android:name=".UpgradeActivity" />
+        <activity android:name=".ContactPickerActivity" />
+        <activity android:name=".OrderInboxActivity" />
+        <activity android:name=".ExpenseListActivity" />
+        <activity android:name=".ExpenseFormActivity" />
+        <activity android:name=".ExpenseDetailActivity" />
+        <activity android:name=".ResellerListActivity" />
+        <activity android:name=".ResellerDetailActivity" />
+        <activity android:name=".LoginActivity" />
+        <activity android:name=".UserListActivity" />
+        <activity android:name=".AttendanceSettingsActivity" />
+        <activity
+            android:name=".CameraCaptureActivity"
+            android:screenOrientation="portrait" />
+
+        <!--
+            NotificationListenerService untuk auto-detect pesan WA.
+            User HARUS enable manual via:
+            Settings → Notifications → Special access → Notification access
+        -->
+        <service
+            android:name=".wa.WaListenerService"
+            android:exported="true"
+            android:label="DAMIU POS — Auto Detect Pesanan WA"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!--
+            Test injection receiver — hanya berfungsi di debug build
+            (lihat WaTestInjectionReceiver.onReceive). Dipakai untuk
+            simulasi pesan WA via `adb shell am broadcast` tanpa harus
+            kirim WA real.
+        -->
+        <receiver
+            android:name=".wa.WaTestInjectionReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.crowja.damiupos.TEST_PARSE" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+            Foreground service untuk play nada dering loop saat ada
+            pesanan WA pending. Berjalan di background → suara tetap
+            bunyi walau app tidak di foreground.
+        -->
+        <service
+            android:name=".wa.OrderAlertService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!--
+            Pengingat "jam kerja harian sudah terpenuhi". Dipicu AlarmManager
+            (one-shot, setAndAllowWhileIdle) saat akumulasi jam kerja staf
+            mencapai target harian → notifikasi bersuara.
+        -->
+        <receiver
+            android:name=".WorkHoursReminderReceiver"
+            android:exported="false" />
+
+        <!-- Re-arm pengingat jam kerja setelah perangkat reboot. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <provider
             android:name="androidx.core.content.FileProvider"

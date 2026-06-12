@@ -17,7 +17,7 @@
             android:background="@color/primary"
             android:titleTextColor="@color/white"
             app:navigationIcon="@drawable/ic_arrow_back"
-            app:title="Daftar Transaksi" />
+            app:title="Transaksi" />
     </com.google.android.material.appbar.AppBarLayout>
 
     <!-- Filter bar -->

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Debug-only manifest overlay.
+    Marks internal activities as exported so they can be launched from `adb shell am start`
+    for automated screenshot capture / debugging. Does NOT affect release builds.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application>
+        <!-- Debug-only seed activity: demo data + complete wizard.
+             Launch via: adb shell am start -n com.crowja.damiupos/.DebugSeedActivity -->
+        <activity android:name=".DebugSeedActivity"        android:exported="true" />
+
+        <activity android:name=".CustomerListActivity"     android:exported="true" tools:replace="android:exported" />
+        <activity android:name=".CustomerFormActivity"     android:exported="true" tools:replace="android:exported" />
+        <activity android:name=".CustomerDetailActivity"   android:exported="true" tools:replace="android:exported" />
+        <activity android:name=".TransactionActivity"      android:exported="true" tools:replace="android:exported" />
+        <activity android:name=".TransactionListActivity"  android:exported="true" tools:replace="android:exported" />
+        <activity android:name=".ReportActivity"           android:exported="true" tools:replace="android:exported" />
+        <activity android:name=".ExportActivity"           android:exported="true" tools:replace="android:exported" />
+        <activity android:name=".ProductListActivity"      android:exported="true" tools:replace="android:exported" />
+        <activity android:name=".ProductFormActivity"      android:exported="true" tools:replace="android:exported" />
+        <activity android:name=".GalonStockActivity"       android:exported="true" tools:replace="android:exported" />
+        <activity android:name=".MapPickerActivity"        android:exported="true" tools:replace="android:exported" />
+        <activity android:name=".ReceiptActivity"          android:exported="true" tools:replace="android:exported" />
+        <activity android:name=".SettingsActivity"         android:exported="true" tools:replace="android:exported" />
+        <activity android:name=".WizardActivity"           android:exported="true" tools:replace="android:exported" />
+        <activity android:name=".FollowUpActivity"         android:exported="true" tools:replace="android:exported" />
+        <activity android:name=".UpgradeActivity"          android:exported="true" tools:replace="android:exported" />
+    </application>
+</manifest>

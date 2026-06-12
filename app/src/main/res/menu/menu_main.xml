@@ -3,6 +3,12 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <item
+        android:id="@+id/action_inbox"
+        android:icon="@drawable/ic_inbox"
+        android:title="Pesanan dari WA"
+        app:showAsAction="always" />
+
+    <item
         android:id="@+id/action_info"
         android:icon="@drawable/ic_info"
         android:title="Tentang"

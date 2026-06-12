@@ -52,7 +52,7 @@
                         android:textSize="16sp"
                         android:textStyle="bold" />
 
-                    <com.damiu.pos.view.SimpleBarChart
+                    <com.crowja.damiupos.view.SimpleBarChart
                         android:id="@+id/chartBulanan"
                         android:layout_width="match_parent"
                         android:layout_height="220dp"
@@ -95,7 +95,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content">
 
-                        <com.damiu.pos.view.SimpleBarChart
+                        <com.crowja.damiupos.view.SimpleBarChart
                             android:id="@+id/chartHarian"
                             android:layout_width="800dp"
                             android:layout_height="200dp"

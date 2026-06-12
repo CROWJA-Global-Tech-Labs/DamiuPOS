@@ -10,4 +10,19 @@
 .cxx
 local.properties
 .claude/
-DAMIU-POS-debug.apk
+
+# Signing & certificates — NEVER commit (repo is public)
+*.jks
+*.keystore
+*.pem
+upload_certificate.pem
+
+# Build artifacts — too large for the repo
+*.apk
+*.aab
+
+# Test/debug artifacts
+*_test.png
+trx_form_screenshot.png
+tools/adb_pair_qr.png
+_bld_tmp.txt

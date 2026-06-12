@@ -85,12 +85,49 @@
                     android:textColor="@color/text_secondary"
                     android:textSize="14sp" />
 
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="24dp"
+                    android:layout_marginBottom="16dp"
+                    android:background="@color/grey_light" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:text="Sudah punya cadangan dari HP lain?"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnImportDbWizard"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Pulihkan dari File Backup"
+                    android:textAllCaps="false"
+                    app:cornerRadius="12dp"
+                    app:icon="@android:drawable/ic_menu_upload"
+                    app:iconGravity="textStart" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:gravity="center"
+                    android:text="Impor file .db hasil export — tidak perlu setup ulang."
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="32dp"
                     android:gravity="center"
-                    android:text="© Depot Air Minum FREZ"
+                    android:text="© CROWJA Global Tech Labs"
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp"
                     android:textStyle="bold" />

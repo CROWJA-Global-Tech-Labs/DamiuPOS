@@ -19,7 +19,7 @@
             android:contentInsetStartWithNavigation="0dp">
 
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
@@ -39,41 +39,189 @@
                 </FrameLayout>
 
                 <LinearLayout
-                    android:layout_width="wrap_content"
+                    android:id="@+id/toolbarTextWrap"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_weight="1"
                     android:layout_marginStart="10dp"
                     android:orientation="vertical">
 
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:id="@+id/tvToolbarTitle"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:letterSpacing="0.05"
                         android:text="@string/app_name"
                         android:textColor="@color/white"
                         android:textSize="18sp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
                         android:textStyle="bold" />
 
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:id="@+id/tvToolbarSubtitle"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Point-of-Sales Khusus Depot Air Minum"
+                        android:text="Point of Sales Khusus Depot Air Minum"
                         android:textColor="#CCFFFFFF"
-                        android:textSize="10sp" />
+                        android:textSize="10sp"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
                 </LinearLayout>
             </LinearLayout>
         </androidx.appcompat.widget.Toolbar>
     </com.google.android.material.appbar.AppBarLayout>
 
-    <androidx.core.widget.NestedScrollView
+    <!-- Main content + sticky bottom banner.
+         Wrapped in a vertical LinearLayout so the banner is pinned to the bottom
+         (scroll view takes remaining space) while still respecting the AppBar. -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:orientation="vertical"
         app:layout_behavior="@string/appbar_scrolling_view_behavior">
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:padding="16dp">
+
+            <!-- Pro Temp chip — visible only saat user dapat Pro 24 jam dari rewarded ad -->
+            <TextView
+                android:id="@+id/chipProTemp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:background="#FFF59D"
+                android:drawablePadding="6dp"
+                android:gravity="center"
+                android:padding="8dp"
+                android:text="🎁 Pro Trial: 23h 45m sisa"
+                android:textColor="#5D4037"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+            <!-- Bar operator (multi user & absensi) — hanya tampil saat fitur aktif.
+                 Menampilkan nama operator + tombol Istirahat & Pulang. -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardOperator"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:visibility="gone"
+                app:cardBackgroundColor="#0D47A1"
+                app:cardCornerRadius="14dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="12dp">
+
+                    <ImageView
+                        android:layout_width="34dp"
+                        android:layout_height="34dp"
+                        android:background="@drawable/bg_icon_circle"
+                        android:padding="6dp"
+                        android:src="@android:drawable/ic_menu_my_calendar"
+                        app:tint="@color/white"
+                        android:contentDescription="Operator" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvOperatorName"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:maxLines="1"
+                            android:ellipsize="end"
+                            android:text="Operator"
+                            android:textColor="@color/white"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvOperatorShift"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:maxLines="1"
+                            android:ellipsize="end"
+                            android:text="Sedang bekerja"
+                            android:textColor="#CCFFFFFF"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnIstirahat"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="40dp"
+                        android:layout_marginStart="4dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:text="Istirahat"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="12sp"
+                        app:cornerRadius="10dp"
+                        app:strokeColor="#80FFFFFF" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnClockOut"
+                        android:layout_width="wrap_content"
+                        android:layout_height="40dp"
+                        android:layout_marginStart="6dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:text="Pulang"
+                        android:textAllCaps="false"
+                        android:textColor="#0D47A1"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="@color/white"
+                        app:cornerRadius="10dp" />
+
+                    <!-- Admin: logout biasa (tanpa absensi/laporan). -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnAdminLogout"
+                        android:layout_width="wrap_content"
+                        android:layout_height="40dp"
+                        android:layout_marginStart="6dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:minWidth="0dp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:text="Logout"
+                        android:textAllCaps="false"
+                        android:textColor="#0D47A1"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:visibility="gone"
+                        app:backgroundTint="@color/white"
+                        app:cornerRadius="10dp" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
 
             <!-- Summary Cards Row 1 -->
             <LinearLayout
@@ -142,10 +290,14 @@
                 </com.google.android.material.card.MaterialCardView>
 
                 <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardGalonTerjual"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:layout_marginStart="8dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
                     app:cardCornerRadius="16dp"
                     app:cardElevation="4dp">
 
@@ -204,10 +356,14 @@
                 android:weightSum="3">
 
                 <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardTransaksi"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:layout_marginEnd="4dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
                     app:cardCornerRadius="16dp"
                     app:cardElevation="3dp">
 
@@ -248,11 +404,15 @@
                 </com.google.android.material.card.MaterialCardView>
 
                 <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardGalonBeredar"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:layout_marginStart="4dp"
                     android:layout_marginEnd="4dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
                     app:cardCornerRadius="16dp"
                     app:cardElevation="3dp">
 
@@ -290,13 +450,39 @@
                             android:textColor="#E0FFFFFF"
                             android:textSize="11sp" />
                     </LinearLayout>
+
+                    <!-- Badge stok tersedia (pindahan dari tile Stok Galon);
+                         blink merah saat stok <= ambang peringatan. -->
+                    <TextView
+                        android:id="@+id/tvStokBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="top|end"
+                        android:layout_marginTop="4dp"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/bg_stock_badge"
+                        android:minWidth="22dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:paddingTop="1dp"
+                        android:paddingBottom="1dp"
+                        android:elevation="6dp"
+                        android:gravity="center"
+                        android:text="0"
+                        android:textColor="#26A69A"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
                 </com.google.android.material.card.MaterialCardView>
 
                 <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardTotalPelanggan"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:layout_marginStart="4dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground"
                     app:cardCornerRadius="16dp"
                     app:cardElevation="3dp">
 
@@ -357,37 +543,11 @@
                 android:weightSum="2">
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnJualGalon"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
-                    android:layout_weight="1"
-                    android:layout_marginEnd="6dp"
-                    android:minHeight="76dp"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:paddingTop="16dp"
-                    android:paddingBottom="16dp"
-                    android:text="@string/jual_galon"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="@color/primary"
-                    app:cornerRadius="16dp"
-                    app:elevation="0dp"
-                    android:stateListAnimator="@null"
-                    app:icon="@android:drawable/ic_input_add"
-                    app:iconPadding="8dp"
-                    app:iconSize="26dp"
-                    app:iconTint="@color/white"
-                    app:iconGravity="textStart" />
-
-                <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnGalonKembali"
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
                     android:layout_weight="1"
-                    android:layout_marginStart="6dp"
+                    android:layout_marginEnd="6dp"
                     android:minHeight="76dp"
                     android:paddingStart="10dp"
                     android:paddingEnd="10dp"
@@ -407,7 +567,97 @@
                     app:iconSize="26dp"
                     app:iconTint="@color/white"
                     app:iconGravity="textStart" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnJualGalon"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:layout_marginStart="6dp"
+                    android:minHeight="76dp"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:paddingTop="16dp"
+                    android:paddingBottom="16dp"
+                    android:text="@string/jual_galon"
+                    android:textAllCaps="false"
+                    android:textColor="@color/white"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    app:backgroundTint="@color/primary"
+                    app:cornerRadius="16dp"
+                    app:elevation="0dp"
+                    android:stateListAnimator="@null"
+                    app:icon="@android:drawable/ic_input_add"
+                    app:iconPadding="8dp"
+                    app:iconSize="26dp"
+                    app:iconTint="@color/white"
+                    app:iconGravity="textStart" />
             </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Menu Karyawan (absensi) — hanya tampil untuk admin saat multi
+                 user aktif. Pintu masuk kelola pegawai, riwayat & rekap absensi. -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardKaryawan"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground"
+                android:visibility="gone"
+                app:cardBackgroundColor="#00897B"
+                app:cardCornerRadius="14dp"
+                app:cardElevation="3dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="14dp">
+
+                    <ImageView
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:background="@drawable/bg_icon_circle"
+                        android:padding="7dp"
+                        android:src="@android:drawable/ic_menu_my_calendar"
+                        app:tint="@color/white"
+                        android:contentDescription="Karyawan" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="12dp"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Karyawan"
+                            android:textColor="@color/white"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Kelola pegawai, absensi &amp; rekap"
+                            android:textColor="#CCFFFFFF"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:contentDescription="Buka"
+                        android:src="@android:drawable/ic_media_play"
+                        app:tint="@color/white" />
+                </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
             <androidx.gridlayout.widget.GridLayout
@@ -471,135 +721,6 @@
                 </FrameLayout>
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnPelanggan"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_margin="4dp"
-                    android:minHeight="60dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:text="@string/pelanggan"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="#5C6BC0"
-                    app:cornerRadius="14dp"
-                    app:elevation="3dp"
-                    app:icon="@android:drawable/ic_menu_my_calendar"
-                    app:iconGravity="textStart"
-                    app:iconPadding="8dp"
-                    app:iconSize="22dp"
-                    app:iconTint="@color/white"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal" />
-
-                <FrameLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal">
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnStokGalon"
-                        android:layout_width="match_parent"
-                        android:layout_height="64dp"
-                        android:layout_margin="4dp"
-                        android:minHeight="60dp"
-                        android:paddingTop="8dp"
-                        android:paddingBottom="8dp"
-                        android:maxLines="1"
-                        android:ellipsize="end"
-                        android:text="Stok Galon"
-                        android:textAllCaps="false"
-                        android:textColor="@color/white"
-                        android:textSize="13sp"
-                        android:textStyle="bold"
-                        app:backgroundTint="#26A69A"
-                        app:cornerRadius="14dp"
-                        app:elevation="3dp"
-                        app:icon="@android:drawable/ic_menu_agenda"
-                        app:iconGravity="textStart"
-                        app:iconPadding="8dp"
-                        app:iconSize="22dp"
-                        app:iconTint="@color/white" />
-
-                    <TextView
-                        android:id="@+id/tvStokBadge"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_gravity="top|end"
-                        android:layout_marginTop="2dp"
-                        android:layout_marginEnd="2dp"
-                        android:background="@drawable/bg_stock_badge"
-                        android:minWidth="22dp"
-                        android:paddingStart="6dp"
-                        android:paddingEnd="6dp"
-                        android:paddingTop="1dp"
-                        android:paddingBottom="1dp"
-                        android:elevation="6dp"
-                        android:gravity="center"
-                        android:text="0"
-                        android:textColor="#26A69A"
-                        android:textSize="11sp"
-                        android:textStyle="bold" />
-                </FrameLayout>
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnProduk"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_margin="4dp"
-                    android:minHeight="60dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:text="Jenis Air Minum"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="#29B6F6"
-                    app:cornerRadius="14dp"
-                    app:elevation="3dp"
-                    app:icon="@drawable/ic_water_drop"
-                    app:iconGravity="textStart"
-                    app:iconPadding="8dp"
-                    app:iconSize="22dp"
-                    app:iconTint="@color/white"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnDaftarTransaksi"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_margin="4dp"
-                    android:minHeight="60dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:text="Daftar Transaksi"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="#AB47BC"
-                    app:cornerRadius="14dp"
-                    app:elevation="3dp"
-                    app:icon="@android:drawable/ic_menu_recent_history"
-                    app:iconGravity="textStart"
-                    app:iconPadding="8dp"
-                    app:iconSize="22dp"
-                    app:iconTint="@color/white"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal" />
-
-                <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnLaporan"
                     android:layout_width="0dp"
                     android:layout_height="64dp"
@@ -609,7 +730,7 @@
                     android:paddingBottom="8dp"
                     android:maxLines="1"
                     android:ellipsize="end"
-                    android:text="Laporan &amp; Grafik"
+                    android:text="Report &amp; Grafik"
                     android:textAllCaps="false"
                     android:textColor="@color/white"
                     android:textSize="13sp"
@@ -635,7 +756,7 @@
                     android:paddingBottom="8dp"
                     android:maxLines="1"
                     android:ellipsize="end"
-                    android:text="Export Penjualan"
+                    android:text="Export"
                     android:textAllCaps="false"
                     android:textColor="@color/white"
                     android:textSize="13sp"
@@ -644,6 +765,58 @@
                     app:cornerRadius="14dp"
                     app:elevation="3dp"
                     app:icon="@android:drawable/ic_menu_save"
+                    app:iconGravity="textStart"
+                    app:iconPadding="8dp"
+                    app:iconSize="22dp"
+                    app:iconTint="@color/white"
+                    grid:layout_columnWeight="1"
+                    grid:layout_gravity="fill_horizontal" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnReseller"
+                    android:layout_width="0dp"
+                    android:layout_height="64dp"
+                    android:layout_margin="4dp"
+                    android:minHeight="60dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:text="Reseller"
+                    android:textAllCaps="false"
+                    android:textColor="@color/white"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    app:backgroundTint="#AB47BC"
+                    app:cornerRadius="14dp"
+                    app:elevation="3dp"
+                    app:icon="@android:drawable/ic_menu_share"
+                    app:iconGravity="textStart"
+                    app:iconPadding="8dp"
+                    app:iconSize="22dp"
+                    app:iconTint="@color/white"
+                    grid:layout_columnWeight="1"
+                    grid:layout_gravity="fill_horizontal" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPengeluaran"
+                    android:layout_width="0dp"
+                    android:layout_height="64dp"
+                    android:layout_margin="4dp"
+                    android:minHeight="60dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:text="Pengeluaran"
+                    android:textAllCaps="false"
+                    android:textColor="@color/white"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    app:backgroundTint="#EF5350"
+                    app:cornerRadius="14dp"
+                    app:elevation="3dp"
+                    app:icon="@android:drawable/ic_menu_directions"
                     app:iconGravity="textStart"
                     app:iconPadding="8dp"
                     app:iconSize="22dp"
@@ -709,5 +882,15 @@
 
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
+
+        <!-- Sticky bottom banner ad (auto-hide saat Pro) -->
+        <FrameLayout
+            android:id="@+id/adContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/grey_light"
+            android:gravity="center"
+            android:visibility="gone" />
+    </LinearLayout>
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

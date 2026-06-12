@@ -95,5 +95,18 @@
             app:cornerRadius="10dp"
             app:icon="@android:drawable/sym_action_chat"
             app:iconGravity="textStart" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnDone"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Selesai"
+            android:textAllCaps="false"
+            app:backgroundTint="@color/green"
+            app:cornerRadius="10dp"
+            app:icon="@drawable/ic_check"
+            app:iconGravity="textStart"
+            app:iconTint="@color/white" />
     </LinearLayout>
 </LinearLayout>
