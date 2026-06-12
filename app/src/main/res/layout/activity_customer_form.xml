@@ -123,6 +123,17 @@
                 android:text="Jadikan Reseller (dapat komisi per galon)"
                 android:textSize="14sp" />
 
+            <!-- Sub-opsi reseller: komisi ditambahkan ke harga air saat transaksi.
+                 Hanya tampil kalau "Jadikan Reseller" dicentang. -->
+            <com.google.android.material.checkbox.MaterialCheckBox
+                android:id="@+id/cbKomisiAddToPrice"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="24dp"
+                android:text="Tambahkan Komisi ke Harga Air Minum"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
             <!-- Foto Rumah -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"

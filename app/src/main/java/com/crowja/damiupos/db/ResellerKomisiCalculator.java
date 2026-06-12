@@ -53,7 +53,10 @@ public final class ResellerKomisiCalculator {
         double globalRate = settings.getResellerKomisi();
         Map<Long, Double> rates = rateDao.getRates(reseller.getId());
 
-        List<Transaction> trxs = trxDao.getJualByCustomerSince(
+        // Komisi mencakup transaksi yang di-afiliasikan ke reseller ini
+        // (reseller_id) maupun pembelian langsung reseller (customer_id) tanpa
+        // afiliasi eksplisit — lihat getJualForResellerSince.
+        List<Transaction> trxs = trxDao.getJualForResellerSince(
                 reseller.getId(), reseller.getResellerSince());
 
         for (Transaction t : trxs) {

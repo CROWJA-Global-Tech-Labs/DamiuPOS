@@ -126,12 +126,17 @@ public final class AttendanceRecap {
                 List<File> atts = new ArrayList<>();
                 atts.add(zip);
 
+                final File zipFile = zip;
                 ShiftEmailSender.sendAsync(app, s.getSmtpHost(), s.getSmtpPort(),
                         s.getSmtpUser(), s.getSmtpPass(), s.getAdminEmail(),
                         subject, body, atts, (success, error) -> {
                             // Tandai terkirim HANYA kalau sukses → gagal = retry
                             // di login berikutnya (hingga berhasil).
-                            if (success) s.setLastRecapPeriod(periodId);
+                            if (success) {
+                                s.setLastRecapPeriod(periodId);
+                                // Hemat storage: hapus foto periode + file zip.
+                                cleanupPeriodFiles(dbHelper, period[0], period[1], zipFile);
+                            }
                             recapSending = false;
                         });
             } catch (Throwable t) {
@@ -153,6 +158,34 @@ public final class AttendanceRecap {
         Calendar start = (Calendar) end.clone();
         start.add(Calendar.DAY_OF_YEAR, -6);
         return new String[]{SDF_DATE.format(start.getTime()), SDF_DATE.format(end.getTime())};
+    }
+
+    /**
+     * Setelah rekap bulanan sukses terkirim: hapus foto selfie periode + file
+     * ZIP rekap untuk menekan footprint storage, lalu kosongkan photo_path.
+     */
+    private static void cleanupPeriodFiles(DatabaseHelper dbHelper, String start, String end,
+                                           File zip) {
+        try {
+            UserDao userDao = new UserDao(dbHelper);
+            AttendanceDao attDao = new AttendanceDao(dbHelper);
+            for (User u : userDao.getAll()) {
+                for (Attendance a : attDao.getEventsByUserBetween(u.getId(), start, end)) {
+                    String p = a.getPhotoPath();
+                    if (p == null || p.isEmpty()) continue;
+                    File f = new File(p);
+                    if (f.exists()) {
+                        //noinspection ResultOfMethodCallIgnored
+                        f.delete();
+                    }
+                }
+            }
+            attDao.clearPhotoPathsBetween(start, end);
+            if (zip != null && zip.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                zip.delete();
+            }
+        } catch (Throwable ignored) {}
     }
 
     private static volatile boolean weeklySending = false;
@@ -198,10 +231,18 @@ public final class AttendanceRecap {
                         + "\nDikirim otomatis oleh DAMIU POS.";
                 List<File> atts = new ArrayList<>();
                 atts.add(pdf);
+                final File pdfFile = pdf;
                 ShiftEmailSender.sendAsync(app, s.getSmtpHost(), s.getSmtpPort(),
                         s.getSmtpUser(), s.getSmtpPass(), s.getAdminEmail(),
                         subject, body, atts, (success, error) -> {
-                            if (success) s.setLastWeeklyRecap(weekId);
+                            if (success) {
+                                s.setLastWeeklyRecap(weekId);
+                                // Hemat storage: hapus file PDF pekanan setelah terkirim.
+                                if (pdfFile != null && pdfFile.exists()) {
+                                    //noinspection ResultOfMethodCallIgnored
+                                    pdfFile.delete();
+                                }
+                            }
                             weeklySending = false;
                         });
             } catch (Throwable t) {

@@ -64,19 +64,44 @@ public class TransactionActivity extends AppCompatActivity {
      *  user di confirm-dialog Balas, kalau ada). Override DB customer phone. */
     public static final String EXTRA_INBOX_SENDER_PHONE = "inbox_sender_phone";
 
+    /** Intent extra: id reseller yang langsung di-set sebagai reseller afiliasi
+     *  (caller: Detail Reseller → "Buat Transaksi Baru"). */
+    public static final String EXTRA_RESELLER_ID = "preset_reseller_id";
+
     /** Cached inbox sender name dari intent — di-pass ke ReceiptActivity. */
     private String forwardedInboxSenderName;
 
     private MaterialButtonToggleGroup toggleType, toggleOngkirMode, toggleOwnership, toggleReturnMode;
     private TextView tvSelectedCustomer, tvTotalHarga, tvEmptyItems;
+    private TextView tvSelectedReseller, btnClearReseller, tvSelectedTrxDate;
     private TextInputEditText etJumlahKembali, etOngkir, etCatatan;
     private TextInputEditText etHargaGantiRugi, etJumlahRusak;
     private TextInputEditText etHargaBotol;
     private TextInputEditText etJumlahBotolJual, etHargaBotolJual;
     private TextInputLayout tilOngkir, tilJumlahKembali, tilHargaBotol;
     private View ongkirModeContainer, cardCustomer, cardItems, cardOwnership, gantiRugiContainer, returnModeContainer;
-    private View cardJualBotol;
+    private View cardJualBotol, cardDate, cardReseller, cardKembali;
     private LinearLayout llItems;
+
+    /** Reseller afiliasi terpilih (0 = tidak ada). */
+    private long selectedResellerId = 0;
+    private String selectedResellerName = "";
+    /** Reseller terpilih pakai "Tambahkan Komisi ke Harga Air Minum". */
+    private boolean selectedResellerAddToPrice = false;
+    /** Override komisi per produk untuk reseller terpilih (fallback rate global). */
+    private java.util.Map<Long, Double> selectedResellerRates = new java.util.HashMap<>();
+
+    /** Satu baris entri produk — semua produk DB di-render sekaligus supaya
+     *  user mengatur jumlah & harga tanpa menambah item satu per satu. */
+    private static class ProductEntry {
+        final Product product;
+        final EditText etQty;
+        final EditText etPrice;
+        ProductEntry(Product p, EditText q, EditText pr) {
+            this.product = p; this.etQty = q; this.etPrice = pr;
+        }
+    }
+    private final List<ProductEntry> productEntries = new ArrayList<>();
 
     private boolean syncingKembali = false;
     private boolean userEditedKembali = false;
@@ -87,6 +112,7 @@ public class TransactionActivity extends AppCompatActivity {
     private ProductDao productDao;
     private TransactionDao transactionDao;
     private SettingsDao settingsDao;
+    private com.crowja.damiupos.db.ResellerRateDao resellerRateDao;
 
     private long selectedCustomerId = -1;
     private String selectedCustomerName = "";
@@ -95,11 +121,13 @@ public class TransactionActivity extends AppCompatActivity {
     // Tanggal+waktu transaksi terpilih (yyyy-MM-dd HH:mm:ss). Default = sekarang.
     // Berlaku untuk Jual Air, Galon Kembali, dan Jual Botol.
     private String selectedTrxDate;
-    private com.google.android.material.button.MaterialButton btnTanggalTrx;
     private final SimpleDateFormat trxDbFmt =
             new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
-    private final SimpleDateFormat trxDisplayFmt =
-            new SimpleDateFormat("d MMM yyyy, HH:mm", new Locale("id", "ID"));
+    // Card tanggal sempit (30% lebar) → tampil 2 baris: tanggal lalu jam.
+    private final SimpleDateFormat trxDateOnlyFmt =
+            new SimpleDateFormat("d MMM yyyy", new Locale("id", "ID"));
+    private final SimpleDateFormat trxTimeOnlyFmt =
+            new SimpleDateFormat("HH:mm", new Locale("id", "ID"));
 
     private final List<TransactionItem> items = new ArrayList<>();
 
@@ -117,15 +145,17 @@ public class TransactionActivity extends AppCompatActivity {
         productDao = new ProductDao(dbHelper);
         transactionDao = new TransactionDao(dbHelper);
         settingsDao = new SettingsDao(dbHelper);
+        resellerRateDao = new com.crowja.damiupos.db.ResellerRateDao(dbHelper);
 
         toggleType = findViewById(R.id.toggleType);
         tvSelectedCustomer = findViewById(R.id.tvSelectedCustomer);
 
-        // Tanggal transaksi — default sekarang
-        btnTanggalTrx = findViewById(R.id.btnTanggalTrx);
+        // Tanggal transaksi — default sekarang (card di samping pilih pelanggan)
+        cardDate = findViewById(R.id.cardDate);
+        tvSelectedTrxDate = findViewById(R.id.tvSelectedTrxDate);
         selectedTrxDate = trxDbFmt.format(new Date());
         updateTanggalTrxButton();
-        btnTanggalTrx.setOnClickListener(v -> showTrxDateTimePicker());
+        cardDate.setOnClickListener(v -> showTrxDateTimePicker());
 
         tvTotalHarga = findViewById(R.id.tvTotalHarga);
         etJumlahKembali = findViewById(R.id.etJumlahKembali);
@@ -137,6 +167,7 @@ public class TransactionActivity extends AppCompatActivity {
         ongkirModeContainer = findViewById(R.id.ongkirModeContainer);
         cardCustomer = findViewById(R.id.cardCustomer);
         cardItems = findViewById(R.id.cardItems);
+        cardKembali = findViewById(R.id.cardKembali);
         llItems = findViewById(R.id.llItems);
         tvEmptyItems = findViewById(R.id.tvEmptyItems);
         gantiRugiContainer = findViewById(R.id.gantiRugiContainer);
@@ -229,7 +260,21 @@ public class TransactionActivity extends AppCompatActivity {
         });
 
         cardCustomer.setOnClickListener(v -> showCustomerPicker());
-        findViewById(R.id.btnAddItem).setOnClickListener(v -> showItemDialog(null, -1));
+
+        // Reseller afiliasi (opsional) — hanya relevan untuk transaksi JUAL.
+        cardReseller = findViewById(R.id.cardReseller);
+        tvSelectedReseller = findViewById(R.id.tvSelectedReseller);
+        btnClearReseller = findViewById(R.id.btnClearReseller);
+        cardReseller.setOnClickListener(v -> showResellerPicker());
+        btnClearReseller.setOnClickListener(v -> {
+            selectedResellerId = 0;
+            selectedResellerName = "";
+            selectedResellerAddToPrice = false;
+            selectedResellerRates = new java.util.HashMap<>();
+            applyResellerPricing(); // kembalikan harga ke normal
+            updateResellerLabel();
+        });
+        updateResellerLabel();
 
         TextWatcher calcWatcher = new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -262,6 +307,12 @@ public class TransactionActivity extends AppCompatActivity {
 
         findViewById(R.id.btnSimpan).setOnClickListener(v -> trySave());
 
+        // Render semua jenis air sebagai baris entri (jumlah + harga per pcs).
+        buildProductEntries();
+
+        // Pre-set reseller afiliasi kalau dibuka dari Detail Reseller.
+        prefillResellerFromIntent();
+
         // Prefill items dari ParsedOrder kalau intent extra di-set
         // (caller: OrderInboxActivity.approve())
         String parsedJson = getIntent().getStringExtra(EXTRA_INBOX_PARSED_JSON);
@@ -284,7 +335,7 @@ public class TransactionActivity extends AppCompatActivity {
             tvSelectedCustomer.post(this::showCustomerPicker);
         }
 
-        refreshItemsView();
+        onEntriesChanged();
         updateTypeUI();
         updateOngkirUI();
         // Auto-fill "Jumlah Botol Galon Kembali" berdasarkan total qty items
@@ -305,49 +356,44 @@ public class TransactionActivity extends AppCompatActivity {
      * Item yang tidak match produk DB di-skip — user bisa tambah manual.
      */
     private void prefillItemsFromInbox(String parsedJson) {
-        android.util.Log.d("TrxPrefill", "JSON: " + parsedJson);
         com.crowja.damiupos.wa.ParsedOrder parsed =
                 com.crowja.damiupos.wa.ParsedOrder.fromJson(parsedJson);
-        android.util.Log.d("TrxPrefill", "items=" + parsed.items.size()
-                + " type=" + parsed.type);
         if (parsed.items.isEmpty()) return;
 
         List<Product> all = productDao.getAll();
-        android.util.Log.d("TrxPrefill", "DB products=" + all.size());
-
         int matched = 0;
-        int placeholder = 0;
+        int unmatched = 0;
         for (com.crowja.damiupos.wa.ParsedOrder.Item it : parsed.items) {
             if (it.qty <= 0 || it.product == null || it.product.isEmpty()) continue;
             Product match = findProductForLabel(it.product, all);
-            if (match != null) {
-                android.util.Log.d("TrxPrefill", "Match '" + it.product
-                        + "' → DB '" + match.getName() + "' qty=" + it.qty);
-                items.add(new TransactionItem(match.getId(), match.getName(),
-                        it.qty, match.getHargaJual()));
+            // Set jumlah pada baris entri produk yang cocok. Harga dibiarkan
+            // pakai default produk (sudah ter-prefill saat build).
+            if (match != null && applyQtyToEntry(match.getId(), it.qty)) {
                 matched++;
             } else {
-                // Tidak ada match di DB → tambahkan sebagai placeholder
-                // dengan productId=0 + harga 0. User bisa tap item untuk
-                // edit & pilih produk DB yang benar.
-                android.util.Log.d("TrxPrefill", "Placeholder for '"
-                        + it.product + "' qty=" + it.qty
-                        + " (tidak match produk DB)");
-                items.add(new TransactionItem(0L, it.product, it.qty, 0));
-                placeholder++;
+                unmatched++;
             }
         }
-        android.util.Log.d("TrxPrefill", "Done: matched=" + matched
-                + " placeholder=" + placeholder + " total=" + items.size());
 
-        if (!items.isEmpty()) userEditedKembali = false;
+        if (matched > 0) userEditedKembali = false;
 
-        if (placeholder > 0) {
+        if (unmatched > 0) {
             String msg = all.isEmpty()
-                    ? "Belum ada Jenis Air di DB — tap item untuk pilih produk + isi harga"
-                    : placeholder + " item belum match produk DB — tap item untuk edit produk & harga";
+                    ? "Belum ada Jenis Air di DB — atur item manual setelah menambah produk."
+                    : unmatched + " item dari pesanan tidak cocok dengan Jenis Air — atur jumlahnya manual.";
             Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
         }
+    }
+
+    /** Set jumlah (pcs) pada baris entri produk dengan id tertentu. */
+    private boolean applyQtyToEntry(long productId, int qty) {
+        for (ProductEntry pe : productEntries) {
+            if (pe.product.getId() == productId) {
+                pe.etQty.setText(String.valueOf(qty));
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -388,7 +434,7 @@ public class TransactionActivity extends AppCompatActivity {
             cardJualBotol.setVisibility(View.VISIBLE);
             cardItems.setVisibility(View.GONE);
             cardOwnership.setVisibility(View.GONE);
-            tilJumlahKembali.setVisibility(View.GONE);
+            cardKembali.setVisibility(View.GONE);
             tilOngkir.setVisibility(View.GONE);
             ongkirModeContainer.setVisibility(View.GONE);
             returnModeContainer.setVisibility(View.GONE);
@@ -396,7 +442,7 @@ public class TransactionActivity extends AppCompatActivity {
         } else if (isJual) {
             cardJualBotol.setVisibility(View.GONE);
             cardItems.setVisibility(View.VISIBLE);
-            tilJumlahKembali.setVisibility(View.VISIBLE);
+            cardKembali.setVisibility(View.VISIBLE);
             tilJumlahKembali.setHint("Jumlah Botol Galon Kembali");
             ongkirModeContainer.setVisibility(View.VISIBLE);
             returnModeContainer.setVisibility(View.GONE);
@@ -407,13 +453,17 @@ public class TransactionActivity extends AppCompatActivity {
         } else {
             cardJualBotol.setVisibility(View.GONE);
             cardItems.setVisibility(View.GONE);
-            tilJumlahKembali.setVisibility(View.VISIBLE);
+            cardKembali.setVisibility(View.VISIBLE);
             tilJumlahKembali.setHint("Jumlah Botol Galon Kembali");
             tilOngkir.setVisibility(View.GONE);
             ongkirModeContainer.setVisibility(View.GONE);
             returnModeContainer.setVisibility(View.VISIBLE);
             cardOwnership.setVisibility(View.GONE);
             updateReturnModeUI();
+        }
+        // Reseller afiliasi hanya relevan untuk transaksi JUAL air.
+        if (cardReseller != null) {
+            cardReseller.setVisibility(isJual ? View.VISIBLE : View.GONE);
         }
         updateTotal();
     }
@@ -452,7 +502,7 @@ public class TransactionActivity extends AppCompatActivity {
         //   - BOTOL SENDIRI: pelanggan pakai botol sendiri → tidak ada yg dikembalikan
         if (isJualSelected()) {
             boolean hideKembali = !isPinjamSelected();
-            tilJumlahKembali.setVisibility(hideKembali ? View.GONE : View.VISIBLE);
+            cardKembali.setVisibility(hideKembali ? View.GONE : View.VISIBLE);
             if (hideKembali) {
                 syncingKembali = true;
                 etJumlahKembali.setText("0");
@@ -589,33 +639,74 @@ public class TransactionActivity extends AppCompatActivity {
 
     // --- Items UI ---
 
-    private void refreshItemsView() {
+    /**
+     * Render satu baris entri untuk SETIAP jenis air di DB (nama + harga per
+     * pcs + stepper jumlah −/+). Harga di-prefill dari harga jual produk;
+     * jumlah default 0. Perubahan apa pun → {@link #onEntriesChanged()}.
+     */
+    private void buildProductEntries() {
         llItems.removeAllViews();
-        NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
-        for (int i = 0; i < items.size(); i++) {
-            final int idx = i;
-            TransactionItem it = items.get(i);
-            View row = LayoutInflater.from(this).inflate(R.layout.item_trx_line, llItems, false);
+        productEntries.clear();
+        List<Product> products = productDao.getAll();
+        for (Product p : products) {
+            View row = LayoutInflater.from(this)
+                    .inflate(R.layout.item_product_entry, llItems, false);
+            TextView tvDot = row.findViewById(R.id.tvItemDot);
             TextView tvName = row.findViewById(R.id.tvItemName);
-            TextView tvCalc = row.findViewById(R.id.tvItemCalc);
-            TextView tvSub = row.findViewById(R.id.tvItemSubtotal);
-            ImageButton btnDel = row.findViewById(R.id.btnItemDelete);
-            tvName.setText(it.productName);
-            tvCalc.setText(it.jumlah + " x Rp " + nf.format(it.hargaPerGalon));
-            tvSub.setText("Rp " + nf.format(it.getSubtotal()));
-            row.setOnClickListener(v -> showItemDialog(items.get(idx), idx));
-            btnDel.setOnClickListener(v -> {
-                items.remove(idx);
-                refreshItemsView();
-                syncKembaliToTotalJumlah();
-                if (Transaction.ONGKIR_BORONGAN.equals(getSelectedOngkirType()) && !userEditedOngkir) {
-                    applyBoronganDefault();
-                }
-                updateTotal();
+            final EditText etQty = row.findViewById(R.id.etItemQty);
+            final EditText etPrice = row.findViewById(R.id.etItemPrice);
+            View btnMinus = row.findViewById(R.id.btnItemMinus);
+            View btnPlus = row.findViewById(R.id.btnItemPlus);
+
+            tvName.setText(p.getName());
+            try {
+                tvDot.setTextColor(p.getColor() != null && !p.getColor().isEmpty()
+                        ? Color.parseColor(p.getColor()) : Color.parseColor("#1565C0"));
+            } catch (Exception e) {
+                tvDot.setTextColor(Color.parseColor("#1565C0"));
+            }
+            // Set nilai awal SEBELUM pasang watcher supaya tidak memicu
+            // onEntriesChanged saat inisialisasi.
+            etQty.setText("0");
+            etPrice.setText(String.valueOf((long) p.getHargaJual()));
+
+            TextWatcher w = new TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+                @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+                @Override public void afterTextChanged(Editable s) { onEntriesChanged(); }
+            };
+            etQty.addTextChangedListener(w);
+            etPrice.addTextChangedListener(w);
+
+            btnMinus.setOnClickListener(v -> {
+                int q = parseIntOr(etQty, 0);
+                if (q > 0) etQty.setText(String.valueOf(q - 1));
             });
+            btnPlus.setOnClickListener(v -> etQty.setText(String.valueOf(parseIntOr(etQty, 0) + 1)));
+
             llItems.addView(row);
+            productEntries.add(new ProductEntry(p, etQty, etPrice));
         }
-        tvEmptyItems.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
+        tvEmptyItems.setVisibility(products.isEmpty() ? View.VISIBLE : View.GONE);
+    }
+
+    /**
+     * Bangun ulang {@link #items} dari semua baris entri dengan jumlah > 0,
+     * lalu sinkronkan jumlah kembali / ongkir borongan / total.
+     */
+    private void onEntriesChanged() {
+        items.clear();
+        for (ProductEntry pe : productEntries) {
+            int qty = parseIntOr(pe.etQty, 0);
+            if (qty <= 0) continue;
+            double price = parseDoubleOr(pe.etPrice, 0);
+            items.add(new TransactionItem(pe.product.getId(), pe.product.getName(), qty, price));
+        }
+        syncKembaliToTotalJumlah();
+        if (Transaction.ONGKIR_BORONGAN.equals(getSelectedOngkirType()) && !userEditedOngkir) {
+            applyBoronganDefault();
+        }
+        updateTotal();
     }
 
     private void syncKembaliToTotalJumlah() {
@@ -635,118 +726,90 @@ public class TransactionActivity extends AppCompatActivity {
         return CustomerDao.UMUM_NAME.equals(selectedCustomerName);
     }
 
-    private void showItemDialog(TransactionItem editing, int editIdx) {
-        List<Product> products = productDao.getAll();
-        if (products.isEmpty()) {
+    /** Update label card reseller afiliasi + visibility tombol "Hapus". */
+    private void updateResellerLabel() {
+        if (tvSelectedReseller == null) return;
+        if (selectedResellerId > 0 && selectedResellerName != null
+                && !selectedResellerName.isEmpty()) {
+            tvSelectedReseller.setText(selectedResellerName
+                    + (selectedResellerAddToPrice ? "  ·  komisi masuk ke harga" : ""));
+            btnClearReseller.setVisibility(View.VISIBLE);
+        } else {
+            tvSelectedReseller.setText("Tidak ada");
+            btnClearReseller.setVisibility(View.GONE);
+        }
+    }
+
+    /**
+     * Dialog pilih reseller afiliasi untuk transaksi ini. Reseller terpilih
+     * mendapat komisi atas transaksi JUAL ini (lihat ResellerKomisiCalculator).
+     */
+    private void showResellerPicker() {
+        List<Customer> resellers = customerDao.getResellers();
+        if (resellers.isEmpty()) {
             Toast.makeText(this,
-                    "Belum ada jenis air. Tambahkan di menu Jenis Air Minum.",
+                    "Belum ada reseller. Tandai pelanggan sebagai reseller di menu Reseller.",
                     Toast.LENGTH_LONG).show();
             return;
         }
-
-        View dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_item_trx, null);
-        TextView tvProduct = dialogView.findViewById(R.id.tvProduct);
-        EditText etQty = dialogView.findViewById(R.id.etQty);
-        EditText etPrice = dialogView.findViewById(R.id.etPrice);
-
-        final long[] chosenPid = {0};
-        final String[] chosenName = {""};
-
-        if (editing != null) {
-            chosenPid[0] = editing.productId;
-            chosenName[0] = editing.productName;
-            tvProduct.setText(editing.productName);
-            etQty.setText(String.valueOf(editing.jumlah));
-            etPrice.setText(String.valueOf((long) editing.hargaPerGalon));
-        } else {
-            etQty.setText("1");
+        final CharSequence[] names = new CharSequence[resellers.size()];
+        for (int i = 0; i < resellers.size(); i++) {
+            Customer r = resellers.get(i);
+            String phone = r.getPhone() != null && !r.getPhone().isEmpty()
+                    ? "  -  " + r.getPhone() : "";
+            names[i] = r.getName() + phone;
         }
+        new AlertDialog.Builder(this)
+                .setTitle("Pilih Reseller Afiliasi")
+                .setItems(names, (d, w) -> {
+                    Customer r = resellers.get(w);
+                    selectedResellerId = r.getId();
+                    selectedResellerName = r.getName();
+                    selectedResellerAddToPrice = r.isKomisiAddToPrice();
+                    selectedResellerRates = resellerRateDao.getRates(r.getId());
+                    applyResellerPricing();
+                    updateResellerLabel();
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
 
-        tvProduct.setOnClickListener(v -> {
-            CharSequence[] names = new CharSequence[products.size()];
-            NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
-            for (int i = 0; i < products.size(); i++) {
-                Product p = products.get(i);
-                int color;
-                try {
-                    color = p.getColor() != null && !p.getColor().isEmpty()
-                            ? Color.parseColor(p.getColor())
-                            : Color.parseColor("#1565C0");
-                } catch (Exception e) {
-                    color = Color.parseColor("#1565C0");
-                }
-                SpannableStringBuilder sb = new SpannableStringBuilder();
-                int dotStart = sb.length();
-                sb.append("\u25CF  ");
-                sb.setSpan(new ForegroundColorSpan(color), dotStart, dotStart + 1,
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                sb.setSpan(new RelativeSizeSpan(1.4f), dotStart, dotStart + 1,
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                int nameStart = sb.length();
-                sb.append(p.getName());
-                sb.setSpan(new ForegroundColorSpan(color), nameStart, sb.length(),
-                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                sb.setSpan(new StyleSpan(android.graphics.Typeface.BOLD),
-                        nameStart, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                sb.append("  — Rp ").append(nf.format(p.getHargaJual()));
-                names[i] = sb;
+    /**
+     * Set harga tiap baris produk sesuai reseller terpilih. Kalau reseller pakai
+     * "Tambahkan Komisi ke Harga", harga = harga jual + komisi (override per
+     * produk dari {@link com.crowja.damiupos.db.ResellerRateDao}, fallback rate
+     * global {@link SettingsDao#getResellerKomisi()}). Tanpa flag / tanpa reseller
+     * → kembali ke harga jual normal. Menimpa harga yang sempat diubah manual.
+     */
+    private void applyResellerPricing() {
+        double globalRate = settingsDao.getResellerKomisi();
+        for (ProductEntry pe : productEntries) {
+            double price = pe.product.getHargaJual();
+            if (selectedResellerAddToPrice && selectedResellerId > 0) {
+                Double override = selectedResellerRates.get(pe.product.getId());
+                double rate = override != null ? override : globalRate;
+                price += rate;
             }
-            new AlertDialog.Builder(this)
-                    .setTitle("Pilih Jenis Air")
-                    .setItems(names, (d, w) -> {
-                        Product p = products.get(w);
-                        chosenPid[0] = p.getId();
-                        chosenName[0] = p.getName();
-                        tvProduct.setText(p.getName());
-                        if (etPrice.getText().toString().trim().isEmpty()) {
-                            etPrice.setText(String.valueOf((long) p.getHargaJual()));
-                        }
-                    })
-                    .show();
-        });
+            pe.etPrice.setText(String.valueOf((long) price));
+        }
+        // setText memicu watcher → onEntriesChanged → updateTotal.
+    }
 
-        AlertDialog.Builder b = new AlertDialog.Builder(this)
-                .setTitle(editing == null ? "Tambah Item" : "Edit Item")
-                .setView(dialogView)
-                .setPositiveButton(editing == null ? "Tambah" : "Simpan", null)
-                .setNegativeButton("Batal", null);
-        AlertDialog dialog = b.create();
-        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-                .setOnClickListener(v -> {
-                    if (chosenPid[0] <= 0) {
-                        Toast.makeText(this, "Pilih jenis air", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    int qty;
-                    double price;
-                    try {
-                        qty = Integer.parseInt(etQty.getText().toString().trim());
-                        price = Double.parseDouble(etPrice.getText().toString().trim());
-                    } catch (NumberFormatException e) {
-                        Toast.makeText(this, "Angka tidak valid", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    if (qty <= 0) {
-                        Toast.makeText(this, "Jumlah harus > 0", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    TransactionItem newItem = new TransactionItem(
-                            chosenPid[0], chosenName[0], qty, price);
-                    if (editIdx >= 0) {
-                        items.set(editIdx, newItem);
-                    } else {
-                        items.add(newItem);
-                    }
-                    refreshItemsView();
-                    syncKembaliToTotalJumlah();
-                    if (Transaction.ONGKIR_BORONGAN.equals(getSelectedOngkirType())
-                            && !userEditedOngkir) {
-                        applyBoronganDefault();
-                    }
-                    updateTotal();
-                    dialog.dismiss();
-                }));
-        dialog.show();
+    /**
+     * Kalau dibuka dari Detail Reseller (EXTRA_RESELLER_ID), langsung set reseller
+     * afiliasi terpilih + terapkan harga (kalau reseller pakai komisi-ke-harga).
+     */
+    private void prefillResellerFromIntent() {
+        long preResellerId = getIntent().getLongExtra(EXTRA_RESELLER_ID, 0);
+        if (preResellerId <= 0) return;
+        Customer r = customerDao.getById(preResellerId);
+        if (r == null || !r.isReseller()) return;
+        selectedResellerId = r.getId();
+        selectedResellerName = r.getName();
+        selectedResellerAddToPrice = r.isKomisiAddToPrice();
+        selectedResellerRates = resellerRateDao.getRates(r.getId());
+        applyResellerPricing();
+        updateResellerLabel();
     }
 
     private static final int REQUEST_NEW_CUSTOMER = 5101;
@@ -1114,13 +1177,18 @@ public class TransactionActivity extends AppCompatActivity {
     }
 
     private void updateTanggalTrxButton() {
-        if (btnTanggalTrx == null) return;
+        if (tvSelectedTrxDate == null) return;
         try {
             Date d = trxDbFmt.parse(selectedTrxDate);
-            btnTanggalTrx.setText("Tanggal: "
-                    + (d != null ? trxDisplayFmt.format(d) : "Sekarang"));
+            if (d != null) {
+                // 2 baris (card sempit): tanggal di atas, jam di bawah.
+                tvSelectedTrxDate.setText(trxDateOnlyFmt.format(d)
+                        + "\n" + trxTimeOnlyFmt.format(d));
+            } else {
+                tvSelectedTrxDate.setText("Sekarang");
+            }
         } catch (Exception e) {
-            btnTanggalTrx.setText("Tanggal: Sekarang");
+            tvSelectedTrxDate.setText("Sekarang");
         }
     }
 
@@ -1179,14 +1247,14 @@ public class TransactionActivity extends AppCompatActivity {
         finish();
     }
 
-    private double parseDoubleOr(TextInputEditText et, double def) {
+    private double parseDoubleOr(EditText et, double def) {
         if (et == null || et.getText() == null) return def;
         String s = et.getText().toString().trim();
         if (s.isEmpty()) return def;
         try { return Double.parseDouble(s); } catch (NumberFormatException e) { return def; }
     }
 
-    private int parseIntOr(TextInputEditText et, int def) {
+    private int parseIntOr(EditText et, int def) {
         if (et == null || et.getText() == null) return def;
         String s = et.getText().toString().trim();
         if (s.isEmpty()) return def;
@@ -1238,6 +1306,7 @@ public class TransactionActivity extends AppCompatActivity {
             trx.setGalonOwnership(ownership);
             trx.setHargaBotolGalon(hargaBotol);
             trx.setPaymentMethod(pendingPayment); // metode bayar dipilih sebelum simpan
+            trx.setResellerId(selectedResellerId); // reseller afiliasi (0 = tidak ada)
         }
         double hargaGR = 0;
         int rusak = 0;

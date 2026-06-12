@@ -46,6 +46,36 @@ public final class ShiftReporter {
         public long breakMillis;    // total istirahat (BREAK → IN berikut)
     }
 
+    /**
+     * Total kerja HARI INI (kalender lokal) untuk user: jumlah segmen
+     * IN&nbsp;→&nbsp;BREAK/OUT (atau IN&nbsp;→&nbsp;sekarang untuk segmen terbuka),
+     * dibatasi hanya event hari ini. Beda dari {@link #computeShift} yang
+     * mengikuti "shift berjalan" tanpa batas hari — dipakai untuk pengingat jam
+     * kerja &amp; popup apresiasi supaya akurat "jam kerja hari ini" walaupun
+     * shift dibiarkan terbuka lintas hari (lupa Pulang).
+     */
+    public static long workedMillisToday(DatabaseHelper dbHelper, long userId) {
+        String today = SDF_DATE.format(new Date());
+        List<Attendance> evs = new AttendanceDao(dbHelper)
+                .getEventsByUserBetween(userId, today, today);
+        long now = System.currentTimeMillis();
+        long workedMs = 0;
+        long segStart = -1;
+        for (Attendance a : evs) {
+            long t = parseMillis(a.getTs(), now);
+            if (Attendance.EVENT_IN.equals(a.getEvent())) {
+                segStart = t;
+            } else { // BREAK atau OUT menutup segmen kerja terbuka
+                if (segStart >= 0) {
+                    workedMs += Math.max(0, t - segStart);
+                    segStart = -1;
+                }
+            }
+        }
+        if (segStart >= 0) workedMs += Math.max(0, now - segStart);
+        return workedMs;
+    }
+
     /** Hitung shift berjalan user dari log absensi (sampai "sekarang"). */
     public static Shift computeShift(DatabaseHelper dbHelper, long userId) {
         Shift s = new Shift();
@@ -89,8 +119,9 @@ public final class ShiftReporter {
         Shift shift = computeShift(dbHelper, userId);
         double[] sum = trxDao.getSummaryByDateRange(today, today);
         List<Transaction> transactions = trxDao.getByDateRange(today, today);
+        List<Expense> expenses = expenseDao.getByDateRange(today, today);
         double totalExpense = 0;
-        for (Expense e : expenseDao.getByDateRange(today, today)) {
+        for (Expense e : expenses) {
             totalExpense += e.getAmount();
         }
 
@@ -123,8 +154,18 @@ public final class ShiftReporter {
         // Rincian pembayaran per metode (Tunai/QRIS/Transfer).
         appendPaymentMethods(sb, transactions, nf);
 
+        // Rincian tiap pengeluaran (pengeluaran) hari ini.
+        appendExpenses(sb, expenses, nf);
+
         // Daftar pelanggan yang di-follow-up hari ini.
-        appendFollowUps(sb, customerDao.getFollowedUpOn(today));
+        List<Customer> followedToday = customerDao.getFollowedUpOn(today);
+        appendFollowUps(sb, followedToday);
+
+        // Pelanggan yang MASIH perlu di-follow-up tapi belum dihubungi hari ini.
+        java.util.Set<Long> followedIds = new java.util.HashSet<>();
+        for (Customer c : followedToday) followedIds.add(c.getId());
+        appendFollowUpPending(sb,
+                customerDao.getFollowUpCandidates(settings.getFollowupDays()), followedIds);
 
         return sb.toString();
     }
@@ -192,6 +233,27 @@ public final class ShiftReporter {
         }
     }
 
+    /** Rincian tiap pengeluaran hari ini: nama + nominal (+ catatan kalau ada). */
+    private static void appendExpenses(StringBuilder sb, List<Expense> expenses, NumberFormat nf) {
+        double total = 0;
+        for (Expense e : expenses) total += e.getAmount();
+        sb.append("\n*Rincian Pengeluaran* (Rp ").append(nf.format(Math.round(total))).append(")\n");
+        if (expenses.isEmpty()) {
+            sb.append("- (tidak ada)\n");
+            return;
+        }
+        for (Expense e : expenses) {
+            String name = e.getName() != null && !e.getName().isEmpty()
+                    ? e.getName() : "(tanpa nama)";
+            sb.append("- ").append(name).append(": Rp ")
+              .append(nf.format(Math.round(e.getAmount())));
+            if (e.getNote() != null && !e.getNote().isEmpty()) {
+                sb.append("  ·  ").append(e.getNote());
+            }
+            sb.append("\n");
+        }
+    }
+
     /** Jumlah + nama pelanggan yang di-follow-up hari ini. */
     private static void appendFollowUps(StringBuilder sb, List<Customer> followed) {
         sb.append("\n*Follow Up Hari Ini* (").append(followed.size()).append(")\n");
@@ -201,6 +263,34 @@ public final class ShiftReporter {
         }
         for (Customer c : followed) {
             sb.append("- ").append(c.getName() != null ? c.getName() : "(tanpa nama)").append("\n");
+        }
+    }
+
+    /**
+     * Pelanggan yang MASIH perlu di-follow-up (sudah lewat ambang hari sejak
+     * pembelian terakhir, belum dikecualikan) TAPI belum dihubungi hari ini.
+     * Detail: nama + tanggal beli terakhir, supaya shift berikutnya tahu siapa
+     * yang tersisa.
+     */
+    private static void appendFollowUpPending(StringBuilder sb, List<Customer> candidates,
+                                              java.util.Set<Long> followedTodayIds) {
+        List<Customer> pending = new java.util.ArrayList<>();
+        for (Customer c : candidates) {
+            if (!followedTodayIds.contains(c.getId())) pending.add(c);
+        }
+        sb.append("\n*Belum Di Follow Up* (").append(pending.size()).append(")\n");
+        if (pending.isEmpty()) {
+            sb.append("- (tidak ada)\n");
+            return;
+        }
+        for (Customer c : pending) {
+            sb.append("- ").append(c.getName() != null ? c.getName() : "(tanpa nama)");
+            // getFollowUpCandidates meng-overload createdAt dengan ts beli terakhir.
+            String lastJual = c.getCreatedAt();
+            if (lastJual != null && lastJual.length() >= 10) {
+                sb.append(" (terakhir beli ").append(lastJual, 0, 10).append(")");
+            }
+            sb.append("\n");
         }
     }
 
@@ -243,5 +333,13 @@ public final class ShiftReporter {
         long h = totalMin / 60;
         long m = totalMin % 60;
         return h > 0 ? h + "j " + m + "m" : m + "m";
+    }
+
+    /** Bentuk panjang untuk popup apresiasi: "7 jam 32 menit" / "45 menit". */
+    public static String formatDurationLong(long millis) {
+        long totalMin = Math.max(0, millis / 60000L);
+        long h = totalMin / 60;
+        long m = totalMin % 60;
+        return h > 0 ? h + " jam " + m + " menit" : m + " menit";
     }
 }

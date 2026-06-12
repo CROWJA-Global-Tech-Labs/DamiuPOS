@@ -111,18 +111,42 @@ public class LoginActivity extends AppCompatActivity {
             cam.putExtra(CameraCaptureActivity.EXTRA_LABEL, "Clock In");
             startActivityForResult(cam, REQ_SELFIE_LOGIN);
         });
+
+        // Pulihkan pendingUser kalau activity sempat di-recreate OS saat selfie
+        // di depan — supaya hasil foto tetap tercatat sebagai clock in.
+        if (savedInstanceState != null) {
+            long savedUid = savedInstanceState.getLong("pending_login_uid", 0);
+            if (savedUid > 0) pendingUser = userDao.getById(savedUid);
+        }
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        // Selamatkan user yang menunggu selfie supaya clock in tidak hilang
+        // kalau LoginActivity di-kill OS saat kamera di depan.
+        if (pendingUser != null) outState.putLong("pending_login_uid", pendingUser.getId());
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQ_SELFIE_LOGIN && pendingUser != null) {
+            // Batal eksplisit di peringatan lokasi → jangan clock in, balik ke login.
+            if (data != null && data.getBooleanExtra(
+                    CameraCaptureActivity.EXTRA_USER_CANCELLED, false)) {
+                pendingUser = null;
+                return;
+            }
             // Foto boleh null (kamera gagal/ditolak) — absensi tetap jalan.
             String photo = data != null
                     ? data.getStringExtra(CameraCaptureActivity.EXTRA_PHOTO_PATH) : null;
             new AttendanceDao(DatabaseHelper.getInstance(this))
                     .log(pendingUser.getId(), Attendance.EVENT_IN, photo);
             settingsDao.setCurrentUser(pendingUser.getId(), pendingUser.getName());
+            // Jadwalkan pengingat "jam kerja terpenuhi" untuk shift ini
+            // (re-arm otomatis menghitung jam kerja sebelum istirahat).
+            WorkHoursReminder.schedule(getApplicationContext(), pendingUser.getId());
             Toast.makeText(this, "Selamat bekerja, " + pendingUser.getName() + " 👋",
                     Toast.LENGTH_SHORT).show();
             pendingUser = null;

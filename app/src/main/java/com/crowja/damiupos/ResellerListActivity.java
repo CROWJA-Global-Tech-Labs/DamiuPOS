@@ -210,6 +210,7 @@ public class ResellerListActivity extends AppCompatActivity {
 
     private void makeReseller(Customer c) {
         c.setReseller(true);
+        c.setKomisiAddToPrice(true); // default: komisi ditambahkan ke harga jual
         if (c.getResellerSince() == null || c.getResellerSince().isEmpty()) {
             c.setResellerSince(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
                     .format(new Date()));

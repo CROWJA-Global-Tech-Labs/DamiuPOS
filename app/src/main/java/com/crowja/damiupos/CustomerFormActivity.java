@@ -16,6 +16,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.ContactsContract;
 import android.provider.MediaStore;
+import android.view.View;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -69,6 +70,7 @@ public class CustomerFormActivity extends AppCompatActivity {
     private double longitude = 0;
 
     private com.google.android.material.checkbox.MaterialCheckBox cbReseller;
+    private com.google.android.material.checkbox.MaterialCheckBox cbKomisiAddToPrice;
     /** resellerSince existing dari DB (kalau edit) — dipertahankan kalau tetap reseller. */
     private String existingResellerSince;
 
@@ -96,6 +98,17 @@ public class CustomerFormActivity extends AppCompatActivity {
         ivFotoRumah = findViewById(R.id.ivFotoRumah);
         tvKoordinat = findViewById(R.id.tvKoordinat);
 
+        // Reseller + sub-opsi "Tambahkan Komisi ke Harga Air Minum"
+        // (hanya tampil saat "Jadikan Reseller" dicentang).
+        cbReseller = findViewById(R.id.cbReseller);
+        cbKomisiAddToPrice = findViewById(R.id.cbKomisiAddToPrice);
+        cbKomisiAddToPrice.setVisibility(cbReseller.isChecked() ? View.VISIBLE : View.GONE);
+        cbReseller.setOnCheckedChangeListener((b, checked) -> {
+            cbKomisiAddToPrice.setVisibility(checked ? View.VISIBLE : View.GONE);
+            // Default ON: saat pelanggan dijadikan reseller, komisi-ke-harga ikut aktif.
+            cbKomisiAddToPrice.setChecked(checked);
+        });
+
         // Check if editing existing customer
         editId = getIntent().getLongExtra("customer_id", -1);
         if (editId != -1) {
@@ -109,8 +122,8 @@ public class CustomerFormActivity extends AppCompatActivity {
                     selectedCreatedAt = customer.getCreatedAt();
                 }
                 // Reseller state existing
-                if (cbReseller == null) cbReseller = findViewById(R.id.cbReseller);
                 cbReseller.setChecked(customer.isReseller());
+                cbKomisiAddToPrice.setChecked(customer.isKomisiAddToPrice());
                 existingResellerSince = customer.getResellerSince();
 
                 if (customer.getPhotoPath() != null && !customer.getPhotoPath().isEmpty()) {
@@ -202,31 +215,9 @@ public class CustomerFormActivity extends AppCompatActivity {
         }
     }
 
+    /** Preview foto hemat memori (downsample + RGB_565 + EXIF). */
     private Bitmap loadRotatedBitmap(String photoPath) {
-        Bitmap bitmap = BitmapFactory.decodeFile(photoPath);
-        if (bitmap == null) return null;
-        try {
-            ExifInterface exif = new ExifInterface(photoPath);
-            int orientation = exif.getAttributeInt(
-                    ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
-            int rotation = 0;
-            switch (orientation) {
-                case ExifInterface.ORIENTATION_ROTATE_90: rotation = 90; break;
-                case ExifInterface.ORIENTATION_ROTATE_180: rotation = 180; break;
-                case ExifInterface.ORIENTATION_ROTATE_270: rotation = 270; break;
-            }
-            if (rotation != 0) {
-                Matrix matrix = new Matrix();
-                matrix.postRotate(rotation);
-                Bitmap rotated = Bitmap.createBitmap(bitmap, 0, 0,
-                        bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-                bitmap.recycle();
-                return rotated;
-            }
-        } catch (IOException e) {
-            // Ignore EXIF errors, return original bitmap
-        }
-        return bitmap;
+        return com.crowja.damiupos.util.BitmapUtils.decodeSampled(photoPath, 1024, 1024);
     }
 
     private void updateKoordinatDisplay() {
@@ -390,6 +381,9 @@ public class CustomerFormActivity extends AppCompatActivity {
         // historis tidak berubah.
         boolean isReseller = cbReseller != null && cbReseller.isChecked();
         customer.setReseller(isReseller);
+        // Komisi-ke-harga hanya berlaku kalau pelanggan reseller.
+        customer.setKomisiAddToPrice(isReseller
+                && cbKomisiAddToPrice != null && cbKomisiAddToPrice.isChecked());
         if (isReseller) {
             customer.setResellerSince(
                     existingResellerSince != null && !existingResellerSince.isEmpty()

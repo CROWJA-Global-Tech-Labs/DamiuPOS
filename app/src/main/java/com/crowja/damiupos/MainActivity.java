@@ -9,6 +9,11 @@ import android.net.Uri;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.RelativeSizeSpan;
+import android.text.style.StyleSpan;
 import android.view.LayoutInflater;
 import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
@@ -127,6 +132,7 @@ public class MainActivity extends AppCompatActivity {
 
         adapter = new TransactionAdapter(true);
         rvRecentTransactions.setLayoutManager(new LinearLayoutManager(this));
+        rvRecentTransactions.setHasFixedSize(true);
         rvRecentTransactions.setAdapter(adapter);
         adapter.setOnItemClickListener(trx -> {
             Intent i = new Intent(this, ReceiptActivity.class);
@@ -214,8 +220,8 @@ public class MainActivity extends AppCompatActivity {
         View btnClockOut = findViewById(R.id.btnClockOut);
         View btnAdminLogout = findViewById(R.id.btnAdminLogout);
         if (btnIstirahat != null) btnIstirahat.setOnClickListener(v -> doIstirahat());
-        // Pulang: ambil selfie dulu → catat OUT → kirim laporan ke email admin.
-        if (btnClockOut != null) btnClockOut.setOnClickListener(v -> startSelfieThenClockOut());
+        // Pulang: konfirmasi dulu → selfie → catat OUT → laporan + apresiasi.
+        if (btnClockOut != null) btnClockOut.setOnClickListener(v -> confirmPulang());
         // Admin: logout biasa (tanpa absensi/laporan).
         if (btnAdminLogout != null) btnAdminLogout.setOnClickListener(v -> doAdminLogout());
 
@@ -225,6 +231,34 @@ public class MainActivity extends AppCompatActivity {
             cardKaryawan.setOnClickListener(v ->
                     startActivity(new Intent(this, UserListActivity.class)));
         }
+
+        // Siapkan channel pengingat jam kerja + minta izin notifikasi (Android 13+).
+        ensureNotificationAccess();
+    }
+
+    private static final int REQ_POST_NOTIF = 9311;
+
+    /** Buat channel pengingat jam kerja + minta izin POST_NOTIFICATIONS (API 33+). */
+    private void ensureNotificationAccess() {
+        WorkHoursReminder.ensureChannel(this);
+        if (Build.VERSION.SDK_INT >= 33
+                && androidx.core.content.ContextCompat.checkSelfPermission(this,
+                        android.Manifest.permission.POST_NOTIFICATIONS)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            androidx.core.app.ActivityCompat.requestPermissions(this,
+                    new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, REQ_POST_NOTIF);
+        }
+    }
+
+    /** Konfirmasi sebelum Pulang (clock out) — gate selfie + pencatatan OUT. */
+    private void confirmPulang() {
+        new AlertDialog.Builder(this)
+                .setTitle("Konfirmasi Pulang")
+                .setMessage("Akhiri shift dan catat jam pulang sekarang? "
+                        + "Laporan shift akan dikirim ke admin.")
+                .setPositiveButton("Ya, Pulang", (d, w) -> startSelfieThenClockOut())
+                .setNegativeButton("Batal", null)
+                .show();
     }
 
     /**
@@ -274,6 +308,11 @@ public class MainActivity extends AppCompatActivity {
                 String info = "Kerja " + ShiftReporter.formatDuration(s.workMillis);
                 if (s.breakCount > 0) info += " • Istirahat " + s.breakCount + "x";
                 tvShift.setText(info);
+                // Self-heal: pastikan pengingat "jam kerja terpenuhi" terjadwal
+                // selama shift masih terbuka (no-op kalau target sudah tercapai).
+                if (s.clockIn != null) {
+                    WorkHoursReminder.schedule(getApplicationContext(), uid);
+                }
             } catch (Exception e) {
                 tvShift.setText("Sedang bekerja");
             }
@@ -294,6 +333,8 @@ public class MainActivity extends AppCompatActivity {
                 .setPositiveButton("Ya, Istirahat", (d, w) -> {
                     new AttendanceDao(DatabaseHelper.getInstance(this))
                             .log(uid, Attendance.EVENT_BREAK);
+                    // Pause pengingat jam kerja — di-rearm saat clock in lagi.
+                    WorkHoursReminder.cancel(getApplicationContext(), uid);
                     settingsDao.clearCurrentUser();
                     Intent i = new Intent(this, LoginActivity.class);
                     i.putExtra(LoginActivity.EXTRA_FROM_BREAK, true);
@@ -324,6 +365,13 @@ public class MainActivity extends AppCompatActivity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQ_SELFIE_LOGOUT) {
+            // Batal eksplisit di peringatan lokasi → batalkan pulang, shift jalan terus.
+            if (data != null && data.getBooleanExtra(
+                    CameraCaptureActivity.EXTRA_USER_CANCELLED, false)) {
+                pendingLogoutUid = 0;
+                pendingLogoutName = null;
+                return;
+            }
             String photo = data != null
                     ? data.getStringExtra(CameraCaptureActivity.EXTRA_PHOTO_PATH) : null;
             finishClockOut(photo);
@@ -341,12 +389,31 @@ public class MainActivity extends AppCompatActivity {
         DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
         com.crowja.damiupos.db.AttendanceDao attDao = new AttendanceDao(dbHelper);
 
+        // Guard anti-double-OUT: kalau shift sudah ditutup (mis. popup apresiasi
+        // hilang karena rotasi/destroy lalu user menekan Pulang lagi), jangan
+        // catat OUT kedua / kirim email kosong — langsung ke login saja.
+        Attendance last = attDao.getLastEvent(uid);
+        if (last != null && Attendance.EVENT_OUT.equals(last.getEvent())) {
+            proceedToLoginAfterClockOut();
+            return;
+        }
+
         // Foto login diambil SEBELUM OUT (setelah OUT, shift berjalan tertutup).
         String loginPhoto = attDao.getCurrentShiftLoginPhoto(uid);
         String summary = ShiftReporter.buildSummaryText(this, dbHelper, uid, uname);
+        // "Jam kerja hari ini" untuk popup apresiasi — dibatasi tanggal hari ini
+        // (akurat walau shift sempat dibiarkan terbuka lintas hari).
+        long workMs = ShiftReporter.workedMillisToday(dbHelper, uid);
 
         // Catat OUT + foto pulang.
         attDao.log(uid, Attendance.EVENT_OUT, logoutPhoto);
+        // Shift selesai → batalkan pengingat jam kerja + lepas sesi SEGERA
+        // (sinkron). Kalau popup apresiasi hilang karena rotasi/destroy, gate
+        // onCreate tetap mengarahkan ke login (tidak terjebak masih "login").
+        WorkHoursReminder.cancel(getApplicationContext(), uid);
+        pendingLogoutUid = 0;
+        pendingLogoutName = null;
+        settingsDao.clearCurrentUser();
 
         // Kirim laporan shift (teks + foto login & pulang) ke email admin.
         if (settingsDao.isShiftEmailConfigured()) {
@@ -377,7 +444,33 @@ public class MainActivity extends AppCompatActivity {
         AttendanceRecap.maybeSendDueRecap(getApplicationContext(), dbHelper, true);
         AttendanceRecap.maybeSendDueWeeklyRecap(getApplicationContext(), dbHelper, true);
 
-        // Lepas sesi + kembali ke login.
+        // Popup apresiasi + jam kerja hari ini. Navigasi ke login DITUNDA
+        // sampai user menekan OK (kalau langsung finish(), dialog ikut tertutup).
+        showAppreciationThenLogout(uname, workMs);
+    }
+
+    /**
+     * Tampilkan kata-kata apresiasi + total jam kerja hari ini, lalu lanjutkan
+     * ke layar login setelah user menekan OK. Dialog tidak bisa dibatalkan
+     * supaya clock out selalu tuntas.
+     */
+    private void showAppreciationThenLogout(String uname, long workMs) {
+        String first = (uname != null && !uname.isEmpty()) ? uname : "Kak";
+        SpannableStringBuilder msg = new SpannableStringBuilder();
+        msg.append("Terima kasih, " + first + "! Kerja kerasmu hari ini sangat berarti.\n\n");
+        appendStyled(msg, "Total kerja hari ini: " + ShiftReporter.formatDurationLong(workMs),
+                Color.parseColor("#1565C0"), true, 1.15f);
+        msg.append("\n\nIstirahat yang cukup, sampai jumpa besok! 👋");
+        new AlertDialog.Builder(this)
+                .setTitle("👋 Selamat Pulang!")
+                .setMessage(msg)
+                .setCancelable(false)
+                .setPositiveButton("OK", (d, w) -> proceedToLoginAfterClockOut())
+                .show();
+    }
+
+    /** Lepas sesi + kembali ke layar login (dipanggil setelah popup apresiasi). */
+    private void proceedToLoginAfterClockOut() {
         pendingLogoutUid = 0;
         pendingLogoutName = null;
         settingsDao.clearCurrentUser();
@@ -385,6 +478,23 @@ public class MainActivity extends AppCompatActivity {
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         startActivity(i);
         finish();
+    }
+
+    /** Append teks berwarna/bold/diperbesar ke SpannableStringBuilder. */
+    private void appendStyled(SpannableStringBuilder sb, String text,
+                              int color, boolean bold, float sizeMul) {
+        int start = sb.length();
+        sb.append(text);
+        int end = sb.length();
+        sb.setSpan(new ForegroundColorSpan(color), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        if (bold) {
+            sb.setSpan(new StyleSpan(android.graphics.Typeface.BOLD), start, end,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        if (sizeMul != 1f) {
+            sb.setSpan(new RelativeSizeSpan(sizeMul), start, end,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
     }
 
     private static void addIfExists(java.util.List<java.io.File> list, String path) {
@@ -407,6 +517,14 @@ public class MainActivity extends AppCompatActivity {
     public boolean onCreateOptionsMenu(Menu menu) {
         getMenuInflater().inflate(R.menu.menu_main, menu);
         return true;
+    }
+
+    @Override
+    public boolean onPrepareOptionsMenu(Menu menu) {
+        // Ikon amplop (inbox pesanan WA) hanya tampil kalau auto-detect aktif.
+        MenuItem inbox = menu.findItem(R.id.action_inbox);
+        if (inbox != null) inbox.setVisible(settingsDao.isWaAutoDetectEnabled());
+        return super.onPrepareOptionsMenu(menu);
     }
 
     @Override
@@ -504,6 +622,8 @@ public class MainActivity extends AppCompatActivity {
             registerReceiver(newOrderReceiver, f);
         }
         refreshOrderInboxBanner();
+        // Re-evaluasi visibilitas ikon inbox (auto-detect bisa di-toggle di Pengaturan).
+        invalidateOptionsMenu();
     }
 
     @Override

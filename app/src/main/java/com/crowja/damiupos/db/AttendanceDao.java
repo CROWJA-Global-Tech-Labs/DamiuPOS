@@ -32,6 +32,19 @@ public class AttendanceDao {
         return db.insert(DatabaseHelper.TABLE_ATTENDANCE, null, v);
     }
 
+    /**
+     * Kosongkan kolom photo_path untuk semua event dalam rentang tanggal
+     * (dipanggil setelah foto periode dihapus agar tidak ada path menggantung).
+     */
+    public void clearPhotoPathsBetween(String startDate, String endDate) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.putNull(DatabaseHelper.COL_ATT_PHOTO_PATH);
+        db.update(DatabaseHelper.TABLE_ATTENDANCE, v,
+                DatabaseHelper.COL_ATT_TS + ">=? AND " + DatabaseHelper.COL_ATT_TS + "<=?",
+                new String[]{startDate + " 00:00:00", endDate + " 23:59:59"});
+    }
+
     /** Foto IN pertama (login) shift berjalan user — null kalau tidak ada. */
     public String getCurrentShiftLoginPhoto(long userId) {
         for (Attendance a : getCurrentShiftEvents(userId)) {

@@ -21,6 +21,7 @@ public class Customer {
     private boolean isReseller;
     private String resellerSince;   // komisi dihitung dari JUAL setelah tanggal ini
     private int komisiGalon;        // calculated: total galon JUAL sejak jadi reseller
+    private boolean komisiAddToPrice = true; // default ON: komisi ditambahkan ke harga jual
 
     public Customer() {}
 
@@ -106,4 +107,8 @@ public class Customer {
     /** Total galon JUAL sejak jadi reseller (basis perhitungan komisi). */
     public int getKomisiGalon() { return komisiGalon; }
     public void setKomisiGalon(int v) { this.komisiGalon = v; }
+
+    /** True = komisi reseller ini ditambahkan ke harga air minum saat transaksi. */
+    public boolean isKomisiAddToPrice() { return komisiAddToPrice; }
+    public void setKomisiAddToPrice(boolean v) { this.komisiAddToPrice = v; }
 }

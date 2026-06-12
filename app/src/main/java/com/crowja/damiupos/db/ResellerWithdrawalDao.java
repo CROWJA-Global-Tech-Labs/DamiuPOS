@@ -21,7 +21,7 @@ public class ResellerWithdrawalDao {
     public static final String TYPE_AIR = "AIR";
     public static final String TYPE_UANG = "UANG";
 
-    /** Row hasil query: {id, type, galonQty, amount, note, createdAt}. */
+    /** Row hasil query: {id, type, galonQty, amount, note, createdAt, expenseId}. */
     public static class Withdrawal {
         public long id;
         public String type;
@@ -29,6 +29,7 @@ public class ResellerWithdrawalDao {
         public double amount;
         public String note;
         public String createdAt;
+        public long expenseId; // expense terkait (0 = tidak ada)
     }
 
     private final DatabaseHelper dbHelper;
@@ -39,6 +40,12 @@ public class ResellerWithdrawalDao {
 
     public long insert(long customerId, String type, int galonQty,
                        double amount, String note) {
+        return insert(customerId, type, galonQty, amount, note, 0);
+    }
+
+    /** Insert pencairan + link ke expense (pengeluaran) terkait. */
+    public long insert(long customerId, String type, int galonQty,
+                       double amount, String note, long expenseId) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_WD_CUSTOMER_ID, customerId);
@@ -48,6 +55,7 @@ public class ResellerWithdrawalDao {
         if (note != null && !note.trim().isEmpty()) {
             v.put(DatabaseHelper.COL_WD_NOTE, note.trim());
         }
+        v.put(DatabaseHelper.COL_WD_EXPENSE_ID, expenseId);
         return db.insert(DatabaseHelper.TABLE_RESELLER_WD, null, v);
     }
 
@@ -90,6 +98,8 @@ public class ResellerWithdrawalDao {
             int noteIdx = c.getColumnIndex(DatabaseHelper.COL_WD_NOTE);
             if (noteIdx >= 0 && !c.isNull(noteIdx)) w.note = c.getString(noteIdx);
             w.createdAt = c.getString(c.getColumnIndexOrThrow(DatabaseHelper.COL_WD_CREATED_AT));
+            int expIdx = c.getColumnIndex(DatabaseHelper.COL_WD_EXPENSE_ID);
+            if (expIdx >= 0) w.expenseId = c.getLong(expIdx);
             list.add(w);
         }
         c.close();

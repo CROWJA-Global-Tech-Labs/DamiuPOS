@@ -39,6 +39,16 @@ import java.util.Locale;
 
 public class FollowUpActivity extends AppCompatActivity {
 
+    // Formatter di-hoist (dipakai per-item di bind) — main-thread, aman dibagi.
+    private static final SimpleDateFormat SDF_PARSE_FULL =
+            new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
+    private static final SimpleDateFormat SDF_PARSE_DATE =
+            new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+    private static final SimpleDateFormat SDF_OUT_DATE =
+            new SimpleDateFormat("dd MMM yyyy", new Locale("id", "ID"));
+    private static final SimpleDateFormat SDF_OUT_DAY =
+            new SimpleDateFormat("EEEE", new Locale("id", "ID"));
+
     private RecyclerView rv;
     private TextView tvEmpty, tvSummary;
     private FollowUpAdapter adapter;
@@ -69,6 +79,7 @@ public class FollowUpActivity extends AppCompatActivity {
 
         adapter = new FollowUpAdapter();
         rv.setLayoutManager(new LinearLayoutManager(this));
+        rv.setHasFixedSize(true);
         rv.setAdapter(adapter);
 
         attachSwipeToRemove();
@@ -342,54 +353,23 @@ public class FollowUpActivity extends AppCompatActivity {
     }
 
     /**
-     * Load foto pelanggan untuk avatar: downsample (inSampleSize) supaya hemat
-     * memory di list, + koreksi rotasi EXIF supaya tidak miring. Return null
-     * kalau gagal (caller fallback ke inisial).
+     * Avatar foto pelanggan: thumbnail ter-cache (RGB_565 + sampling + EXIF) agar
+     * scroll tidak men-decode ulang. Null kalau gagal (fallback ke inisial).
      */
     private android.graphics.Bitmap loadAvatarBitmap(String path) {
-        try {
-            android.graphics.BitmapFactory.Options opts =
-                    new android.graphics.BitmapFactory.Options();
-            opts.inSampleSize = 4; // avatar kecil, tidak perlu full-res
-            android.graphics.Bitmap bmp =
-                    android.graphics.BitmapFactory.decodeFile(path, opts);
-            if (bmp == null) return null;
-            int orientation = new androidx.exifinterface.media.ExifInterface(path)
-                    .getAttributeInt(
-                            androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,
-                            androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL);
-            int rot = 0;
-            switch (orientation) {
-                case androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_90: rot = 90; break;
-                case androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_180: rot = 180; break;
-                case androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_270: rot = 270; break;
-            }
-            if (rot != 0) {
-                android.graphics.Matrix m = new android.graphics.Matrix();
-                m.postRotate(rot);
-                android.graphics.Bitmap rotated = android.graphics.Bitmap.createBitmap(
-                        bmp, 0, 0, bmp.getWidth(), bmp.getHeight(), m, true);
-                if (rotated != bmp) bmp.recycle();
-                return rotated;
-            }
-            return bmp;
-        } catch (Throwable t) {
-            return null;
-        }
+        return com.crowja.damiupos.util.BitmapUtils.cachedThumb(path, 160, 160);
     }
 
     private long daysSince(String ts) {
         if (ts == null || ts.isEmpty()) return 0;
         try {
-            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
-            Date d = sdf.parse(ts);
+            Date d = SDF_PARSE_FULL.parse(ts);
             if (d == null) return 0;
             long diff = System.currentTimeMillis() - d.getTime();
             return Math.max(0, diff / (1000L * 60 * 60 * 24));
         } catch (Exception e) {
             try {
-                SimpleDateFormat sdf2 = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
-                Date d2 = sdf2.parse(ts.substring(0, Math.min(10, ts.length())));
+                Date d2 = SDF_PARSE_DATE.parse(ts.substring(0, Math.min(10, ts.length())));
                 if (d2 == null) return 0;
                 long diff = System.currentTimeMillis() - d2.getTime();
                 return Math.max(0, diff / (1000L * 60 * 60 * 24));
@@ -400,10 +380,8 @@ public class FollowUpActivity extends AppCompatActivity {
     private String formatDate(String ts) {
         if (ts == null || ts.isEmpty()) return "-";
         try {
-            SimpleDateFormat in = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
-            SimpleDateFormat out = new SimpleDateFormat("dd MMM yyyy", new Locale("id", "ID"));
-            Date d = in.parse(ts);
-            return d != null ? out.format(d) : ts;
+            Date d = SDF_PARSE_FULL.parse(ts);
+            return d != null ? SDF_OUT_DATE.format(d) : ts;
         } catch (Exception e) {
             return ts.length() >= 10 ? ts.substring(0, 10) : ts;
         }
@@ -458,18 +436,12 @@ public class FollowUpActivity extends AppCompatActivity {
     private String formatDayName(String ts) {
         if (ts == null || ts.isEmpty()) return "-";
         try {
-            SimpleDateFormat in = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
-            Date d = in.parse(ts);
-            if (d == null) return "-";
-            SimpleDateFormat out = new SimpleDateFormat("EEEE", new Locale("id", "ID"));
-            return out.format(d);
+            Date d = SDF_PARSE_FULL.parse(ts);
+            return d != null ? SDF_OUT_DAY.format(d) : "-";
         } catch (Exception e) {
             try {
-                SimpleDateFormat in2 = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
-                Date d2 = in2.parse(ts.substring(0, Math.min(10, ts.length())));
-                if (d2 == null) return "-";
-                SimpleDateFormat out = new SimpleDateFormat("EEEE", new Locale("id", "ID"));
-                return out.format(d2);
+                Date d2 = SDF_PARSE_DATE.parse(ts.substring(0, Math.min(10, ts.length())));
+                return d2 != null ? SDF_OUT_DAY.format(d2) : "-";
             } catch (Exception ignored) { return "-"; }
         }
     }

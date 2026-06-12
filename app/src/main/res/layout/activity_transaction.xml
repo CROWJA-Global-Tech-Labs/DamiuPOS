@@ -115,13 +115,97 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- Customer Selector (pilih pelanggan dulu — beberapa default
-                 seperti ownership / jumlah kembali tergantung pelanggan). -->
-            <com.google.android.material.card.MaterialCardView
-                android:id="@+id/cardCustomer"
+            <!-- Pilih Pelanggan (70%) + Tanggal Transaksi (30%) berdampingan.
+                 Pilih pelanggan dulu — beberapa default (ownership / jumlah
+                 kembali) tergantung pelanggan. -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
+                android:orientation="horizontal"
+                android:baselineAligned="false"
+                android:weightSum="10">
+
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardCustomer"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="7"
+                    app:cardCornerRadius="12dp"
+                    app:cardElevation="2dp"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:orientation="vertical"
+                        android:padding="12dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/pilih_pelanggan"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+
+                        <TextView
+                            android:id="@+id/tvSelectedCustomer"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:text="Tap untuk pilih pelanggan"
+                            android:textColor="@color/text_primary"
+                            android:textSize="16sp" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- Tanggal & Waktu Transaksi (default sekarang) -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/cardDate"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="3"
+                    android:layout_marginStart="8dp"
+                    app:cardCornerRadius="12dp"
+                    app:cardElevation="2dp"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:orientation="vertical"
+                        android:padding="12dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Tanggal"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+
+                        <TextView
+                            android:id="@+id/tvSelectedTrxDate"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:text="Sekarang"
+                            android:textColor="@color/text_primary"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+            </LinearLayout>
+
+            <!-- Reseller Afiliasi (opsional) — DI ATAS item penjualan. Reseller
+                 yang mendapat komisi atas transaksi JUAL ini. Kalau reseller
+                 memakai "Tambahkan Komisi ke Harga", harga tiap item otomatis
+                 ditambah komisi saat dipilih. -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardReseller"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
                 app:cardCornerRadius="12dp"
                 app:cardElevation="2dp"
                 android:clickable="true"
@@ -130,42 +214,46 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
                     android:padding="12dp">
 
-                    <TextView
-                        android:layout_width="wrap_content"
+                    <LinearLayout
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:text="@string/pilih_pelanggan"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="12sp" />
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Reseller Afiliasi (opsional)"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+
+                        <TextView
+                            android:id="@+id/tvSelectedReseller"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:text="Tidak ada"
+                            android:textColor="@color/text_primary"
+                            android:textSize="15sp" />
+                    </LinearLayout>
 
                     <TextView
-                        android:id="@+id/tvSelectedCustomer"
+                        android:id="@+id/btnClearReseller"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="Tap untuk pilih pelanggan"
-                        android:textColor="@color/text_primary"
-                        android:textSize="16sp" />
+                        android:layout_marginStart="8dp"
+                        android:padding="6dp"
+                        android:text="Hapus"
+                        android:textColor="@color/primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
-
-            <!-- Tanggal & Waktu Transaksi (default sekarang) -->
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnTanggalTrx"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:gravity="start|center_vertical"
-                android:text="Tanggal: Sekarang"
-                android:textAllCaps="false"
-                android:textSize="13sp"
-                app:cornerRadius="8dp"
-                app:icon="@android:drawable/ic_menu_today"
-                app:iconGravity="textStart"
-                app:iconSize="18dp" />
 
             <!-- Items (multi-product) -->
             <com.google.android.material.card.MaterialCardView
@@ -183,13 +271,22 @@
                     android:padding="12dp">
 
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="Item Penjualan"
                         android:textColor="@color/text_primary"
                         android:textSize="14sp"
                         android:textStyle="bold" />
 
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="Atur jumlah (pcs) dan harga per pcs untuk tiap jenis air."
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp" />
+
+                    <!-- Semua jenis air di-render di sini (1 baris per produk). -->
                     <LinearLayout
                         android:id="@+id/llItems"
                         android:layout_width="match_parent"
@@ -203,19 +300,10 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
                         android:gravity="center"
-                        android:text="Belum ada item. Tap tombol di bawah."
+                        android:text="Belum ada Jenis Air. Tambahkan di menu Jenis Air Minum."
                         android:textColor="@color/text_secondary"
-                        android:textSize="13sp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnAddItem"
-                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:text="+ Tambah Jenis Air"
-                        android:textAllCaps="false"
-                        app:cornerRadius="12dp" />
+                        android:textSize="13sp"
+                        android:visibility="gone" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
@@ -408,9 +496,9 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- Transaction Details -->
+            <!-- Jumlah Botol Galon Kembali — sekarang card sendiri. -->
             <com.google.android.material.card.MaterialCardView
-                android:id="@+id/cardDetails"
+                android:id="@+id/cardKembali"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
@@ -422,6 +510,14 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
                     android:padding="12dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Botol Galon Kembali"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
 
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/tilJumlahKembali"
@@ -443,6 +539,23 @@
                             android:inputType="number"
                             android:text="1" />
                     </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Transaction Details -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardDetails"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="12dp">
 
                     <LinearLayout
                         android:id="@+id/returnModeContainer"

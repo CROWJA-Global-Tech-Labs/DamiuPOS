@@ -138,28 +138,8 @@ public class ExpenseDetailActivity extends AppCompatActivity {
         }
     }
 
+    /** Preview foto hemat memori (downsample + RGB_565 + EXIF). */
     private Bitmap loadRotatedBitmap(String photoPath) {
-        Bitmap bitmap = BitmapFactory.decodeFile(photoPath);
-        if (bitmap == null) return null;
-        try {
-            ExifInterface exif = new ExifInterface(photoPath);
-            int orientation = exif.getAttributeInt(
-                    ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
-            int rotation = 0;
-            switch (orientation) {
-                case ExifInterface.ORIENTATION_ROTATE_90: rotation = 90; break;
-                case ExifInterface.ORIENTATION_ROTATE_180: rotation = 180; break;
-                case ExifInterface.ORIENTATION_ROTATE_270: rotation = 270; break;
-            }
-            if (rotation != 0) {
-                Matrix matrix = new Matrix();
-                matrix.postRotate(rotation);
-                Bitmap rotated = Bitmap.createBitmap(bitmap, 0, 0,
-                        bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-                bitmap.recycle();
-                return rotated;
-            }
-        } catch (IOException ignored) {}
-        return bitmap;
+        return com.crowja.damiupos.util.BitmapUtils.decodeSampled(photoPath, 1024, 1024);
     }
 }

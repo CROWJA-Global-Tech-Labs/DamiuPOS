@@ -18,6 +18,7 @@ import android.os.CountDownTimer;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageCapture;
@@ -27,6 +28,9 @@ import androidx.camera.view.LifecycleCameraController;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+
+import com.crowja.damiupos.db.DatabaseHelper;
+import com.crowja.damiupos.db.SettingsDao;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -49,6 +53,9 @@ public class CameraCaptureActivity extends AppCompatActivity {
 
     public static final String EXTRA_LABEL = "label";       // teks judul (Clock In/Pulang)
     public static final String EXTRA_PHOTO_PATH = "photo_path";
+    /** true = user menekan "Batal" di peringatan lokasi (batalkan absensi),
+     *  beda dari kamera gagal/izin ditolak (yang tetap lanjut tanpa foto). */
+    public static final String EXTRA_USER_CANCELLED = "user_cancelled";
 
     private static final int REQ_CAMERA = 901;
 
@@ -68,6 +75,39 @@ public class CameraCaptureActivity extends AppCompatActivity {
         String label = getIntent().getStringExtra(EXTRA_LABEL);
         tvLabel.setText("Foto Wajah" + (label != null ? " — " + label : ""));
 
+        // Peringatan lokasi sebelum selfie absensi: pastikan berada di
+        // lingkungan depot dulu. OK → lanjut kamera + countdown; Batal → batal.
+        showLocationWarningThenStart();
+    }
+
+    /** Tampilkan peringatan agar berada di lingkungan depot sebelum foto. */
+    private void showLocationWarningThenStart() {
+        String depot = "";
+        try {
+            depot = new SettingsDao(DatabaseHelper.getInstance(this)).getDepotName();
+        } catch (Throwable ignored) {}
+        String tempat = (depot != null && !depot.isEmpty()) ? depot : "depot";
+        new AlertDialog.Builder(this)
+                .setTitle("Sebelum Ambil Foto")
+                .setMessage("Pastikan Anda berada di lingkungan " + tempat
+                        + " sebelum mengambil foto wajah. Lanjutkan?")
+                .setCancelable(false)
+                .setPositiveButton("Ya, Lanjut", (d, w) -> startCameraFlow())
+                .setNegativeButton("Batal", (d, w) -> finishUserCancelled())
+                .show();
+    }
+
+    /** Batal eksplisit oleh user (tombol Batal di peringatan lokasi) → absensi
+     *  TIDAK dilanjutkan (beda dari finishNoPhoto yang tetap lanjut tanpa foto). */
+    private void finishUserCancelled() {
+        Intent data = new Intent();
+        data.putExtra(EXTRA_USER_CANCELLED, true);
+        setResult(RESULT_CANCELED, data);
+        finish();
+    }
+
+    /** Cek izin kamera/lokasi lalu mulai kamera (dipanggil setelah peringatan OK). */
+    private void startCameraFlow() {
         boolean cam = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                 == PackageManager.PERMISSION_GRANTED;
         boolean loc = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)

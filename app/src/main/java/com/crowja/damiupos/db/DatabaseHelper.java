@@ -7,7 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 18;
+    private static final int DATABASE_VERSION = 20;
 
     // Table customers
     public static final String TABLE_CUSTOMERS = "customers";
@@ -24,6 +24,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     /** Timestamp sejak kapan jadi reseller — komisi dihitung dari transaksi
      *  JUAL setelah tanggal ini saja. */
     public static final String COL_RESELLER_SINCE = "reseller_since";
+    /** 1 = komisi reseller ini ditambahkan ke harga air minum saat transaksi
+     *  (pelanggan membayar harga + komisi), bukan diserap margin depot. */
+    public static final String COL_KOMISI_ADD_TO_PRICE = "komisi_add_to_price";
     /** Timestamp saat pelanggan di-"Remove" dari daftar Follow Up. NULL = tidak
      *  dikecualikan. Pelanggan otomatis muncul lagi kalau beli setelah tanggal ini. */
     public static final String COL_FOLLOWUP_EXCLUDED_AT = "followup_excluded_at";
@@ -67,6 +70,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_HARGA_BOTOL = "harga_botol";
     /** Metode pembayaran transaksi JUAL: TUNAI | QRIS | TRANSFER. */
     public static final String COL_PAYMENT_METHOD = "payment_method";
+    /** Reseller afiliasi: customer_id reseller yang mendapat komisi atas
+     *  transaksi JUAL ini (mis. transaksi atas rujukan reseller). 0 = tidak ada. */
+    public static final String COL_TRX_RESELLER_ID = "reseller_id";
 
     // Table settings
     public static final String TABLE_SETTINGS = "settings";
@@ -136,6 +142,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_WD_AMOUNT = "amount";       // nilai rupiah pencairan
     public static final String COL_WD_NOTE = "note";
     public static final String COL_WD_CREATED_AT = "created_at";
+    /** Id expense (pengeluaran) yang dicatat untuk pencairan ini (0 = tidak ada).
+     *  Dipakai untuk menghapus expense terkait saat pencairan dihapus. */
+    public static final String COL_WD_EXPENSE_ID = "expense_id";
 
     private static final String CREATE_TABLE_CUSTOMERS =
             "CREATE TABLE " + TABLE_CUSTOMERS + " (" +
@@ -148,6 +157,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_LONGITUDE + " REAL DEFAULT 0, " +
                     COL_IS_RESELLER + " INTEGER DEFAULT 0, " +
                     COL_RESELLER_SINCE + " TEXT, " +
+                    COL_KOMISI_ADD_TO_PRICE + " INTEGER DEFAULT 1, " +
                     COL_FOLLOWUP_EXCLUDED_AT + " TEXT, " +
                     COL_FOLLOWUP_EXCLUDE_REASON + " TEXT, " +
                     COL_LAST_FOLLOWUP_AT + " TEXT, " +
@@ -188,6 +198,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_GALON_OWNERSHIP + " TEXT DEFAULT 'PINJAM', " +
                     COL_HARGA_BOTOL + " REAL DEFAULT 0, " +
                     COL_PAYMENT_METHOD + " TEXT, " +
+                    COL_TRX_RESELLER_ID + " INTEGER DEFAULT 0, " +
                     COL_TANGGAL + " TEXT DEFAULT (datetime('now','localtime')), " +
                     COL_CATATAN + " TEXT, " +
                     "FOREIGN KEY(" + COL_CUSTOMER_ID + ") REFERENCES " +
@@ -244,6 +255,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_WD_GALON_QTY + " INTEGER DEFAULT 0, " +
                     COL_WD_AMOUNT + " REAL NOT NULL DEFAULT 0, " +
                     COL_WD_NOTE + " TEXT, " +
+                    COL_WD_EXPENSE_ID + " INTEGER DEFAULT 0, " +
                     COL_WD_CREATED_AT + " TEXT DEFAULT (datetime('now','localtime')), " +
                     "FOREIGN KEY(" + COL_WD_CUSTOMER_ID + ") REFERENCES " +
                     TABLE_CUSTOMERS + "(" + COL_ID + ") ON DELETE CASCADE" +
@@ -421,6 +433,22 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             try {
                 db.execSQL("ALTER TABLE " + TABLE_TRANSACTIONS +
                         " ADD COLUMN " + COL_PAYMENT_METHOD + " TEXT");
+            } catch (Exception ignored) {}
+        }
+        if (oldVersion < 19) {
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_TRANSACTIONS +
+                        " ADD COLUMN " + COL_TRX_RESELLER_ID + " INTEGER DEFAULT 0");
+            } catch (Exception ignored) {}
+        }
+        if (oldVersion < 20) {
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_CUSTOMERS +
+                        " ADD COLUMN " + COL_KOMISI_ADD_TO_PRICE + " INTEGER DEFAULT 1");
+            } catch (Exception ignored) {}
+            try {
+                db.execSQL("ALTER TABLE " + TABLE_RESELLER_WD +
+                        " ADD COLUMN " + COL_WD_EXPENSE_ID + " INTEGER DEFAULT 0");
             } catch (Exception ignored) {}
         }
     }

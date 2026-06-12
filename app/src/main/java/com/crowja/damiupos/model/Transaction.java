@@ -39,6 +39,7 @@ public class Transaction {
     private String galonOwnership = OWNERSHIP_PINJAM;
     private double hargaBotolGalon; // harga beli botol galon saat ownership=BELI
     private String paymentMethod;   // TUNAI | QRIS | TRANSFER (untuk JUAL)
+    private long resellerId;        // reseller afiliasi yg dapat komisi (0 = tidak ada)
     private String tanggal;
     private String catatan;
     private List<TransactionItem> items = new ArrayList<>();
@@ -91,6 +92,9 @@ public class Transaction {
 
     public String getPaymentMethod() { return paymentMethod; }
     public void setPaymentMethod(String v) { this.paymentMethod = v; }
+
+    public long getResellerId() { return resellerId; }
+    public void setResellerId(long v) { this.resellerId = v; }
 
     public String getTanggal() { return tanggal; }
     public void setTanggal(String tanggal) { this.tanggal = tanggal; }

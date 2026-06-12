@@ -161,24 +161,9 @@ public class GalonStockActivity extends AppCompatActivity {
         }
     }
 
+    /** Foto struk hemat memori (downsample + RGB_565 + EXIF). */
     private Bitmap loadRotated(String path) {
-        Bitmap bmp = BitmapFactory.decodeFile(path);
-        if (bmp == null) return null;
-        try {
-            ExifInterface exif = new ExifInterface(path);
-            int orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION,
-                    ExifInterface.ORIENTATION_NORMAL);
-            Matrix m = new Matrix();
-            switch (orientation) {
-                case ExifInterface.ORIENTATION_ROTATE_90: m.postRotate(90); break;
-                case ExifInterface.ORIENTATION_ROTATE_180: m.postRotate(180); break;
-                case ExifInterface.ORIENTATION_ROTATE_270: m.postRotate(270); break;
-                default: return bmp;
-            }
-            Bitmap rotated = Bitmap.createBitmap(bmp, 0, 0, bmp.getWidth(), bmp.getHeight(), m, true);
-            bmp.recycle();
-            return rotated;
-        } catch (IOException e) { return bmp; }
+        return com.crowja.damiupos.util.BitmapUtils.decodeSampled(path, 1280, 1280);
     }
 
     private void clearPendingPhoto() {

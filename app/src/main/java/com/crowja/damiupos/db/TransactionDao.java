@@ -36,6 +36,7 @@ public class TransactionDao {
         if (trx.getPaymentMethod() != null) {
             values.put(DatabaseHelper.COL_PAYMENT_METHOD, trx.getPaymentMethod());
         }
+        values.put(DatabaseHelper.COL_TRX_RESELLER_ID, trx.getResellerId());
         String itemsJson = TransactionItem.listToJson(trx.getItems());
         if (itemsJson != null) {
             values.put(DatabaseHelper.COL_ITEMS_JSON, itemsJson);
@@ -219,6 +220,41 @@ public class TransactionDao {
     }
 
     /**
+     * Transaksi JUAL yang menjadi basis komisi seorang reseller, sejak
+     * {@code since}. Mencakup dua sumber:
+     * <ol>
+     *   <li>Transaksi yang di-afiliasikan eksplisit ke reseller ini
+     *       ({@code reseller_id = ?}) — penjualan atas rujukan reseller,
+     *       walau pembelinya pelanggan lain.</li>
+     *   <li>Pembelian langsung oleh reseller sendiri ({@code customer_id = ?})
+     *       yang TIDAK punya afiliasi eksplisit — kompatibilitas perilaku lama.</li>
+     * </ol>
+     * Satu baris tidak akan dihitung dua kali (OR pada level row).
+     */
+    public List<Transaction> getJualForResellerSince(long resellerId, String since) {
+        List<Transaction> list = new ArrayList<>();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String rid = String.valueOf(resellerId);
+        StringBuilder where = new StringBuilder(
+                "type='JUAL' AND (" + DatabaseHelper.COL_TRX_RESELLER_ID + "=? " +
+                "OR (customer_id=? AND COALESCE(" + DatabaseHelper.COL_TRX_RESELLER_ID + ",0)=0))");
+        List<String> args = new ArrayList<>();
+        args.add(rid);
+        args.add(rid);
+        if (since != null && !since.isEmpty()) {
+            where.append(" AND tanggal >= ?");
+            args.add(since);
+        }
+        Cursor cursor = db.query(DatabaseHelper.TABLE_TRANSACTIONS, null,
+                where.toString(), args.toArray(new String[0]), null, null, "tanggal DESC");
+        while (cursor.moveToNext()) {
+            list.add(cursorToTransaction(cursor));
+        }
+        cursor.close();
+        return list;
+    }
+
+    /**
      * Total transaksi di bulan kalender saat ini (lokal). Dipakai untuk
      * Free tier limit (BuildConfig.FREE_MAX_TRX_PER_MONTH).
      */
@@ -370,6 +406,10 @@ public class TransactionDao {
         int payIdx = cursor.getColumnIndex(DatabaseHelper.COL_PAYMENT_METHOD);
         if (payIdx >= 0) {
             t.setPaymentMethod(cursor.getString(payIdx));
+        }
+        int resIdx = cursor.getColumnIndex(DatabaseHelper.COL_TRX_RESELLER_ID);
+        if (resIdx >= 0) {
+            t.setResellerId(cursor.getLong(resIdx));
         }
         int itemsIdx = cursor.getColumnIndex(DatabaseHelper.COL_ITEMS_JSON);
         if (itemsIdx >= 0) {

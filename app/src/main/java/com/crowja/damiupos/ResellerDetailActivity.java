@@ -1,5 +1,6 @@
 package com.crowja.damiupos;
 
+import android.content.Intent;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -18,12 +19,14 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
+import com.crowja.damiupos.db.ExpenseDao;
 import com.crowja.damiupos.db.ProductDao;
 import com.crowja.damiupos.db.ResellerKomisiCalculator;
 import com.crowja.damiupos.db.ResellerRateDao;
 import com.crowja.damiupos.db.ResellerWithdrawalDao;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.model.Customer;
+import com.crowja.damiupos.model.Expense;
 import com.crowja.damiupos.model.Product;
 import com.google.android.material.button.MaterialButtonToggleGroup;
 import com.google.android.material.textfield.TextInputEditText;
@@ -46,12 +49,16 @@ public class ResellerDetailActivity extends AppCompatActivity {
     private long customerId;
     private CustomerDao customerDao;
     private ResellerWithdrawalDao wdDao;
+    private ExpenseDao expenseDao;
     private SettingsDao settingsDao;
     private ProductDao productDao;
     private ResellerRateDao rateDao;
     private DatabaseHelper dbHelper;
 
     private double saldo; // saldo komisi terkini (untuk validasi cairkan)
+    private String resellerName = ""; // untuk label expense pencairan
+    private com.google.android.material.checkbox.MaterialCheckBox cbKomisiKeHarga;
+    private boolean bindingCb = false; // suppress listener saat set state dari DB
 
     private static final NumberFormat NF = NumberFormat.getInstance(new Locale("id", "ID"));
 
@@ -74,6 +81,7 @@ public class ResellerDetailActivity extends AppCompatActivity {
         dbHelper = DatabaseHelper.getInstance(this);
         customerDao = new CustomerDao(dbHelper);
         wdDao = new ResellerWithdrawalDao(dbHelper);
+        expenseDao = new ExpenseDao(dbHelper);
         settingsDao = new SettingsDao(dbHelper);
         productDao = new ProductDao(dbHelper);
         rateDao = new ResellerRateDao(dbHelper);
@@ -85,6 +93,18 @@ public class ResellerDetailActivity extends AppCompatActivity {
 
         findViewById(R.id.btnCairkan).setOnClickListener(v -> showCairkanDialog());
         findViewById(R.id.btnAturKomisi).setOnClickListener(v -> showAturKomisiDialog());
+
+        // Buat transaksi baru dengan reseller ini sudah ter-set sebagai afiliasi.
+        findViewById(R.id.btnBuatTransaksi).setOnClickListener(v ->
+                startActivity(new Intent(this, TransactionActivity.class)
+                        .putExtra(TransactionActivity.EXTRA_RESELLER_ID, customerId)));
+
+        // Checkbox "Tambahkan Komisi ke Harga Jual" — simpan langsung ke DB.
+        cbKomisiKeHarga = findViewById(R.id.cbKomisiKeHarga);
+        cbKomisiKeHarga.setOnCheckedChangeListener((b, checked) -> {
+            if (bindingCb) return;
+            customerDao.setKomisiAddToPrice(customerId, checked);
+        });
     }
 
     @Override
@@ -115,6 +135,11 @@ public class ResellerDetailActivity extends AppCompatActivity {
         int totalGalon = 0;
         for (ResellerKomisiCalculator.Entry e : res.entries) totalGalon += e.totalGalon;
 
+        resellerName = me.getName() != null ? me.getName() : "";
+        // Sinkronkan checkbox komisi-ke-harga dengan state DB (tanpa trigger listener).
+        bindingCb = true;
+        cbKomisiKeHarga.setChecked(me.isKomisiAddToPrice());
+        bindingCb = false;
         ((TextView) findViewById(R.id.tvResellerName)).setText(me.getName());
         ((TextView) findViewById(R.id.tvResellerSince)).setText(
                 "Reseller sejak: " + formatDate(me.getResellerSince()));
@@ -282,7 +307,8 @@ public class ResellerDetailActivity extends AppCompatActivity {
                     etGalonQty.setError("Melebihi saldo (Rp " + NF.format(Math.round(saldo)) + ")");
                     return;
                 }
-                wdDao.insert(customerId, ResellerWithdrawalDao.TYPE_AIR, qty, total, note);
+                long expIdAir = recordKomisiExpense(total, ResellerWithdrawalDao.TYPE_AIR, qty, note);
+                wdDao.insert(customerId, ResellerWithdrawalDao.TYPE_AIR, qty, total, note, expIdAir);
                 Toast.makeText(this, "Dicairkan " + qty + " galon air minum "
                         + "(Rp " + NF.format(Math.round(total)) + ")", Toast.LENGTH_LONG).show();
             } else {
@@ -292,13 +318,32 @@ public class ResellerDetailActivity extends AppCompatActivity {
                     etNominal.setError("Melebihi saldo (Rp " + NF.format(Math.round(saldo)) + ")");
                     return;
                 }
-                wdDao.insert(customerId, ResellerWithdrawalDao.TYPE_UANG, 0, nominal, note);
+                long expIdUang = recordKomisiExpense(nominal, ResellerWithdrawalDao.TYPE_UANG, 0, note);
+                wdDao.insert(customerId, ResellerWithdrawalDao.TYPE_UANG, 0, nominal, note, expIdUang);
                 Toast.makeText(this, "Dicairkan Rp " + NF.format(Math.round(nominal)),
                         Toast.LENGTH_LONG).show();
             }
             dialog.dismiss();
             refresh();
         });
+    }
+
+    /**
+     * Catat pencairan komisi reseller sebagai pengeluaran (pengeluaran) depot.
+     * Return id expense yang dibuat (di-link ke pencairan supaya bisa ikut
+     * terhapus kalau pencairan dihapus).
+     */
+    private long recordKomisiExpense(double amount, String type, int galonQty, String note) {
+        String name = "Komisi Reseller"
+                + (resellerName != null && !resellerName.isEmpty() ? " - " + resellerName : "");
+        StringBuilder n = new StringBuilder("Pencairan komisi reseller");
+        if (ResellerWithdrawalDao.TYPE_AIR.equals(type)) {
+            n.append(" (air: ").append(galonQty).append(" galon)");
+        } else {
+            n.append(" (uang tunai)");
+        }
+        if (note != null && !note.isEmpty()) n.append(" — ").append(note);
+        return expenseDao.insert(new Expense(name, amount, null, n.toString()));
     }
 
     private static int parseIntSafe(TextInputEditText et, int def) {
@@ -402,6 +447,8 @@ public class ResellerDetailActivity extends AppCompatActivity {
                                 + NF.format(Math.round(w.amount)) + ".")
                         .setPositiveButton("Hapus", (d, which) -> {
                             wdDao.delete(w.id);
+                            // Hapus juga expense (pengeluaran) terkait pencairan ini.
+                            if (w.expenseId > 0) expenseDao.delete(w.expenseId);
                             refresh();
                         })
                         .setNegativeButton("Batal", null)

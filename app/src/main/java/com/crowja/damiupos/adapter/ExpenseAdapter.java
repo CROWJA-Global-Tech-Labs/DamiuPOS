@@ -55,17 +55,12 @@ public class ExpenseAdapter extends RecyclerView.Adapter<ExpenseAdapter.VH> {
         h.tvName.setText(e.getName() != null ? e.getName() : "(tanpa nama)");
         h.tvAmount.setText("- Rp " + NF.format(Math.round(e.getAmount())));
 
-        // Thumbnail foto (kalau ada)
-        if (e.getPhotoPath() != null && !e.getPhotoPath().isEmpty()
-                && new File(e.getPhotoPath()).exists()) {
-            try {
-                // Decode dengan sampling supaya tidak boros memory untuk 56dp thumb
-                BitmapFactory.Options opts = new BitmapFactory.Options();
-                opts.inSampleSize = 8;
-                h.ivThumb.setImageBitmap(BitmapFactory.decodeFile(e.getPhotoPath(), opts));
-            } catch (Throwable t) {
-                h.ivThumb.setImageResource(android.R.drawable.ic_menu_gallery);
-            }
+        // Thumbnail foto (kalau ada) — ter-cache, RGB_565, sampling ke ukuran kecil.
+        android.graphics.Bitmap thumb = e.getPhotoPath() != null && !e.getPhotoPath().isEmpty()
+                ? com.crowja.damiupos.util.BitmapUtils.cachedThumb(e.getPhotoPath(), 160, 160)
+                : null;
+        if (thumb != null) {
+            h.ivThumb.setImageBitmap(thumb);
         } else {
             h.ivThumb.setImageResource(android.R.drawable.ic_menu_gallery);
         }

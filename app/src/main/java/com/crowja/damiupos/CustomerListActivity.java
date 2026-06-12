@@ -74,6 +74,7 @@ public class CustomerListActivity extends AppCompatActivity
         adapter = new CustomerAdapter(this);
         adapter.setOnSelectionChangedListener(this);
         rvCustomers.setLayoutManager(new LinearLayoutManager(this));
+        rvCustomers.setHasFixedSize(true);
         rvCustomers.setAdapter(adapter);
 
         findViewById(R.id.fabAdd).setOnClickListener(v -> tryAddCustomer());

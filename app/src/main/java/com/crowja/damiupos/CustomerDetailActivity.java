@@ -161,7 +161,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
             File f = new File(path);
             if (f.exists()) {
                 try {
-                    ivFoto.setImageBitmap(BitmapFactory.decodeFile(path));
+                    ivFoto.setImageBitmap(com.crowja.damiupos.util.BitmapUtils
+                            .decodeSampled(path, 1024, 1024));
                     final String finalPath = path;
                     ivFoto.setOnClickListener(v -> showFullScreenPhoto(finalPath));
                     return;
@@ -173,7 +174,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
     }
 
     private void showFullScreenPhoto(String path) {
-        android.graphics.Bitmap bmp = BitmapFactory.decodeFile(path);
+        android.graphics.Bitmap bmp = com.crowja.damiupos.util.BitmapUtils
+                .decodeForScreen(this, path);
         if (bmp == null) {
             Toast.makeText(this, "Foto tidak dapat dimuat", Toast.LENGTH_SHORT).show();
             return;

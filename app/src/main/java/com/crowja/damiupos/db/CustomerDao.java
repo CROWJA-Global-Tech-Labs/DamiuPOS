@@ -30,6 +30,7 @@ public class CustomerDao {
         values.put(DatabaseHelper.COL_LATITUDE, customer.getLatitude());
         values.put(DatabaseHelper.COL_LONGITUDE, customer.getLongitude());
         values.put(DatabaseHelper.COL_IS_RESELLER, customer.isReseller() ? 1 : 0);
+        values.put(DatabaseHelper.COL_KOMISI_ADD_TO_PRICE, customer.isKomisiAddToPrice() ? 1 : 0);
         if (customer.getResellerSince() != null) {
             values.put(DatabaseHelper.COL_RESELLER_SINCE, customer.getResellerSince());
         }
@@ -50,6 +51,7 @@ public class CustomerDao {
         values.put(DatabaseHelper.COL_LATITUDE, customer.getLatitude());
         values.put(DatabaseHelper.COL_LONGITUDE, customer.getLongitude());
         values.put(DatabaseHelper.COL_IS_RESELLER, customer.isReseller() ? 1 : 0);
+        values.put(DatabaseHelper.COL_KOMISI_ADD_TO_PRICE, customer.isKomisiAddToPrice() ? 1 : 0);
         if (customer.getResellerSince() != null) {
             values.put(DatabaseHelper.COL_RESELLER_SINCE, customer.getResellerSince());
         }
@@ -303,6 +305,15 @@ public class CustomerDao {
                 DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
     }
 
+    /** Update HANYA flag "komisi ke harga jual" (tanpa menyentuh field lain). */
+    public void setKomisiAddToPrice(long customerId, boolean value) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        android.content.ContentValues v = new android.content.ContentValues();
+        v.put(DatabaseHelper.COL_KOMISI_ADD_TO_PRICE, value ? 1 : 0);
+        db.update(DatabaseHelper.TABLE_CUSTOMERS, v,
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
+    }
+
     /** Tandai pelanggan baru saja di-follow-up (kirim pesan WA). */
     public void markFollowedUp(long customerId) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
@@ -412,9 +423,15 @@ public class CustomerDao {
         c.setLatitude(cursor.getDouble(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_LATITUDE)));
         c.setLongitude(cursor.getDouble(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_LONGITUDE)));
         c.setCreatedAt(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_CREATED_AT)));
-        c.setGalonKeluar(cursor.getInt(cursor.getColumnIndexOrThrow("galon_keluar")));
-        c.setGalonKembali(cursor.getInt(cursor.getColumnIndexOrThrow("galon_kembali")));
-        c.setTotalTransaksi(cursor.getInt(cursor.getColumnIndexOrThrow("total_trx")));
+        // Kolom agregat (galon_keluar/kembali/total_trx) hanya ada di query yang
+        // menghitungnya (getAll/getResellers). Query polos seperti getFollowedUpOn
+        // (SELECT *) tidak punya — baca dengan guard supaya tidak crash.
+        int idxKeluar = cursor.getColumnIndex("galon_keluar");
+        if (idxKeluar >= 0) c.setGalonKeluar(cursor.getInt(idxKeluar));
+        int idxKembali = cursor.getColumnIndex("galon_kembali");
+        if (idxKembali >= 0) c.setGalonKembali(cursor.getInt(idxKembali));
+        int idxTotalTrx = cursor.getColumnIndex("total_trx");
+        if (idxTotalTrx >= 0) c.setTotalTransaksi(cursor.getInt(idxTotalTrx));
         int idxTotalOrdered = cursor.getColumnIndex("galon_total_ordered");
         if (idxTotalOrdered >= 0) c.setGalonTotalOrdered(cursor.getInt(idxTotalOrdered));
         int idxFirstJual = cursor.getColumnIndex("first_jual");
@@ -427,6 +444,8 @@ public class CustomerDao {
         if (idxSince >= 0 && !cursor.isNull(idxSince)) {
             c.setResellerSince(cursor.getString(idxSince));
         }
+        int idxAddPrice = cursor.getColumnIndex(DatabaseHelper.COL_KOMISI_ADD_TO_PRICE);
+        if (idxAddPrice >= 0) c.setKomisiAddToPrice(cursor.getInt(idxAddPrice) == 1);
         int idxKomisi = cursor.getColumnIndex("komisi_galon");
         if (idxKomisi >= 0) c.setKomisiGalon(cursor.getInt(idxKomisi));
         return c;
@@ -444,8 +463,19 @@ public class CustomerDao {
                 "COALESCE(SUM(CASE WHEN t.type='JUAL' AND COALESCE(t.galon_ownership,'PINJAM')='PINJAM' THEN t.jumlah_galon ELSE 0 END),0) AS galon_keluar, " +
                 "COALESCE(SUM(CASE WHEN t.type='KEMBALI' THEN t.jumlah_galon ELSE 0 END),0) AS galon_kembali, " +
                 "COUNT(t._id) AS total_trx, " +
-                "COALESCE(SUM(CASE WHEN t.type='JUAL' AND (c." + DatabaseHelper.COL_RESELLER_SINCE + " IS NULL " +
-                "    OR t.tanggal >= c." + DatabaseHelper.COL_RESELLER_SINCE + ") THEN t.jumlah_galon ELSE 0 END),0) AS komisi_galon " +
+                // Galon basis komisi: transaksi JUAL yg di-afiliasikan ke reseller
+                // ini (reseller_id) maupun pembelian langsung tanpa afiliasi
+                // (customer_id). Subquery agar tidak terikat join customer_id.
+                "COALESCE((SELECT SUM(t2." + DatabaseHelper.COL_JUMLAH_GALON + ") " +
+                "    FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t2 " +
+                "    WHERE t2." + DatabaseHelper.COL_TYPE + "='JUAL' " +
+                "      AND (t2." + DatabaseHelper.COL_TRX_RESELLER_ID + " = c._id " +
+                "           OR (t2." + DatabaseHelper.COL_CUSTOMER_ID + " = c._id " +
+                "               AND COALESCE(t2." + DatabaseHelper.COL_TRX_RESELLER_ID + ",0)=0)) " +
+                "      AND (c." + DatabaseHelper.COL_RESELLER_SINCE + " IS NULL " +
+                "           OR t2." + DatabaseHelper.COL_TANGGAL + " >= c." + DatabaseHelper.COL_RESELLER_SINCE + ") " +
+                "      AND COALESCE(t2." + DatabaseHelper.COL_CATATAN + ",'') NOT LIKE '%[JUAL BOTOL KOSONG]%'" +
+                "),0) AS komisi_galon " +
                 "FROM customers c " +
                 "LEFT JOIN transactions t ON c._id = t.customer_id " +
                 "WHERE c." + DatabaseHelper.COL_IS_RESELLER + " = 1 " +

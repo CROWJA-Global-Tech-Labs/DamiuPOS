@@ -22,10 +22,15 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
     public interface OnItemClickListener { void onClick(Transaction trx); }
     public interface OnItemLongClickListener { void onLongClick(Transaction trx); }
 
+    // Hoisted supaya tidak alokasi/lookup per-bind (main-thread, aman dibagi).
+    private static final NumberFormat NF = NumberFormat.getInstance(new Locale("id", "ID"));
+    private static final int ORANGE = android.graphics.Color.parseColor("#E65100");
+
     private List<Transaction> transactions = new ArrayList<>();
     private boolean showCustomerName = true;
     private OnItemClickListener onItemClickListener;
     private OnItemLongClickListener onItemLongClickListener;
+    private int colorPrimary = 0, colorGreen = 0; // di-resolve sekali
 
     public void setOnItemClickListener(OnItemClickListener l) { this.onItemClickListener = l; }
     public void setOnItemLongClickListener(OnItemLongClickListener l) { this.onItemLongClickListener = l; }
@@ -75,6 +80,10 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
         }
 
         void bind(Transaction trx) {
+            if (colorPrimary == 0) {
+                colorPrimary = itemView.getContext().getResources().getColor(R.color.primary);
+                colorGreen = itemView.getContext().getResources().getColor(R.color.green);
+            }
             boolean isJual = Transaction.TYPE_JUAL.equals(trx.getType());
 
             if (isJual) {
@@ -95,8 +104,8 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
                     typeLabel = trx.getProductName();
                 }
                 tvType.setText(typeLabel);
-                tvType.setTextColor(itemView.getContext().getResources().getColor(R.color.primary));
-                tvGalonCount.setTextColor(itemView.getContext().getResources().getColor(R.color.primary));
+                tvType.setTextColor(colorPrimary);
+                tvGalonCount.setTextColor(colorPrimary);
             } else {
                 boolean isGantiRugi = trx.getTotalHarga() > 0
                         || (trx.getCatatan() != null && trx.getCatatan().contains("[GANTI RUGI"));
@@ -104,15 +113,14 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
                     tvTypeIcon.setBackgroundResource(R.drawable.bg_type_kembali);
                     tvTypeIcon.setText("\u26A0"); // warning sign
                     tvType.setText("Kembali — Ganti Rugi");
-                    int orange = android.graphics.Color.parseColor("#E65100");
-                    tvType.setTextColor(orange);
-                    tvGalonCount.setTextColor(orange);
+                    tvType.setTextColor(ORANGE);
+                    tvGalonCount.setTextColor(ORANGE);
                 } else {
                     tvTypeIcon.setBackgroundResource(R.drawable.bg_type_kembali);
                     tvTypeIcon.setText("\u2193"); // arrow down
                     tvType.setText("Kembali");
-                    tvType.setTextColor(itemView.getContext().getResources().getColor(R.color.green));
-                    tvGalonCount.setTextColor(itemView.getContext().getResources().getColor(R.color.green));
+                    tvType.setTextColor(colorGreen);
+                    tvGalonCount.setTextColor(colorGreen);
                 }
             }
 
@@ -127,8 +135,7 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
             tvGalonCount.setText(trx.getJumlahGalon() + " galon");
 
             if (isJual || trx.getTotalHarga() > 0) {
-                NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
-                tvHarga.setText("Rp " + nf.format(trx.getTotalHarga()));
+                tvHarga.setText("Rp " + NF.format(trx.getTotalHarga()));
                 tvHarga.setVisibility(View.VISIBLE);
             } else {
                 tvHarga.setVisibility(View.GONE);
