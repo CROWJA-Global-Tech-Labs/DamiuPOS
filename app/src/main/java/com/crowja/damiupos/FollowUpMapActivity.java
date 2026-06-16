@@ -51,6 +51,8 @@ public class FollowUpMapActivity extends AppCompatActivity {
 
     private WebView webView;
     private final List<Customer> mapCustomers = new ArrayList<>();
+    private CustomerDao customerDao;
+    private SettingsDao settingsDao;
 
     // Live location: posisi device ditampilkan sebagai ikon pengendara motor
     // (top-down) yang bergerak/berotasi mengikuti GPS.
@@ -74,8 +76,8 @@ public class FollowUpMapActivity extends AppCompatActivity {
         TextView tvEmpty = findViewById(R.id.tvEmpty);
 
         DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
-        CustomerDao customerDao = new CustomerDao(dbHelper);
-        SettingsDao settingsDao = new SettingsDao(dbHelper);
+        customerDao = new CustomerDao(dbHelper);
+        settingsDao = new SettingsDao(dbHelper);
         int days = settingsDao.getFollowupDays();
 
         // Kumpulkan pelanggan follow-up yang punya koordinat.
@@ -97,6 +99,8 @@ public class FollowUpMapActivity extends AppCompatActivity {
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
+        // UA pengenal aplikasi supaya penyedia tile tidak memblokir request.
+        settings.setUserAgentString(MapTiles.userAgent());
         webView.addJavascriptInterface(new MapBridge(), "Android");
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -235,12 +239,27 @@ public class FollowUpMapActivity extends AppCompatActivity {
         super.onDestroy();
     }
 
-    /** JS bridge: dipanggil dari popup "Navigasi" untuk buka Google Maps. */
+    /** JS bridge: dipanggil dari popup pin untuk Navigasi / Chat Follow-up. */
     private class MapBridge {
         @JavascriptInterface
         public void navigate(double lat, double lng, String name) {
             runOnUiThread(() -> openInGoogleMaps(lat, lng, name));
         }
+
+        @JavascriptInterface
+        public void chat(long customerId) {
+            runOnUiThread(() -> openChatForFollowUp(customerId));
+        }
+    }
+
+    /** Buka WhatsApp follow-up untuk pelanggan pin (cari dari id). */
+    private void openChatForFollowUp(long customerId) {
+        Customer target = null;
+        for (Customer c : mapCustomers) {
+            if (c.getId() == customerId) { target = c; break; }
+        }
+        if (target == null) return;
+        WhatsAppFollowUp.open(this, target, settingsDao, customerDao);
     }
 
     private void openInGoogleMaps(double lat, double lng, String name) {
@@ -266,6 +285,7 @@ public class FollowUpMapActivity extends AppCompatActivity {
         for (Customer c : mapCustomers) {
             try {
                 JSONObject o = new JSONObject();
+                o.put("id", c.getId());
                 o.put("lat", c.getLatitude());
                 o.put("lng", c.getLongitude());
                 o.put("name", c.getName() != null ? c.getName() : "Pelanggan");
@@ -291,6 +311,7 @@ public class FollowUpMapActivity extends AppCompatActivity {
                 // lebih spesifik dari '.navbtn', tanpa !important teks jadi biru
                 // di atas tombol biru (kontras buruk).
                 "  .leaflet-popup-content a.navbtn{display:block;margin-top:8px;padding:9px 12px;background:#1565C0;color:#ffffff !important;border-radius:6px;text-decoration:none;font-size:13px;font-weight:bold;text-align:center;}\n" +
+                "  .leaflet-popup-content a.chatbtn{display:block;margin-top:8px;padding:9px 12px;background:#25D366;color:#ffffff !important;border-radius:6px;text-decoration:none;font-size:13px;font-weight:bold;text-align:center;}\n" +
                 "  .pname{font-size:14px;font-weight:bold;color:#222;}\n" +
                 "  .pphone{font-size:12px;color:#666;margin-top:2px;}\n" +
                 // Marker posisi device: divIcon polos (tanpa kotak putih default),
@@ -305,14 +326,16 @@ public class FollowUpMapActivity extends AppCompatActivity {
                 "<script>\n" +
                 "var pts = " + pointsJson + ";\n" +
                 "var map = L.map('map',{zoomControl:true}).setView([" + centerLat + "," + centerLng + "], 14);\n" +
-                "L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'OSM',maxZoom:19}).addTo(map);\n" +
+                "L.tileLayer('" + MapTiles.LEAFLET_URL + "',{subdomains:'" + MapTiles.SUBDOMAINS + "',maxZoom:19,attribution:'" + MapTiles.ATTRIBUTION + "'}).addTo(map);\n" +
                 "var bounds=[];\n" +
                 "pts.forEach(function(p){\n" +
                 "  var m=L.marker([p.lat,p.lng]).addTo(map);\n" +
                 "  bounds.push([p.lat,p.lng]);\n" +
                 "  var phoneHtml = p.phone ? '<div class=\"pphone\">'+p.phone+'</div>' : '';\n" +
                 "  var safeName=(p.name||'').replace(/'/g,\"\\\\'\");\n" +
-                "  var html='<div class=\"pname\">'+p.name+'</div>'+phoneHtml+\n" +
+                // Tombol Chat Follow-up hanya kalau pelanggan punya nomor telepon.
+                "  var chatHtml = p.phone ? '<a class=\"chatbtn\" href=\"#\" onclick=\"chat('+p.id+');return false;\">Chat Follow-up (WhatsApp)</a>' : '';\n" +
+                "  var html='<div class=\"pname\">'+p.name+'</div>'+phoneHtml+chatHtml+\n" +
                 "    '<a class=\"navbtn\" href=\"#\" onclick=\"nav('+p.lat+','+p.lng+',\\''+safeName+'\\');return false;\">Navigasi (Google Maps)</a>';\n" +
                 "  m.bindPopup(html);\n" +
                 "});\n" +
@@ -320,6 +343,9 @@ public class FollowUpMapActivity extends AppCompatActivity {
                 "else if(bounds.length===1){map.setView(bounds[0],16);}\n" +
                 "function nav(lat,lng,name){\n" +
                 "  if(window.Android&&Android.navigate){Android.navigate(lat,lng,name);}\n" +
+                "}\n" +
+                "function chat(id){\n" +
+                "  if(window.Android&&Android.chat){Android.chat(id);}\n" +
                 "}\n" +
                 // ---- posisi live device: ikon pengendara motor (top-down) ----
                 "var RIDER='<svg width=\"44\" height=\"44\" viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\">'+\n" +

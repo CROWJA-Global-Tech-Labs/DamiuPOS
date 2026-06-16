@@ -29,7 +29,7 @@ public class AttendanceDao {
         v.put(DatabaseHelper.COL_ATT_USER_ID, userId);
         v.put(DatabaseHelper.COL_ATT_EVENT, event);
         if (photoPath != null) v.put(DatabaseHelper.COL_ATT_PHOTO_PATH, photoPath);
-        return db.insert(DatabaseHelper.TABLE_ATTENDANCE, null, v);
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_ATTENDANCE, v);
     }
 
     /**

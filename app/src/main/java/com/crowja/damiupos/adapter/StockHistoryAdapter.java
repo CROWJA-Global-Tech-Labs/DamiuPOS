@@ -86,7 +86,10 @@ public class StockHistoryAdapter extends RecyclerView.Adapter<StockHistoryAdapte
         }
 
         void bind(String[] item) {
-            tvStockJumlah.setText("+" + item[1] + " galon");
+            // Koreksi bisa negatif → tampilkan tanda yang benar (jangan "+-5").
+            String jml = item[1] != null ? item[1] : "0";
+            String sign = jml.startsWith("-") ? "" : "+";
+            tvStockJumlah.setText(sign + jml + " galon");
 
             String catatan = item[2];
             if (catatan != null && !catatan.isEmpty()) {

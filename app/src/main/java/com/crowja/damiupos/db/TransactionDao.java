@@ -48,12 +48,12 @@ public class TransactionDao {
         if (trx.getTanggal() != null && !trx.getTanggal().isEmpty()) {
             values.put(DatabaseHelper.COL_TANGGAL, trx.getTanggal());
         }
-        return db.insert(DatabaseHelper.TABLE_TRANSACTIONS, null, values);
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_TRANSACTIONS, values);
     }
 
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        return db.delete(DatabaseHelper.TABLE_TRANSACTIONS,
+        return dbHelper.syncDelete(db, DatabaseHelper.TABLE_TRANSACTIONS, "transactions",
                 DatabaseHelper.COL_TRX_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
@@ -301,6 +301,32 @@ public class TransactionDao {
         }
         cursor.close();
         return list;
+    }
+
+    /**
+     * Ringkasan penjualan AIR MINUM saja dalam rentang tanggal:
+     * {total_galon_air, total_harga_air} — dijumlahkan per item air minum
+     * (subtotal = jumlah × harga/galon), TANPA ongkir dan TANPA jual botol galon
+     * kosong. Dipakai menghitung "harga rata-rata per galon" lintas jenis air.
+     */
+    public double[] getWaterSalesByDateRange(String startDate, String endDate) {
+        int galon = 0;
+        double revenue = 0;
+        for (Transaction t : getByDateRange(startDate, endDate)) {
+            if (!Transaction.TYPE_JUAL.equals(t.getType())) continue;
+            if (t.getCatatan() != null && t.getCatatan().contains("[JUAL BOTOL KOSONG]")) continue;
+            java.util.List<com.crowja.damiupos.model.TransactionItem> items = t.getItems();
+            if (items != null && !items.isEmpty()) {
+                for (com.crowja.damiupos.model.TransactionItem it : items) {
+                    galon += it.jumlah;
+                    revenue += it.getSubtotal();
+                }
+            } else {
+                galon += t.getJumlahGalon();
+                revenue += t.getJumlahGalon() * t.getHargaPerGalon();
+            }
+        }
+        return new double[]{galon, revenue};
     }
 
     /** Summary for date range: [total_trx, total_galon_jual, total_galon_kembali, total_pendapatan] */

@@ -82,18 +82,34 @@ public final class WorkHoursReminder {
     }
 
     /**
-     * (Re)jadwalkan pengingat untuk {@code userId}. No-op kalau target sudah
-     * terpenuhi (remaining &lt;= 0) — mencegah notifikasi dobel saat kembali
-     * dari istirahat setelah target tercapai.
+     * Progres jam kerja PERIODE cut-off berjalan untuk {@code userId}:
+     * {periodWorkedMs, periodRequiredMs}. Ideal = hari kerja ideal × jam ideal/hari.
+     */
+    public static long[] periodProgress(DatabaseHelper db, SettingsDao s, long userId) {
+        String[] p = AttendanceRecap.currentPeriod(s.getPayrollCutoffDay());
+        AttendanceRecap.PeriodSummary ps = AttendanceRecap.computePeriodSummary(
+                db, userId, p[0], p[1], s.getDailyNormalHours());
+        return new long[]{Math.round(ps.totalHours * 3600000.0),
+                Math.round(ps.requiredHours * 3600000.0)};
+    }
+
+    /** Tanggal akhir periode cut-off berjalan ("yyyy-MM-dd") — penanda guard. */
+    public static String currentPeriodEnd(SettingsDao s) {
+        return AttendanceRecap.currentPeriod(s.getPayrollCutoffDay())[1];
+    }
+
+    /**
+     * (Re)jadwalkan pengingat untuk {@code userId} berdasar SISA jam kerja sampai
+     * memenuhi target PERIODE cut-off. No-op kalau sudah terpenuhi (remaining
+     * &lt;= 0) — mencegah notifikasi dobel.
      */
     public static void schedule(Context ctx, long userId) {
         if (userId <= 0) return;
         ensureChannel(ctx);
         DatabaseHelper db = DatabaseHelper.getInstance(ctx);
         SettingsDao settings = new SettingsDao(db);
-        long targetMs = Math.round(settings.getDailyNormalHours() * 3600000.0);
-        long workedMs = ShiftReporter.workedMillisToday(db, userId);
-        long remaining = targetMs - workedMs;
+        long[] pr = periodProgress(db, settings, userId);
+        long remaining = pr[1] - pr[0];
         if (remaining <= 0) { cancel(ctx, userId); return; }
         AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
         if (am == null) return;
@@ -118,20 +134,32 @@ public final class WorkHoursReminder {
         return PendingIntent.getBroadcast(ctx, REQ_BASE + (int) userId, i, flags);
     }
 
-    /** Tampilkan notifikasi bersuara "jam kerja terpenuhi". */
-    public static void notifyMet(Context ctx, long workedMs) {
+    /**
+     * Notifikasi bersuara "jam kerja PERIODE terpenuhi" — sekali per periode
+     * cut-off (guard {@code work_met_notif_<uid>} = tanggal akhir periode).
+     */
+    public static void notifyMet(Context ctx, long userId) {
         ensureChannel(ctx);
-        String worked = ShiftReporter.formatDurationLong(workedMs);
+        DatabaseHelper db = DatabaseHelper.getInstance(ctx);
+        SettingsDao s = new SettingsDao(db);
+        String periodEnd = currentPeriodEnd(s);
+        String guardKey = "work_met_notif_" + userId;
+        if (periodEnd.equals(s.get(guardKey, ""))) return;   // sudah dinotif periode ini
+        s.set(guardKey, periodEnd);
+
+        long[] pr = periodProgress(db, s, userId);
+        String worked = ShiftReporter.formatDurationLong(pr[0]);
+        String req = ShiftReporter.formatDurationLong(pr[1]);
         Intent open = new Intent(ctx, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         int piFlags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
         PendingIntent contentPi = PendingIntent.getActivity(ctx, 0, open, piFlags);
-        String big = "Kamu sudah bekerja " + worked + " hari ini dan memenuhi target. "
-                + "Terima kasih atas kerja kerasmu — boleh bersiap pulang.";
+        String big = "Jam kerjamu periode cut-off ini sudah terpenuhi: " + worked
+                + " dari target " + req + ". Terima kasih atas kerja kerasmu!";
         Notification n = new NotificationCompat.Builder(ctx, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_check)
-                .setContentTitle("Jam kerja sudah terpenuhi 🎉")
-                .setContentText("Kamu sudah bekerja " + worked + " hari ini.")
+                .setContentTitle("Jam kerja periode terpenuhi 🎉")
+                .setContentText("Periode: " + worked + " / " + req)
                 .setStyle(new NotificationCompat.BigTextStyle().bigText(big))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setCategory(NotificationCompat.CATEGORY_REMINDER)

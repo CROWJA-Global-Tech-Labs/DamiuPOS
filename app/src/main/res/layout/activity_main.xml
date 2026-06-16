@@ -158,7 +158,7 @@
                             android:id="@+id/tvOperatorShift"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:maxLines="1"
+                            android:maxLines="2"
                             android:ellipsize="end"
                             android:text="Sedang bekerja"
                             android:textColor="#CCFFFFFF"
@@ -250,6 +250,7 @@
                         android:orientation="vertical"
                         android:padding="14dp">
 
+                        <!-- Atas: ikon (kiri) + nilai & pill tren (kanan) -->
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
@@ -265,27 +266,52 @@
                                 app:tint="@color/white"
                                 android:contentDescription="Pendapatan" />
 
-                            <TextView
-                                android:layout_width="wrap_content"
+                            <LinearLayout
+                                android:layout_width="0dp"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
-                                android:text="@string/pendapatan_hari_ini"
-                                android:textColor="#E0FFFFFF"
-                                android:textSize="11sp"
-                                android:textStyle="bold" />
+                                android:layout_weight="1"
+                                android:layout_marginStart="6dp"
+                                android:gravity="end"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:id="@+id/tvPendapatan"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:gravity="end"
+                                    android:text="Rp 0"
+                                    android:textColor="@color/white"
+                                    android:textSize="18sp"
+                                    android:textStyle="bold"
+                                    android:maxLines="1"
+                                    android:ellipsize="end" />
+
+                                <TextView
+                                    android:id="@+id/tvPendapatanTrend"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_gravity="end"
+                                    android:layout_marginTop="4dp"
+                                    android:background="@drawable/bg_trend_pill"
+                                    android:paddingStart="6dp"
+                                    android:paddingEnd="6dp"
+                                    android:paddingTop="1dp"
+                                    android:paddingBottom="1dp"
+                                    android:textColor="@color/white"
+                                    android:textSize="10sp"
+                                    android:visibility="gone" />
+                            </LinearLayout>
                         </LinearLayout>
 
+                        <!-- Bawah: judul (align bottom) -->
                         <TextView
-                            android:id="@+id/tvPendapatan"
-                            android:layout_width="wrap_content"
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="10dp"
-                            android:text="Rp 0"
-                            android:textColor="@color/white"
-                            android:textSize="20sp"
-                            android:textStyle="bold"
-                            android:maxLines="1"
-                            android:ellipsize="end" />
+                            android:text="@string/pendapatan_hari_ini"
+                            android:textColor="#E0FFFFFF"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
@@ -308,6 +334,7 @@
                         android:orientation="vertical"
                         android:padding="14dp">
 
+                        <!-- Atas: ikon (kiri) + nilai & pill tren (kanan) -->
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
@@ -323,24 +350,51 @@
                                 app:tint="@color/white"
                                 android:contentDescription="Galon terjual" />
 
-                            <TextView
-                                android:layout_width="wrap_content"
+                            <LinearLayout
+                                android:layout_width="0dp"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
-                                android:text="@string/galon_terjual_hari_ini"
-                                android:textColor="#E0FFFFFF"
-                                android:textSize="11sp"
-                                android:textStyle="bold" />
+                                android:layout_weight="1"
+                                android:layout_marginStart="6dp"
+                                android:gravity="end"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:id="@+id/tvGalonTerjual"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:gravity="end"
+                                    android:text="0"
+                                    android:textColor="@color/white"
+                                    android:textSize="18sp"
+                                    android:textStyle="bold"
+                                    android:maxLines="1"
+                                    android:ellipsize="end" />
+
+                                <TextView
+                                    android:id="@+id/tvGalonTerjualTrend"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_gravity="end"
+                                    android:layout_marginTop="4dp"
+                                    android:background="@drawable/bg_trend_pill"
+                                    android:paddingStart="6dp"
+                                    android:paddingEnd="6dp"
+                                    android:paddingTop="1dp"
+                                    android:paddingBottom="1dp"
+                                    android:textColor="@color/white"
+                                    android:textSize="10sp"
+                                    android:visibility="gone" />
+                            </LinearLayout>
                         </LinearLayout>
 
+                        <!-- Bawah: judul (align bottom) -->
                         <TextView
-                            android:id="@+id/tvGalonTerjual"
-                            android:layout_width="wrap_content"
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="10dp"
-                            android:text="0"
-                            android:textColor="@color/white"
-                            android:textSize="20sp"
+                            android:text="@string/galon_terjual_hari_ini"
+                            android:textColor="#E0FFFFFF"
+                            android:textSize="11sp"
                             android:textStyle="bold" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
@@ -375,14 +429,30 @@
                         android:orientation="vertical"
                         android:padding="12dp">
 
-                        <ImageView
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
-                            android:background="@drawable/bg_icon_circle"
-                            android:padding="5dp"
-                            android:src="@android:drawable/ic_menu_recent_history"
-                            app:tint="@color/white"
-                            android:contentDescription="Transaksi" />
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:background="@drawable/bg_icon_circle"
+                                android:padding="5dp"
+                                android:src="@android:drawable/ic_menu_recent_history"
+                                app:tint="@color/white"
+                                android:contentDescription="Transaksi" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="6dp"
+                                android:text="TRX"
+                                android:textColor="#E0FFFFFF"
+                                android:textSize="11sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
 
                         <TextView
                             android:id="@+id/tvTransaksiHariIni"
@@ -395,11 +465,18 @@
                             android:textStyle="bold" />
 
                         <TextView
+                            android:id="@+id/tvTransaksiTrend"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Transaksi"
-                            android:textColor="#E0FFFFFF"
-                            android:textSize="11sp" />
+                            android:layout_marginTop="5dp"
+                            android:background="@drawable/bg_trend_pill"
+                            android:paddingStart="6dp"
+                            android:paddingEnd="6dp"
+                            android:paddingTop="1dp"
+                            android:paddingBottom="1dp"
+                            android:textColor="@color/white"
+                            android:textSize="10sp"
+                            android:visibility="gone" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
@@ -424,14 +501,30 @@
                         android:orientation="vertical"
                         android:padding="12dp">
 
-                        <ImageView
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
-                            android:background="@drawable/bg_icon_circle"
-                            android:padding="5dp"
-                            android:src="@android:drawable/ic_menu_rotate"
-                            app:tint="@color/white"
-                            android:contentDescription="Galon beredar" />
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:background="@drawable/bg_icon_circle"
+                                android:padding="5dp"
+                                android:src="@android:drawable/ic_menu_rotate"
+                                app:tint="@color/white"
+                                android:contentDescription="Galon beredar" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="6dp"
+                                android:text="GLN"
+                                android:textColor="#E0FFFFFF"
+                                android:textSize="11sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
 
                         <TextView
                             android:id="@+id/tvGalonBeredar"
@@ -444,21 +537,29 @@
                             android:textStyle="bold" />
 
                         <TextView
+                            android:id="@+id/tvGalonBeredarTrend"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="@string/galon_beredar"
-                            android:textColor="#E0FFFFFF"
-                            android:textSize="11sp" />
+                            android:layout_marginTop="5dp"
+                            android:background="@drawable/bg_trend_pill"
+                            android:paddingStart="6dp"
+                            android:paddingEnd="6dp"
+                            android:paddingTop="1dp"
+                            android:paddingBottom="1dp"
+                            android:textColor="@color/white"
+                            android:textSize="10sp"
+                            android:visibility="gone" />
                     </LinearLayout>
 
                     <!-- Badge stok tersedia (pindahan dari tile Stok Galon);
-                         blink merah saat stok <= ambang peringatan. -->
+                         blink merah saat stok <= ambang peringatan. Di pojok bawah
+                         supaya tidak bentrok dengan nilai di kanan atas. -->
                     <TextView
                         android:id="@+id/tvStokBadge"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_gravity="top|end"
-                        android:layout_marginTop="4dp"
+                        android:layout_gravity="bottom|end"
+                        android:layout_marginBottom="4dp"
                         android:layout_marginEnd="4dp"
                         android:background="@drawable/bg_stock_badge"
                         android:minWidth="22dp"
@@ -494,14 +595,30 @@
                         android:orientation="vertical"
                         android:padding="12dp">
 
-                        <ImageView
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
-                            android:background="@drawable/bg_icon_circle"
-                            android:padding="5dp"
-                            android:src="@android:drawable/ic_menu_myplaces"
-                            app:tint="@color/white"
-                            android:contentDescription="Total pelanggan" />
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:background="@drawable/bg_icon_circle"
+                                android:padding="5dp"
+                                android:src="@android:drawable/ic_menu_myplaces"
+                                app:tint="@color/white"
+                                android:contentDescription="Total pelanggan" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="6dp"
+                                android:text="CUST"
+                                android:textColor="#E0FFFFFF"
+                                android:textSize="11sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
 
                         <TextView
                             android:id="@+id/tvTotalPelanggan"
@@ -514,11 +631,18 @@
                             android:textStyle="bold" />
 
                         <TextView
+                            android:id="@+id/tvTotalPelangganTrend"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="@string/total_pelanggan"
-                            android:textColor="#E0FFFFFF"
-                            android:textSize="11sp" />
+                            android:layout_marginTop="5dp"
+                            android:background="@drawable/bg_trend_pill"
+                            android:paddingStart="6dp"
+                            android:paddingEnd="6dp"
+                            android:paddingTop="1dp"
+                            android:paddingBottom="1dp"
+                            android:textColor="@color/white"
+                            android:textSize="10sp"
+                            android:visibility="gone" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
             </LinearLayout>
@@ -568,31 +692,61 @@
                     app:iconTint="@color/white"
                     app:iconGravity="textStart" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnJualGalon"
+                <FrameLayout
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
                     android:layout_weight="1"
-                    android:layout_marginStart="6dp"
-                    android:minHeight="76dp"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:paddingTop="16dp"
-                    android:paddingBottom="16dp"
-                    android:text="@string/jual_galon"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="@color/primary"
-                    app:cornerRadius="16dp"
-                    app:elevation="0dp"
-                    android:stateListAnimator="@null"
-                    app:icon="@android:drawable/ic_input_add"
-                    app:iconPadding="8dp"
-                    app:iconSize="26dp"
-                    app:iconTint="@color/white"
-                    app:iconGravity="textStart" />
+                    android:layout_marginStart="6dp">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnJualGalon"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:minHeight="76dp"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:paddingTop="16dp"
+                        android:paddingBottom="16dp"
+                        android:text="@string/jual_galon"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="@color/primary"
+                        app:cornerRadius="16dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null"
+                        app:icon="@android:drawable/ic_input_add"
+                        app:iconPadding="8dp"
+                        app:iconSize="26dp"
+                        app:iconTint="@color/white"
+                        app:iconGravity="textStart" />
+
+                    <!-- Badge "Transaksi Pending" (berkedip saat ada pending).
+                         Ketuk → daftar Transaksi Pending. -->
+                    <TextView
+                        android:id="@+id/tvPendingBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="top|end"
+                        android:layout_marginTop="4dp"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/bg_pending_badge"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:minWidth="22dp"
+                        android:paddingStart="7dp"
+                        android:paddingEnd="7dp"
+                        android:paddingTop="2dp"
+                        android:paddingBottom="2dp"
+                        android:elevation="6dp"
+                        android:gravity="center"
+                        android:text="0"
+                        android:textColor="@color/white"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+                </FrameLayout>
             </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
@@ -728,9 +882,8 @@
                     android:minHeight="60dp"
                     android:paddingTop="8dp"
                     android:paddingBottom="8dp"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:text="Report &amp; Grafik"
+                    android:maxLines="2"
+                    android:text="Report &amp;\nGrafik"
                     android:textAllCaps="false"
                     android:textColor="@color/white"
                     android:textSize="13sp"
@@ -843,6 +996,32 @@
                     app:cornerRadius="14dp"
                     app:elevation="3dp"
                     app:icon="@android:drawable/ic_menu_preferences"
+                    app:iconGravity="textStart"
+                    app:iconPadding="8dp"
+                    app:iconSize="22dp"
+                    app:iconTint="@color/white"
+                    grid:layout_columnWeight="1"
+                    grid:layout_gravity="fill_horizontal" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAnalisa"
+                    android:layout_width="0dp"
+                    android:layout_height="64dp"
+                    android:layout_margin="4dp"
+                    android:minHeight="60dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:maxLines="2"
+                    android:lineSpacingMultiplier="0.95"
+                    android:text="Analisa &amp;\nPrediksi"
+                    android:textAllCaps="false"
+                    android:textColor="@color/white"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    app:backgroundTint="#00897B"
+                    app:cornerRadius="14dp"
+                    app:elevation="3dp"
+                    app:icon="@android:drawable/ic_menu_sort_by_size"
                     app:iconGravity="textStart"
                     app:iconPadding="8dp"
                     app:iconSize="22dp"

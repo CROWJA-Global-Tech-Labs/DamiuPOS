@@ -4,7 +4,9 @@ import android.content.Context;
 
 import com.crowja.damiupos.db.AttendanceDao;
 import com.crowja.damiupos.db.DatabaseHelper;
+import com.crowja.damiupos.db.SalaryDao;
 import com.crowja.damiupos.db.SettingsDao;
+import com.crowja.damiupos.db.TransactionDao;
 import com.crowja.damiupos.db.UserDao;
 import com.crowja.damiupos.model.Attendance;
 import com.crowja.damiupos.model.User;
@@ -48,6 +50,126 @@ public final class AttendanceRecap {
         Calendar start = (Calendar) end.clone();
         start.add(Calendar.MONTH, -1);
         start.add(Calendar.DAY_OF_MONTH, 1); // (cutoff bln lalu) + 1 hari
+        return new String[]{SDF_DATE.format(start.getTime()), SDF_DATE.format(end.getTime())};
+    }
+
+    /**
+     * Periode cut-off yang BERLANGSUNG (memuat hari ini): kalau hari ini ≤ cutoff
+     * bulan ini → berakhir di cutoff bulan ini; kalau sudah lewat → berakhir di
+     * cutoff bulan depan. Return {startDate, endDate} "yyyy-MM-dd".
+     */
+    public static String[] currentPeriod(int cutoffDay) {
+        Calendar today = Calendar.getInstance();
+        int dimThis = today.getActualMaximum(Calendar.DAY_OF_MONTH);
+        int cutoffThis = Math.min(cutoffDay, dimThis);
+        Calendar end = Calendar.getInstance();
+        if (today.get(Calendar.DAY_OF_MONTH) <= cutoffThis) {
+            end.set(Calendar.DAY_OF_MONTH, cutoffThis);
+        } else {
+            end.add(Calendar.MONTH, 1);
+            int dimNext = end.getActualMaximum(Calendar.DAY_OF_MONTH);
+            end.set(Calendar.DAY_OF_MONTH, Math.min(cutoffDay, dimNext));
+        }
+        Calendar start = (Calendar) end.clone();
+        start.add(Calendar.MONTH, -1);
+        start.add(Calendar.DAY_OF_MONTH, 1);
+        return new String[]{SDF_DATE.format(start.getTime()), SDF_DATE.format(end.getTime())};
+    }
+
+    /** Ringkasan jam kerja satu staf dalam periode (hingga hari ini). */
+    public static final class PeriodSummary {
+        public int workingDays;          // hari yang benar-benar kerja
+        public double totalHours;        // total jam kerja terkumpul (termasuk shift terbuka hari ini)
+        public double requiredHours;     // jam ideal = hari kerja ideal × jam ideal/hari
+        public double diffHours;         // totalHours - requiredHours (+ lebih, - kurang)
+        public double dailyOvertimeHours; // akumulasi lembur harian (jam di atas jam ideal/hari)
+    }
+
+    /**
+     * Hitung akumulasi jam kerja staf dari {@code start} s/d hari ini dalam
+     * periode cut-off: hari-hari lampau dari log (IN→OUT), hari ini memakai
+     * {@code ShiftReporter.workedMillisToday} supaya shift terbuka ikut terhitung.
+     * Jam ideal = hari kerja × {@code dailyNormalHours}.
+     */
+    public static PeriodSummary computePeriodSummary(DatabaseHelper db, long userId,
+            String start, String end, double dailyNormalHours) {
+        PeriodSummary ps = new PeriodSummary();
+        String today = SDF_DATE.format(new Date());
+        String rangeEnd = today.compareTo(end) < 0 ? today : end;   // jangan lewati hari ini
+        AttendanceDao attDao = new AttendanceDao(db);
+        List<Attendance> events = attDao.getEventsByUserBetween(userId, start, rangeEnd);
+
+        LinkedHashMap<String, List<Attendance>> byDay = new LinkedHashMap<>();
+        for (Attendance a : events) {
+            String d = a.getTs() != null && a.getTs().length() >= 10
+                    ? a.getTs().substring(0, 10) : "?";
+            List<Attendance> l = byDay.get(d);
+            if (l == null) { l = new ArrayList<>(); byDay.put(d, l); }
+            l.add(a);
+        }
+        for (Map.Entry<String, List<Attendance>> e : byDay.entrySet()) {
+            if (e.getKey().equals(today)) continue;   // hari ini dihitung terpisah
+            DayResult dr = computeDay(e.getValue());
+            ps.totalHours += dr.workHours;
+            ps.dailyOvertimeHours += Math.max(0, dr.workHours - dailyNormalHours);
+            if (!"-".equals(dr.masuk)) ps.workingDays++;
+        }
+        // Hari ini (termasuk shift yang masih berjalan).
+        if (start.compareTo(today) <= 0 && today.compareTo(end) <= 0) {
+            long todayMs = ShiftReporter.workedMillisToday(db, userId);
+            if (todayMs > 0) {
+                double todayH = todayMs / 3600000.0;
+                ps.totalHours += todayH;
+                ps.dailyOvertimeHours += Math.max(0, todayH - dailyNormalHours);
+                ps.workingDays++;
+            }
+        }
+        // Jam ideal periode = hari kerja ideal × jam kerja ideal/hari. Hari kerja
+        // ideal diskalakan dari "hari kerja/pekan" sesuai panjang periode cut-off:
+        //   idealDays = hariKerjaPerPekan × (jumlahHariPeriode ÷ 7).
+        int workDaysPerWeek = new SettingsDao(db).getWorkDaysPerWeek();
+        double periodDays = periodLengthDays(start, end);
+        double idealDays = workDaysPerWeek * (periodDays / 7.0);
+        ps.requiredHours = idealDays * dailyNormalHours;
+        ps.diffHours = ps.totalHours - ps.requiredHours;
+        return ps;
+    }
+
+    /** Jumlah hari (inklusif) dalam periode {@code start}..{@code end}
+     *  ("yyyy-MM-dd"); minimal 1. */
+    private static double periodLengthDays(String start, String end) {
+        try {
+            Date s = SDF_DATE.parse(start);
+            Date e = SDF_DATE.parse(end);
+            if (s != null && e != null) {
+                long days = Math.round((e.getTime() - s.getTime()) / 86400000.0) + 1;
+                return days >= 1 ? days : 1;
+            }
+        } catch (Exception ignored) {}
+        return 30;   // fallback periode bulanan
+    }
+
+    /** Teks bonus penjualan untuk periode (galon JUAL × rate), diakhiri 2 baris;
+     *  "" kalau bonus dimatikan. */
+    private static String periodBonusText(DatabaseHelper db, SettingsDao s,
+                                          String start, String end) {
+        if (!s.isSalesBonusEnabled()) return "";
+        int galon = (int) new TransactionDao(db).getSummaryByDateRange(start, end)[1];
+        return ShiftReporter.salesBonusLine(s, galon) + "\n\n";
+    }
+
+    /**
+     * Periode cut-off SEBELUM periode berjalan (satu bulan lebih awal dari
+     * {@link #monthlyPeriod}). Dipakai admin untuk generate slip periode lalu.
+     */
+    public static String[] previousPeriod(int cutoffDay) {
+        Calendar end = Calendar.getInstance();
+        end.add(Calendar.MONTH, -1);
+        int dim = end.getActualMaximum(Calendar.DAY_OF_MONTH);
+        end.set(Calendar.DAY_OF_MONTH, Math.min(cutoffDay, dim));
+        Calendar start = (Calendar) end.clone();
+        start.add(Calendar.MONTH, -1);
+        start.add(Calendar.DAY_OF_MONTH, 1);
         return new String[]{SDF_DATE.format(start.getTime()), SDF_DATE.format(end.getTime())};
     }
 
@@ -121,7 +243,9 @@ public final class AttendanceRecap {
                 String subject = "Rekap Absensi - " + depot + " - "
                         + period[0] + " s/d " + period[1];
                 String body = "Rekapitulasi absensi staff periode " + period[0]
-                        + " s/d " + period[1] + ".\n\nFile ZIP (data XLSX + foto) terlampir."
+                        + " s/d " + period[1] + ".\n\nFile ZIP (data XLSX + foto) terlampir.\n\n"
+                        + periodBonusText(dbHelper, s, period[0], period[1])
+                        + TrendReporter.buildText(dbHelper)
                         + "\nDikirim otomatis oleh DAMIU POS.";
                 List<File> atts = new ArrayList<>();
                 atts.add(zip);
@@ -130,12 +254,18 @@ public final class AttendanceRecap {
                 ShiftEmailSender.sendAsync(app, s.getSmtpHost(), s.getSmtpPort(),
                         s.getSmtpUser(), s.getSmtpPass(), s.getAdminEmail(),
                         subject, body, atts, (success, error) -> {
-                            // Tandai terkirim HANYA kalau sukses → gagal = retry
-                            // di login berikutnya (hingga berhasil).
                             if (success) {
                                 s.setLastRecapPeriod(periodId);
                                 // Hemat storage: hapus foto periode + file zip.
                                 cleanupPeriodFiles(dbHelper, period[0], period[1], zipFile);
+                            } else {
+                                // Gagal → simpan ke antrian laporan gagal (retry tiap
+                                // login berikutnya + bisa di-resend admin). Set marker
+                                // supaya tidak regenerasi; antrian yang menangani kirim
+                                // ulang (zip dihapus setelah berhasil).
+                                ShiftEmailSender.enqueue(app, "Rekap Bulanan", subject, body,
+                                        atts, atts);
+                                s.setLastRecapPeriod(periodId);
                             }
                             recapSending = false;
                         });
@@ -226,11 +356,14 @@ public final class AttendanceRecap {
                 if (depot == null || depot.isEmpty()) depot = "DAMIU POS";
                 String subject = "Rekap Pekanan - " + depot + " - "
                         + week[0] + " s/d " + week[1];
-                String body = "Rekap pekanan (PDF semua konten export) periode "
-                        + week[0] + " s/d " + week[1] + " terlampir."
-                        + "\nDikirim otomatis oleh DAMIU POS.";
+                String body = "Rekap pekanan (PDF semua konten export + Analisa & Prediksi) periode "
+                        + week[0] + " s/d " + week[1] + " terlampir.\n\n"
+                        + periodBonusText(dbHelper, s, week[0], week[1])
+                        + "Dikirim otomatis oleh DAMIU POS.";
                 List<File> atts = new ArrayList<>();
                 atts.add(pdf);
+                final File analytics = AnalyticsPdf.build(app, dbHelper);  // analisa & prediksi
+                if (analytics != null) atts.add(analytics);
                 final File pdfFile = pdf;
                 ShiftEmailSender.sendAsync(app, s.getSmtpHost(), s.getSmtpPort(),
                         s.getSmtpUser(), s.getSmtpPass(), s.getAdminEmail(),
@@ -242,6 +375,17 @@ public final class AttendanceRecap {
                                     //noinspection ResultOfMethodCallIgnored
                                     pdfFile.delete();
                                 }
+                                if (analytics != null && analytics.exists()) {
+                                    //noinspection ResultOfMethodCallIgnored
+                                    analytics.delete();
+                                }
+                            } else {
+                                // Gagal → simpan ke antrian laporan gagal (retry tiap
+                                // login berikutnya + bisa di-resend admin). PDF dihapus
+                                // oleh antrian setelah berhasil terkirim.
+                                ShiftEmailSender.enqueue(app, "Rekap Pekanan", subject, body,
+                                        atts, atts);
+                                s.setLastWeeklyRecap(weekId);
                             }
                             weeklySending = false;
                         });
@@ -249,6 +393,104 @@ public final class AttendanceRecap {
                 weeklySending = false;
             }
         }, "weekly-recap").start();
+    }
+
+    /**
+     * Bangun + ENQUEUE rekap bulanan (cut-off) kalau due & belum terkirim, agar
+     * dikirim lewat progress window saat Pulang. Return true kalau ada yang
+     * di-enqueue. WAJIB dipanggil dari background thread (build berat: ZIP+foto).
+     * Marker {@code lastRecapPeriod} di-set setelah enqueue — antrian yang retry
+     * kalau pengiriman gagal (di-flush ulang tiap login).
+     */
+    public static boolean enqueueDueRecap(Context ctx, DatabaseHelper dbHelper) {
+        final SettingsDao s = new SettingsDao(dbHelper);
+        if (!s.isMultiUserEnabled() || !s.isShiftEmailConfigured()) return false;
+        int cutoff = s.getPayrollCutoffDay();
+        String[] period = mostRecentCompletedPeriod(cutoff);
+        String periodId = period[1];
+        if (periodId.equals(s.getLastRecapPeriod())) return false;
+        final Context app = ctx.getApplicationContext();
+        File zip = exportRecapZip(app, dbHelper, period[0], period[1], s.getDailyNormalHours());
+        if (zip == null) return false;
+        String depot = s.getDepotName();
+        if (depot == null || depot.isEmpty()) depot = "DAMIU POS";
+        String subject = "Rekap Absensi - " + depot + " - " + period[0] + " s/d " + period[1];
+        String body = "Rekapitulasi absensi staff periode " + period[0]
+                + " s/d " + period[1] + ".\n\nFile ZIP (data XLSX + foto) terlampir.\n\n"
+                + periodBonusText(dbHelper, s, period[0], period[1])
+                + TrendReporter.buildText(dbHelper)
+                + "\nDikirim otomatis oleh DAMIU POS.";
+        List<File> atts = new ArrayList<>();
+        atts.add(zip);
+        ShiftEmailSender.enqueue(app, "Rekap Bulanan", subject, body, atts, atts);
+        s.setLastRecapPeriod(periodId);
+        return true;
+    }
+
+    /**
+     * Bangun + ENQUEUE rekap pekanan kalau due & belum terkirim (lihat
+     * {@link #enqueueDueRecap}). WAJIB dari background thread.
+     */
+    public static boolean enqueueDueWeeklyRecap(Context ctx, DatabaseHelper dbHelper) {
+        final SettingsDao s = new SettingsDao(dbHelper);
+        if (!s.isMultiUserEnabled() || !s.isShiftEmailConfigured()) return false;
+        if (!s.isWeeklyRecapEnabled()) return false;
+        int triggerDow = s.getWeeklyRecapDay();
+        String[] week = mostRecentCompletedWeek(triggerDow);
+        String weekId = week[1];
+        if (weekId.equals(s.getLastWeeklyRecap())) return false;
+        final Context app = ctx.getApplicationContext();
+        File pdf = ReportPdfBuilder.build(app, week[0], week[1], true, true, true);
+        if (pdf == null) { s.setLastWeeklyRecap(weekId); return false; }  // pekan kosong
+        String depot = s.getDepotName();
+        if (depot == null || depot.isEmpty()) depot = "DAMIU POS";
+        String subject = "Rekap Pekanan - " + depot + " - " + week[0] + " s/d " + week[1];
+        String body = "Rekap pekanan (PDF semua konten export + Analisa & Prediksi) periode "
+                + week[0] + " s/d " + week[1] + " terlampir.\n\n"
+                + periodBonusText(dbHelper, s, week[0], week[1])
+                + "Dikirim otomatis oleh DAMIU POS.";
+        List<File> atts = new ArrayList<>();
+        atts.add(pdf);
+        File analytics = AnalyticsPdf.build(app, dbHelper);   // analisa & prediksi terlampir
+        if (analytics != null) atts.add(analytics);
+        ShiftEmailSender.enqueue(app, "Rekap Pekanan", subject, body, atts, atts);
+        s.setLastWeeklyRecap(weekId);
+        return true;
+    }
+
+    /**
+     * Bangun + ENQUEUE slip gaji (PDF + XLSX) staf di tanggal cut-off, sekali per
+     * periode per staf (marker {@code payslip_sent_<uid>}). Dipanggil dari thread
+     * persiapan saat Pulang; dikirim lewat progress window bersama laporan lain.
+     */
+    public static boolean enqueueDuePayslip(Context ctx, DatabaseHelper dbHelper,
+                                            long userId, String userName) {
+        final SettingsDao s = new SettingsDao(dbHelper);
+        if (!s.isMultiUserEnabled() || !s.isShiftEmailConfigured()) return false;
+        int cutoff = s.getPayrollCutoffDay();
+        if (!isCutoffToday(cutoff)) return false;            // hanya di hari cut-off
+        String[] period = monthlyPeriod(cutoff);             // periode berakhir hari ini
+        String marker = "payslip_sent_" + userId;
+        if (period[1].equals(s.get(marker, ""))) return false; // sudah dikirim periode ini
+        final Context app = ctx.getApplicationContext();
+        File pdf = PayslipPdf.build(app, dbHelper, userId, userName, period[0], period[1]);
+        File xlsx = PayslipXlsx.build(app, dbHelper, userId, userName, period[0], period[1]);
+        if (pdf == null && xlsx == null) return false;
+        String depot = s.getDepotName();
+        if (depot == null || depot.isEmpty()) depot = "DAMIU POS";
+        String subject = "Slip Gaji - " + depot + " - " + userName + " - "
+                + period[0] + " s/d " + period[1];
+        String body = "Slip gaji " + userName + " periode " + period[0] + " s/d " + period[1]
+                + " (PDF + Excel formula) terlampir.\nDikirim otomatis oleh DAMIU POS.";
+        List<File> atts = new ArrayList<>();
+        if (pdf != null) atts.add(pdf);
+        if (xlsx != null) atts.add(xlsx);
+        ShiftEmailSender.enqueue(app, "Slip Gaji", subject, body, atts, atts);
+        s.set(marker, period[1]);
+        // Catat pembayaran cicilan periode ini (sekali, dijaga marker di atas):
+        // sisa angsuran berkurang, yang lunas otomatis diarsipkan.
+        new SalaryDao(dbHelper).applyAngsuranPayment(userId);
+        return true;
     }
 
     // ------------------------------------------------------------------ export

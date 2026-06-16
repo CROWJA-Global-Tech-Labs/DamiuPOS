@@ -206,12 +206,15 @@ public class UserListActivity extends AppCompatActivity {
         RadioGroup rgRole = content.findViewById(R.id.rgUserRole);
         RadioButton rbAdmin = content.findViewById(R.id.rbRoleAdmin);
         RadioButton rbStaf = content.findViewById(R.id.rbRoleStaf);
+        RadioButton rbViewer = content.findViewById(R.id.rbRoleViewer);
         SwitchMaterial swActive = content.findViewById(R.id.swUserActive);
 
         if (existing != null) {
             etName.setText(existing.getName());
             etPin.setText(existing.getPin());
-            if (existing.isAdmin()) rbAdmin.setChecked(true); else rbStaf.setChecked(true);
+            if (existing.isAdmin()) rbAdmin.setChecked(true);
+            else if (existing.isViewer()) rbViewer.setChecked(true);
+            else rbStaf.setChecked(true);
             swActive.setChecked(existing.isActive());
         }
 
@@ -234,19 +237,21 @@ public class UserListActivity extends AppCompatActivity {
                     if (name.isEmpty()) { etName.setError("Nama wajib diisi"); return; }
                     if (pin.length() < 4) { etPin.setError("PIN minimal 4 digit"); return; }
 
-                    boolean admin = rbAdmin.isChecked();
+                    String role = rbAdmin.isChecked() ? User.ROLE_ADMIN
+                            : rbViewer.isChecked() ? User.ROLE_VIEWER
+                            : User.ROLE_STAF;
                     boolean active = swActive.isChecked();
                     if (existing == null) {
                         User u = new User();
                         u.setName(name);
                         u.setPin(pin);
-                        u.setRole(admin ? User.ROLE_ADMIN : User.ROLE_STAF);
+                        u.setRole(role);
                         u.setActive(active);
                         userDao.insert(u);
                     } else {
                         existing.setName(name);
                         existing.setPin(pin);
-                        existing.setRole(admin ? User.ROLE_ADMIN : User.ROLE_STAF);
+                        existing.setRole(role);
                         existing.setActive(active);
                         userDao.update(existing);
                     }
@@ -330,13 +335,19 @@ public class UserListActivity extends AppCompatActivity {
             h.tvInitial.setText(name != null && !name.isEmpty()
                     ? String.valueOf(name.charAt(0)).toUpperCase(Locale.getDefault()) : "?");
 
-            String role = u.isAdmin() ? "Admin" : "Staf";
+            String role = u.isAdmin() ? "Admin" : u.isViewer() ? "Viewer" : "Staf";
             if (!u.isActive()) role += " • Nonaktif";
             if (settingsDao.getCurrentUserId() == u.getId()) role += " • Sedang login";
             h.tvRole.setText(role);
 
             h.itemView.setOnClickListener(v -> showUserForm(u));
             h.btnHistory.setOnClickListener(v -> showHistory(u));
+            h.btnSalary.setOnClickListener(v -> {
+                Intent i = new Intent(UserListActivity.this, SalaryConfigActivity.class);
+                i.putExtra(SalaryConfigActivity.EXTRA_USER_ID, u.getId());
+                i.putExtra(SalaryConfigActivity.EXTRA_USER_NAME, u.getName());
+                startActivity(i);
+            });
         }
 
         @Override
@@ -344,13 +355,14 @@ public class UserListActivity extends AppCompatActivity {
 
         class VH extends RecyclerView.ViewHolder {
             final TextView tvName, tvRole, tvInitial;
-            final android.widget.ImageButton btnHistory;
+            final android.widget.ImageButton btnHistory, btnSalary;
             VH(@NonNull View v) {
                 super(v);
                 tvName = v.findViewById(R.id.tvUserName);
                 tvRole = v.findViewById(R.id.tvUserRole);
                 tvInitial = v.findViewById(R.id.tvUserInitial);
                 btnHistory = v.findViewById(R.id.btnHistory);
+                btnSalary = v.findViewById(R.id.btnSalary);
             }
         }
     }

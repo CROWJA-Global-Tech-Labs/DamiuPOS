@@ -46,8 +46,6 @@ public class FollowUpActivity extends AppCompatActivity {
             new SimpleDateFormat("yyyy-MM-dd", Locale.US);
     private static final SimpleDateFormat SDF_OUT_DATE =
             new SimpleDateFormat("dd MMM yyyy", new Locale("id", "ID"));
-    private static final SimpleDateFormat SDF_OUT_DAY =
-            new SimpleDateFormat("EEEE", new Locale("id", "ID"));
 
     private RecyclerView rv;
     private TextView tvEmpty, tvSummary;
@@ -388,61 +386,6 @@ public class FollowUpActivity extends AppCompatActivity {
     }
 
     private void openWhatsAppForFollowUp(Customer c) {
-        String phone = c != null ? c.getPhone() : null;
-        if (phone == null || phone.isEmpty()) {
-            Toast.makeText(this, "Pelanggan belum memiliki nomor WhatsApp", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        String normalized = phone.replaceAll("[^0-9]", "");
-        if (normalized.startsWith("0")) normalized = "62" + normalized.substring(1);
-        else if (!normalized.startsWith("62")) normalized = "62" + normalized;
-
-        String lastTs = c.getCreatedAt();
-        String hari = formatDayName(lastTs);
-        String tanggal = formatDate(lastTs);
-        long days = daysSince(lastTs);
-
-        // Template configurable dari Pengaturan. Placeholder:
-        //   {nama} {hari} {tanggal} {hari_lalu}
-        String template = settingsDao.getFollowUpTemplate();
-        String msg = template
-                .replace("{nama}", c.getName() != null ? c.getName() : "")
-                .replace("{hari}", hari)
-                .replace("{tanggal}", tanggal)
-                .replace("{hari_lalu}", String.valueOf(days));
-
-        try {
-            Intent i = new Intent(Intent.ACTION_VIEW,
-                    Uri.parse("https://wa.me/" + normalized +
-                            "?text=" + Uri.encode(msg)));
-            try {
-                getPackageManager().getPackageInfo("com.whatsapp", 0);
-                i.setPackage("com.whatsapp");
-            } catch (Exception ignored) {
-                try {
-                    getPackageManager().getPackageInfo("com.whatsapp.w4b", 0);
-                    i.setPackage("com.whatsapp.w4b");
-                } catch (Exception ignored2) {}
-            }
-            startActivity(i);
-            // Catat: pelanggan ini di-follow-up hari ini (untuk laporan harian).
-            customerDao.markFollowedUp(c.getId());
-        } catch (Exception e) {
-            Toast.makeText(this, "Tidak dapat membuka WhatsApp", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    /** Nama hari dalam Bahasa Indonesia (Senin, Selasa, dst.) */
-    private String formatDayName(String ts) {
-        if (ts == null || ts.isEmpty()) return "-";
-        try {
-            Date d = SDF_PARSE_FULL.parse(ts);
-            return d != null ? SDF_OUT_DAY.format(d) : "-";
-        } catch (Exception e) {
-            try {
-                Date d2 = SDF_PARSE_DATE.parse(ts.substring(0, Math.min(10, ts.length())));
-                return d2 != null ? SDF_OUT_DAY.format(d2) : "-";
-            } catch (Exception ignored) { return "-"; }
-        }
+        WhatsAppFollowUp.open(this, c, settingsDao, customerDao);
     }
 }

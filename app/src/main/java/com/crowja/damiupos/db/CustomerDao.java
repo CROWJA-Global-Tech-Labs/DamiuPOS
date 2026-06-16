@@ -38,7 +38,7 @@ public class CustomerDao {
         if (customer.getCreatedAt() != null && !customer.getCreatedAt().isEmpty()) {
             values.put(DatabaseHelper.COL_CREATED_AT, customer.getCreatedAt());
         }
-        return db.insert(DatabaseHelper.TABLE_CUSTOMERS, null, values);
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_CUSTOMERS, values);
     }
 
     public int update(Customer customer) {
@@ -58,14 +58,14 @@ public class CustomerDao {
         if (customer.getCreatedAt() != null && !customer.getCreatedAt().isEmpty()) {
             values.put(DatabaseHelper.COL_CREATED_AT, customer.getCreatedAt());
         }
-        return db.update(DatabaseHelper.TABLE_CUSTOMERS, values,
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_CUSTOMERS, values,
                 DatabaseHelper.COL_ID + "=?",
                 new String[]{String.valueOf(customer.getId())});
     }
 
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        return db.delete(DatabaseHelper.TABLE_CUSTOMERS,
+        return dbHelper.syncDelete(db, DatabaseHelper.TABLE_CUSTOMERS, "customers",
                 DatabaseHelper.COL_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
@@ -88,7 +88,7 @@ public class CustomerDao {
             placeholders.append('?');
             args[i++] = String.valueOf(id);
         }
-        return db.delete(DatabaseHelper.TABLE_CUSTOMERS,
+        return dbHelper.syncDelete(db, DatabaseHelper.TABLE_CUSTOMERS, "customers",
                 DatabaseHelper.COL_ID + " IN (" + placeholders + ")",
                 args);
     }
@@ -374,6 +374,21 @@ public class CustomerDao {
     public int getTotalCustomers() {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         Cursor cursor = db.rawQuery("SELECT COUNT(*) FROM customers", null);
+        int count = 0;
+        if (cursor.moveToFirst()) {
+            count = cursor.getInt(0);
+        }
+        cursor.close();
+        return count;
+    }
+
+    /** Jumlah pelanggan baru yang dibuat dalam rentang tanggal (inklusif). */
+    public int getCountCreatedBetween(String startDate, String endDate) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor cursor = db.rawQuery(
+                "SELECT COUNT(*) FROM customers WHERE date(" + DatabaseHelper.COL_CREATED_AT
+                        + ") >= ? AND date(" + DatabaseHelper.COL_CREATED_AT + ") <= ?",
+                new String[]{startDate, endDate});
         int count = 0;
         if (cursor.moveToFirst()) {
             count = cursor.getInt(0);

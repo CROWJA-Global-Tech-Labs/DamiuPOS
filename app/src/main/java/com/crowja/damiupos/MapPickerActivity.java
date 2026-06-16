@@ -60,6 +60,8 @@ public class MapPickerActivity extends AppCompatActivity {
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
+        // UA pengenal aplikasi supaya penyedia tile tidak memblokir request.
+        settings.setUserAgentString(MapTiles.userAgent());
 
         webView.addJavascriptInterface(new MapBridge(), "Android");
         webView.setWebViewClient(new WebViewClient());
@@ -216,8 +218,8 @@ public class MapPickerActivity extends AppCompatActivity {
                 "<script>\n" +
                 "var map = L.map('map',{zoomControl:true}).setView([" + lat + "," + lng + "], 15);\n" +
                 "L.control.zoom({position:'bottomright'}).remove();\n" +
-                "L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{\n" +
-                "  attribution:'OSM',maxZoom:19\n" +
+                "L.tileLayer('" + MapTiles.LEAFLET_URL + "',{\n" +
+                "  subdomains:'" + MapTiles.SUBDOMAINS + "',attribution:'" + MapTiles.ATTRIBUTION + "',maxZoom:19\n" +
                 "}).addTo(map);\n" +
                 "function updateCoords(){\n" +
                 "  var c=map.getCenter();\n" +

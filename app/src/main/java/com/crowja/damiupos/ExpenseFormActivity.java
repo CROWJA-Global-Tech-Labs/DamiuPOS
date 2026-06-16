@@ -11,6 +11,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.text.TextUtils;
+import android.view.View;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.Toast;
@@ -56,8 +57,10 @@ public class ExpenseFormActivity extends AppCompatActivity {
     private static final int REQUEST_PICK_IMAGE = 4202;
     private static final int REQUEST_PERMISSION_CAMERA = 4203;
 
-    private EditText etName, etAmount, etNote;
+    private EditText etName, etAmount, etNote, etLiter, etPcs;
     private ImageView ivFoto;
+    private com.google.android.material.button.MaterialButtonToggleGroup toggleKategori;
+    private View tilName, tilLiter, tilPcs;
     private ExpenseDao expenseDao;
     private String currentPhotoPath;
     private long editingId = 0;
@@ -76,7 +79,18 @@ public class ExpenseFormActivity extends AppCompatActivity {
         etName = findViewById(R.id.etName);
         etAmount = findViewById(R.id.etAmount);
         etNote = findViewById(R.id.etNote);
+        etLiter = findViewById(R.id.etLiter);
+        etPcs = findViewById(R.id.etPcs);
         ivFoto = findViewById(R.id.ivFotoStruk);
+        toggleKategori = findViewById(R.id.toggleKategori);
+        tilName = findViewById(R.id.tilName);
+        tilLiter = findViewById(R.id.tilLiter);
+        tilPcs = findViewById(R.id.tilPcs);
+        // Input yang relevan tergantung kategori: Air Baku→liter, Segel/Tutup→pcs,
+        // Umum→nama. Nama disembunyikan untuk kategori non-Umum.
+        toggleKategori.addOnButtonCheckedListener((g, id, checked) -> {
+            if (checked) applyCategoryUi(id);
+        });
 
         // Prefill kalau edit mode
         editingId = getIntent().getLongExtra(EXTRA_EXPENSE_ID, 0);
@@ -87,12 +101,26 @@ public class ExpenseFormActivity extends AppCompatActivity {
                 etName.setText(e.getName());
                 etAmount.setText(String.valueOf(Math.round(e.getAmount())));
                 etNote.setText(e.getNote() != null ? e.getNote() : "");
+                if (e.isAirBaku()) {
+                    toggleKategori.check(R.id.btnKatAirBaku);
+                    if (e.getLiters() > 0) etLiter.setText(trimLiters(e.getLiters()));
+                } else if (e.isSegel()) {
+                    toggleKategori.check(R.id.btnKatSegel);
+                    if (e.getPcs() > 0) etPcs.setText(String.valueOf(e.getPcs()));
+                } else if (e.isTutup()) {
+                    toggleKategori.check(R.id.btnKatTutup);
+                    if (e.getPcs() > 0) etPcs.setText(String.valueOf(e.getPcs()));
+                } else {
+                    toggleKategori.check(R.id.btnKatUmum);
+                }
                 if (e.getPhotoPath() != null && !e.getPhotoPath().isEmpty()) {
                     currentPhotoPath = e.getPhotoPath();
                     ivFoto.setImageBitmap(loadRotatedBitmap(currentPhotoPath));
                 }
             }
         }
+        // Sinkronkan tampilan dengan kategori terpilih (default: Air Baku).
+        applyCategoryUi(toggleKategori.getCheckedButtonId());
 
         findViewById(R.id.btnFoto).setOnClickListener(v -> takePhoto());
         findViewById(R.id.btnPickGallery).setOnClickListener(v -> pickFromGallery());
@@ -191,13 +219,50 @@ public class ExpenseFormActivity extends AppCompatActivity {
         }
     }
 
+    /** Atur visibilitas input nama/liter/pcs sesuai kategori terpilih. */
+    private void applyCategoryUi(int checkedId) {
+        boolean airBaku = checkedId == R.id.btnKatAirBaku;
+        boolean pcsCat = checkedId == R.id.btnKatSegel || checkedId == R.id.btnKatTutup;
+        boolean umum = checkedId == R.id.btnKatUmum;
+        tilName.setVisibility(umum ? View.VISIBLE : View.GONE);
+        tilLiter.setVisibility(airBaku ? View.VISIBLE : View.GONE);
+        tilPcs.setVisibility(pcsCat ? View.VISIBLE : View.GONE);
+    }
+
+    private String categoryFromToggle() {
+        int id = toggleKategori.getCheckedButtonId();
+        if (id == R.id.btnKatAirBaku) return Expense.CAT_AIR_BAKU;
+        if (id == R.id.btnKatSegel) return Expense.CAT_SEGEL;
+        if (id == R.id.btnKatTutup) return Expense.CAT_TUTUP;
+        return Expense.CAT_UMUM;
+    }
+
+    /** Nama otomatis untuk kategori non-Umum (pakai label kategori). */
+    private static String autoName(String category) {
+        Expense tmp = new Expense();
+        tmp.setCategory(category);
+        return tmp.getCategoryLabel();
+    }
+
     private void save() {
-        String name = etName.getText().toString().trim();
-        if (TextUtils.isEmpty(name)) {
-            Toast.makeText(this, "Nama pengeluaran wajib diisi", Toast.LENGTH_SHORT).show();
-            etName.requestFocus();
-            return;
+        String category = categoryFromToggle();
+        boolean isUmum = Expense.CAT_UMUM.equals(category);
+        boolean isAirBaku = Expense.CAT_AIR_BAKU.equals(category);
+        boolean isPcsCat = Expense.CAT_SEGEL.equals(category) || Expense.CAT_TUTUP.equals(category);
+
+        // Nama: manual hanya untuk Umum; kategori lain pakai label kategori.
+        String name;
+        if (isUmum) {
+            name = etName.getText().toString().trim();
+            if (TextUtils.isEmpty(name)) {
+                Toast.makeText(this, "Nama pengeluaran wajib diisi", Toast.LENGTH_SHORT).show();
+                etName.requestFocus();
+                return;
+            }
+        } else {
+            name = autoName(category);
         }
+
         String amountStr = etAmount.getText().toString().trim();
         double amount;
         try {
@@ -212,12 +277,43 @@ public class ExpenseFormActivity extends AppCompatActivity {
             return;
         }
 
+        double liters = 0;
+        int pcs = 0;
+        if (isAirBaku) {
+            String ls = etLiter.getText() != null ? etLiter.getText().toString().trim() : "";
+            try {
+                liters = ls.isEmpty() ? 0 : Double.parseDouble(ls);
+            } catch (NumberFormatException ex) {
+                liters = 0;
+            }
+            if (liters <= 0) {
+                etLiter.setError("Isi jumlah liter air baku");
+                etLiter.requestFocus();
+                return;
+            }
+        } else if (isPcsCat) {
+            String ps = etPcs.getText() != null ? etPcs.getText().toString().trim() : "";
+            try {
+                pcs = ps.isEmpty() ? 0 : Integer.parseInt(ps);
+            } catch (NumberFormatException ex) {
+                pcs = 0;
+            }
+            if (pcs <= 0) {
+                etPcs.setError("Isi jumlah pcs");
+                etPcs.requestFocus();
+                return;
+            }
+        }
+
         Expense e = editingId > 0 ? expenseDao.getById(editingId) : new Expense();
         if (e == null) e = new Expense();
         e.setName(name);
         e.setAmount(amount);
         e.setPhotoPath(currentPhotoPath);
         e.setNote(etNote.getText().toString().trim());
+        e.setCategory(category);
+        e.setLiters(liters);
+        e.setPcs(pcs);
 
         if (editingId > 0) {
             expenseDao.update(e);
@@ -232,6 +328,11 @@ public class ExpenseFormActivity extends AppCompatActivity {
             }
         }
         finish();
+    }
+
+    /** Tampilkan liter tanpa ".0" kalau bulat. */
+    private static String trimLiters(double v) {
+        return v == Math.floor(v) ? String.valueOf((long) v) : String.valueOf(v);
     }
 
     /** Preview foto hemat memori (downsample + RGB_565 + EXIF). */

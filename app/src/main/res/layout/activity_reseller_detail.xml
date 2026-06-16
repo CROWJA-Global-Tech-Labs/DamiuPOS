@@ -166,6 +166,20 @@
                 app:iconGravity="textStart"
                 app:iconSize="18dp" />
 
+            <!-- Kirim rekap pendapatan (komisi) reseller — PDF 30 hari terakhir -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnKirimRekap"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="Kirim Rekap Pendapatan (PDF)"
+                android:textAllCaps="false"
+                app:cornerRadius="10dp"
+                app:icon="@android:drawable/ic_menu_send"
+                app:iconGravity="textStart"
+                app:iconSize="18dp" />
+
             <!-- Atur komisi per jenis air -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnAturKomisi"

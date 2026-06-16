@@ -13,11 +13,20 @@ package com.crowja.damiupos.model;
  */
 public class Expense {
 
+    /** Kategori pengeluaran. */
+    public static final String CAT_AIR_BAKU = "AIR_BAKU";
+    public static final String CAT_SEGEL = "SEGEL";
+    public static final String CAT_TUTUP = "TUTUP";
+    public static final String CAT_UMUM = "UMUM";
+
     private long id;
     private String name;        // mis. "Bayar listrik", "Beli botol galon kosong"
     private double amount;      // nominal dalam Rupiah
     private String photoPath;   // path absolut file foto struk (nullable)
     private String note;        // catatan tambahan (nullable)
+    private String category = CAT_UMUM; // AIR_BAKU | SEGEL | TUTUP | UMUM
+    private double liters;      // liter air baku (untuk kategori AIR_BAKU)
+    private int pcs;            // jumlah pcs (untuk kategori SEGEL / TUTUP)
     private String createdAt;   // timestamp dari SQLite
 
     public Expense() {}
@@ -43,6 +52,30 @@ public class Expense {
 
     public String getNote() { return note; }
     public void setNote(String note) { this.note = note; }
+
+    public String getCategory() { return category != null ? category : CAT_UMUM; }
+    public void setCategory(String category) { this.category = category; }
+    public boolean isAirBaku() { return CAT_AIR_BAKU.equals(category); }
+    public boolean isSegel() { return CAT_SEGEL.equals(category); }
+    public boolean isTutup() { return CAT_TUTUP.equals(category); }
+    /** True kalau kategori memakai input pcs (Segel / Tutup). */
+    public boolean usesPcs() { return isSegel() || isTutup(); }
+    /** True kalau kategori butuh input nama manual (hanya Umum). */
+    public boolean needsName() { return CAT_UMUM.equals(getCategory()); }
+
+    public double getLiters() { return liters; }
+    public void setLiters(double liters) { this.liters = liters; }
+
+    public int getPcs() { return pcs; }
+    public void setPcs(int pcs) { this.pcs = pcs; }
+
+    /** Label kategori yang ramah untuk ditampilkan. */
+    public String getCategoryLabel() {
+        if (CAT_AIR_BAKU.equals(category)) return "Belanja Air Baku";
+        if (CAT_SEGEL.equals(category)) return "Segel Galon";
+        if (CAT_TUTUP.equals(category)) return "Tutup Galon";
+        return "Umum";
+    }
 
     public String getCreatedAt() { return createdAt; }
     public void setCreatedAt(String createdAt) { this.createdAt = createdAt; }

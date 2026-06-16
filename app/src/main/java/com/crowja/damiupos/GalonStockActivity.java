@@ -10,9 +10,14 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.text.InputType;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
+import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -100,6 +105,64 @@ public class GalonStockActivity extends AppCompatActivity {
         });
 
         refreshData();
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        menu.add(0, 1, 0, "Koreksi Keseluruhan")
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == 1) { showKoreksiDialog(); return true; }
+        return super.onOptionsItemSelected(item);
+    }
+
+    /**
+     * Koreksi keseluruhan: set stok galon TERSEDIA langsung ke nilai yang benar.
+     * Sistem mencatat entry penyesuaian (selisih) supaya histori tetap auditable.
+     */
+    private void showKoreksiDialog() {
+        final int current = galonStockDao.getStokTersedia();
+        final EditText et = new EditText(this);
+        et.setInputType(InputType.TYPE_CLASS_NUMBER);
+        et.setText(String.valueOf(current));
+        et.setHint("Jumlah galon tersedia yang benar");
+        LinearLayout wrap = new LinearLayout(this);
+        int pad = (int) (20 * getResources().getDisplayMetrics().density);
+        wrap.setPadding(pad, pad / 2, pad, 0);
+        wrap.addView(et);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Koreksi Keseluruhan Stok")
+                .setMessage("Stok tersedia sekarang: " + current + " galon.\n"
+                        + "Masukkan jumlah yang benar — sistem akan menyesuaikan otomatis.")
+                .setView(wrap)
+                .setPositiveButton("Koreksi", (d, w) -> {
+                    String str = et.getText() != null ? et.getText().toString().trim() : "";
+                    if (str.isEmpty()) return;
+                    int target;
+                    try {
+                        target = Integer.parseInt(str);
+                    } catch (NumberFormatException e) {
+                        Toast.makeText(this, "Nilai tidak valid", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    int delta = target - galonStockDao.getStokTersedia();
+                    if (delta == 0) {
+                        Toast.makeText(this, "Stok sudah sesuai", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    galonStockDao.addStock(delta, "Koreksi keseluruhan → tersedia " + target
+                            + " (selisih " + (delta > 0 ? "+" : "") + delta + ")");
+                    Toast.makeText(this, "Stok tersedia dikoreksi ke " + target + " galon",
+                            Toast.LENGTH_LONG).show();
+                    refreshData();
+                })
+                .setNegativeButton("Batal", null)
+                .show();
     }
 
     private void takePhoto() {

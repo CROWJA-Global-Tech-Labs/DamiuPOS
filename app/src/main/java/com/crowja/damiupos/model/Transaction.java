@@ -93,6 +93,14 @@ public class Transaction {
     public String getPaymentMethod() { return paymentMethod; }
     public void setPaymentMethod(String v) { this.paymentMethod = v; }
 
+    /** Label ramah metode pembayaran ("Tunai"/"QRIS"/"Transfer"), "" kalau kosong. */
+    public String getPaymentMethodLabel() {
+        if (PAY_TUNAI.equals(paymentMethod)) return "Tunai";
+        if (PAY_QRIS.equals(paymentMethod)) return "QRIS";
+        if (PAY_TRANSFER.equals(paymentMethod)) return "Transfer";
+        return "";
+    }
+
     public long getResellerId() { return resellerId; }
     public void setResellerId(long v) { this.resellerId = v; }
 

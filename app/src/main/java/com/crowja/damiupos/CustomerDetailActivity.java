@@ -222,6 +222,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
         WebSettings ws = webMap.getSettings();
         ws.setJavaScriptEnabled(true);
         ws.setDomStorageEnabled(true);
+        // UA pengenal aplikasi supaya penyedia tile tidak memblokir request.
+        ws.setUserAgentString(MapTiles.userAgent());
         webMap.setOnClickListener(v -> findViewById(R.id.btnNavigate).performClick());
 
         String html = "<!DOCTYPE html><html><head>"
@@ -229,16 +231,18 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 + "<meta name='viewport' content='width=device-width, initial-scale=1.0, user-scalable=no'>"
                 + "<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css' />"
                 + "<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>"
-                + "<style>html,body,#map{height:100%;margin:0;padding:0;}</style>"
+                + "<style>html,body,#map{height:100%;margin:0;padding:0;}"
+                + ".leaflet-control-attribution{font-size:9px;}</style>"
                 + "</head><body><div id='map'></div>"
                 + "<script>"
-                + "var map = L.map('map', {zoomControl:false, attributionControl:false, dragging:false,"
+                + "var map = L.map('map', {zoomControl:false, dragging:false,"
                 + " scrollWheelZoom:false, doubleClickZoom:false, touchZoom:false, boxZoom:false, keyboard:false})"
                 + ".setView([" + lat + "," + lng + "], 16);"
-                + "L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);"
+                + "L.tileLayer('" + MapTiles.LEAFLET_URL + "', {subdomains:'" + MapTiles.SUBDOMAINS
+                + "', maxZoom:19, attribution:'" + MapTiles.ATTRIBUTION + "'}).addTo(map);"
                 + "L.marker([" + lat + "," + lng + "]).addTo(map);"
                 + "</script></body></html>";
-        webMap.loadDataWithBaseURL("https://openstreetmap.org/", html, "text/html", "utf-8", null);
+        webMap.loadDataWithBaseURL("https://unpkg.com", html, "text/html", "utf-8", null);
     }
 
     private void openWhatsApp() {

@@ -65,7 +65,15 @@ public class ExpenseAdapter extends RecyclerView.Adapter<ExpenseAdapter.VH> {
             h.ivThumb.setImageResource(android.R.drawable.ic_menu_gallery);
         }
 
-        h.tvDate.setText(formatDate(e.getCreatedAt()));
+        String dateLine = formatDate(e.getCreatedAt());
+        if (e.isAirBaku()) {
+            dateLine += "  ·  Air Baku";
+            if (e.getLiters() > 0) dateLine += " " + NF.format(Math.round(e.getLiters())) + " L";
+        } else if (e.usesPcs()) {
+            dateLine += "  ·  " + e.getCategoryLabel();
+            if (e.getPcs() > 0) dateLine += " " + NF.format(e.getPcs()) + " pcs";
+        }
+        h.tvDate.setText(dateLine);
 
         h.itemView.setOnClickListener(v -> {
             if (listener != null) listener.onExpenseClick(e);

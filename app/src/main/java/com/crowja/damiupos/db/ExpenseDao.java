@@ -19,29 +19,106 @@ public class ExpenseDao {
 
     public long insert(Expense e) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        ContentValues v = new ContentValues();
-        v.put(DatabaseHelper.COL_EXPENSE_NAME, e.getName());
-        v.put(DatabaseHelper.COL_EXPENSE_AMOUNT, e.getAmount());
-        v.put(DatabaseHelper.COL_EXPENSE_PHOTO_PATH, e.getPhotoPath());
-        v.put(DatabaseHelper.COL_EXPENSE_NOTE, e.getNote());
-        return db.insert(DatabaseHelper.TABLE_EXPENSES, null, v);
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_EXPENSES, toValues(e));
     }
 
     public int update(Expense e) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_EXPENSES, toValues(e),
+                DatabaseHelper.COL_EXPENSE_ID + "=?",
+                new String[]{String.valueOf(e.getId())});
+    }
+
+    private static ContentValues toValues(Expense e) {
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_EXPENSE_NAME, e.getName());
         v.put(DatabaseHelper.COL_EXPENSE_AMOUNT, e.getAmount());
         v.put(DatabaseHelper.COL_EXPENSE_PHOTO_PATH, e.getPhotoPath());
         v.put(DatabaseHelper.COL_EXPENSE_NOTE, e.getNote());
-        return db.update(DatabaseHelper.TABLE_EXPENSES, v,
-                DatabaseHelper.COL_EXPENSE_ID + "=?",
-                new String[]{String.valueOf(e.getId())});
+        v.put(DatabaseHelper.COL_EXPENSE_CATEGORY, e.getCategory());
+        v.put(DatabaseHelper.COL_EXPENSE_LITERS, e.getLiters());
+        v.put(DatabaseHelper.COL_EXPENSE_PCS, e.getPcs());
+        return v;
+    }
+
+    /** Total nominal (Rp) untuk satu kategori, sepanjang waktu. */
+    public double getTotalAmountByCategory(String category) {
+        return scalar("SELECT COALESCE(SUM(" + DatabaseHelper.COL_EXPENSE_AMOUNT + "),0) FROM "
+                + DatabaseHelper.TABLE_EXPENSES + " WHERE " + DatabaseHelper.COL_EXPENSE_CATEGORY
+                + "=?", category);
+    }
+
+    /** Total liter untuk satu kategori (mis. AIR_BAKU), sepanjang waktu. */
+    public double getTotalLitersByCategory(String category) {
+        return scalar("SELECT COALESCE(SUM(" + DatabaseHelper.COL_EXPENSE_LITERS + "),0) FROM "
+                + DatabaseHelper.TABLE_EXPENSES + " WHERE " + DatabaseHelper.COL_EXPENSE_CATEGORY
+                + "=?", category);
+    }
+
+    /** Total pcs untuk satu kategori (mis. SEGEL / TUTUP), sepanjang waktu. */
+    public double getTotalPcsByCategory(String category) {
+        return scalar("SELECT COALESCE(SUM(" + DatabaseHelper.COL_EXPENSE_PCS + "),0) FROM "
+                + DatabaseHelper.TABLE_EXPENSES + " WHERE " + DatabaseHelper.COL_EXPENSE_CATEGORY
+                + "=?", category);
+    }
+
+    /**
+     * Harga satuan TERBARU untuk satu kategori: amount ÷ {@code divisorCol} dari
+     * entry paling baru (yang {@code divisorCol}&gt;0). Dipakai prediksi laba
+     * supaya ikut menyesuaikan kalau harga beli berubah. 0 kalau belum ada data.
+     * {@code divisorCol} = COL_EXPENSE_LITERS (air baku, → Rp/liter) atau
+     * COL_EXPENSE_PCS (segel/tutup, → Rp/pcs).
+     */
+    public double getLatestUnitPrice(String category, String divisorCol) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT " + DatabaseHelper.COL_EXPENSE_AMOUNT + ", " + divisorCol
+                + " FROM " + DatabaseHelper.TABLE_EXPENSES
+                + " WHERE " + DatabaseHelper.COL_EXPENSE_CATEGORY + "=? AND " + divisorCol + ">0"
+                + " ORDER BY datetime(" + DatabaseHelper.COL_EXPENSE_CREATED_AT + ") DESC, "
+                + DatabaseHelper.COL_EXPENSE_ID + " DESC LIMIT 1", new String[]{category});
+        double price = 0;
+        if (c.moveToFirst()) {
+            double amount = c.getDouble(0);
+            double divisor = c.getDouble(1);
+            if (divisor > 0) price = amount / divisor;
+        }
+        c.close();
+        return price;
+    }
+
+    /** Tanggal ("yyyy-MM-dd") pembelian air baku PALING AWAL (liter>0), null kalau belum ada. */
+    public String getEarliestDateByCategory(String category) {
+        return earliestDateWhere(category, DatabaseHelper.COL_EXPENSE_LITERS);
+    }
+
+    /** Tanggal pembelian PALING AWAL untuk kategori pcs (pcs>0), null kalau belum ada. */
+    public String getEarliestDateByCategoryPcs(String category) {
+        return earliestDateWhere(category, DatabaseHelper.COL_EXPENSE_PCS);
+    }
+
+    private String earliestDateWhere(String category, String positiveCol) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT MIN(date(" + DatabaseHelper.COL_EXPENSE_CREATED_AT + ")) FROM "
+                + DatabaseHelper.TABLE_EXPENSES + " WHERE " + DatabaseHelper.COL_EXPENSE_CATEGORY
+                + "=? AND " + positiveCol + ">0", new String[]{category});
+        String d = null;
+        if (c.moveToFirst()) d = c.getString(0);
+        c.close();
+        return d;
+    }
+
+    private double scalar(String sql, String arg) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.rawQuery(sql, new String[]{arg});
+        double v = 0;
+        if (c.moveToFirst()) v = c.getDouble(0);
+        c.close();
+        return v;
     }
 
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        return db.delete(DatabaseHelper.TABLE_EXPENSES,
+        return dbHelper.syncDelete(db, DatabaseHelper.TABLE_EXPENSES, "expenses",
                 DatabaseHelper.COL_EXPENSE_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
@@ -124,6 +201,12 @@ public class ExpenseDao {
         if (photoIdx >= 0 && !c.isNull(photoIdx)) e.setPhotoPath(c.getString(photoIdx));
         int noteIdx = c.getColumnIndex(DatabaseHelper.COL_EXPENSE_NOTE);
         if (noteIdx >= 0 && !c.isNull(noteIdx)) e.setNote(c.getString(noteIdx));
+        int catIdx = c.getColumnIndex(DatabaseHelper.COL_EXPENSE_CATEGORY);
+        if (catIdx >= 0 && !c.isNull(catIdx)) e.setCategory(c.getString(catIdx));
+        int litIdx = c.getColumnIndex(DatabaseHelper.COL_EXPENSE_LITERS);
+        if (litIdx >= 0) e.setLiters(c.getDouble(litIdx));
+        int pcsIdx = c.getColumnIndex(DatabaseHelper.COL_EXPENSE_PCS);
+        if (pcsIdx >= 0) e.setPcs(c.getInt(pcsIdx));
         e.setCreatedAt(c.getString(c.getColumnIndexOrThrow(DatabaseHelper.COL_EXPENSE_CREATED_AT)));
         return e;
     }

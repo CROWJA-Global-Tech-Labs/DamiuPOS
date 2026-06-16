@@ -42,6 +42,8 @@ public class TransactionListActivity extends AppCompatActivity {
     private MaterialButton btnDateRange, btnSort;
     private MaterialButtonToggleGroup toggleTypeFilter;
     private TextInputEditText etSearch;
+    private android.widget.CheckBox cbPaySemua, cbPayTunai, cbPayQris, cbPayTransfer;
+    private boolean suppressPayEvents = false;
 
     // Filter state
     private String typeFilter = "ALL"; // ALL, JUAL, KEMBALI
@@ -69,6 +71,39 @@ public class TransactionListActivity extends AppCompatActivity {
         btnSort = findViewById(R.id.btnSort);
         toggleTypeFilter = findViewById(R.id.toggleTypeFilter);
         etSearch = findViewById(R.id.etSearch);
+        cbPaySemua = findViewById(R.id.cbPaySemua);
+        cbPayTunai = findViewById(R.id.cbPayTunai);
+        cbPayQris = findViewById(R.id.cbPayQris);
+        cbPayTransfer = findViewById(R.id.cbPayTransfer);
+        // "Semua" dipilih → bersihkan metode spesifik; dimatikan tanpa metode lain
+        // → kembalikan ke "Semua" (filter tidak pernah kosong total).
+        cbPaySemua.setOnCheckedChangeListener((b, checked) -> {
+            if (suppressPayEvents) return;
+            suppressPayEvents = true;
+            if (checked) {
+                cbPayTunai.setChecked(false);
+                cbPayQris.setChecked(false);
+                cbPayTransfer.setChecked(false);
+            } else if (noPayMethodChecked()) {
+                cbPaySemua.setChecked(true);
+            }
+            suppressPayEvents = false;
+            reload();
+        });
+        android.widget.CompoundButton.OnCheckedChangeListener methodListener = (b, checked) -> {
+            if (suppressPayEvents) return;
+            suppressPayEvents = true;
+            if (checked) {
+                cbPaySemua.setChecked(false);          // pilih metode spesifik → matikan "Semua"
+            } else if (noPayMethodChecked()) {
+                cbPaySemua.setChecked(true);           // tak ada metode → kembali ke "Semua"
+            }
+            suppressPayEvents = false;
+            reload();
+        };
+        cbPayTunai.setOnCheckedChangeListener(methodListener);
+        cbPayQris.setOnCheckedChangeListener(methodListener);
+        cbPayTransfer.setOnCheckedChangeListener(methodListener);
 
         adapter = new TransactionAdapter(true);
         rv.setLayoutManager(new LinearLayoutManager(this));
@@ -133,9 +168,16 @@ public class TransactionListActivity extends AppCompatActivity {
         } else {
             all = transactionDao.getAll();
         }
+        // Set metode pembayaran yang dipilih (kosong = semua metode).
+        java.util.Set<String> payFilter = new java.util.HashSet<>();
+        if (cbPayTunai.isChecked()) payFilter.add(Transaction.PAY_TUNAI);
+        if (cbPayQris.isChecked()) payFilter.add(Transaction.PAY_QRIS);
+        if (cbPayTransfer.isChecked()) payFilter.add(Transaction.PAY_TRANSFER);
+
         List<Transaction> filtered = new ArrayList<>();
         for (Transaction t : all) {
             if (!"ALL".equals(typeFilter) && !typeFilter.equals(t.getType())) continue;
+            if (!payFilter.isEmpty() && !payFilter.contains(t.getPaymentMethod())) continue;
             if (!search.isEmpty()) {
                 String name = t.getCustomerName() != null
                         ? t.getCustomerName().toLowerCase(Locale.getDefault()) : "";
@@ -185,6 +227,10 @@ public class TransactionListActivity extends AppCompatActivity {
         NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
         tvSummaryCount.setText(filtered.size() + " trx");
         tvSummaryTotal.setText("Rp " + nf.format(total));
+    }
+
+    private boolean noPayMethodChecked() {
+        return !cbPayTunai.isChecked() && !cbPayQris.isChecked() && !cbPayTransfer.isChecked();
     }
 
     private String safeStr(String s) { return s != null ? s : ""; }

@@ -11,6 +11,8 @@ import android.text.style.ForegroundColorSpan;
 import android.text.style.RelativeSizeSpan;
 import android.text.style.StyleSpan;
 import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
@@ -68,6 +70,13 @@ public class TransactionActivity extends AppCompatActivity {
      *  (caller: Detail Reseller → "Buat Transaksi Baru"). */
     public static final String EXTRA_RESELLER_ID = "preset_reseller_id";
 
+    /** Intent extra: id Transaksi Pending yang sedang dieksekusi. Catatannya
+     *  di-prefill, dan baris pending dihapus begitu transaksi berhasil disimpan. */
+    public static final String EXTRA_PENDING_ID = "pending_id";
+
+    /** Intent extra: catatan/ringkasan pesanan dari Transaksi Pending → prefill catatan. */
+    public static final String EXTRA_PENDING_NOTE = "pending_note";
+
     /** Cached inbox sender name dari intent — di-pass ke ReceiptActivity. */
     private String forwardedInboxSenderName;
 
@@ -118,6 +127,9 @@ public class TransactionActivity extends AppCompatActivity {
     private String selectedCustomerName = "";
     private String selectedCustomerPhone = "";
 
+    /** Id Transaksi Pending yang sedang dieksekusi (>0 → dihapus setelah sukses). */
+    private long executingPendingId = 0;
+
     // Tanggal+waktu transaksi terpilih (yyyy-MM-dd HH:mm:ss). Default = sekarang.
     // Berlaku untuk Jual Air, Galon Kembali, dan Jual Botol.
     private String selectedTrxDate;
@@ -134,6 +146,22 @@ public class TransactionActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // Akun Viewer tidak boleh membuat transaksi — blok dari SEMUA entry
+        // point (dashboard, detail pelanggan, detail reseller, inbox WA).
+        DatabaseHelper dbGuard = DatabaseHelper.getInstance(this);
+        SettingsDao sGuard = new SettingsDao(dbGuard);
+        if (sGuard.isMultiUserEnabled() && sGuard.getCurrentUserId() > 0) {
+            com.crowja.damiupos.model.User cur =
+                    new com.crowja.damiupos.db.UserDao(dbGuard).getById(sGuard.getCurrentUserId());
+            if (cur != null && cur.isViewer()) {
+                Toast.makeText(this, "Akun Viewer tidak dapat membuat transaksi",
+                        Toast.LENGTH_LONG).show();
+                finish();
+                return;
+            }
+        }
+
         setContentView(R.layout.activity_transaction);
 
         Toolbar toolbar = findViewById(R.id.toolbar);
@@ -307,6 +335,19 @@ public class TransactionActivity extends AppCompatActivity {
 
         findViewById(R.id.btnSimpan).setOnClickListener(v -> trySave());
 
+        // "Simpan sebagai Pending" — catat pesanan untuk dieksekusi nanti
+        // (mis. staf hendak pulang, transaksi belum bisa di-handle hari ini).
+        View btnSimpanPending = findViewById(R.id.btnSimpanPending);
+        if (btnSimpanPending != null) btnSimpanPending.setOnClickListener(v -> saveAsPending());
+
+        // Eksekusi sebuah Transaksi Pending → prefill catatan + tandai untuk dihapus
+        // setelah transaksi sukses.
+        executingPendingId = getIntent().getLongExtra(EXTRA_PENDING_ID, 0);
+        String pendingNote = getIntent().getStringExtra(EXTRA_PENDING_NOTE);
+        if (pendingNote != null && !pendingNote.trim().isEmpty() && etCatatan != null) {
+            etCatatan.setText(pendingNote.trim());
+        }
+
         // Render semua jenis air sebagai baris entri (jumlah + harga per pcs).
         buildProductEntries();
 
@@ -464,6 +505,11 @@ public class TransactionActivity extends AppCompatActivity {
         // Reseller afiliasi hanya relevan untuk transaksi JUAL air.
         if (cardReseller != null) {
             cardReseller.setVisibility(isJual ? View.VISIBLE : View.GONE);
+        }
+        // "Simpan sebagai Pending" hanya untuk Jual Air Minum.
+        View btnSimpanPending = findViewById(R.id.btnSimpanPending);
+        if (btnSimpanPending != null) {
+            btnSimpanPending.setVisibility(isJual ? View.VISIBLE : View.GONE);
         }
         updateTotal();
     }
@@ -1210,6 +1256,7 @@ public class TransactionActivity extends AppCompatActivity {
     }
 
     private void doSaveJualBotol(int qty, double hargaBotol, double total) {
+        clearExecutedPending();
         Transaction trx = new Transaction();
         trx.setCustomerId(selectedCustomerId);
         trx.setType(Transaction.TYPE_JUAL);
@@ -1243,8 +1290,117 @@ public class TransactionActivity extends AppCompatActivity {
         r.putExtra(ReceiptActivity.EXTRA_ONGKIR_TYPE, Transaction.ONGKIR_NONE);
         r.putExtra(ReceiptActivity.EXTRA_TOTAL_HARGA, total);
         r.putExtra(ReceiptActivity.EXTRA_CATATAN, catatan);
+        if (pendingPayment != null) r.putExtra(ReceiptActivity.EXTRA_PAYMENT_METHOD, pendingPayment);
         startActivity(r);
         finish();
+    }
+
+    /**
+     * Simpan keadaan form saat ini sebagai "Transaksi Pending" (pelanggan +
+     * ringkasan pesanan + catatan) untuk dieksekusi nanti. Tidak menyimpan
+     * transaksi sungguhan — hanya pengingat yang muncul (pill berkedip) di
+     * tombol "Jual Air Minum".
+     */
+    private void saveAsPending() {
+        String catatan = etCatatan != null && etCatatan.getText() != null
+                ? etCatatan.getText().toString().trim() : "";
+        String itemSummary = buildItemSummary();
+        boolean hasCustomer = selectedCustomerId != -1
+                && selectedCustomerName != null && !selectedCustomerName.isEmpty();
+        // Perlu sesuatu yang bisa dikenali: pelanggan ATAU ringkasan/catatan.
+        if (!hasCustomer && itemSummary.isEmpty() && catatan.isEmpty()) {
+            Toast.makeText(this,
+                    "Pilih pelanggan atau isi pesanan/catatan dulu untuk disimpan sebagai pending",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        StringBuilder note = new StringBuilder();
+        if (!itemSummary.isEmpty()) note.append(itemSummary);
+        if (!catatan.isEmpty()) {
+            if (note.length() > 0) note.append(" — ");
+            note.append(catatan);
+        }
+
+        com.crowja.damiupos.model.PendingTransaction p =
+                new com.crowja.damiupos.model.PendingTransaction();
+        p.setCustomerId(selectedCustomerId);
+        p.setCustomerName(hasCustomer ? selectedCustomerName : "Umum");
+        p.setCustomerPhone(selectedCustomerPhone);
+        p.setNote(note.toString());
+        long uid = settingsDao.getCurrentUserId();
+        p.setCreatedBy(uid);
+        p.setCreatedByName(settingsDao.getCurrentUserName());
+        new com.crowja.damiupos.db.PendingTransactionDao(DatabaseHelper.getInstance(this)).insert(p);
+
+        Toast.makeText(this, "Disimpan sebagai Transaksi Pending ✓", Toast.LENGTH_SHORT).show();
+        finish();
+    }
+
+    /** Ringkasan item terisi (jumlah > 0) → "3× Galon 19L, 2× ...". "" kalau kosong. */
+    private String buildItemSummary() {
+        StringBuilder sb = new StringBuilder();
+        for (ProductEntry pe : productEntries) {
+            int qty = parseIntOr(pe.etQty, 0);
+            if (qty <= 0) continue;
+            if (sb.length() > 0) sb.append(", ");
+            sb.append(qty).append("× ").append(pe.product.getName());
+        }
+        return sb.toString();
+    }
+
+    /** Hapus baris Transaksi Pending yang sedang dieksekusi (kalau ada) setelah
+     *  transaksi berhasil disimpan. */
+    private void clearExecutedPending() {
+        if (executingPendingId > 0) {
+            try {
+                new com.crowja.damiupos.db.PendingTransactionDao(
+                        DatabaseHelper.getInstance(this)).delete(executingPendingId);
+            } catch (Exception ignored) {}
+            executingPendingId = 0;
+        }
+    }
+
+    // ---- Indikator "PENDING (N)" di pojok kanan atas (toolbar) ----
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.menu_transaction, menu);
+        return true;
+    }
+
+    @Override
+    public boolean onPrepareOptionsMenu(Menu menu) {
+        MenuItem mi = menu.findItem(R.id.action_view_pending);
+        if (mi != null) {
+            int n = 0;
+            try {
+                n = new com.crowja.damiupos.db.PendingTransactionDao(
+                        DatabaseHelper.getInstance(this)).countPending();
+            } catch (Exception ignored) {}
+            mi.setVisible(n > 0);
+            // Teks putih agar kontras di toolbar biru.
+            SpannableStringBuilder t = new SpannableStringBuilder("PENDING (" + n + ")");
+            t.setSpan(new ForegroundColorSpan(Color.WHITE), 0, t.length(),
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            mi.setTitle(t);
+        }
+        return super.onPrepareOptionsMenu(menu);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == R.id.action_view_pending) {
+            startActivity(new Intent(this, PendingTransactionListActivity.class));
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        invalidateOptionsMenu();   // segarkan jumlah "PENDING (N)"
     }
 
     private double parseDoubleOr(EditText et, double def) {
@@ -1280,6 +1436,7 @@ public class TransactionActivity extends AppCompatActivity {
     private void doSave(boolean isJual, int totalJumlah, double ongkir,
                         double totalHarga, int jumlahKembali, String ongkirType,
                         String ownership, double hargaBotol) {
+        clearExecutedPending();
         // Persist last ownership selection for next transaction
         if (isJual && ownership != null) {
             settingsDao.setLastGalonOwnership(ownership);
@@ -1348,6 +1505,7 @@ public class TransactionActivity extends AppCompatActivity {
             r.putExtra(ReceiptActivity.EXTRA_TOTAL_HARGA, totalHarga);
             String catatanStr = etCatatan.getText() != null ? etCatatan.getText().toString().trim() : "";
             r.putExtra(ReceiptActivity.EXTRA_CATATAN, catatanStr);
+            if (pendingPayment != null) r.putExtra(ReceiptActivity.EXTRA_PAYMENT_METHOD, pendingPayment);
 
             if (settingsDao.isPointsEnabled()) {
                 double ppa = settingsDao.getPointsPerAmount();

@@ -78,6 +78,16 @@ public class SettingsDao {
      *  bulanan: jam wajib = hari kerja × ini). Default 7. */
     public static final String KEY_DAILY_NORMAL_HOURS = "daily_normal_hours";
     public static final double DEFAULT_DAILY_NORMAL_HOURS = 7;
+    /** Jumlah hari kerja per pekan (1–7). Basis jam kerja ideal periode:
+     *  hari ideal periode = hari kerja/pekan × (jumlah hari periode ÷ 7). */
+    public static final String KEY_WORK_DAYS_PER_WEEK = "work_days_per_week";
+    public static final int DEFAULT_WORK_DAYS_PER_WEEK = 6;
+    /** Asumsi liter per galon untuk Analisa & Prediksi (default 19). */
+    public static final String KEY_LITERS_PER_GALON = "liters_per_galon";
+    public static final double DEFAULT_LITERS_PER_GALON = 19;
+    /** Bonus penjualan per galon untuk staf (Rp). Aktif/nonaktif + nominal. */
+    public static final String KEY_SALES_BONUS_ENABLED = "sales_bonus_enabled";
+    public static final String KEY_SALES_BONUS_PER_GALON = "sales_bonus_per_galon";
     /** Tanggal cut-off rekap absensi bulanan (1..31). Default 28. Periode =
      *  (cutoff+1 bulan lalu) s/d (cutoff bulan ini). */
     public static final String KEY_PAYROLL_CUTOFF_DAY = "payroll_cutoff_day";
@@ -490,6 +500,49 @@ public class SettingsDao {
     }
     public void setDailyNormalHours(double v) {
         set(KEY_DAILY_NORMAL_HOURS, String.valueOf(v > 0 ? v : DEFAULT_DAILY_NORMAL_HOURS));
+    }
+
+    /** Jumlah hari kerja per pekan (1–7, default 6). */
+    public int getWorkDaysPerWeek() {
+        try {
+            int v = Integer.parseInt(get(KEY_WORK_DAYS_PER_WEEK,
+                    String.valueOf(DEFAULT_WORK_DAYS_PER_WEEK)));
+            if (v < 1) return 1;
+            if (v > 7) return 7;
+            return v;
+        } catch (NumberFormatException e) { return DEFAULT_WORK_DAYS_PER_WEEK; }
+    }
+    public void setWorkDaysPerWeek(int v) {
+        if (v < 1) v = 1;
+        if (v > 7) v = 7;
+        set(KEY_WORK_DAYS_PER_WEEK, String.valueOf(v));
+    }
+
+    public double getLitersPerGalon() {
+        try {
+            double v = Double.parseDouble(get(KEY_LITERS_PER_GALON,
+                    String.valueOf(DEFAULT_LITERS_PER_GALON)));
+            return v > 0 ? v : DEFAULT_LITERS_PER_GALON;
+        } catch (NumberFormatException e) { return DEFAULT_LITERS_PER_GALON; }
+    }
+    public void setLitersPerGalon(double v) {
+        set(KEY_LITERS_PER_GALON, String.valueOf(v > 0 ? v : DEFAULT_LITERS_PER_GALON));
+    }
+
+    public boolean isSalesBonusEnabled() {
+        return "1".equals(get(KEY_SALES_BONUS_ENABLED, "0"));
+    }
+    public void setSalesBonusEnabled(boolean enabled) {
+        set(KEY_SALES_BONUS_ENABLED, enabled ? "1" : "0");
+    }
+    public double getSalesBonusPerGalon() {
+        try {
+            double v = Double.parseDouble(get(KEY_SALES_BONUS_PER_GALON, "0"));
+            return v > 0 ? v : 0;
+        } catch (NumberFormatException e) { return 0; }
+    }
+    public void setSalesBonusPerGalon(double v) {
+        set(KEY_SALES_BONUS_PER_GALON, String.valueOf(v > 0 ? v : 0));
     }
 
     /** Tanggal cut-off rekap absensi bulanan (1..31). */

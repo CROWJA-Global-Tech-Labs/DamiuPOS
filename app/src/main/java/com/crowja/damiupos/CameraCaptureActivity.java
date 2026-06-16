@@ -337,7 +337,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
         }
     }
 
-    /** Ambil 1 tile OSM yang memuat koordinat + gambar marker merah di titiknya. */
+    /** Ambil 1 tile basemap yang memuat koordinat + gambar marker merah di titiknya. */
     private Bitmap fetchMapBitmap(double lat, double lng, int z) {
         HttpURLConnection conn = null;
         try {
@@ -348,9 +348,9 @@ public class CameraCaptureActivity extends AppCompatActivity {
             int xtile = (int) Math.floor(xt);
             int ytile = (int) Math.floor(yt);
 
-            URL url = new URL("https://tile.openstreetmap.org/" + z + "/" + xtile + "/" + ytile + ".png");
+            URL url = new URL(MapTiles.tileUrl(z, xtile, ytile));
             conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestProperty("User-Agent", "DAMIU-POS/1.0 (attendance)");
+            conn.setRequestProperty("User-Agent", MapTiles.userAgent());
             conn.setConnectTimeout(8000);
             conn.setReadTimeout(8000);
             try (InputStream in = conn.getInputStream()) {

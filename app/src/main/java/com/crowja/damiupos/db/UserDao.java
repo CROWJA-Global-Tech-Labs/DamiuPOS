@@ -24,7 +24,7 @@ public class UserDao {
         v.put(DatabaseHelper.COL_USER_PIN, u.getPin());
         v.put(DatabaseHelper.COL_USER_ROLE, u.getRole());
         v.put(DatabaseHelper.COL_USER_ACTIVE, u.isActive() ? 1 : 0);
-        return db.insert(DatabaseHelper.TABLE_USERS, null, v);
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_USERS, v);
     }
 
     public int update(User u) {
@@ -34,7 +34,7 @@ public class UserDao {
         v.put(DatabaseHelper.COL_USER_PIN, u.getPin());
         v.put(DatabaseHelper.COL_USER_ROLE, u.getRole());
         v.put(DatabaseHelper.COL_USER_ACTIVE, u.isActive() ? 1 : 0);
-        return db.update(DatabaseHelper.TABLE_USERS, v,
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_USERS, v,
                 DatabaseHelper.COL_USER_ID + "=?",
                 new String[]{String.valueOf(u.getId())});
     }
@@ -42,7 +42,7 @@ public class UserDao {
     /** Hapus user beserta log absensinya (FK cascade). */
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        return db.delete(DatabaseHelper.TABLE_USERS,
+        return dbHelper.syncDelete(db, DatabaseHelper.TABLE_USERS, "staff",
                 DatabaseHelper.COL_USER_ID + "=?",
                 new String[]{String.valueOf(id)});
     }

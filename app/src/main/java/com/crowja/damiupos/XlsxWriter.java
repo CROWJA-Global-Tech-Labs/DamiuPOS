@@ -26,6 +26,8 @@ public final class XlsxWriter {
     public static final int STYLE_TITLE = 1;   // tebal (judul)
     public static final int STYLE_HEADER = 2;  // tebal + fill abu + border + center
     public static final int STYLE_DATA = 3;    // border tipis semua sisi
+    public static final int STYLE_CURRENCY = 4;      // angka + border + format "Rp"
+    public static final int STYLE_CURRENCY_BOLD = 5; // angka tebal + format "Rp" (total)
 
     /** Sel dengan style eksplisit. */
     public static final class Cell {
@@ -33,6 +35,22 @@ public final class XlsxWriter {
         final int style;
         public Cell(Object value, int style) {
             this.value = value;
+            this.style = style;
+        }
+    }
+
+    /**
+     * Sel formula: ditulis sebagai {@code <c><f>expr</f><v>cached</v></c>} sehingga
+     * Excel/LibreOffice menghitung ulang saat dibuka. {@code expr} TANPA tanda "="
+     * di depan (mis. "C5*D5", "SUM(E5:E9)"). {@code cached} = nilai cache awal.
+     */
+    public static final class Formula {
+        final String expr;
+        final double cached;
+        final int style;
+        public Formula(String expr, double cached, int style) {
+            this.expr = expr;
+            this.cached = cached;
             this.style = style;
         }
     }
@@ -65,6 +83,11 @@ public final class XlsxWriter {
     private static final String STYLES_XML =
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>" +
             "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">" +
+            // Format mata uang Rupiah (numFmtId custom 164) → tampil "Rp1.000.000"
+            // tapi nilai sel tetap angka (formula tetap jalan).
+            "<numFmts count=\"1\">" +
+            "<numFmt numFmtId=\"164\" formatCode=\"&quot;Rp&quot;#,##0\"/>" +
+            "</numFmts>" +
             "<fonts count=\"2\">" +
             "<font><sz val=\"11\"/><name val=\"Calibri\"/></font>" +
             "<font><b/><sz val=\"11\"/><name val=\"Calibri\"/></font>" +
@@ -86,7 +109,7 @@ public final class XlsxWriter {
             "<cellStyleXfs count=\"1\">" +
             "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/>" +
             "</cellStyleXfs>" +
-            "<cellXfs count=\"4\">" +
+            "<cellXfs count=\"6\">" +
             // 0 default
             "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>" +
             // 1 title (bold)
@@ -96,6 +119,10 @@ public final class XlsxWriter {
             "<alignment horizontal=\"center\" vertical=\"center\" wrapText=\"1\"/></xf>" +
             // 3 data (border)
             "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"1\" xfId=\"0\" applyBorder=\"1\"/>" +
+            // 4 currency data (border + format Rp)
+            "<xf numFmtId=\"164\" fontId=\"0\" fillId=\"0\" borderId=\"1\" xfId=\"0\" applyNumberFormat=\"1\" applyBorder=\"1\"/>" +
+            // 5 currency bold (untuk total)
+            "<xf numFmtId=\"164\" fontId=\"1\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\" applyFont=\"1\"/>" +
             "</cellXfs>" +
             "<cellStyles count=\"1\">" +
             "<cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/>" +
@@ -160,6 +187,16 @@ public final class XlsxWriter {
             int col = 0;
             if (row != null) {
                 for (Object raw : row) {
+                    if (raw instanceof Formula) {
+                        Formula f = (Formula) raw;
+                        String ref = colName(col) + r;
+                        String sAttr = f.style != 0 ? " s=\"" + f.style + "\"" : "";
+                        sb.append("<c r=\"").append(ref).append("\"").append(sAttr)
+                          .append("><f>").append(xml(f.expr)).append("</f><v>")
+                          .append(numStr(f.cached)).append("</v></c>");
+                        col++;
+                        continue;
+                    }
                     Object value = raw;
                     int style = STYLE_DEFAULT;
                     if (raw instanceof Cell) {

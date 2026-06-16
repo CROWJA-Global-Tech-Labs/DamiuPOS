@@ -31,13 +31,13 @@ public class WorkHoursReminderReceiver extends BroadcastReceiver {
         // istirahat / sudah pulang → jangan ganggu.
         if (settings.getCurrentUserId() != userId) return;
 
-        long targetMs = Math.round(settings.getDailyNormalHours() * 3600000.0);
-        long workedMs = ShiftReporter.workedMillisToday(db, userId);
-        if (workedMs < targetMs) {
-            // Belum benar-benar memenuhi → jadwalkan ulang sisa waktunya.
+        // Cek pemenuhan jam kerja PERIODE cut-off (bukan harian).
+        long[] pr = WorkHoursReminder.periodProgress(db, settings, userId);
+        if (pr[0] < pr[1]) {
+            // Belum terpenuhi → jadwalkan ulang sisa waktunya.
             WorkHoursReminder.schedule(ctx, userId);
             return;
         }
-        WorkHoursReminder.notifyMet(ctx, workedMs);
+        WorkHoursReminder.notifyMet(ctx, userId);
     }
 }

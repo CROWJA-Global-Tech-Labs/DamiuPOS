@@ -1,6 +1,7 @@
 package com.crowja.damiupos;
 
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -14,6 +15,7 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
+import androidx.core.content.FileProvider;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -32,6 +34,7 @@ import com.google.android.material.button.MaterialButtonToggleGroup;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
+import java.io.File;
 import java.text.NumberFormat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -57,6 +60,7 @@ public class ResellerDetailActivity extends AppCompatActivity {
 
     private double saldo; // saldo komisi terkini (untuk validasi cairkan)
     private String resellerName = ""; // untuk label expense pencairan
+    private Customer currentReseller; // reseller yang sedang dilihat (untuk PDF rekap)
     private com.google.android.material.checkbox.MaterialCheckBox cbKomisiKeHarga;
     private boolean bindingCb = false; // suppress listener saat set state dari DB
 
@@ -99,6 +103,9 @@ public class ResellerDetailActivity extends AppCompatActivity {
                 startActivity(new Intent(this, TransactionActivity.class)
                         .putExtra(TransactionActivity.EXTRA_RESELLER_ID, customerId)));
 
+        // Kirim rekap pendapatan (PDF, 30 hari terakhir).
+        findViewById(R.id.btnKirimRekap).setOnClickListener(v -> kirimRekapPdf());
+
         // Checkbox "Tambahkan Komisi ke Harga Jual" — simpan langsung ke DB.
         cbKomisiKeHarga = findViewById(R.id.cbKomisiKeHarga);
         cbKomisiKeHarga.setOnCheckedChangeListener((b, checked) -> {
@@ -135,6 +142,7 @@ public class ResellerDetailActivity extends AppCompatActivity {
         int totalGalon = 0;
         for (ResellerKomisiCalculator.Entry e : res.entries) totalGalon += e.totalGalon;
 
+        currentReseller = me;
         resellerName = me.getName() != null ? me.getName() : "";
         // Sinkronkan checkbox komisi-ke-harga dengan state DB (tanpa trigger listener).
         bindingCb = true;
@@ -344,6 +352,43 @@ public class ResellerDetailActivity extends AppCompatActivity {
         }
         if (note != null && !note.isEmpty()) n.append(" — ").append(note);
         return expenseDao.insert(new Expense(name, amount, null, n.toString()));
+    }
+
+    /**
+     * Buat PDF rekap pendapatan reseller (komisi + riwayat 30 hari terakhir) di
+     * background, lalu buka share sheet untuk dikirim (mis. WhatsApp ke reseller).
+     */
+    private void kirimRekapPdf() {
+        final Customer r = currentReseller;
+        if (r == null) {
+            Toast.makeText(this, "Data reseller belum siap", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Toast.makeText(this, "Menyiapkan rekap PDF…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            File pdf = ResellerRecapPdf.build(getApplicationContext(), dbHelper, r, 30);
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (pdf != null && pdf.exists()) sharePdf(pdf, r);
+                else Toast.makeText(this, "Gagal membuat rekap PDF", Toast.LENGTH_LONG).show();
+            });
+        }, "reseller-recap-pdf").start();
+    }
+
+    private void sharePdf(File file, Customer r) {
+        try {
+            Uri uri = FileProvider.getUriForFile(this,
+                    getApplicationContext().getPackageName() + ".fileprovider", file);
+            Intent share = new Intent(Intent.ACTION_SEND);
+            share.setType("application/pdf");
+            share.putExtra(Intent.EXTRA_STREAM, uri);
+            share.putExtra(Intent.EXTRA_SUBJECT, "Rekap Pendapatan Reseller - "
+                    + (r.getName() != null ? r.getName() : ""));
+            share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(share, "Kirim Rekap Pendapatan"));
+        } catch (Throwable t) {
+            Toast.makeText(this, "Gagal membagikan PDF", Toast.LENGTH_LONG).show();
+        }
     }
 
     private static int parseIntSafe(TextInputEditText et, int def) {

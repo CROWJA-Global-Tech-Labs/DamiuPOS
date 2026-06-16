@@ -56,12 +56,12 @@ public class ResellerWithdrawalDao {
             v.put(DatabaseHelper.COL_WD_NOTE, note.trim());
         }
         v.put(DatabaseHelper.COL_WD_EXPENSE_ID, expenseId);
-        return db.insert(DatabaseHelper.TABLE_RESELLER_WD, null, v);
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_RESELLER_WD, v);
     }
 
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        return db.delete(DatabaseHelper.TABLE_RESELLER_WD,
+        return dbHelper.syncDelete(db, DatabaseHelper.TABLE_RESELLER_WD, "reseller_withdrawals",
                 DatabaseHelper.COL_WD_ID + "=?",
                 new String[]{String.valueOf(id)});
     }

@@ -768,7 +768,7 @@
                             android:layout_marginTop="12dp"
                             style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                             android:hint="Proxy Bearer Token"
-                            app:helperText="Token dari admin DAMIU. Routing via VPS Crowja, kuota Claude Max plan."
+                            app:helperText="Token dari admin DAMIU. Routing via VPS FREZ, kuota Claude Max plan."
                             app:passwordToggleEnabled="true"
                             app:boxCornerRadiusBottomEnd="8dp"
                             app:boxCornerRadiusBottomStart="8dp"
@@ -1028,7 +1028,7 @@
                 android:layout_marginTop="24dp"
                 android:layout_marginBottom="8dp"
                 android:gravity="center"
-                android:text="© CROWJA Global Tech Labs"
+                android:text="© FREZ Tech &amp; Innovation Labs"
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp"
                 android:textStyle="bold" />

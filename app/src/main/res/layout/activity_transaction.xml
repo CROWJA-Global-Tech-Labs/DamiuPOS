@@ -852,6 +852,27 @@
                 app:iconTint="@color/white"
                 app:rippleColor="@color/white" />
 
+            <!-- Simpan sebagai Pending: catat pesanan untuk dieksekusi nanti
+                 (mis. staf hendak pulang, belum bisa di-handle hari ini). -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSimpanPending"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="10dp"
+                android:text="Simpan sebagai Pending"
+                android:textAllCaps="false"
+                android:textColor="@color/primary"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                app:cornerRadius="26dp"
+                app:icon="@android:drawable/ic_menu_recent_history"
+                app:iconGravity="textStart"
+                app:iconPadding="8dp"
+                app:iconSize="20dp"
+                app:iconTint="@color/primary"
+                app:strokeColor="@color/primary" />
+
         </LinearLayout>
     </ScrollView>
 </LinearLayout>

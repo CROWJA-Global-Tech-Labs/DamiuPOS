@@ -25,12 +25,12 @@ public class GalonStockDao {
         values.put(DatabaseHelper.COL_STOCK_JUMLAH, jumlah);
         values.put(DatabaseHelper.COL_STOCK_CATATAN, catatan);
         values.put(DatabaseHelper.COL_STOCK_PHOTO_PATH, photoPath);
-        return db.insert(DatabaseHelper.TABLE_GALON_STOCK, null, values);
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_GALON_STOCK, values);
     }
 
     public int deleteStock(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        return db.delete(DatabaseHelper.TABLE_GALON_STOCK,
+        return dbHelper.syncDelete(db, DatabaseHelper.TABLE_GALON_STOCK, "galon_stock",
                 DatabaseHelper.COL_STOCK_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
@@ -42,7 +42,7 @@ public class GalonStockDao {
         values.put(DatabaseHelper.COL_STOCK_JUMLAH, jumlah);
         values.put(DatabaseHelper.COL_STOCK_CATATAN, catatan);
         values.put(DatabaseHelper.COL_STOCK_PHOTO_PATH, photoPath);
-        return db.update(DatabaseHelper.TABLE_GALON_STOCK, values,
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_GALON_STOCK, values,
                 DatabaseHelper.COL_STOCK_ID + "=?",
                 new String[]{String.valueOf(id)});
     }

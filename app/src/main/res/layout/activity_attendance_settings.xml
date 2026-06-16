@@ -187,6 +187,17 @@
                             app:icon="@android:drawable/ic_menu_send"
                             app:iconGravity="textStart" />
 
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnLaporanGagal"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:text="Laporan Gagal Terkirim"
+                            android:textAllCaps="false"
+                            app:icon="@android:drawable/ic_menu_recent_history"
+                            app:iconGravity="textStart" />
+
                         <View
                             android:layout_width="match_parent"
                             android:layout_height="1dp"
@@ -213,7 +224,7 @@
                                 android:layout_weight="1"
                                 android:layout_marginTop="6dp"
                                 android:layout_marginEnd="6dp"
-                                android:hint="Jam kerja normal / hari">
+                                android:hint="Jam kerja ideal/hari (tanpa istirahat)">
 
                                 <com.google.android.material.textfield.TextInputEditText
                                     android:id="@+id/etDailyNormalHours"
@@ -227,21 +238,34 @@
                                 android:layout_height="wrap_content"
                                 android:layout_weight="1"
                                 android:layout_marginTop="6dp"
-                                android:hint="Tgl cut-off (1-31)">
+                                android:hint="Hari kerja / pekan (1–7)">
 
                                 <com.google.android.material.textfield.TextInputEditText
-                                    android:id="@+id/etCutoffDay"
+                                    android:id="@+id/etWorkDaysPerWeek"
                                     android:layout_width="match_parent"
                                     android:layout_height="wrap_content"
                                     android:inputType="number" />
                             </com.google.android.material.textfield.TextInputLayout>
                         </LinearLayout>
 
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:hint="Tgl cut-off (1-31)">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etCutoffDay"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="number" />
+                        </com.google.android.material.textfield.TextInputLayout>
+
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="4dp"
-                            android:text="Lembur dihitung harian (di atas jam normal/hari) tapi difinalkan bulanan: jam wajib = hari kerja × jam normal. Di tanggal cut-off, saat staff Pulang, rekap (ZIP: XLSX + foto) auto-kirim ke email admin."
+                            android:text="Jam kerja ideal per periode = (hari kerja/pekan × jumlah pekan dalam periode) × jam kerja ideal/hari. Lembur = kerja di atas jam ideal/hari; kalau kurang, ditampilkan kekurangannya. Di tanggal cut-off saat staff Pulang, rekap (ZIP: XLSX + foto) + slip gaji auto-kirim ke email admin."
                             android:textColor="@color/text_secondary"
                             android:textSize="11sp" />
 
@@ -296,6 +320,69 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="4dp"
                             android:text="Tiap hari trigger (default Sabtu) saat staff Pulang, PDF semua konten Export untuk pekan tsb auto-kirim ke email admin. Retry di login berikutnya kalau gagal."
+                            android:textColor="@color/text_secondary"
+                            android:textSize="11sp" />
+
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="1dp"
+                            android:layout_marginTop="14dp"
+                            android:background="#E0E0E0" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:text="Bonus Penjualan Staf"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/switchSalesBonus"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:text="Aktifkan bonus penjualan per galon"
+                            android:textColor="@color/text_primary" />
+
+                        <LinearLayout
+                            android:id="@+id/salesBonusConfig"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:visibility="gone">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginEnd="8dp"
+                                android:text="Bonus / galon (Rp):"
+                                android:textColor="@color/text_primary"
+                                android:textSize="13sp" />
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
+                                app:prefixText="Rp ">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/etSalesBonusPerGalon"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:inputType="number"
+                                    android:maxLines="1" />
+                            </com.google.android.material.textfield.TextInputLayout>
+                        </LinearLayout>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:text="Bonus = galon terjual × nominal ini. Muncul di laporan shift, pekanan, &amp; cut-off, dan diberitahukan ke staf saat Pulang (hari ini + akumulasi periode)."
                             android:textColor="@color/text_secondary"
                             android:textSize="11sp" />
                     </LinearLayout>

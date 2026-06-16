@@ -16,6 +16,15 @@
         android:textStyle="bold" />
 
     <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:gravity="center"
+        android:text="by FREZ Tech &amp; Innovation Labs"
+        android:textColor="@color/text_secondary"
+        android:textSize="12sp" />
+
+    <TextView
         android:id="@+id/tvAboutVersion"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
@@ -37,7 +46,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
         android:gravity="center"
-        android:text="CROWJA Global Tech Labs"
+        android:text="FREZ Tech &amp; Innovation Labs"
         android:textColor="@color/text_primary"
         android:textSize="16sp"
         android:textStyle="bold" />
@@ -47,7 +56,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
         android:gravity="center"
-        android:text="© CROWJA Global Tech Labs"
+        android:text="© FREZ Tech &amp; Innovation Labs"
         android:textColor="@color/text_secondary"
         android:textSize="12sp" />
 
@@ -118,4 +127,21 @@
         android:text="Kelola Langganan"
         android:textAllCaps="false"
         android:visibility="gone" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="12dp"
+        android:background="#E0E0E0" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnAboutChangelog"
+        style="@style/Widget.MaterialComponents.Button.TextButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="📋 Changelog &amp; Fitur"
+        android:textAllCaps="false"
+        app:icon="@drawable/ic_info"
+        app:iconGravity="textStart" />
 </LinearLayout>

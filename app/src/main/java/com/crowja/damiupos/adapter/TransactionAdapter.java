@@ -131,7 +131,10 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
                 tvCustomerName.setVisibility(View.GONE);
             }
 
-            tvDate.setText(trx.getTanggal() != null ? trx.getTanggal() : "");
+            String dateLine = trx.getTanggal() != null ? trx.getTanggal() : "";
+            String pay = isJual ? trx.getPaymentMethodLabel() : "";
+            if (pay != null && !pay.isEmpty()) dateLine += "  ·  " + pay;
+            tvDate.setText(dateLine);
             tvGalonCount.setText(trx.getJumlahGalon() + " galon");
 
             if (isJual || trx.getTotalHarga() > 0) {

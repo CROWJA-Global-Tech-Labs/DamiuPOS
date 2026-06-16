@@ -51,21 +51,26 @@
             android:id="@+id/rgUserRole"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:orientation="vertical">
 
             <RadioButton
                 android:id="@+id/rbRoleStaf"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:checked="true"
-                android:text="Staf" />
+                android:text="Staf (kasir, diabsen)" />
 
             <RadioButton
                 android:id="@+id/rbRoleAdmin"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:text="Admin" />
+                android:text="Admin (kelola, tanpa absensi)" />
+
+            <RadioButton
+                android:id="@+id/rbRoleViewer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Viewer (lihat saja, tanpa transaksi &amp; absensi)" />
         </RadioGroup>
 
         <com.google.android.material.switchmaterial.SwitchMaterial

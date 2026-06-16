@@ -56,6 +56,7 @@ public class ReceiptActivity extends AppCompatActivity {
     public static final String EXTRA_ONGKIR_TYPE = "ongkir_type";
     public static final String EXTRA_TOTAL_HARGA = "total_harga";
     public static final String EXTRA_CATATAN = "catatan";
+    public static final String EXTRA_PAYMENT_METHOD = "payment_method";
     public static final String EXTRA_POINTS_ENABLED = "points_enabled";
     public static final String EXTRA_POINTS_EARNED = "points_earned";
     public static final String EXTRA_POINTS_TOTAL = "points_total";
@@ -225,6 +226,7 @@ public class ReceiptActivity extends AppCompatActivity {
         i.putExtra(EXTRA_ONGKIR_TYPE, t.getOngkirType());
         i.putExtra(EXTRA_TOTAL_HARGA, t.getTotalHarga());
         i.putExtra(EXTRA_CATATAN, t.getCatatan());
+        if (t.getPaymentMethod() != null) i.putExtra(EXTRA_PAYMENT_METHOD, t.getPaymentMethod());
         if (t.getItems() != null && !t.getItems().isEmpty()) {
             i.putExtra(EXTRA_ITEMS_JSON, TransactionItem.listToJson(t.getItems()));
         }
@@ -377,6 +379,13 @@ public class ReceiptActivity extends AppCompatActivity {
         sb.append(leftRight("TOTAL", "Rp " + nf.format(totalHarga))).append("\n");
         sb.append(line('=')).append("\n");
 
+        // Metode pembayaran (kalau ada — transaksi JUAL)
+        String payLabel = paymentLabel(getIntent().getStringExtra(EXTRA_PAYMENT_METHOD));
+        if (!payLabel.isEmpty()) {
+            sb.append(leftRight("Pembayaran dengan", payLabel)).append("\n");
+            sb.append(line('-')).append("\n");
+        }
+
         // Points section
         boolean pointsEnabled = getIntent().getBooleanExtra(EXTRA_POINTS_ENABLED, false);
         if (pointsEnabled) {
@@ -427,6 +436,14 @@ public class ReceiptActivity extends AppCompatActivity {
         sb.append(center("Available in Google Playstore")).append("\n");
 
         return sb.toString();
+    }
+
+    /** Map kode metode bayar ke label struk; "" kalau kosong/tidak dikenal. */
+    private static String paymentLabel(String code) {
+        if (com.crowja.damiupos.model.Transaction.PAY_TUNAI.equals(code)) return "Tunai";
+        if (com.crowja.damiupos.model.Transaction.PAY_QRIS.equals(code)) return "QRIS";
+        if (com.crowja.damiupos.model.Transaction.PAY_TRANSFER.equals(code)) return "Transfer";
+        return "";
     }
 
     private String center(String text) {

@@ -127,7 +127,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="32dp"
                     android:gravity="center"
-                    android:text="© CROWJA Global Tech Labs"
+                    android:text="© FREZ Tech &amp; Innovation Labs"
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp"
                     android:textStyle="bold" />

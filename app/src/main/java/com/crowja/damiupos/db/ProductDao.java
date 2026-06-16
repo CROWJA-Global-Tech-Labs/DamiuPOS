@@ -24,7 +24,7 @@ public class ProductDao {
         values.put(DatabaseHelper.COL_HARGA_JUAL, product.getHargaJual());
         values.put(DatabaseHelper.COL_HARGA_MODAL, product.getHargaModal());
         values.put(DatabaseHelper.COL_COLOR, product.getColor());
-        return db.insert(DatabaseHelper.TABLE_PRODUCTS, null, values);
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_PRODUCTS, values);
     }
 
     public int update(Product product) {
@@ -34,14 +34,14 @@ public class ProductDao {
         values.put(DatabaseHelper.COL_HARGA_JUAL, product.getHargaJual());
         values.put(DatabaseHelper.COL_HARGA_MODAL, product.getHargaModal());
         values.put(DatabaseHelper.COL_COLOR, product.getColor());
-        return db.update(DatabaseHelper.TABLE_PRODUCTS, values,
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_PRODUCTS, values,
                 DatabaseHelper.COL_PRODUCT_ID + "=?",
                 new String[]{String.valueOf(product.getId())});
     }
 
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        return db.delete(DatabaseHelper.TABLE_PRODUCTS,
+        return dbHelper.syncDelete(db, DatabaseHelper.TABLE_PRODUCTS, "products",
                 DatabaseHelper.COL_PRODUCT_ID + "=?",
                 new String[]{String.valueOf(id)});
     }

@@ -35,10 +35,13 @@ public class AttendanceSettingsActivity extends AppCompatActivity {
     private SwitchMaterial switchMultiUser;
     private LinearLayout multiUserConfig;
     private TextInputEditText etAdminEmail, etSmtpUser, etSmtpPass, etSmtpHost, etSmtpPort;
-    private TextInputEditText etDailyNormalHours, etCutoffDay;
+    private TextInputEditText etDailyNormalHours, etCutoffDay, etWorkDaysPerWeek;
     private SwitchMaterial switchWeeklyRecap;
     private LinearLayout weeklyRecapConfig;
     private Spinner spWeeklyDay;
+    private SwitchMaterial switchSalesBonus;
+    private LinearLayout salesBonusConfig;
+    private TextInputEditText etSalesBonusPerGalon;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -62,6 +65,7 @@ public class AttendanceSettingsActivity extends AppCompatActivity {
         etSmtpPort = findViewById(R.id.etSmtpPort);
         etDailyNormalHours = findViewById(R.id.etDailyNormalHours);
         etCutoffDay = findViewById(R.id.etCutoffDay);
+        etWorkDaysPerWeek = findViewById(R.id.etWorkDaysPerWeek);
 
         boolean muEnabled = settingsDao.isMultiUserEnabled();
         switchMultiUser.setChecked(muEnabled);
@@ -75,6 +79,7 @@ public class AttendanceSettingsActivity extends AppCompatActivity {
         etDailyNormalHours.setText(dnh == Math.rint(dnh)
                 ? String.valueOf((int) dnh) : String.valueOf(dnh));
         etCutoffDay.setText(String.valueOf(settingsDao.getPayrollCutoffDay()));
+        etWorkDaysPerWeek.setText(String.valueOf(settingsDao.getWorkDaysPerWeek()));
 
         // Rekap pekanan (PDF).
         switchWeeklyRecap = findViewById(R.id.switchWeeklyRecap);
@@ -92,11 +97,25 @@ public class AttendanceSettingsActivity extends AppCompatActivity {
         switchWeeklyRecap.setOnCheckedChangeListener((b, checked) ->
                 weeklyRecapConfig.setVisibility(checked ? View.VISIBLE : View.GONE));
 
+        // Bonus penjualan per galon.
+        switchSalesBonus = findViewById(R.id.switchSalesBonus);
+        salesBonusConfig = findViewById(R.id.salesBonusConfig);
+        etSalesBonusPerGalon = findViewById(R.id.etSalesBonusPerGalon);
+        boolean bonusOn = settingsDao.isSalesBonusEnabled();
+        switchSalesBonus.setChecked(bonusOn);
+        salesBonusConfig.setVisibility(bonusOn ? View.VISIBLE : View.GONE);
+        double bonusRate = settingsDao.getSalesBonusPerGalon();
+        if (bonusRate > 0) etSalesBonusPerGalon.setText(String.valueOf((long) bonusRate));
+        switchSalesBonus.setOnCheckedChangeListener((b, checked) ->
+                salesBonusConfig.setVisibility(checked ? View.VISIBLE : View.GONE));
+
         switchMultiUser.setOnCheckedChangeListener((b, checked) ->
                 multiUserConfig.setVisibility(checked ? View.VISIBLE : View.GONE));
         findViewById(R.id.btnKelolaUser).setOnClickListener(v ->
                 startActivity(new Intent(this, UserListActivity.class)));
         findViewById(R.id.btnTestSmtp).setOnClickListener(v -> testSmtp());
+        findViewById(R.id.btnLaporanGagal).setOnClickListener(v ->
+                startActivity(new Intent(this, PendingReportsActivity.class)));
         findViewById(R.id.btnSimpanAbsensi).setOnClickListener(v -> save());
     }
 
@@ -133,6 +152,16 @@ public class AttendanceSettingsActivity extends AppCompatActivity {
                 etCutoffDay.setError("Tanggal tidak valid"); return;
             }
         }
+        String workDaysStr = text(etWorkDaysPerWeek);
+        if (!workDaysStr.isEmpty()) {
+            try {
+                int d = Integer.parseInt(workDaysStr);
+                if (d < 1 || d > 7) { etWorkDaysPerWeek.setError("1–7"); return; }
+                settingsDao.setWorkDaysPerWeek(d);
+            } catch (NumberFormatException e) {
+                etWorkDaysPerWeek.setError("Jumlah hari tidak valid"); return;
+            }
+        }
 
         // Saat pertama kali aktif: baseline periode rekap ke periode terbaru yang
         // sudah selesai, supaya rekap auto-kirim mulai dari cut-off BERIKUTNYA
@@ -151,6 +180,14 @@ public class AttendanceSettingsActivity extends AppCompatActivity {
         if (weekly && settingsDao.getLastWeeklyRecap().isEmpty()) {
             settingsDao.setLastWeeklyRecap(
                     AttendanceRecap.mostRecentCompletedWeek(weeklyDow)[1]);
+        }
+
+        // Bonus penjualan.
+        settingsDao.setSalesBonusEnabled(switchSalesBonus.isChecked());
+        String bonusStr = text(etSalesBonusPerGalon);
+        if (!bonusStr.isEmpty()) {
+            try { settingsDao.setSalesBonusPerGalon(Double.parseDouble(bonusStr)); }
+            catch (NumberFormatException e) { etSalesBonusPerGalon.setError("Nominal tidak valid"); return; }
         }
 
         if (adminJustCreated) {

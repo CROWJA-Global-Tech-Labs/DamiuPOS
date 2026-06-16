@@ -47,7 +47,7 @@ public class LoginActivity extends AppCompatActivity {
 
         // Guard: fitur mati atau sudah login → langsung dashboard.
         if (!settingsDao.isMultiUserEnabled() || settingsDao.getCurrentUserId() > 0) {
-            goToMain();
+            goToMain(false);
             return;
         }
 
@@ -63,7 +63,7 @@ public class LoginActivity extends AppCompatActivity {
             Toast.makeText(this,
                     "Tidak ada pengguna aktif — fitur multi user dinonaktifkan",
                     Toast.LENGTH_LONG).show();
-            goToMain();
+            goToMain(false);
             return;
         }
 
@@ -99,10 +99,10 @@ public class LoginActivity extends AppCompatActivity {
                 etPin.setError("PIN salah");
                 return;
             }
-            if (auth.isAdmin()) {
-                // Admin: login biasa tanpa absensi (tanpa clock in / selfie).
+            if (!auth.tracksAttendance()) {
+                // Admin & Viewer: login biasa tanpa absensi (tanpa clock in / selfie).
                 settingsDao.setCurrentUser(auth.getId(), auth.getName());
-                goToMain();
+                goToMain(false);
                 return;
             }
             // Staf: ambil selfie wajah dulu, baru clock in.
@@ -150,11 +150,11 @@ public class LoginActivity extends AppCompatActivity {
             Toast.makeText(this, "Selamat bekerja, " + pendingUser.getName() + " 👋",
                     Toast.LENGTH_SHORT).show();
             pendingUser = null;
-            goToMain();
+            goToMain(true);   // staf clock in → MainActivity tampilkan info pending
         }
     }
 
-    private void goToMain() {
+    private void goToMain(boolean justClockedInStaff) {
         // Kirim/retry rekap absensi yang tertunda saat karyawan login. Kalau di
         // tanggal cut-off tidak ada yang login, ini yang menyusulkan di hari
         // berikutnya (hingga email berhasil). Internal-guard: no-op kalau fitur
@@ -164,8 +164,13 @@ public class LoginActivity extends AppCompatActivity {
         AttendanceRecap.maybeSendDueWeeklyRecap(getApplicationContext(),
                 DatabaseHelper.getInstance(this), false);
 
+        // Kirim ulang laporan shift yang sempat gagal terkirim di lapangan
+        // (mis. saat Pulang tidak ada sinyal / HP langsung dikunci).
+        ShiftEmailSender.flushPending(getApplicationContext());
+
         Intent i = new Intent(this, MainActivity.class);
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        if (justClockedInStaff) i.putExtra(MainActivity.EXTRA_JUST_CLOCKED_IN, true);
         startActivity(i);
         finish();
     }
