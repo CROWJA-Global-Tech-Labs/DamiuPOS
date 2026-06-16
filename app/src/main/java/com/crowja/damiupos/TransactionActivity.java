@@ -154,8 +154,10 @@ public class TransactionActivity extends AppCompatActivity {
         if (sGuard.isMultiUserEnabled() && sGuard.getCurrentUserId() > 0) {
             com.crowja.damiupos.model.User cur =
                     new com.crowja.damiupos.db.UserDao(dbGuard).getById(sGuard.getCurrentUserId());
-            if (cur != null && cur.isViewer()) {
-                Toast.makeText(this, "Akun Viewer tidak dapat membuat transaksi",
+            if (cur != null && !cur.canCreateTransaction()) {
+                Toast.makeText(this, cur.isMarketing()
+                                ? "Akun Marketing hanya dapat melakukan Promosi"
+                                : "Akun Viewer tidak dapat membuat transaksi",
                         Toast.LENGTH_LONG).show();
                 finish();
                 return;

@@ -48,7 +48,94 @@ public class TransactionDao {
         if (trx.getTanggal() != null && !trx.getTanggal().isEmpty()) {
             values.put(DatabaseHelper.COL_TANGGAL, trx.getTanggal());
         }
+        // Antrian Delivery: JUAL masuk antrian PENDING dengan waktu antri = sekarang
+        // (real, bukan `tanggal` yang bisa di-backdate). KEMBALI tidak diantrikan.
+        if (Transaction.TYPE_JUAL.equals(trx.getType())) {
+            values.put(DatabaseHelper.COL_DELIVERY_STATUS, Transaction.DELIVERY_PENDING);
+            values.put(DatabaseHelper.COL_DELIVERY_QUEUED_AT, DatabaseHelper.nowIso());
+        }
         return dbHelper.syncInsert(db, DatabaseHelper.TABLE_TRANSACTIONS, values);
+    }
+
+    // ----------------------------------------------------------- Antrian Delivery
+
+    /** Jumlah order yang masih di antrian (PENDING) — untuk badge dashboard. */
+    public int countDeliveryQueue() {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        try (Cursor c = db.rawQuery(
+                "SELECT COUNT(*) FROM " + DatabaseHelper.TABLE_TRANSACTIONS
+                        + " WHERE " + DatabaseHelper.COL_DELIVERY_STATUS + "=?",
+                new String[]{Transaction.DELIVERY_PENDING})) {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        }
+    }
+
+    /**
+     * Antrian delivery (JUAL PENDING) terlama dulu, lengkap dengan data pelanggan
+     * (nama/telepon/koordinat) untuk navigasi. Item terisi dari items_json.
+     */
+    public List<Transaction> getDeliveryQueue() {
+        List<Transaction> list = new ArrayList<>();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String sql = "SELECT t.*, c." + DatabaseHelper.COL_NAME + " AS cust_name, "
+                + "c." + DatabaseHelper.COL_PHONE + " AS cust_phone, "
+                + "c." + DatabaseHelper.COL_ADDRESS + " AS cust_addr, "
+                + "c." + DatabaseHelper.COL_LATITUDE + " AS cust_lat, "
+                + "c." + DatabaseHelper.COL_LONGITUDE + " AS cust_lng "
+                + "FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t "
+                + "LEFT JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c ON c."
+                + DatabaseHelper.COL_ID + " = t." + DatabaseHelper.COL_CUSTOMER_ID + " "
+                + "WHERE t." + DatabaseHelper.COL_DELIVERY_STATUS + "=? "
+                + "ORDER BY t." + DatabaseHelper.COL_DELIVERY_QUEUED_AT + " ASC";
+        try (Cursor c = db.rawQuery(sql, new String[]{Transaction.DELIVERY_PENDING})) {
+            while (c.moveToNext()) {
+                Transaction t = new Transaction();
+                t.setId(getLong(c, DatabaseHelper.COL_TRX_ID));
+                t.setCustomerId(getLong(c, DatabaseHelper.COL_CUSTOMER_ID));
+                t.setType(getStr(c, DatabaseHelper.COL_TYPE));
+                t.setJumlahGalon((int) getLong(c, DatabaseHelper.COL_JUMLAH_GALON));
+                t.setTotalHarga(getDouble(c, DatabaseHelper.COL_TOTAL_HARGA));
+                t.setOngkir(getDouble(c, DatabaseHelper.COL_ONGKIR));
+                t.setCatatan(getStr(c, DatabaseHelper.COL_CATATAN));
+                t.setDeliveryStatus(getStr(c, DatabaseHelper.COL_DELIVERY_STATUS));
+                t.setDeliveryQueuedAt(getStr(c, DatabaseHelper.COL_DELIVERY_QUEUED_AT));
+                String itemsJson = getStr(c, DatabaseHelper.COL_ITEMS_JSON);
+                if (itemsJson != null) t.setItems(TransactionItem.listFromJson(itemsJson));
+                t.setCustomerName(getStr(c, "cust_name"));
+                t.setCustomerPhone(getStr(c, "cust_phone"));
+                // Koordinat pelanggan disisipkan ke item lewat field display.
+                t.setCustomerLat(getDouble(c, "cust_lat"));
+                t.setCustomerLng(getDouble(c, "cust_lng"));
+                t.setCustomerAddress(getStr(c, "cust_addr"));
+                list.add(t);
+            }
+        }
+        return list;
+    }
+
+    /** Tandai order Selesai: status DONE + waktu selesai = sekarang (durasi terhitung). */
+    public void markDelivered(long trxId) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_DELIVERY_STATUS, Transaction.DELIVERY_DONE);
+        v.put(DatabaseHelper.COL_DELIVERY_DONE_AT, DatabaseHelper.nowIso());
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
+    }
+
+    private static long getLong(Cursor c, String col) {
+        int i = c.getColumnIndex(col);
+        return i >= 0 && !c.isNull(i) ? c.getLong(i) : 0;
+    }
+
+    private static double getDouble(Cursor c, String col) {
+        int i = c.getColumnIndex(col);
+        return i >= 0 && !c.isNull(i) ? c.getDouble(i) : 0;
+    }
+
+    private static String getStr(Cursor c, String col) {
+        int i = c.getColumnIndex(col);
+        return i >= 0 ? c.getString(i) : null;
     }
 
     public int delete(long id) {

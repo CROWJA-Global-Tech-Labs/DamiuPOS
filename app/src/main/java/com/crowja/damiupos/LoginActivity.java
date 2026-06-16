@@ -144,6 +144,9 @@ public class LoginActivity extends AppCompatActivity {
             new AttendanceDao(DatabaseHelper.getInstance(this))
                     .log(pendingUser.getId(), Attendance.EVENT_IN, photo);
             settingsDao.setCurrentUser(pendingUser.getId(), pendingUser.getName());
+            // Shift terbuka → service polling tetap aktif (background) sepanjang
+            // shift, termasuk saat istirahat, sampai Pulang.
+            settingsDao.setShiftActive(true);
             // Jadwalkan pengingat "jam kerja terpenuhi" untuk shift ini
             // (re-arm otomatis menghitung jam kerja sebelum istirahat).
             WorkHoursReminder.schedule(getApplicationContext(), pendingUser.getId());
@@ -155,18 +158,9 @@ public class LoginActivity extends AppCompatActivity {
     }
 
     private void goToMain(boolean justClockedInStaff) {
-        // Kirim/retry rekap absensi yang tertunda saat karyawan login. Kalau di
-        // tanggal cut-off tidak ada yang login, ini yang menyusulkan di hari
-        // berikutnya (hingga email berhasil). Internal-guard: no-op kalau fitur
-        // mati / email belum diatur / sudah terkirim.
-        AttendanceRecap.maybeSendDueRecap(getApplicationContext(),
-                DatabaseHelper.getInstance(this), false);
-        AttendanceRecap.maybeSendDueWeeklyRecap(getApplicationContext(),
-                DatabaseHelper.getInstance(this), false);
-
-        // Kirim ulang laporan shift yang sempat gagal terkirim di lapangan
-        // (mis. saat Pulang tidak ada sinyal / HP langsung dikunci).
-        ShiftEmailSender.flushPending(getApplicationContext());
+        // Dorong data (absensi, transaksi, dll.) ke server saat login supaya
+        // admin selalu melihat data terkini di dashboard web. Tidak ada email.
+        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
 
         Intent i = new Intent(this, MainActivity.class);
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);

@@ -1,7 +1,5 @@
 package com.crowja.damiupos;
 
-import android.content.Intent;
-import android.net.Uri;
 import android.os.Bundle;
 import android.text.InputType;
 import android.view.LayoutInflater;
@@ -11,20 +9,16 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
-import androidx.core.content.FileProvider;
 
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SalaryDao;
-import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.model.SalaryConfig;
 import com.crowja.damiupos.model.SalaryItem;
 import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.google.android.material.textfield.TextInputEditText;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -77,7 +71,6 @@ public class SalaryConfigActivity extends AppCompatActivity {
         findViewById(R.id.btnAddAngsuran).setOnClickListener(v ->
                 addItemRow(new SalaryItem(SalaryItem.KIND_ANGSURAN, "", 0, 0)));
         findViewById(R.id.btnSimpanGaji).setOnClickListener(v -> { if (save()) finish(); });
-        findViewById(R.id.btnPreviewSlip).setOnClickListener(v -> { if (save()) shareSlip(); });
     }
 
     private void load() {
@@ -177,51 +170,6 @@ public class SalaryConfigActivity extends AppCompatActivity {
         salaryDao.replaceItems(userId, items);
         Toast.makeText(this, "Konfigurasi gaji tersimpan", Toast.LENGTH_SHORT).show();
         return true;
-    }
-
-    /** Pilih periode cut-off, lalu bangun + bagikan slip PDF + XLSX. */
-    private void shareSlip() {
-        SettingsDao s = new SettingsDao(DatabaseHelper.getInstance(this));
-        int cutoff = s.getPayrollCutoffDay();
-        final String[] cur = AttendanceRecap.monthlyPeriod(cutoff);
-        final String[] prev = AttendanceRecap.previousPeriod(cutoff);
-        String[] labels = {
-                "Periode berjalan (" + cur[0] + " s/d " + cur[1] + ")",
-                "Periode lalu (" + prev[0] + " s/d " + prev[1] + ")"
-        };
-        new AlertDialog.Builder(this)
-                .setTitle("Pilih Periode Slip")
-                .setItems(labels, (d, which) -> doShareSlip(which == 0 ? cur : prev))
-                .setNegativeButton("Batal", null)
-                .show();
-    }
-
-    private void doShareSlip(String[] period) {
-        DatabaseHelper db = DatabaseHelper.getInstance(this);
-        Toast.makeText(this, "Membuat slip…", Toast.LENGTH_SHORT).show();
-        new Thread(() -> {
-            File pdf = PayslipPdf.build(this, db, userId, userName, period[0], period[1]);
-            File xlsx = PayslipXlsx.build(this, db, userId, userName, period[0], period[1]);
-            runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed()) return;
-                if (pdf == null && xlsx == null) {
-                    Toast.makeText(this, "Gagal membuat slip", Toast.LENGTH_LONG).show();
-                    return;
-                }
-                ArrayList<Uri> uris = new ArrayList<>();
-                if (pdf != null) uris.add(uriFor(pdf));
-                if (xlsx != null) uris.add(uriFor(xlsx));
-                Intent i = new Intent(Intent.ACTION_SEND_MULTIPLE);
-                i.setType("*/*");
-                i.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
-                i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                startActivity(Intent.createChooser(i, "Bagikan Slip Gaji"));
-            });
-        }, "slip-share").start();
-    }
-
-    private Uri uriFor(File f) {
-        return FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", f);
     }
 
     private double num(EditText e) {

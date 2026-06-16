@@ -43,8 +43,13 @@ public class SyncEngine {
         final String table;
         final String[] dataCols;   // scalar columns (identical name phone & server)
         final Ref[] refs;
+        final String idCol;        // local primary-key column (default "_id")
         Spec(String entity, String table, String[] dataCols, Ref[] refs) {
-            this.entity = entity; this.table = table; this.dataCols = dataCols; this.refs = refs;
+            this(entity, table, dataCols, refs, DatabaseHelper.COL_ID);
+        }
+        Spec(String entity, String table, String[] dataCols, Ref[] refs, String idCol) {
+            this.entity = entity; this.table = table; this.dataCols = dataCols;
+            this.refs = refs; this.idCol = idCol;
         }
     }
 
@@ -58,7 +63,7 @@ public class SyncEngine {
                     DatabaseHelper.COL_IS_RESELLER, DatabaseHelper.COL_RESELLER_SINCE,
                     DatabaseHelper.COL_KOMISI_ADD_TO_PRICE, DatabaseHelper.COL_FOLLOWUP_EXCLUDED_AT,
                     DatabaseHelper.COL_FOLLOWUP_EXCLUDE_REASON, DatabaseHelper.COL_LAST_FOLLOWUP_AT,
-                    DatabaseHelper.COL_CREATED_AT,
+                    DatabaseHelper.COL_PHOTO_URL, DatabaseHelper.COL_CREATED_AT,
             }, NO_REFS),
 
             new Spec("products", DatabaseHelper.TABLE_PRODUCTS, new String[]{
@@ -88,6 +93,7 @@ public class SyncEngine {
 
             new Spec("attendance", DatabaseHelper.TABLE_ATTENDANCE, new String[]{
                     DatabaseHelper.COL_ATT_EVENT, DatabaseHelper.COL_ATT_TS,
+                    DatabaseHelper.COL_PHOTO_URL,
             }, new Ref[]{
                     new Ref(DatabaseHelper.COL_ATT_USER_ID, "staff_uuid", DatabaseHelper.TABLE_USERS),
             }),
@@ -125,17 +131,43 @@ public class SyncEngine {
                     new Ref(DatabaseHelper.COL_SI_USER_ID, "staff_uuid", DatabaseHelper.TABLE_USERS),
             }),
 
+            // salary_config is keyed locally by user_id (no _id); its sync_uuid is
+            // the staff's sync_uuid (1:1). Server enforces unique(branch, staff_uuid).
+            new Spec("salary_configs", DatabaseHelper.TABLE_SALARY, new String[]{
+                    DatabaseHelper.COL_SAL_POKOK_ENABLED, DatabaseHelper.COL_SAL_POKOK,
+                    DatabaseHelper.COL_SAL_TUNJ_HARIAN, DatabaseHelper.COL_SAL_LEMBUR_RATE,
+                    DatabaseHelper.COL_SAL_ANGSURAN_SISA, DatabaseHelper.COL_SAL_ANGSURAN_BULAN,
+                    DatabaseHelper.COL_SAL_JABATAN, DatabaseHelper.COL_SAL_STATUS,
+                    DatabaseHelper.COL_SAL_BANK_NAME, DatabaseHelper.COL_SAL_BANK_NO,
+                    DatabaseHelper.COL_SAL_BANK_HOLDER,
+            }, new Ref[]{
+                    new Ref(DatabaseHelper.COL_SAL_USER_ID, "staff_uuid", DatabaseHelper.TABLE_USERS),
+            }, DatabaseHelper.COL_SAL_USER_ID),
+
             new Spec("transactions", DatabaseHelper.TABLE_TRANSACTIONS, new String[]{
                     DatabaseHelper.COL_TYPE, DatabaseHelper.COL_JUMLAH_GALON,
                     DatabaseHelper.COL_HARGA_PER_GALON, DatabaseHelper.COL_TOTAL_HARGA,
                     DatabaseHelper.COL_ONGKIR, DatabaseHelper.COL_ONGKIR_TYPE,
                     DatabaseHelper.COL_ITEMS_JSON, DatabaseHelper.COL_GALON_OWNERSHIP,
                     DatabaseHelper.COL_HARGA_BOTOL, DatabaseHelper.COL_PAYMENT_METHOD,
+                    DatabaseHelper.COL_DELIVERY_STATUS, DatabaseHelper.COL_DELIVERY_QUEUED_AT,
+                    DatabaseHelper.COL_DELIVERY_DONE_AT,
                     DatabaseHelper.COL_TANGGAL, DatabaseHelper.COL_CATATAN,
             }, new Ref[]{
                     new Ref(DatabaseHelper.COL_CUSTOMER_ID, "customer_uuid", DatabaseHelper.TABLE_CUSTOMERS),
                     new Ref(DatabaseHelper.COL_TRX_PRODUCT_ID, "product_uuid", DatabaseHelper.TABLE_PRODUCTS),
                     new Ref(DatabaseHelper.COL_TRX_RESELLER_ID, "reseller_uuid", DatabaseHelper.TABLE_CUSTOMERS),
+            }),
+
+            // After transactions so its trx_uuid ref resolves on pull.
+            new Spec("order_inbox", DatabaseHelper.TABLE_ORDER_INBOX, new String[]{
+                    DatabaseHelper.COL_INBOX_SENDER_NAME, DatabaseHelper.COL_INBOX_SENDER_PHONE,
+                    DatabaseHelper.COL_INBOX_RAW, DatabaseHelper.COL_INBOX_PARSED_JSON,
+                    DatabaseHelper.COL_INBOX_PARSER, DatabaseHelper.COL_INBOX_STATUS,
+                    DatabaseHelper.COL_INBOX_REPLIED, DatabaseHelper.COL_INBOX_RECEIVED_AT,
+            }, new Ref[]{
+                    new Ref(DatabaseHelper.COL_INBOX_CUSTOMER_ID, "customer_uuid", DatabaseHelper.TABLE_CUSTOMERS),
+                    new Ref(DatabaseHelper.COL_INBOX_TRX_ID, "trx_uuid", DatabaseHelper.TABLE_TRANSACTIONS),
             }),
     };
 
@@ -146,16 +178,23 @@ public class SyncEngine {
         public String error;
     }
 
+    private final Context appCtx;
     private final DatabaseHelper dbHelper;
     private final SyncSettings cfg;
     private final SyncApi api;
+    private final SettingsDao settingsDao;
+
+    /** Key/value settings sync uses this server entity name (special path). */
+    private static final String SETTINGS_ENTITY = "app_settings";
 
     // Per-cycle cache: refTable -> (localId -> sync_uuid), to speed push ref lookups.
     private final Map<String, Map<Long, String>> uuidCache = new HashMap<>();
 
     public SyncEngine(Context ctx) {
-        this.dbHelper = DatabaseHelper.getInstance(ctx);
-        this.cfg = new SyncSettings(new SettingsDao(dbHelper));
+        this.appCtx = ctx.getApplicationContext();
+        this.dbHelper = DatabaseHelper.getInstance(appCtx);
+        this.settingsDao = new SettingsDao(dbHelper);
+        this.cfg = new SyncSettings(settingsDao);
         this.api = new SyncApi(cfg);
     }
 
@@ -173,12 +212,9 @@ public class SyncEngine {
             cfg.setDeviceUuid(r.optString("device_uuid", deviceUuid));
             JSONObject b = r.getJSONObject("branch");
             cfg.setBranch(b.optString("code"), b.optString("uuid"), b.optString("name"));
-            JSONObject m = r.optJSONObject("mqtt");
-            if (m != null) {
-                cfg.setMqtt(m.optString("host"), m.optInt("port", 8883),
-                        m.optBoolean("tls", true), m.optString("username"),
-                        m.optString("password"), m.optString("prefix", "damiupos"));
-            }
+            // MQTT broker hints in the enroll response are ignored — the app is
+            // REST-only (polling). No broker credentials are stored on the device.
+            cfg.setLocationIntervalSeconds(r.optInt("location_interval_seconds", 600));
             cfg.setEnabled(true);
             res.ok = true;
         } catch (Exception e) {
@@ -192,14 +228,35 @@ public class SyncEngine {
         if (!cfg.isEnrolled()) { res.error = "Belum terhubung ke server"; return res; }
         try {
             uuidCache.clear();
+            // Upload pending images first so freshly-stamped photo_url values ride this
+            // cycle's push. Failures here are swallowed inside the uploader (retry next run).
+            try { MediaUploader.uploadPending(dbHelper.getWritableDatabase(), api); }
+            catch (Throwable ignored) {}
             res.pushed = push();
             res.pulled = pull();
             cfg.setLastSyncAt(DatabaseHelper.nowIso());
             res.ok = true;
+        } catch (SyncApi.SyncException se) {
+            res.error = se.getMessage();
+            if (se.code == 401) handleRevoked();   // token deleted by dashboard "Cabut Akses"
         } catch (Exception e) {
             res.error = e.getMessage();
         }
         return res;
+    }
+
+    /**
+     * The server rejected our token (HTTP 401) — the dashboard revoked this device.
+     * Drop enrollment so we stop retrying, stop background work, and tell the user
+     * to re-enroll (provisioning).
+     */
+    private void handleRevoked() {
+        cfg.clear();                          // forget token + disable sync
+        try { SyncScheduler.cancelAll(appCtx); } catch (Throwable ignored) {}
+        try { com.crowja.damiupos.LocationService.stop(appCtx); } catch (Throwable ignored) {}
+        OnlineNotifier.postNotif(appCtx, "Akses dicabut",
+                "Perangkat dilepas oleh admin. Daftar ulang (provisioning) untuk terhubung lagi.",
+                7872);
     }
 
     // ------------------------------------------------------------------ PUSH
@@ -259,10 +316,22 @@ public class SyncEngine {
             total += arr.length();
         }
 
-        if (total == 0) return 0;
+        // Branch-shared settings (app_settings) — special key/value path.
+        List<String[]> dirtySettings = settingsDao.getDirtyShared();
+        JSONArray settingsArr = new JSONArray();
+        for (String[] kv : dirtySettings) {
+            JSONObject o = new JSONObject();
+            o.put("key", kv[0]);
+            o.put("value", kv[1]);
+            o.put("edited_at", kv[2]);
+            settingsArr.put(o);
+        }
+
+        if (total == 0 && settingsArr.length() == 0) return 0;
 
         JSONObject body = new JSONObject();
         body.put("entities", entities);
+        if (settingsArr.length() > 0) body.put("settings", settingsArr);
         api.push(body);   // throws on failure → keep dirty, retry next cycle
 
         for (String[] row : sentRows) {
@@ -275,7 +344,12 @@ public class SyncEngine {
                     DatabaseHelper.COL_TS_ENTITY + "=? AND " + DatabaseHelper.COL_SYNC_UUID + "=?",
                     new String[]{tomb[0], tomb[1]});
         }
-        return total;
+        if (!dirtySettings.isEmpty()) {
+            List<String> keys = new ArrayList<>();
+            for (String[] kv : dirtySettings) keys.add(kv[0]);
+            settingsDao.markSharedSynced(keys);
+        }
+        return total + settingsArr.length();
     }
 
     // ------------------------------------------------------------------ PULL
@@ -288,6 +362,8 @@ public class SyncEngine {
             names.put(s.entity);
             cursors.put(s.entity, cfg.getCursor(s.entity));
         }
+        names.put(SETTINGS_ENTITY);
+        cursors.put(SETTINGS_ENTITY, cfg.getCursor(SETTINGS_ENTITY));
         JSONObject body = new JSONObject();
         body.put("entities", names);
         body.put("cursors", cursors);
@@ -304,6 +380,27 @@ public class SyncEngine {
                 cfg.setCursor(s.entity, newCursors.optString(s.entity, cfg.getCursor(s.entity)));
             }
         }
+
+        // Branch-shared settings (app_settings).
+        JSONArray sa = entities != null ? entities.optJSONArray(SETTINGS_ENTITY) : null;
+        if (sa != null) {
+            for (int i = 0; i < sa.length(); i++) {
+                JSONObject o = sa.optJSONObject(i);
+                if (o == null) continue;
+                String key = o.optString("key", null);
+                if (key == null || key.isEmpty()) continue;
+                String value = o.isNull("value") ? null : o.optString("value", null);
+                String editedAt = o.optString("edited_at", "");
+                boolean deleted = !o.isNull("deleted_at")
+                        && !o.optString("deleted_at", "").isEmpty();
+                settingsDao.applySyncedSetting(key, value, editedAt, deleted);
+                applied++;
+            }
+        }
+        if (newCursors != null) {
+            cfg.setCursor(SETTINGS_ENTITY,
+                    newCursors.optString(SETTINGS_ENTITY, cfg.getCursor(SETTINGS_ENTITY)));
+        }
         return applied;
     }
 
@@ -319,7 +416,7 @@ public class SyncEngine {
 
             long localId = -1; int localSynced = 1; String localEdited = "";
             Cursor c = db.query(s.table,
-                    new String[]{DatabaseHelper.COL_ID, DatabaseHelper.COL_SYNCED, DatabaseHelper.COL_EDITED_AT},
+                    new String[]{s.idCol, DatabaseHelper.COL_SYNCED, DatabaseHelper.COL_EDITED_AT},
                     DatabaseHelper.COL_SYNC_UUID + "=?", new String[]{uuid}, null, null, null);
             if (c.moveToFirst()) {
                 localId = c.getLong(0);

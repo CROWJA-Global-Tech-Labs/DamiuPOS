@@ -6,6 +6,12 @@ import android.database.sqlite.SQLiteDatabase;
 
 import com.crowja.damiupos.BuildConfig;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
 public class SettingsDao {
 
     // Developer bypass: when true, app behaves as if Pro is always active.
@@ -63,17 +69,6 @@ public class SettingsDao {
 
     /** 1 = fitur multi user & absensi aktif (wajib login PIN + clock in). */
     public static final String KEY_MULTIUSER_ENABLED = "multiuser_enabled";
-    /** Nomor WA admin tujuan laporan otomatis saat clock out. */
-    public static final String KEY_ADMIN_WA_NUMBER = "admin_wa_number";
-    /** Email tujuan laporan shift (auto-kirim SMTP saat Pulang). */
-    public static final String KEY_ADMIN_EMAIL = "admin_email";
-    /** Konfigurasi SMTP pengirim (akun yang dipakai mengirim laporan). */
-    public static final String KEY_SMTP_HOST = "smtp_host";
-    public static final String KEY_SMTP_PORT = "smtp_port";
-    public static final String KEY_SMTP_USER = "smtp_user";
-    public static final String KEY_SMTP_PASS = "smtp_pass";
-    public static final String DEFAULT_SMTP_HOST = "smtp.gmail.com";
-    public static final String DEFAULT_SMTP_PORT = "587";
     /** Jam kerja normal per HARI (ambang lembur harian & basis normalisasi
      *  bulanan: jam wajib = hari kerja × ini). Default 7. */
     public static final String KEY_DAILY_NORMAL_HOURS = "daily_normal_hours";
@@ -92,21 +87,35 @@ public class SettingsDao {
      *  (cutoff+1 bulan lalu) s/d (cutoff bulan ini). */
     public static final String KEY_PAYROLL_CUTOFF_DAY = "payroll_cutoff_day";
     public static final int DEFAULT_PAYROLL_CUTOFF_DAY = 28;
-    /** Periode rekap terakhir yang sudah terkirim otomatis (mis. "2026-06-28")
-     *  — guard supaya tidak kirim berkali-kali di hari cut-off. */
-    public static final String KEY_LAST_RECAP_PERIOD = "last_recap_period";
-    /** Rekap pekanan: aktif, hari trigger (Calendar.DAY_OF_WEEK), guard. */
-    public static final String KEY_WEEKLY_RECAP_ENABLED = "weekly_recap_enabled";
-    public static final String KEY_WEEKLY_RECAP_DAY = "weekly_recap_day";
-    public static final int DEFAULT_WEEKLY_RECAP_DAY = 7; // Calendar.SATURDAY
-    public static final String KEY_LAST_WEEKLY_RECAP = "last_weekly_recap";
     /** Id user yang sedang login (clock in). 0 = tidak ada (idle/istirahat). */
     public static final String KEY_CURRENT_USER_ID = "current_user_id";
     public static final String KEY_CURRENT_USER_NAME = "current_user_name";
+    /** 1 = ada shift terbuka (antara clock in pertama s/d Pulang), termasuk saat
+     *  istirahat. Dipakai service polling agar tetap aktif selama shift. */
+    public static final String KEY_SHIFT_ACTIVE = "shift_active";
 
     public static final String PARSE_MODE_DEFAULT = "default"; // regex saja
     public static final String PARSE_MODE_AI = "ai";           // AI saja
     public static final String PARSE_MODE_HYBRID = "hybrid";   // regex dulu, AI fallback
+
+    /**
+     * Kunci konfigurasi bisnis BRANCH yang aman disinkronkan lintas perangkat
+     * (app_settings). ALLOWLIST — apa pun di luar daftar ini TIDAK PERNAH dikirim
+     * ke server. Sengaja EXCLUDE: rahasia (sync_*, claude_api_key, pro_*), state
+     * sesi/perangkat (current_user_*, wizard, cursor, last_*), dan toggle
+     * device-spesifik (wa_auto_detect, ringtone).
+     */
+    public static final Set<String> SHAREABLE_KEYS = new HashSet<>(Arrays.asList(
+            KEY_DEFAULT_ONGKIR,
+            KEY_POINTS_ENABLED, KEY_POINTS_PER_AMOUNT, KEY_POINTS_REWARD_THRESHOLD,
+            KEY_DEPOT_NAME, KEY_DEPOT_ADDRESS, KEY_DEPOT_PHONE,
+            KEY_FOLLOWUP_DAYS, KEY_FOLLOWUP_TEMPLATE,
+            KEY_STOCK_ALERT, KEY_HARGA_BOTOL_GALON, KEY_RESELLER_KOMISI,
+            KEY_DAILY_NORMAL_HOURS, KEY_WORK_DAYS_PER_WEEK, KEY_LITERS_PER_GALON,
+            KEY_SALES_BONUS_ENABLED, KEY_SALES_BONUS_PER_GALON,
+            KEY_PAYROLL_CUTOFF_DAY,
+            KEY_WA_REPLY_TEMPLATE, KEY_WA_AUTO_ARCHIVE_HOURS, KEY_WA_PARSE_MODE
+    ));
 
     private final DatabaseHelper dbHelper;
 
@@ -119,7 +128,77 @@ public class SettingsDao {
         ContentValues values = new ContentValues();
         values.put(DatabaseHelper.COL_SETTING_KEY, key);
         values.put(DatabaseHelper.COL_SETTING_VALUE, value);
+        // Only whitelisted branch-config keys become dirty for app_settings sync;
+        // everything else stays synced=1 (clean) so device-local/secret keys are
+        // never pushed to the cloud.
+        if (SHAREABLE_KEYS.contains(key)) {
+            values.put(DatabaseHelper.COL_EDITED_AT, DatabaseHelper.nowIso());
+            values.put(DatabaseHelper.COL_SYNCED, 0);
+        } else {
+            values.put(DatabaseHelper.COL_SYNCED, 1);
+        }
         db.insertWithOnConflict(DatabaseHelper.TABLE_SETTINGS, null, values,
+                SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    // ---------------------------------------------- app_settings sync helpers
+
+    /** Dirty whitelisted settings to push: each = {key, value, edited_at}. */
+    public List<String[]> getDirtyShared() {
+        List<String[]> out = new ArrayList<>();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.query(DatabaseHelper.TABLE_SETTINGS,
+                new String[]{DatabaseHelper.COL_SETTING_KEY, DatabaseHelper.COL_SETTING_VALUE,
+                        DatabaseHelper.COL_EDITED_AT},
+                DatabaseHelper.COL_SYNCED + "=0", null, null, null, null);
+        while (c.moveToNext()) {
+            String key = c.getString(0);
+            if (!SHAREABLE_KEYS.contains(key)) continue;   // defense in depth
+            out.add(new String[]{key, c.getString(1), c.getString(2)});
+        }
+        c.close();
+        return out;
+    }
+
+    /** Mark the given setting keys as pushed (synced=1). */
+    public void markSharedSynced(List<String> keys) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_SYNCED, 1);
+        for (String k : keys) {
+            db.update(DatabaseHelper.TABLE_SETTINGS, v,
+                    DatabaseHelper.COL_SETTING_KEY + "=?", new String[]{k});
+        }
+    }
+
+    /**
+     * Apply a setting received from sync. Only whitelisted keys are accepted.
+     * Last-write-wins: skip if a newer un-pushed local edit exists.
+     */
+    public void applySyncedSetting(String key, String value, String editedAt, boolean deleted) {
+        if (key == null || !SHAREABLE_KEYS.contains(key)) return;
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        boolean exists = false; int localSynced = 1; String localEdited = "";
+        Cursor c = db.query(DatabaseHelper.TABLE_SETTINGS,
+                new String[]{DatabaseHelper.COL_SYNCED, DatabaseHelper.COL_EDITED_AT},
+                DatabaseHelper.COL_SETTING_KEY + "=?", new String[]{key}, null, null, null);
+        if (c.moveToFirst()) { exists = true; localSynced = c.getInt(0); localEdited = c.getString(1); }
+        c.close();
+        if (exists && localSynced == 0 && localEdited != null && editedAt != null
+                && localEdited.compareTo(editedAt) > 0) {
+            return;   // keep newer un-pushed local edit
+        }
+        if (deleted) {
+            db.delete(DatabaseHelper.TABLE_SETTINGS,
+                    DatabaseHelper.COL_SETTING_KEY + "=?", new String[]{key});
+            return;
+        }
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_SETTING_KEY, key);
+        v.put(DatabaseHelper.COL_SETTING_VALUE, value);
+        v.put(DatabaseHelper.COL_EDITED_AT, editedAt);
+        v.put(DatabaseHelper.COL_SYNCED, 1);
+        db.insertWithOnConflict(DatabaseHelper.TABLE_SETTINGS, null, v,
                 SQLiteDatabase.CONFLICT_REPLACE);
     }
 
@@ -444,52 +523,6 @@ public class SettingsDao {
         set(KEY_MULTIUSER_ENABLED, enabled ? "1" : "0");
     }
 
-    /** Nomor WA admin (apa adanya, dinormalisasi saat kirim). */
-    public String getAdminWaNumber() { return get(KEY_ADMIN_WA_NUMBER, ""); }
-    public void setAdminWaNumber(String v) {
-        set(KEY_ADMIN_WA_NUMBER, v != null ? v.trim() : "");
-    }
-
-    /** Email tujuan laporan shift. */
-    public String getAdminEmail() { return get(KEY_ADMIN_EMAIL, ""); }
-    public void setAdminEmail(String v) { set(KEY_ADMIN_EMAIL, v != null ? v.trim() : ""); }
-
-    /** SMTP host pengirim (default Gmail). */
-    public String getSmtpHost() {
-        String v = get(KEY_SMTP_HOST, DEFAULT_SMTP_HOST);
-        return v != null && !v.isEmpty() ? v : DEFAULT_SMTP_HOST;
-    }
-    public void setSmtpHost(String v) {
-        set(KEY_SMTP_HOST, v != null && !v.trim().isEmpty() ? v.trim() : DEFAULT_SMTP_HOST);
-    }
-
-    /** SMTP port (default 587 STARTTLS). */
-    public int getSmtpPort() {
-        try {
-            int p = Integer.parseInt(get(KEY_SMTP_PORT, DEFAULT_SMTP_PORT));
-            return p > 0 ? p : Integer.parseInt(DEFAULT_SMTP_PORT);
-        } catch (NumberFormatException e) { return Integer.parseInt(DEFAULT_SMTP_PORT); }
-    }
-    public void setSmtpPort(int v) {
-        set(KEY_SMTP_PORT, String.valueOf(v > 0 ? v : Integer.parseInt(DEFAULT_SMTP_PORT)));
-    }
-
-    /** Username/email akun SMTP pengirim. */
-    public String getSmtpUser() { return get(KEY_SMTP_USER, ""); }
-    public void setSmtpUser(String v) { set(KEY_SMTP_USER, v != null ? v.trim() : ""); }
-
-    /** Password / app-password akun SMTP pengirim. */
-    public String getSmtpPass() { return get(KEY_SMTP_PASS, ""); }
-    public void setSmtpPass(String v) { set(KEY_SMTP_PASS, v != null ? v : ""); }
-
-    /** True kalau email admin + akun SMTP cukup untuk auto-kirim laporan. */
-    public boolean isShiftEmailConfigured() {
-        return !getAdminEmail().isEmpty()
-                && !getSmtpUser().isEmpty()
-                && !getSmtpPass().isEmpty()
-                && !getSmtpHost().isEmpty();
-    }
-
     /** Jam kerja normal per hari (ambang lembur harian + basis normalisasi bulanan). */
     public double getDailyNormalHours() {
         try {
@@ -557,33 +590,6 @@ public class SettingsDao {
         set(KEY_PAYROLL_CUTOFF_DAY, String.valueOf((v >= 1 && v <= 31) ? v : DEFAULT_PAYROLL_CUTOFF_DAY));
     }
 
-    public String getLastRecapPeriod() { return get(KEY_LAST_RECAP_PERIOD, ""); }
-    public void setLastRecapPeriod(String v) { set(KEY_LAST_RECAP_PERIOD, v != null ? v : ""); }
-
-    // ---------------- Rekap pekanan (PDF export) ----------------
-
-    public boolean isWeeklyRecapEnabled() {
-        return "1".equals(get(KEY_WEEKLY_RECAP_ENABLED, "0"));
-    }
-    public void setWeeklyRecapEnabled(boolean enabled) {
-        set(KEY_WEEKLY_RECAP_ENABLED, enabled ? "1" : "0");
-    }
-
-    /** Hari trigger rekap pekanan (Calendar.DAY_OF_WEEK 1=Minggu..7=Sabtu). Default 7. */
-    public int getWeeklyRecapDay() {
-        try {
-            int v = Integer.parseInt(get(KEY_WEEKLY_RECAP_DAY,
-                    String.valueOf(DEFAULT_WEEKLY_RECAP_DAY)));
-            return (v >= 1 && v <= 7) ? v : DEFAULT_WEEKLY_RECAP_DAY;
-        } catch (NumberFormatException e) { return DEFAULT_WEEKLY_RECAP_DAY; }
-    }
-    public void setWeeklyRecapDay(int dow) {
-        set(KEY_WEEKLY_RECAP_DAY, String.valueOf((dow >= 1 && dow <= 7) ? dow : DEFAULT_WEEKLY_RECAP_DAY));
-    }
-
-    public String getLastWeeklyRecap() { return get(KEY_LAST_WEEKLY_RECAP, ""); }
-    public void setLastWeeklyRecap(String v) { set(KEY_LAST_WEEKLY_RECAP, v != null ? v : ""); }
-
     /** Id user yang sedang clock in. 0 = belum login / istirahat / sudah out. */
     public long getCurrentUserId() {
         try { return Long.parseLong(get(KEY_CURRENT_USER_ID, "0")); }
@@ -596,6 +602,10 @@ public class SettingsDao {
         set(KEY_CURRENT_USER_NAME, name != null ? name : "");
     }
     public void clearCurrentUser() { setCurrentUser(0, ""); }
+
+    /** Shift terbuka (clock in pertama s/d Pulang, termasuk istirahat). */
+    public boolean isShiftActive() { return "1".equals(get(KEY_SHIFT_ACTIVE, "0")); }
+    public void setShiftActive(boolean v) { set(KEY_SHIFT_ACTIVE, v ? "1" : "0"); }
 
     /** Template pesan follow-up. Lihat {@link #KEY_FOLLOWUP_TEMPLATE} untuk placeholder. */
     public String getFollowUpTemplate() {

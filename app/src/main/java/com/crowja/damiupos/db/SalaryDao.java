@@ -64,8 +64,39 @@ public class SalaryDao {
         v.put(DatabaseHelper.COL_SAL_BANK_NAME, s.getBankName());
         v.put(DatabaseHelper.COL_SAL_BANK_NO, s.getBankNo());
         v.put(DatabaseHelper.COL_SAL_BANK_HOLDER, s.getBankHolder());
-        db.insertWithOnConflict(DatabaseHelper.TABLE_SALARY, null, v,
-                SQLiteDatabase.CONFLICT_REPLACE);
+        // Sync-aware upsert: update bumps edited_at (keeps sync_uuid); insert
+        // stamps sync_uuid = the staff's sync_uuid (deterministic 1:1 → no
+        // cross-device duplicate config for the same staff).
+        boolean exists = configExists(db, s.getUserId());
+        if (exists) {
+            dbHelper.syncUpdate(db, DatabaseHelper.TABLE_SALARY, v,
+                    DatabaseHelper.COL_SAL_USER_ID + "=?",
+                    new String[]{String.valueOf(s.getUserId())});
+        } else {
+            String staffUuid = userSyncUuid(db, s.getUserId());
+            if (staffUuid != null) v.put(DatabaseHelper.COL_SYNC_UUID, staffUuid);
+            dbHelper.syncInsert(db, DatabaseHelper.TABLE_SALARY, v);
+        }
+    }
+
+    private boolean configExists(SQLiteDatabase db, long userId) {
+        Cursor c = db.query(DatabaseHelper.TABLE_SALARY,
+                new String[]{DatabaseHelper.COL_SAL_USER_ID},
+                DatabaseHelper.COL_SAL_USER_ID + "=?",
+                new String[]{String.valueOf(userId)}, null, null, null);
+        boolean exists = c.moveToFirst();
+        c.close();
+        return exists;
+    }
+
+    private String userSyncUuid(SQLiteDatabase db, long userId) {
+        Cursor c = db.query(DatabaseHelper.TABLE_USERS,
+                new String[]{DatabaseHelper.COL_SYNC_UUID},
+                DatabaseHelper.COL_ID + "=?",
+                new String[]{String.valueOf(userId)}, null, null, null);
+        String uuid = c.moveToFirst() ? c.getString(0) : null;
+        c.close();
+        return uuid;
     }
 
     // --------------------------------------------------------------- items

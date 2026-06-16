@@ -207,6 +207,7 @@ public class UserListActivity extends AppCompatActivity {
         RadioButton rbAdmin = content.findViewById(R.id.rbRoleAdmin);
         RadioButton rbStaf = content.findViewById(R.id.rbRoleStaf);
         RadioButton rbViewer = content.findViewById(R.id.rbRoleViewer);
+        RadioButton rbMarketing = content.findViewById(R.id.rbRoleMarketing);
         SwitchMaterial swActive = content.findViewById(R.id.swUserActive);
 
         if (existing != null) {
@@ -214,6 +215,7 @@ public class UserListActivity extends AppCompatActivity {
             etPin.setText(existing.getPin());
             if (existing.isAdmin()) rbAdmin.setChecked(true);
             else if (existing.isViewer()) rbViewer.setChecked(true);
+            else if (existing.isMarketing()) rbMarketing.setChecked(true);
             else rbStaf.setChecked(true);
             swActive.setChecked(existing.isActive());
         }
@@ -239,6 +241,7 @@ public class UserListActivity extends AppCompatActivity {
 
                     String role = rbAdmin.isChecked() ? User.ROLE_ADMIN
                             : rbViewer.isChecked() ? User.ROLE_VIEWER
+                            : rbMarketing.isChecked() ? User.ROLE_MARKETING
                             : User.ROLE_STAF;
                     boolean active = swActive.isChecked();
                     if (existing == null) {
@@ -335,7 +338,8 @@ public class UserListActivity extends AppCompatActivity {
             h.tvInitial.setText(name != null && !name.isEmpty()
                     ? String.valueOf(name.charAt(0)).toUpperCase(Locale.getDefault()) : "?");
 
-            String role = u.isAdmin() ? "Admin" : u.isViewer() ? "Viewer" : "Staf";
+            String role = u.isAdmin() ? "Admin" : u.isViewer() ? "Viewer"
+                    : u.isMarketing() ? "Marketing" : "Staf";
             if (!u.isActive()) role += " • Nonaktif";
             if (settingsDao.getCurrentUserId() == u.getId()) role += " • Sedang login";
             h.tvRole.setText(role);

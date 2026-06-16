@@ -83,6 +83,8 @@
         <activity android:name=".FollowUpActivity" />
         <activity android:name=".FollowUpMapActivity" />
         <activity android:name=".PendingTransactionListActivity" />
+        <activity android:name=".DeliveryQueueActivity" />
+        <activity android:name=".PromosiActivity" />
         <activity android:name=".ChangelogActivity" />
         <activity android:name=".SyncSettingsActivity" />
         <activity android:name=".UpgradeActivity" />
@@ -96,7 +98,6 @@
         <activity android:name=".LoginActivity" />
         <activity android:name=".UserListActivity" />
         <activity android:name=".AttendanceSettingsActivity" />
-        <activity android:name=".PendingReportsActivity" />
         <activity android:name=".AnalyticsActivity" />
         <activity android:name=".SalaryConfigActivity" />
         <activity

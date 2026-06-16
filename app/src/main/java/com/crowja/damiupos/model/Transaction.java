@@ -24,10 +24,17 @@ public class Transaction {
     public static final String PAY_QRIS = "QRIS";
     public static final String PAY_TRANSFER = "TRANSFER";
 
+    // Antrian Delivery: status pemrosesan order.
+    public static final String DELIVERY_PENDING = "PENDING";
+    public static final String DELIVERY_DONE = "DONE";
+
     private long id;
     private long customerId;
     private String customerName; // for display purposes
     private String customerPhone; // for display purposes (export, struk, dll.)
+    private String customerAddress; // display (antrian delivery)
+    private double customerLat;     // display — navigasi antrian delivery
+    private double customerLng;     // display — navigasi antrian delivery
     private long productId;
     private String productName;  // for display purposes
     private String type;         // JUAL or KEMBALI
@@ -42,6 +49,10 @@ public class Transaction {
     private long resellerId;        // reseller afiliasi yg dapat komisi (0 = tidak ada)
     private String tanggal;
     private String catatan;
+    // Antrian Delivery (diisi untuk JUAL): status + waktu antri + waktu selesai.
+    private String deliveryStatus;
+    private String deliveryQueuedAt;
+    private String deliveryDoneAt;
     private List<TransactionItem> items = new ArrayList<>();
 
     public Transaction() {}
@@ -57,6 +68,15 @@ public class Transaction {
 
     public String getCustomerPhone() { return customerPhone; }
     public void setCustomerPhone(String customerPhone) { this.customerPhone = customerPhone; }
+
+    public String getCustomerAddress() { return customerAddress; }
+    public void setCustomerAddress(String v) { this.customerAddress = v; }
+
+    public double getCustomerLat() { return customerLat; }
+    public void setCustomerLat(double v) { this.customerLat = v; }
+
+    public double getCustomerLng() { return customerLng; }
+    public void setCustomerLng(double v) { this.customerLng = v; }
 
     public long getProductId() { return productId; }
     public void setProductId(long productId) { this.productId = productId; }
@@ -109,6 +129,15 @@ public class Transaction {
 
     public String getCatatan() { return catatan; }
     public void setCatatan(String catatan) { this.catatan = catatan; }
+
+    public String getDeliveryStatus() { return deliveryStatus; }
+    public void setDeliveryStatus(String v) { this.deliveryStatus = v; }
+
+    public String getDeliveryQueuedAt() { return deliveryQueuedAt; }
+    public void setDeliveryQueuedAt(String v) { this.deliveryQueuedAt = v; }
+
+    public String getDeliveryDoneAt() { return deliveryDoneAt; }
+    public void setDeliveryDoneAt(String v) { this.deliveryDoneAt = v; }
 
     public List<TransactionItem> getItems() { return items; }
     public void setItems(List<TransactionItem> items) {

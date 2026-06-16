@@ -8,6 +8,9 @@ import com.crowja.damiupos.db.SettingsDao;
  */
 public class SyncSettings {
 
+    /** Production server, pre-filled so staff only need to type the provisioning code. */
+    public static final String DEFAULT_BASE_URL = "https://damiupos.hantechno.my.id";
+
     private static final String K_BASE_URL    = "sync_base_url";
     private static final String K_TOKEN       = "sync_token";
     private static final String K_DEVICE_UUID = "sync_device_uuid";
@@ -18,14 +21,6 @@ public class SyncSettings {
     private static final String K_LAST_AT     = "sync_last_at";
     private static final String K_CURSOR      = "sync_cursor_"; // + entity
 
-    // MQTT broker config (handed out at enrollment).
-    private static final String K_MQTT_HOST = "sync_mqtt_host";
-    private static final String K_MQTT_PORT = "sync_mqtt_port";
-    private static final String K_MQTT_TLS  = "sync_mqtt_tls";
-    private static final String K_MQTT_USER = "sync_mqtt_user";
-    private static final String K_MQTT_PASS = "sync_mqtt_pass";
-    private static final String K_MQTT_PREFIX = "sync_mqtt_prefix";
-
     // Latest published app version + the version the user already dismissed.
     private static final String K_VER_CODE = "sync_ver_code";
     private static final String K_VER_NAME = "sync_ver_name";
@@ -33,9 +28,18 @@ public class SyncSettings {
     private static final String K_VER_LOG  = "sync_ver_log";
     private static final String K_VER_MAND = "sync_ver_mandatory";
     private static final String K_VER_DISMISSED = "sync_ver_dismissed";
+    /** versionCode whose APK has already been downloaded & is ready to install. */
+    private static final String K_VER_DOWNLOADED = "sync_ver_downloaded";
+
+    // Last admin broadcast we've shown (created_at) — REST poll cursor.
+    private static final String K_BROADCAST_AT = "sync_broadcast_at";
+    // Last device command we've run (created_at) — REST poll cursor.
+    private static final String K_COMMAND_AT = "sync_command_at";
 
     // Track this device's staff location while clocked in (default on when enrolled).
     private static final String K_LOC_ENABLED = "sync_loc_enabled";
+    // How often to report location while clocked in, in seconds (admin-configurable; default 10 min).
+    private static final String K_LOC_INTERVAL = "sync_loc_interval";
 
     private final SettingsDao settings;
 
@@ -74,23 +78,6 @@ public class SyncSettings {
     public String getCursor(String entity)            { return settings.get(K_CURSOR + entity, ""); }
     public void setCursor(String entity, String value){ settings.set(K_CURSOR + entity, value != null ? value : ""); }
 
-    // ---- MQTT broker config ----
-    public void setMqtt(String host, int port, boolean tls, String user, String pass, String prefix) {
-        settings.set(K_MQTT_HOST, host != null ? host : "");
-        settings.set(K_MQTT_PORT, String.valueOf(port));
-        settings.set(K_MQTT_TLS, tls ? "1" : "0");
-        settings.set(K_MQTT_USER, user != null ? user : "");
-        settings.set(K_MQTT_PASS, pass != null ? pass : "");
-        settings.set(K_MQTT_PREFIX, prefix != null ? prefix : "damiupos");
-    }
-    public String getMqttHost()   { return settings.get(K_MQTT_HOST, ""); }
-    public int getMqttPort()      { try { return Integer.parseInt(settings.get(K_MQTT_PORT, "8883")); } catch (Exception e) { return 8883; } }
-    public boolean isMqttTls()    { return "1".equals(settings.get(K_MQTT_TLS, "1")); }
-    public String getMqttUser()   { return settings.get(K_MQTT_USER, ""); }
-    public String getMqttPass()   { return settings.get(K_MQTT_PASS, ""); }
-    public String getMqttPrefix() { return settings.get(K_MQTT_PREFIX, "damiupos"); }
-    public boolean isMqttConfigured() { return !getMqttHost().isEmpty() && !getMqttUser().isEmpty(); }
-
     // ---- Latest published app version ----
     public void setLatestVersion(int code, String name, String url, String changelog, boolean mandatory) {
         settings.set(K_VER_CODE, String.valueOf(code));
@@ -106,9 +93,29 @@ public class SyncSettings {
     public boolean isLatestVersionMandatory() { return "1".equals(settings.get(K_VER_MAND, "0")); }
     public int getDismissedVersion()          { try { return Integer.parseInt(settings.get(K_VER_DISMISSED, "0")); } catch (Exception e) { return 0; } }
     public void setDismissedVersion(int code) { settings.set(K_VER_DISMISSED, String.valueOf(code)); }
+    public int getDownloadedVersion()          { try { return Integer.parseInt(settings.get(K_VER_DOWNLOADED, "0")); } catch (Exception e) { return 0; } }
+    public void setDownloadedVersion(int code) { settings.set(K_VER_DOWNLOADED, String.valueOf(code)); }
+
+    /** Cursor for the broadcasts REST poll (last shown created_at). */
+    public String getBroadcastCursor()       { return settings.get(K_BROADCAST_AT, ""); }
+    public void setBroadcastCursor(String v) { settings.set(K_BROADCAST_AT, v != null ? v : ""); }
+
+    /** Cursor for the device-commands REST poll (last run created_at). */
+    public String getCommandCursor()         { return settings.get(K_COMMAND_AT, ""); }
+    public void setCommandCursor(String v)   { settings.set(K_COMMAND_AT, v != null ? v : ""); }
 
     public boolean isLocationTrackingEnabled()  { return "1".equals(settings.get(K_LOC_ENABLED, "1")); }
     public void setLocationTrackingEnabled(boolean v) { settings.set(K_LOC_ENABLED, v ? "1" : "0"); }
+
+    /** Location reporting interval while clocked in, in ms (default 10 min). Min 60s. */
+    public long getLocationIntervalMs() { return getLocationIntervalSeconds() * 1000L; }
+    public int getLocationIntervalSeconds() {
+        try { return Math.max(60, Integer.parseInt(settings.get(K_LOC_INTERVAL, "600"))); }
+        catch (Exception e) { return 600; }
+    }
+    public void setLocationIntervalSeconds(int sec) {
+        settings.set(K_LOC_INTERVAL, String.valueOf(Math.max(60, sec)));
+    }
 
     /** Forget enrollment (e.g. unbind device). */
     public void clear() {

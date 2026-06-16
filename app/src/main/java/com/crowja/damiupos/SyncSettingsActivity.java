@@ -22,7 +22,7 @@ public class SyncSettingsActivity extends AppCompatActivity {
 
     private SyncEngine engine;
     private TextView tvStatus;
-    private TextInputEditText etBaseUrl, etEnrollKey;
+    private TextInputEditText etBaseUrl, etEnrollKey, etProvisioningCode;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -36,9 +36,11 @@ public class SyncSettingsActivity extends AppCompatActivity {
         tvStatus = findViewById(R.id.tvStatus);
         etBaseUrl = findViewById(R.id.etBaseUrl);
         etEnrollKey = findViewById(R.id.etEnrollKey);
+        etProvisioningCode = findViewById(R.id.etProvisioningCode);
 
         SyncSettings cfg = engine.settings();
-        if (!cfg.getBaseUrl().isEmpty()) etBaseUrl.setText(cfg.getBaseUrl());
+        // Pre-fill the server URL so staff usually only type the provisioning code.
+        etBaseUrl.setText(cfg.getBaseUrl().isEmpty() ? SyncSettings.DEFAULT_BASE_URL : cfg.getBaseUrl());
 
         ((MaterialButton) findViewById(R.id.btnConnect)).setOnClickListener(v -> doConnect());
         ((MaterialButton) findViewById(R.id.btnSyncNow)).setOnClickListener(v -> doSyncNow());
@@ -63,18 +65,22 @@ public class SyncSettingsActivity extends AppCompatActivity {
 
     private void doConnect() {
         String baseUrl = text(etBaseUrl);
-        String key = text(etEnrollKey);
-        if (baseUrl.isEmpty() || key.isEmpty()) {
-            Toast.makeText(this, "Isi URL server dan kunci pendaftaran", Toast.LENGTH_SHORT).show();
+        // A provisioning code is the primary path; the long-lived enroll key is the fallback.
+        String code = text(etProvisioningCode);
+        String credential = !code.isEmpty() ? code : text(etEnrollKey);
+        if (baseUrl.isEmpty() || credential.isEmpty()) {
+            Toast.makeText(this, "Masukkan kode provisioning (atau kunci pendaftaran) dan URL server",
+                    Toast.LENGTH_SHORT).show();
             return;
         }
         tvStatus.setText("Menghubungkan…");
         String deviceName = (Build.MANUFACTURER + " " + Build.MODEL).trim();
         new Thread(() -> {
-            SyncEngine.Result r = engine.enroll(baseUrl, key, deviceName);
+            SyncEngine.Result r = engine.enroll(baseUrl, credential, deviceName);
             runOnUiThread(() -> {
                 if (r.ok) {
                     SyncScheduler.schedulePeriodic(getApplicationContext());
+                    if (etProvisioningCode != null) etProvisioningCode.setText("");
                     Toast.makeText(this, "Terhubung ke cabang "
                             + engine.settings().getBranchName(), Toast.LENGTH_LONG).show();
                     doSyncNow();
@@ -113,8 +119,8 @@ public class SyncSettingsActivity extends AppCompatActivity {
             String last = cfg.getLastSyncAt();
             sb.append("Sinkron terakhir: ").append(last.isEmpty() ? "belum pernah" : last);
         } else {
-            sb.append("Belum terhubung. Masukkan URL server dan kunci pendaftaran cabang, "
-                    + "lalu tekan Hubungkan.");
+            sb.append("Belum terhubung. Masukkan kode provisioning dari admin "
+                    + "(Dashboard → Kelola → Provisioning), lalu tekan Hubungkan.");
         }
         tvStatus.setText(sb.toString());
     }

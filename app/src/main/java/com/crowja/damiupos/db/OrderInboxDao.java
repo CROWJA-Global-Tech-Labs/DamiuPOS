@@ -32,7 +32,7 @@ public class OrderInboxDao {
         v.put(DatabaseHelper.COL_INBOX_PARSER, inbox.getParserUsed());
         v.put(DatabaseHelper.COL_INBOX_STATUS,
                 inbox.getStatus() != null ? inbox.getStatus() : OrderInbox.STATUS_PENDING);
-        return db.insert(DatabaseHelper.TABLE_ORDER_INBOX, null, v);
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_ORDER_INBOX, v);
     }
 
     public int updateStatus(long id, String status, long trxId) {
@@ -40,7 +40,7 @@ public class OrderInboxDao {
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_INBOX_STATUS, status);
         v.put(DatabaseHelper.COL_INBOX_TRX_ID, trxId);
-        return db.update(DatabaseHelper.TABLE_ORDER_INBOX, v,
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_ORDER_INBOX, v,
                 DatabaseHelper.COL_INBOX_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
@@ -61,7 +61,7 @@ public class OrderInboxDao {
                 + DatabaseHelper.COL_INBOX_STATUS + "=?) AND "
                 + DatabaseHelper.COL_INBOX_RECEIVED_AT
                 + " < datetime('now','localtime','-" + thresholdHours + " hours')";
-        return db.update(DatabaseHelper.TABLE_ORDER_INBOX, v, where,
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_ORDER_INBOX, v, where,
                 new String[]{OrderInbox.STATUS_APPROVED, OrderInbox.STATUS_REJECTED});
     }
 
@@ -70,7 +70,7 @@ public class OrderInboxDao {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_INBOX_REPLIED, 1);
-        return db.update(DatabaseHelper.TABLE_ORDER_INBOX, v,
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_ORDER_INBOX, v,
                 DatabaseHelper.COL_INBOX_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
@@ -137,14 +137,14 @@ public class OrderInboxDao {
         v.put(DatabaseHelper.COL_INBOX_PARSED_JSON, parsedJson);
         v.put(DatabaseHelper.COL_INBOX_PARSER, parserUsed);
         v.put(DatabaseHelper.COL_INBOX_REPLIED, 0);
-        return db.update(DatabaseHelper.TABLE_ORDER_INBOX, v,
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_ORDER_INBOX, v,
                 DatabaseHelper.COL_INBOX_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
 
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        return db.delete(DatabaseHelper.TABLE_ORDER_INBOX,
+        return dbHelper.syncDelete(db, DatabaseHelper.TABLE_ORDER_INBOX, "order_inbox",
                 DatabaseHelper.COL_INBOX_ID + "=?",
                 new String[]{String.valueOf(id)});
     }

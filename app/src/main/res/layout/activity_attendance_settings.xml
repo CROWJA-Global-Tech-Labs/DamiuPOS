@@ -56,7 +56,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
-                        android:text="Wajib login (PIN) untuk clock in. Staf foto wajah saat login/pulang; Istirahat mengunci aplikasi; Pulang otomatis kirim laporan ke email admin."
+                        android:text="Wajib login (PIN) untuk clock in. Staf foto wajah saat login/pulang; Istirahat mengunci aplikasi. Data absensi &amp; shift otomatis tersinkron ke dashboard web admin."
                         android:textColor="@color/text_secondary"
                         android:textSize="12sp" />
 
@@ -83,121 +83,6 @@
                             android:layout_height="1dp"
                             android:layout_marginTop="14dp"
                             android:background="#E0E0E0" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="12dp"
-                            android:text="Email Laporan Shift (otomatis saat Pulang)"
-                            android:textColor="@color/text_primary"
-                            android:textSize="14sp"
-                            android:textStyle="bold" />
-
-                        <com.google.android.material.textfield.TextInputLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="6dp"
-                            android:hint="Email Admin (tujuan laporan)">
-
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/etAdminEmail"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:inputType="textEmailAddress" />
-                        </com.google.android.material.textfield.TextInputLayout>
-
-                        <com.google.android.material.textfield.TextInputLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="6dp"
-                            android:hint="Email Pengirim (akun SMTP)">
-
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/etSmtpUser"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:inputType="textEmailAddress" />
-                        </com.google.android.material.textfield.TextInputLayout>
-
-                        <com.google.android.material.textfield.TextInputLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="6dp"
-                            android:hint="Password / App Password Pengirim"
-                            app:passwordToggleEnabled="true">
-
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/etSmtpPass"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:inputType="textPassword" />
-                        </com.google.android.material.textfield.TextInputLayout>
-
-                        <LinearLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:orientation="horizontal">
-
-                            <com.google.android.material.textfield.TextInputLayout
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="2"
-                                android:layout_marginTop="6dp"
-                                android:layout_marginEnd="6dp"
-                                android:hint="SMTP Host">
-
-                                <com.google.android.material.textfield.TextInputEditText
-                                    android:id="@+id/etSmtpHost"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:inputType="textUri" />
-                            </com.google.android.material.textfield.TextInputLayout>
-
-                            <com.google.android.material.textfield.TextInputLayout
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:layout_marginTop="6dp"
-                                android:hint="Port">
-
-                                <com.google.android.material.textfield.TextInputEditText
-                                    android:id="@+id/etSmtpPort"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:inputType="number" />
-                            </com.google.android.material.textfield.TextInputLayout>
-                        </LinearLayout>
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:text="Gmail: host smtp.gmail.com, port 587, pakai App Password (bukan password biasa)."
-                            android:textColor="@color/text_secondary"
-                            android:textSize="11sp" />
-
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnTestSmtp"
-                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="8dp"
-                            android:text="Test SMTP Server"
-                            android:textAllCaps="false"
-                            app:icon="@android:drawable/ic_menu_send"
-                            app:iconGravity="textStart" />
-
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnLaporanGagal"
-                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="8dp"
-                            android:text="Laporan Gagal Terkirim"
-                            android:textAllCaps="false"
-                            app:icon="@android:drawable/ic_menu_recent_history"
-                            app:iconGravity="textStart" />
-
                         <View
                             android:layout_width="match_parent"
                             android:layout_height="1dp"
@@ -265,64 +150,9 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="4dp"
-                            android:text="Jam kerja ideal per periode = (hari kerja/pekan × jumlah pekan dalam periode) × jam kerja ideal/hari. Lembur = kerja di atas jam ideal/hari; kalau kurang, ditampilkan kekurangannya. Di tanggal cut-off saat staff Pulang, rekap (ZIP: XLSX + foto) + slip gaji auto-kirim ke email admin."
+                            android:text="Jam kerja ideal per periode = (hari kerja/pekan × jumlah pekan dalam periode) × jam kerja ideal/hari. Lembur = kerja di atas jam ideal/hari; kalau kurang, ditampilkan kekurangannya. Rekap absensi &amp; slip gaji dilihat admin di dashboard web."
                             android:textColor="@color/text_secondary"
                             android:textSize="11sp" />
-
-                        <View
-                            android:layout_width="match_parent"
-                            android:layout_height="1dp"
-                            android:layout_marginTop="14dp"
-                            android:background="#E0E0E0" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="12dp"
-                            android:text="Rekap Pekanan (PDF)"
-                            android:textColor="@color/text_primary"
-                            android:textSize="14sp"
-                            android:textStyle="bold" />
-
-                        <com.google.android.material.switchmaterial.SwitchMaterial
-                            android:id="@+id/switchWeeklyRecap"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:text="Aktifkan rekap pekanan otomatis"
-                            android:textColor="@color/text_primary" />
-
-                        <LinearLayout
-                            android:id="@+id/weeklyRecapConfig"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:gravity="center_vertical"
-                            android:orientation="horizontal"
-                            android:visibility="gone">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:layout_marginEnd="8dp"
-                                android:text="Hari trigger:"
-                                android:textColor="@color/text_primary"
-                                android:textSize="13sp" />
-
-                            <Spinner
-                                android:id="@+id/spWeeklyDay"
-                                android:layout_width="0dp"
-                                android:layout_height="48dp"
-                                android:layout_weight="1" />
-                        </LinearLayout>
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:text="Tiap hari trigger (default Sabtu) saat staff Pulang, PDF semua konten Export untuk pekan tsb auto-kirim ke email admin. Retry di login berikutnya kalau gagal."
-                            android:textColor="@color/text_secondary"
-                            android:textSize="11sp" />
-
                         <View
                             android:layout_width="match_parent"
                             android:layout_height="1dp"

@@ -4,9 +4,11 @@ import androidx.annotation.Nullable;
 
 import org.json.JSONObject;
 
+import java.io.File;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.MediaType;
+import okhttp3.MultipartBody;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
@@ -66,6 +68,64 @@ public class SyncApi {
                 .header("Accept", "application/json")
                 .get().build();
         return execute(req);
+    }
+
+    /** Device identity + branch + live config (e.g. location_interval_seconds). */
+    public JSONObject me() throws Exception {
+        return get(cfg.getBaseUrl() + "/api/me", cfg.getToken());
+    }
+
+    /** Admin broadcasts for this branch newer than {@code sinceIso}. */
+    public JSONObject broadcasts(String sinceIso) throws Exception {
+        okhttp3.HttpUrl built = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/broadcasts")
+                .newBuilder()
+                .addQueryParameter("since", sinceIso != null ? sinceIso : "")
+                .build();
+        return get(built.toString(), cfg.getToken());
+    }
+
+    /** Dashboard → device commands for this device newer than {@code sinceIso}. */
+    public JSONObject commands(String sinceIso) throws Exception {
+        okhttp3.HttpUrl built = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/commands")
+                .newBuilder()
+                .addQueryParameter("since", sinceIso != null ? sinceIso : "")
+                .build();
+        return get(built.toString(), cfg.getToken());
+    }
+
+    /**
+     * Upload an image for a synced row. The server stores the file and returns its
+     * public URL ({@code {"url": "..."}}); the caller stamps that onto the row's
+     * photo_url column so it syncs to the dashboard. Branch-scoped by the token.
+     *
+     * @param entity server entity name (e.g. "customers", "attendance")
+     * @param uuid   the row's sync_uuid
+     * @param file   local image file
+     */
+    public JSONObject uploadMedia(String entity, String uuid, File file) throws Exception {
+        RequestBody fileBody = RequestBody.create(file, MediaType.parse("image/jpeg"));
+        RequestBody body = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("entity", entity)
+                .addFormDataPart("uuid", uuid)
+                .addFormDataPart("file", file.getName(), fileBody)
+                .build();
+        Request.Builder b = new Request.Builder()
+                .url(cfg.getBaseUrl() + "/api/media/upload")
+                .header("Accept", "application/json")
+                .post(body);
+        String token = cfg.getToken();
+        if (token != null && !token.isEmpty()) b.header("Authorization", "Bearer " + token);
+        return execute(b.build());
+    }
+
+    private JSONObject get(String url, String token) throws Exception {
+        Request.Builder b = new Request.Builder()
+                .url(url)
+                .header("Accept", "application/json")
+                .get();
+        if (token != null && !token.isEmpty()) b.header("Authorization", "Bearer " + token);
+        return execute(b.build());
     }
 
     private JSONObject post(String url, JSONObject body, @Nullable String token) throws Exception {

@@ -71,6 +71,12 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Viewer (lihat saja, tanpa transaksi &amp; absensi)" />
+
+            <RadioButton
+                android:id="@+id/rbRoleMarketing"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Marketing (promosi galon gratis, tanpa absensi)" />
         </RadioGroup>
 
         <com.google.android.material.switchmaterial.SwitchMaterial

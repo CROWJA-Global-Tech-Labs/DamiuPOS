@@ -170,12 +170,19 @@ public class MainActivity extends AppCompatActivity {
             startActivity(intent);
         });
 
+        View btnPromosi = findViewById(R.id.btnPromosi);
+        if (btnPromosi != null) btnPromosi.setOnClickListener(v ->
+                startActivity(new Intent(this, PromosiActivity.class)));
+
         btnFollowUp = findViewById(R.id.btnFollowUp);
         originalFollowUpTint = btnFollowUp.getBackgroundTintList();
         btnFollowUp.setOnClickListener(v -> {
             btnFollowUp.clearAnimation();
             startActivity(new Intent(this, FollowUpActivity.class));
         });
+
+        findViewById(R.id.btnAntrianDelivery).setOnClickListener(v ->
+                startActivity(new Intent(this, DeliveryQueueActivity.class)));
 
         findViewById(R.id.btnLaporan).setOnClickListener(v -> {
             startActivity(new Intent(this, ReportActivity.class));
@@ -464,13 +471,15 @@ public class MainActivity extends AppCompatActivity {
 
         boolean isAdmin = false;
         boolean isViewer = false;
+        boolean isMarketing = false;
         if (show) {
             com.crowja.damiupos.model.User cur =
                     new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid);
             isAdmin = cur != null && cur.isAdmin();
             isViewer = cur != null && cur.isViewer();
+            isMarketing = cur != null && cur.isMarketing();
         }
-        boolean tracksAttendance = show && !isAdmin && !isViewer; // hanya staf yang absen
+        boolean tracksAttendance = show && !isAdmin && !isViewer && !isMarketing; // hanya staf yang absen
 
         // Menu Karyawan hanya untuk admin yang sedang login.
         View cardKaryawan = findViewById(R.id.cardKaryawan);
@@ -481,6 +490,17 @@ public class MainActivity extends AppCompatActivity {
         View qaKembali = findViewById(R.id.btnGalonKembali);
         if (qaJual != null) qaJual.setVisibility(isViewer ? View.GONE : View.VISIBLE);
         if (qaKembali != null) qaKembali.setVisibility(isViewer ? View.GONE : View.VISIBLE);
+
+        // Marketing hanya melakukan Promosi → sembunyikan panel Jual/Kembali,
+        // tampilkan tombol Promosi (Admin lihat keduanya).
+        View cardQuickActions = findViewById(R.id.cardQuickActions);
+        if (cardQuickActions != null) {
+            cardQuickActions.setVisibility(isMarketing ? View.GONE : View.VISIBLE);
+        }
+        View btnPromosi = findViewById(R.id.btnPromosi);
+        if (btnPromosi != null) {
+            btnPromosi.setVisibility((show && (isMarketing || isAdmin)) ? View.VISIBLE : View.GONE);
+        }
 
         if (!show) return;
 
@@ -496,7 +516,7 @@ public class MainActivity extends AppCompatActivity {
             if (btnIstirahat != null) btnIstirahat.setVisibility(View.GONE);
             if (btnClockOut != null) btnClockOut.setVisibility(View.GONE);
             if (btnAdminLogout != null) btnAdminLogout.setVisibility(View.VISIBLE);
-            tvShift.setText(isViewer ? "Viewer" : "Admin");
+            tvShift.setText(isViewer ? "Viewer" : isMarketing ? "Marketing" : "Admin");
         } else {
             if (btnIstirahat != null) btnIstirahat.setVisibility(View.VISIBLE);
             if (btnClockOut != null) btnClockOut.setVisibility(View.VISIBLE);
@@ -608,7 +628,9 @@ public class MainActivity extends AppCompatActivity {
                             .log(uid, Attendance.EVENT_BREAK);
                     // Pause pengingat jam kerja — di-rearm saat clock in lagi.
                     WorkHoursReminder.cancel(getApplicationContext(), uid);
-                    LocationService.stop(getApplicationContext());
+                    // Istirahat: berhenti melacak LOKASI, tapi service tetap hidup
+                    // (poll-only) supaya polling background tetap aktif selama shift.
+                    LocationService.startBreak(getApplicationContext());
                     settingsDao.clearCurrentUser();
                     Intent i = new Intent(this, LoginActivity.class);
                     i.putExtra(LoginActivity.EXTRA_FROM_BREAK, true);
@@ -672,9 +694,6 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        // Foto login diambil SEBELUM OUT (setelah OUT, shift berjalan tertutup).
-        String loginPhoto = attDao.getCurrentShiftLoginPhoto(uid);
-        String summary = ShiftReporter.buildSummaryText(this, dbHelper, uid, uname);
         // "Jam kerja hari ini" untuk popup apresiasi — dibatasi tanggal hari ini
         // (akurat walau shift sempat dibiarkan terbuka lintas hari).
         long workMs = ShiftReporter.workedMillisToday(dbHelper, uid);
@@ -685,91 +704,18 @@ public class MainActivity extends AppCompatActivity {
         // (sinkron). Kalau popup apresiasi hilang karena rotasi/destroy, gate
         // onCreate tetap mengarahkan ke login (tidak terjebak masih "login").
         WorkHoursReminder.cancel(getApplicationContext(), uid);
+        // Shift selesai → tutup flag + hentikan service polling/lokasi.
+        settingsDao.setShiftActive(false);
         LocationService.stop(getApplicationContext());
         pendingLogoutUid = 0;
         pendingLogoutName = null;
         settingsDao.clearCurrentUser();
 
-        // Rekap pekanan & bulanan (cut-off) yang due di-enqueue & dikirim lewat
-        // progress window di bawah (bersama laporan shift) — bukan async lagi,
-        // supaya user lihat progress & tetap standby sampai semua terkirim.
+        // Data shift (termasuk event OUT + foto) tersimpan lokal & didorong ke
+        // server — admin melihatnya di dashboard web. Tidak ada lagi email.
+        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
 
-        // Kirim laporan shift (teks + foto login & pulang) ke email admin.
-        if (settingsDao.isShiftEmailConfigured()) {
-            String depot = settingsDao.getDepotName();
-            if (depot == null || depot.isEmpty()) depot = "DAMIU POS";
-            String stamp = new java.text.SimpleDateFormat("dd MMM yyyy HH:mm",
-                    new Locale("id", "ID")).format(new java.util.Date());
-            String subject = "Laporan Shift - " + depot + " - " + uname + " - " + stamp;
-            String body = summary
-                    + "\n\nFoto wajah saat Clock In & Pulang terlampir."
-                    + "\nDikirim otomatis oleh DAMIU POS.";
-            java.util.List<java.io.File> atts = new java.util.ArrayList<>();
-            addIfExists(atts, loginPhoto);
-            addIfExists(atts, logoutPhoto);
-            // Write-ahead ke antrian, lalu kirim dengan progress bar — user
-            // diminta tetap standby sampai semua laporan terkirim.
-            ShiftEmailSender.enqueue(getApplicationContext(), "Laporan Shift",
-                    subject, body, atts, null);
-            sendReportsWithProgressThenLogout(uid, uname, workMs);
-        } else {
-            Toast.makeText(this,
-                    "Email/SMTP admin belum diatur — laporan tidak terkirim",
-                    Toast.LENGTH_LONG).show();
-            showAppreciationThenLogout(uname, workMs, 0);
-        }
-    }
-
-    /**
-     * Progress bar pengiriman laporan (shift + laporan lain di antrian) saat
-     * Pulang. Setelah selesai (sukses/gagal), lanjut ke popup apresiasi lalu
-     * login. Dialog tidak bisa dibatalkan supaya user menunggu hingga selesai.
-     */
-    private void sendReportsWithProgressThenLogout(long uid, String uname, long workMs) {
-        View view = LayoutInflater.from(this).inflate(R.layout.dialog_sending_report, null);
-        final android.widget.ProgressBar pb = view.findViewById(R.id.pbSending);
-        final TextView status = view.findViewById(R.id.tvSendingStatus);
-        status.setText("Menyiapkan laporan…");
-        final AlertDialog dlg = new AlertDialog.Builder(this)
-                .setView(view)
-                .setCancelable(false)
-                .create();
-        dlg.show();
-
-        final Context app = getApplicationContext();
-        final DatabaseHelper db = DatabaseHelper.getInstance(this);
-        // Bangun + enqueue rekap pekanan/bulanan + slip gaji (di hari cut-off) yang
-        // due (build berat: ZIP/PDF/XLSX → background thread), lalu kirim SEMUA
-        // lewat progress window. Marker di-set oleh enqueue; antrian retry jika gagal.
-        new Thread(() -> {
-            try {
-                AttendanceRecap.enqueueDueWeeklyRecap(app, db);
-                AttendanceRecap.enqueueDueRecap(app, db);
-                AttendanceRecap.enqueueDuePayslip(app, db, uid, uname);
-            } catch (Throwable ignored) {}
-            runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed()) return;
-                ShiftEmailSender.flushAllWithProgress(app,
-                        new ShiftEmailSender.ProgressCallback() {
-                            @Override
-                            public void onProgress(int current, int total, String label) {
-                                if (isFinishing() || isDestroyed()) return;
-                                pb.setMax(Math.max(total, 1));
-                                pb.setProgress(current);
-                                status.setText("Mengirim " + current + " dari " + total
-                                        + " — " + label);
-                            }
-                            @Override
-                            public void onComplete(int sent, int remaining) {
-                                try { dlg.dismiss(); } catch (Throwable ignored) {}
-                                // Kalau activity sudah hilang (mis. rotasi), sesi sudah
-                                // di-clear → gate onCreate mengarahkan ke login.
-                                if (isFinishing() || isDestroyed()) return;
-                                showAppreciationThenLogout(uname, workMs, remaining);
-                            }
-                        });
-            });
-        }, "report-prep").start();
+        showAppreciationThenLogout(uname, workMs);
     }
 
     /**
@@ -777,7 +723,7 @@ public class MainActivity extends AppCompatActivity {
      * ke layar login setelah user menekan OK. Dialog tidak bisa dibatalkan
      * supaya clock out selalu tuntas.
      */
-    private void showAppreciationThenLogout(String uname, long workMs, int remaining) {
+    private void showAppreciationThenLogout(String uname, long workMs) {
         String first = (uname != null && !uname.isEmpty()) ? uname : "Kak";
         SpannableStringBuilder msg = new SpannableStringBuilder();
         msg.append("Terima kasih, " + first + "! Kerja kerasmu hari ini sangat berarti.\n\n");
@@ -802,12 +748,6 @@ public class MainActivity extends AppCompatActivity {
                                 + " (" + galonPeriod + " galon)",
                         Color.parseColor("#2E7D32"), false, 1f);
             } catch (Exception ignored) {}
-        }
-        if (remaining > 0) {
-            msg.append("\n\n");
-            appendStyled(msg, "⚠ " + remaining + " laporan belum terkirim — akan dicoba "
-                            + "lagi otomatis saat login berikutnya.",
-                    Color.parseColor("#E65100"), false, 1f);
         }
         msg.append("\n\nIstirahat yang cukup, sampai jumpa besok! 👋");
         new AlertDialog.Builder(this)
@@ -846,12 +786,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private static void addIfExists(java.util.List<java.io.File> list, String path) {
-        if (path == null || path.isEmpty()) return;
-        java.io.File f = new java.io.File(path);
-        if (f.exists()) list.add(f);
-    }
-
     /** Admin: logout biasa tanpa absensi/laporan. */
     private void doAdminLogout() {
         settingsDao.clearCurrentUser();
@@ -873,26 +807,6 @@ public class MainActivity extends AppCompatActivity {
         // Ikon amplop (inbox pesanan WA) hanya tampil kalau auto-detect aktif.
         MenuItem inbox = menu.findItem(R.id.action_inbox);
         if (inbox != null) inbox.setVisible(settingsDao.isWaAutoDetectEnabled());
-        // "Slip Gaji Saya" hanya untuk staf yang sedang login (yang punya absensi).
-        MenuItem slip = menu.findItem(R.id.action_payslip);
-        if (slip != null) {
-            boolean staff = false;
-            long uid = settingsDao.getCurrentUserId();
-            if (settingsDao.isMultiUserEnabled() && uid > 0) {
-                com.crowja.damiupos.model.User u = new com.crowja.damiupos.db.UserDao(
-                        DatabaseHelper.getInstance(this)).getById(uid);
-                staff = u != null && u.tracksAttendance();
-            }
-            slip.setVisible(staff);
-        }
-        // "Kirim Pending Laporan" hanya muncul kalau ada laporan gagal di antrian.
-        MenuItem pend = menu.findItem(R.id.action_send_pending);
-        if (pend != null) {
-            int n = 0;
-            try { n = ShiftEmailSender.listPending(this).size(); } catch (Throwable ignored) {}
-            pend.setTitle(n > 0 ? "Kirim Pending Laporan (" + n + ")" : "Kirim Pending Laporan");
-            pend.setVisible(n > 0);
-        }
         return super.onPrepareOptionsMenu(menu);
     }
 
@@ -908,14 +822,6 @@ public class MainActivity extends AppCompatActivity {
             startActivity(new Intent(this, OrderInboxActivity.class));
             return true;
         }
-        if (item.getItemId() == R.id.action_payslip) {
-            exportMyPayslip();
-            return true;
-        }
-        if (item.getItemId() == R.id.action_send_pending) {
-            sendPendingReports();
-            return true;
-        }
         if (item.getItemId() == R.id.action_sync) {
             startActivity(new Intent(this, SyncSettingsActivity.class));
             return true;
@@ -923,99 +829,6 @@ public class MainActivity extends AppCompatActivity {
         return super.onOptionsItemSelected(item);
     }
 
-    /**
-     * Staf export slip gaji-nya sendiri sebagai XLSX ter-password (password =
-     * PIN admin). Pilih periode cut-off lalu bagikan.
-     */
-    private void exportMyPayslip() {
-        long uid = settingsDao.getCurrentUserId();
-        if (uid <= 0) return;
-        final String uname = settingsDao.getCurrentUserName();
-        final String adminPin = new com.crowja.damiupos.db.UserDao(
-                DatabaseHelper.getInstance(this)).getPrimaryAdminPin();
-        if (adminPin == null || adminPin.isEmpty()) {
-            Toast.makeText(this, "PIN admin belum tersedia untuk mengunci file slip.",
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
-        int cutoff = settingsDao.getPayrollCutoffDay();
-        final String[] cur = AttendanceRecap.monthlyPeriod(cutoff);
-        final String[] prev = AttendanceRecap.previousPeriod(cutoff);
-        String[] labels = {
-                "Periode berjalan (" + cur[0] + " s/d " + cur[1] + ")",
-                "Periode lalu (" + prev[0] + " s/d " + prev[1] + ")"
-        };
-        new AlertDialog.Builder(this)
-                .setTitle("Slip Gaji Saya (XLSX terkunci)")
-                .setItems(labels, (d, which) ->
-                        doExportMyPayslip(uid, uname, adminPin, which == 0 ? cur : prev))
-                .setNegativeButton("Batal", null)
-                .show();
-    }
-
-    private void doExportMyPayslip(long uid, String uname, String pin, String[] period) {
-        final Context app = getApplicationContext();
-        final DatabaseHelper db = DatabaseHelper.getInstance(this);
-        Toast.makeText(this, "Membuat slip (terkunci)…", Toast.LENGTH_SHORT).show();
-        new Thread(() -> {
-            // ZIP ber-password (PIN admin) berisi XLSX biasa — diterima WA,
-            // diekstrak pakai PIN, lalu XLSX terbuka di penampil apa pun.
-            java.io.File f = PayslipXlsx.buildProtectedZip(app, db, uid, uname,
-                    period[0], period[1], pin);
-            runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed()) return;
-                if (f == null) {
-                    Toast.makeText(this, "Gagal membuat slip gaji.", Toast.LENGTH_LONG).show();
-                    return;
-                }
-                try {
-                    Uri uri = androidx.core.content.FileProvider.getUriForFile(
-                            this, getPackageName() + ".fileprovider", f);
-                    String mime = "application/zip";
-                    Intent i = new Intent(Intent.ACTION_SEND);
-                    i.setType(mime);
-                    i.putExtra(Intent.EXTRA_STREAM, uri);
-                    i.putExtra(Intent.EXTRA_SUBJECT, "Slip Gaji " + uname);
-                    i.setClipData(new android.content.ClipData("Slip Gaji",
-                            new String[]{mime}, new android.content.ClipData.Item(uri)));
-                    i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                    Toast.makeText(this, "ZIP dikunci PIN admin. Ekstrak pakai PIN admin → "
-                            + "XLSX terbuka di app apa pun.", Toast.LENGTH_LONG).show();
-                    startActivity(Intent.createChooser(i, "Bagikan Slip Gaji"));
-                } catch (Exception e) {
-                    Toast.makeText(this, "Gagal membagikan: " + e.getMessage(),
-                            Toast.LENGTH_LONG).show();
-                }
-            });
-        }, "my-payslip").start();
-    }
-
-    /** Kirim ulang semua laporan yang gagal terkirim (antrian pending). */
-    private void sendPendingReports() {
-        float d = getResources().getDisplayMetrics().density;
-        android.widget.LinearLayout row = new android.widget.LinearLayout(this);
-        row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
-        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-        int pad = (int) (20 * d);
-        row.setPadding(pad, pad, pad, pad);
-        android.widget.ProgressBar pb = new android.widget.ProgressBar(this);
-        TextView tv = new TextView(this);
-        tv.setText("Mengirim laporan pending…");
-        tv.setPadding((int) (16 * d), 0, 0, 0);
-        row.addView(pb);
-        row.addView(tv);
-        AlertDialog dlg = new AlertDialog.Builder(this)
-                .setView(row).setCancelable(false).create();
-        dlg.show();
-        ShiftEmailSender.resendAllAsync(getApplicationContext(), (sent, remaining) -> {
-            try { dlg.dismiss(); } catch (Throwable ignored) {}
-            if (isFinishing() || isDestroyed()) return;
-            Toast.makeText(this, sent + " laporan terkirim"
-                    + (remaining > 0 ? ", " + remaining + " masih gagal" : "") + ".",
-                    Toast.LENGTH_LONG).show();
-            invalidateOptionsMenu();
-        });
-    }
 
     private void showAboutDialog() {
         View view = LayoutInflater.from(this).inflate(R.layout.dialog_about, null);
@@ -1098,8 +911,9 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         refreshDashboard();
-        // Online realtime: (re)connect MQTT for version/broadcast/sync push.
-        com.crowja.damiupos.sync.MqttManager.get().ensureConnected(getApplicationContext());
+        // Online (REST, no MQTT): kick a sync + online tick (config/version/
+        // broadcasts) so opening the app pulls fresh data and admin messages.
+        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
         // Listen broadcast pesanan WA baru
         IntentFilter f = new IntentFilter(WaListenerService.ACTION_NEW_ORDER);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -1179,6 +993,22 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /** Badge jumlah order di Antrian Delivery (PENDING). */
+    private void updateDeliveryBadge() {
+        TextView badge = findViewById(R.id.tvDeliveryBadge);
+        if (badge == null) return;
+        int count = 0;
+        try {
+            count = transactionDao.countDeliveryQueue();
+        } catch (Exception ignored) {}
+        if (count > 0) {
+            badge.setText(String.valueOf(count));
+            badge.setVisibility(View.VISIBLE);
+        } else {
+            badge.setVisibility(View.GONE);
+        }
+    }
+
     private void updateStockIndicator() {
         // Indikator stok sekarang menempel di card "Galon Beredar"
         // (tile Stok Galon sudah dihapus, card jadi pintu masuknya).
@@ -1244,6 +1074,7 @@ public class MainActivity extends AppCompatActivity {
         // Setelah refreshOperatorBar (visibilitas tombol Jual sudah final untuk
         // role saat ini) → evaluasi badge Transaksi Pending.
         updatePendingTrxIndicator();
+        updateDeliveryBadge();
 
         // Recent transactions
         List<Transaction> recent = transactionDao.getRecent(10);

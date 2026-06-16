@@ -66,6 +66,8 @@ public class CustomerFormActivity extends AppCompatActivity {
     private long editId = -1;
 
     private String currentPhotoPath;
+    /** Photo path loaded when editing — used to detect a photo change (→ re-upload). */
+    private String originalPhotoPath;
     private double latitude = 0;
     private double longitude = 0;
 
@@ -128,6 +130,7 @@ public class CustomerFormActivity extends AppCompatActivity {
 
                 if (customer.getPhotoPath() != null && !customer.getPhotoPath().isEmpty()) {
                     currentPhotoPath = customer.getPhotoPath();
+                    originalPhotoPath = currentPhotoPath;
                     File photoFile = new File(currentPhotoPath);
                     if (photoFile.exists()) {
                         ivFotoRumah.setImageBitmap(loadRotatedBitmap(currentPhotoPath));
@@ -396,6 +399,11 @@ public class CustomerFormActivity extends AppCompatActivity {
         if (editId != -1) {
             customer.setId(editId);
             customerDao.update(customer);
+            // Photo changed → clear the stale server URL so the new file re-uploads
+            // (MediaUploader runs before push, so the dashboard URL stays current).
+            if (currentPhotoPath != null && !currentPhotoPath.equals(originalPhotoPath)) {
+                customerDao.clearPhotoUrl(editId);
+            }
             Toast.makeText(this, "Pelanggan berhasil diupdate", Toast.LENGTH_SHORT).show();
             finish();
         } else {

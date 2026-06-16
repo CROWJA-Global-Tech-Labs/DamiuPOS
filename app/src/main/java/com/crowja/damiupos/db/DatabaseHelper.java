@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 26;
+    private static final int DATABASE_VERSION = 29;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -32,6 +32,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_PHONE = "phone";
     public static final String COL_ADDRESS = "address";
     public static final String COL_PHOTO_PATH = "photo_path";
+    /** Server URL of the uploaded photo (set after a successful media upload;
+     *  synced so the web dashboard can show it). Reused for customers + attendance. */
+    public static final String COL_PHOTO_URL = "photo_url";
     public static final String COL_LATITUDE = "latitude";
     public static final String COL_LONGITUDE = "longitude";
     public static final String COL_CREATED_AT = "created_at";
@@ -89,6 +92,14 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     /** Reseller afiliasi: customer_id reseller yang mendapat komisi atas
      *  transaksi JUAL ini (mis. transaksi atas rujukan reseller). 0 = tidak ada. */
     public static final String COL_TRX_RESELLER_ID = "reseller_id";
+    /** Antrian Delivery: status pemrosesan order. PENDING = masih di antrian,
+     *  DONE = sudah ditandai Selesai. NULL = tidak diantrikan (mis. KEMBALI). */
+    public static final String COL_DELIVERY_STATUS = "delivery_status";
+    /** Wall-clock saat order masuk antrian (= waktu transaksi dibuat). Basis
+     *  timer real-time & durasi proses. Terpisah dari `tanggal` (bisa di-backdate). */
+    public static final String COL_DELIVERY_QUEUED_AT = "delivery_queued_at";
+    /** Wall-clock saat staf menandai order Selesai. Durasi = done_at − queued_at. */
+    public static final String COL_DELIVERY_DONE_AT = "delivery_done_at";
 
     // Table settings
     public static final String TABLE_SETTINGS = "settings";
@@ -216,6 +227,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_PHONE + " TEXT, " +
                     COL_ADDRESS + " TEXT, " +
                     COL_PHOTO_PATH + " TEXT, " +
+                    COL_PHOTO_URL + " TEXT, " +
                     COL_LATITUDE + " REAL DEFAULT 0, " +
                     COL_LONGITUDE + " REAL DEFAULT 0, " +
                     COL_IS_RESELLER + " INTEGER DEFAULT 0, " +
@@ -262,16 +274,24 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_HARGA_BOTOL + " REAL DEFAULT 0, " +
                     COL_PAYMENT_METHOD + " TEXT, " +
                     COL_TRX_RESELLER_ID + " INTEGER DEFAULT 0, " +
+                    COL_DELIVERY_STATUS + " TEXT, " +
+                    COL_DELIVERY_QUEUED_AT + " TEXT, " +
+                    COL_DELIVERY_DONE_AT + " TEXT, " +
                     COL_TANGGAL + " TEXT DEFAULT (datetime('now','localtime')), " +
                     COL_CATATAN + " TEXT, " +
                     "FOREIGN KEY(" + COL_CUSTOMER_ID + ") REFERENCES " +
                     TABLE_CUSTOMERS + "(" + COL_ID + ") ON DELETE CASCADE" +
                     ");";
 
+    // settings: key/value. edited_at/synced track which shared-config keys are
+    // dirty for the app_settings sync path (only whitelisted keys ever go dirty;
+    // synced defaults to 1 = clean so device-local keys are never pushed).
     private static final String CREATE_TABLE_SETTINGS =
             "CREATE TABLE " + TABLE_SETTINGS + " (" +
                     COL_SETTING_KEY + " TEXT PRIMARY KEY, " +
-                    COL_SETTING_VALUE + " TEXT" +
+                    COL_SETTING_VALUE + " TEXT, " +
+                    COL_EDITED_AT + " TEXT, " +
+                    COL_SYNCED + " INTEGER DEFAULT 1" +
                     ");";
 
     private static final String CREATE_TABLE_ORDER_INBOX =
@@ -350,7 +370,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_SAL_STATUS + " TEXT, " +
                     COL_SAL_BANK_NAME + " TEXT, " +
                     COL_SAL_BANK_NO + " TEXT, " +
-                    COL_SAL_BANK_HOLDER + " TEXT" +
+                    COL_SAL_BANK_HOLDER + " TEXT, " +
+                    // Sync columns (1:1 dgn staf — sync_uuid = sync_uuid staf).
+                    COL_SYNC_UUID + " TEXT, " +
+                    COL_EDITED_AT + " TEXT, " +
+                    COL_SYNCED + " INTEGER DEFAULT 0" +
                     ");";
 
     private static final String CREATE_TABLE_SALARY_ITEMS =
@@ -384,6 +408,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_ATT_USER_ID + " INTEGER NOT NULL, " +
                     COL_ATT_EVENT + " TEXT NOT NULL, " +
                     COL_ATT_PHOTO_PATH + " TEXT, " +
+                    COL_PHOTO_URL + " TEXT, " +
                     COL_ATT_TS + " TEXT DEFAULT (datetime('now','localtime')), " +
                     "FOREIGN KEY(" + COL_ATT_USER_ID + ") REFERENCES " +
                     TABLE_USERS + "(" + COL_USER_ID + ") ON DELETE CASCADE" +
@@ -593,6 +618,41 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
         if (oldVersion < 26) {
             installSyncInfra(db, true);   // additive columns + tombstones + backfill
+        }
+        if (oldVersion < 27) {
+            // salary_config joins sync (1:1 per staff). Add sync columns + backfill
+            // sync_uuid = the staff's sync_uuid (deterministic → no cross-device
+            // duplicate; server enforces unique(branch, staff_uuid)).
+            tryExec(db, "ALTER TABLE " + TABLE_SALARY + " ADD COLUMN " + COL_SYNC_UUID + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_SALARY + " ADD COLUMN " + COL_EDITED_AT + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_SALARY + " ADD COLUMN " + COL_SYNCED + " INTEGER DEFAULT 0");
+            tryExec(db, "UPDATE " + TABLE_SALARY + " SET " + COL_SYNC_UUID
+                    + " = (SELECT u." + COL_SYNC_UUID + " FROM " + TABLE_USERS + " u WHERE u."
+                    + COL_ID + " = " + TABLE_SALARY + "." + COL_SAL_USER_ID + "), "
+                    + COL_EDITED_AT + " = '" + nowIso() + "', " + COL_SYNCED + " = 0"
+                    + " WHERE " + COL_SYNC_UUID + " IS NULL");
+
+            // settings: add sync-tracking columns for the app_settings (shared
+            // config) path. Default synced=1 (clean) so existing device-local
+            // keys are never pushed until a whitelisted key is changed.
+            tryExec(db, "ALTER TABLE " + TABLE_SETTINGS + " ADD COLUMN " + COL_EDITED_AT + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_SETTINGS + " ADD COLUMN " + COL_SYNCED + " INTEGER DEFAULT 1");
+        }
+        if (oldVersion < 28) {
+            // photo_url: server URL of the uploaded customer photo / attendance selfie.
+            // Synced so the web dashboard can show images. Empty until MediaUploader
+            // uploads the local file; no backfill needed (existing rows re-upload on
+            // next sync because photo_url is empty while photo_path is set).
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_PHOTO_URL + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_ATTENDANCE + " ADD COLUMN " + COL_PHOTO_URL + " TEXT");
+        }
+        if (oldVersion < 29) {
+            // Antrian Delivery: per-order fulfillment tracking on transactions.
+            // Additive; existing rows keep NULL status (not queued). Synced so the
+            // web dashboard sees the queue + processing-time data.
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_STATUS + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_QUEUED_AT + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_DONE_AT + " TEXT");
         }
     }
 

@@ -649,6 +649,7 @@
 
             <!-- Quick Actions (dominant panel) -->
             <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardQuickActions"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
@@ -750,6 +751,32 @@
             </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- Promosi Galon Gratis — hanya untuk akun Marketing (dan Admin).
+                 Alur mirip Transaksi Baru: pelanggan baru + galon gratis. -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnPromosi"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:minHeight="76dp"
+                android:paddingTop="16dp"
+                android:paddingBottom="16dp"
+                android:text="🎁 Promosi Galon Gratis"
+                android:textAllCaps="false"
+                android:textColor="@color/white"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                app:backgroundTint="#2E7D32"
+                app:cornerRadius="16dp"
+                app:elevation="0dp"
+                android:stateListAnimator="@null"
+                app:icon="@android:drawable/ic_input_add"
+                app:iconPadding="8dp"
+                app:iconSize="26dp"
+                app:iconTint="@color/white"
+                app:iconGravity="textStart" />
+
             <!-- Menu Karyawan (absensi) — hanya tampil untuk admin saat multi
                  user aktif. Pintu masuk kelola pegawai, riwayat & rekap absensi. -->
             <com.google.android.material.card.MaterialCardView
@@ -821,6 +848,57 @@
                 android:layout_marginTop="8dp"
                 grid:columnCount="2"
                 grid:useDefaultMargins="false">
+
+                <FrameLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    grid:layout_columnWeight="1"
+                    grid:layout_gravity="fill_horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnAntrianDelivery"
+                        android:layout_width="match_parent"
+                        android:layout_height="64dp"
+                        android:layout_margin="4dp"
+                        android:minHeight="60dp"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:maxLines="2"
+                        android:text="Antrian\nDelivery"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#00897B"
+                        app:cornerRadius="14dp"
+                        app:elevation="3dp"
+                        app:icon="@android:drawable/ic_menu_directions"
+                        app:iconGravity="textStart"
+                        app:iconPadding="8dp"
+                        app:iconSize="22dp"
+                        app:iconTint="@color/white" />
+
+                    <TextView
+                        android:id="@+id/tvDeliveryBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="top|end"
+                        android:layout_marginTop="2dp"
+                        android:layout_marginEnd="2dp"
+                        android:background="@drawable/bg_pending_badge"
+                        android:minWidth="22dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:paddingTop="1dp"
+                        android:paddingBottom="1dp"
+                        android:elevation="6dp"
+                        android:gravity="center"
+                        android:text="0"
+                        android:textColor="@color/white"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+                </FrameLayout>
 
                 <FrameLayout
                     android:layout_width="0dp"

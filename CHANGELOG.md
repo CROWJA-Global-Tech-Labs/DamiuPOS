@@ -8,6 +8,15 @@ Brand UI: _by FREZ Tech & Innovation Labs_. Paket/identifier tetap `com.crowja.d
 
 ## Versi 1.2.10 — Transaksi Pending & Penyempurnaan
 
+### Sinkronisasi Cloud diperluas
+- Sinkron online kini mencakup **pesanan WA (order_inbox)**, **konfigurasi gaji per staf (salary_configs)**, dan **pengaturan depot (app_settings)** — otomatis menyebar ke semua perangkat cabang.
+- Data sensitif (token, sandi SMTP/Claude, sesi login) **tidak pernah** disinkronkan — hanya konfigurasi bisnis yang aman (allowlist). salary_config memakai `sync_uuid` = uuid staf (1:1, tanpa duplikat lintas perangkat).
+
+### Akun Marketing & Promosi (BARU)
+- **Peran "Marketing"**: jenis akun baru untuk staf pemasaran (login PIN, tanpa absensi).
+- **Promosi Galon Gratis**: akun Marketing (dan Admin) bisa memberi galon GRATIS ke pelanggan baru lewat alur mirip Transaksi Baru — pilih/tambah pelanggan, tentukan jumlah galon, simpan. Tercatat sebagai transaksi Rp 0 berpenanda `[PROMOSI]`.
+- Akun Marketing fokus ke Promosi: tombol **🎁 Promosi Galon Gratis** di dashboard; tidak bisa membuat transaksi penjualan biasa.
+
 ### Transaksi Pending (BARU)
 - **Catat transaksi pending**: di layar Jual Air Minum ada tombol **"Simpan sebagai Pending"** — dipakai saat pesanan belum bisa dieksekusi (mis. staf hendak pulang). Menyimpan pelanggan + ringkasan pesanan + catatan.
 - **Pill berkedip**: tombol **"Jual Air Minum"** menampilkan badge merah berkedip berisi jumlah transaksi pending.

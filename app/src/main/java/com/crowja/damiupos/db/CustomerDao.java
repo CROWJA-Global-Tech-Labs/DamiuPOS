@@ -301,6 +301,20 @@ public class CustomerDao {
         v.put(DatabaseHelper.COL_FOLLOWUP_EXCLUDED_AT,
                 new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new java.util.Date()));
         v.put(DatabaseHelper.COL_FOLLOWUP_EXCLUDE_REASON, reason);
+        // syncUpdate: bumps edited_at + dirty so the exclusion shares across the branch.
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_CUSTOMERS, v,
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
+    }
+
+    /**
+     * Kosongkan photo_url (URL foto di server) supaya foto baru di-upload ulang.
+     * Dipakai saat foto pelanggan diganti; MediaUploader jalan sebelum push, jadi
+     * URL di dashboard tetap mutakhir. Baris sudah dirty dari update() sebelumnya.
+     */
+    public void clearPhotoUrl(long customerId) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        android.content.ContentValues v = new android.content.ContentValues();
+        v.put(DatabaseHelper.COL_PHOTO_URL, "");
         db.update(DatabaseHelper.TABLE_CUSTOMERS, v,
                 DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
     }
@@ -310,7 +324,7 @@ public class CustomerDao {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         android.content.ContentValues v = new android.content.ContentValues();
         v.put(DatabaseHelper.COL_KOMISI_ADD_TO_PRICE, value ? 1 : 0);
-        db.update(DatabaseHelper.TABLE_CUSTOMERS, v,
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_CUSTOMERS, v,
                 DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
     }
 
@@ -320,7 +334,7 @@ public class CustomerDao {
         android.content.ContentValues v = new android.content.ContentValues();
         v.put(DatabaseHelper.COL_LAST_FOLLOWUP_AT,
                 new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new java.util.Date()));
-        db.update(DatabaseHelper.TABLE_CUSTOMERS, v,
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_CUSTOMERS, v,
                 DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
     }
 
