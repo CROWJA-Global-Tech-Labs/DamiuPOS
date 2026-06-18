@@ -98,7 +98,7 @@ public class ExpenseDao {
 
     private String earliestDateWhere(String category, String positiveCol) {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
-        Cursor c = db.rawQuery("SELECT MIN(date(" + DatabaseHelper.COL_EXPENSE_CREATED_AT + ")) FROM "
+        Cursor c = db.rawQuery("SELECT MIN(" + localDate(DatabaseHelper.COL_EXPENSE_CREATED_AT) + ") FROM "
                 + DatabaseHelper.TABLE_EXPENSES + " WHERE " + DatabaseHelper.COL_EXPENSE_CATEGORY
                 + "=? AND " + positiveCol + ">0", new String[]{category});
         String d = null;
@@ -115,6 +115,21 @@ public class ExpenseDao {
         c.close();
         return v;
     }
+
+    // -- created_at: campuran 2 format --
+    // created_at bisa tersimpan sebagai UTC ISO ("…Z", hasil sinkron dari server) ATAU
+    // wall-clock LOKAL "yyyy-MM-dd HH:mm:ss" (dibuat langsung di perangkat). Untuk
+    // pengelompokan "hari ini"/rentang tanggal/bulan, baris UTC HARUS dikonversi ke waktu
+    // lokal dulu — kalau tidak, pengeluaran sore (yang di UTC jatuh ke tanggal kemarin)
+    // hilang dari filter "Hari Ini". Baris lokal dibiarkan apa adanya. Cermin dari
+    // TransactionDao.localDt/localDate/localMonth.
+    private static String localDt(String col) {
+        return "(CASE WHEN " + col + " LIKE '%Z' THEN datetime(" + col + ",'localtime') ELSE " + col + " END)";
+    }
+    /** date() atas wall-clock lokal kolom tanggal (lihat {@link #localDt}). */
+    private static String localDate(String col) { return "date(" + localDt(col) + ")"; }
+    /** strftime('%Y-%m') atas wall-clock lokal kolom tanggal. */
+    private static String localMonth(String col) { return "strftime('%Y-%m'," + localDt(col) + ")"; }
 
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
@@ -150,7 +165,7 @@ public class ExpenseDao {
 
     /** All expenses within a date range (inclusive), newest first. Used by reports. */
     public List<Expense> getByDateRange(String startDate, String endDate) {
-        return query("date(" + DatabaseHelper.COL_EXPENSE_CREATED_AT + ") BETWEEN date(?) AND date(?)",
+        return query(localDate(DatabaseHelper.COL_EXPENSE_CREATED_AT) + " BETWEEN date(?) AND date(?)",
                 new String[]{startDate, endDate});
     }
 
@@ -159,7 +174,7 @@ public class ExpenseDao {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String q = "SELECT COALESCE(SUM(" + DatabaseHelper.COL_EXPENSE_AMOUNT + "),0) " +
                 "FROM " + DatabaseHelper.TABLE_EXPENSES + " " +
-                "WHERE date(" + DatabaseHelper.COL_EXPENSE_CREATED_AT + ") = date('now','localtime')";
+                "WHERE " + localDate(DatabaseHelper.COL_EXPENSE_CREATED_AT) + " = date('now','localtime')";
         Cursor c = db.rawQuery(q, null);
         double total = 0;
         if (c.moveToFirst()) total = c.getDouble(0);
@@ -172,7 +187,7 @@ public class ExpenseDao {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String q = "SELECT COALESCE(SUM(" + DatabaseHelper.COL_EXPENSE_AMOUNT + "),0) " +
                 "FROM " + DatabaseHelper.TABLE_EXPENSES + " " +
-                "WHERE strftime('%Y-%m', " + DatabaseHelper.COL_EXPENSE_CREATED_AT + ") " +
+                "WHERE " + localMonth(DatabaseHelper.COL_EXPENSE_CREATED_AT) + " " +
                 "    = strftime('%Y-%m','now','localtime')";
         Cursor c = db.rawQuery(q, null);
         double total = 0;
