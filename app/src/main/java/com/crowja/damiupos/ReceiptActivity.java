@@ -1192,11 +1192,11 @@ public class ReceiptActivity extends AppCompatActivity {
     /** Pesan WhatsApp: sapaan + (jika ada) link lacak pengiriman live + teks kampanye aktif. */
     private String composeTrackingCaption(String custName) {
         String name = (custName != null && !custName.isEmpty()) ? custName : "Pelanggan";
-        StringBuilder sb = new StringBuilder("Halo " + name
+        StringBuilder sb = new StringBuilder("👋 Assalamu'alaikum " + name
                 + ", berikut struk pembelian air minum Anda. Terima kasih 🙏");
         String url = trackingUrl();
         if (url != null) {
-            sb.append("\n\nPantau progres pengiriman & lokasi kurir secara langsung di sini:\n")
+            sb.append("\n\n🚚 Pantau progres pengiriman & lokasi kurir secara langsung di sini:\n")
                     .append(url);
         }
         appendActiveCampaigns(sb);
@@ -1204,9 +1204,10 @@ public class ReceiptActivity extends AppCompatActivity {
     }
 
     /**
-     * Sisipkan teks + link tiap kampanye aktif yang menyasar perangkat ini dan BELUM pernah dikirim
-     * ke pelanggan ini. Mencatat "delivery" (anti-kirim-ulang) lalu memicu sinkronisasi agar
-     * link {@code /c/{token}} bisa dibuka pelanggan. No-op tanpa pelanggan / belum terhubung server.
+     * Sisipkan judul + link tiap kampanye aktif yang menyasar perangkat ini dan BELUM TERPENUHI untuk
+     * pelanggan ini (belum pernah diklik). Link DILAMPIRKAN ULANG di tiap struk sampai pelanggan klik —
+     * atau kampanye dihapus/dinonaktifkan di web. Memakai delivery yang sama (token tetap) lalu memicu
+     * sinkronisasi agar link {@code /c/{token}} bisa dibuka. No-op tanpa pelanggan / belum terhubung server.
      */
     private void appendActiveCampaigns(StringBuilder sb) {
         long custId = getIntent().getLongExtra(EXTRA_CUSTOMER_ID, -1);
@@ -1226,14 +1227,17 @@ public class ReceiptActivity extends AppCompatActivity {
                     cDao.activeForCustomer(deviceUuid, custId);
             boolean any = false;
             for (com.crowja.damiupos.db.CampaignDao.Pending p : pending) {
-                String token = cDao.createDelivery(p.campaignLocalId, custId);
-                if (token == null) continue;               // sudah pernah dikirim → lewati
-                sb.append("\n\n📣 ").append(p.title != null ? p.title : "");
-                if (p.bodyText != null && !p.bodyText.isEmpty()) sb.append("\n").append(p.bodyText);
-                sb.append("\n").append(base).append("/c/").append(token);
+                String token = cDao.ensureDelivery(p.campaignLocalId, custId);
+                if (token == null) continue;               // sudah diklik (terpenuhi) → lewati
+                // Cukup judul (📣 + tebal WA *…*) + ajakan klik link; isi selengkapnya ada di halaman
+                // kampanye (/c/{token}), bukan di pesan WA — biar pesannya ringkas.
+                sb.append("\n\n📣 *").append(p.title != null ? p.title : "").append("*")
+                        .append("\nUntuk info selengkapnya, silakan klik link di bawah ini:")
+                        .append("\n").append(base).append("/c/").append(token);
                 any = true;
             }
             if (any) {
+                sb.append("\n\nTerima kasih 🙏");
                 // Dorong sinkronisasi supaya delivery sampai ke server sebelum pelanggan membuka link.
                 com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
             }

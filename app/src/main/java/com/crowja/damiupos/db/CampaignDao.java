@@ -13,11 +13,15 @@ import java.util.UUID;
 
 /**
  * Kampanye pelanggan (Phase 2, device side). Campaigns are pulled from the web (read-only here);
- * a {@link #createDelivery delivery} is minted on this device the first time a campaign is shared
- * with a customer (alongside the struk + tracking link) and then synced up. The
- * (campaign, customer) pair is the anti-rebroadcast key, so a customer never gets the same
- * campaign twice — even across the branch's devices (deliveries are branch-wide, so a delivery
- * another phone created is pulled here and dedupes the share).
+ * a {@link #ensureDelivery delivery} is minted on this device the first time a campaign is shared
+ * with a customer (alongside the struk + tracking link) and then synced up.
+ *
+ * The campaign keeps being RE-ATTACHED to the same customer's struk on every sale until it is
+ * "fulfilled" — i.e. UNTIL EITHER the customer clicked its link at least once (clicked_at, set on the
+ * web and synced down) OR the campaign is removed on the web (deactivate → is_active=0 on pull;
+ * delete → tombstone removes the local row, so it drops out of {@link #activeForCustomer}). Each
+ * re-attach reuses the SAME (campaign, customer) delivery token, so it's one delivery per customer —
+ * even across the branch's devices (deliveries are branch-wide, pulled & respected here).
  */
 public class CampaignDao {
 
@@ -45,10 +49,10 @@ public class CampaignDao {
     }
 
     /**
-     * Active campaigns that target {@code deviceUuid} and have NOT yet been delivered to this
-     * customer — i.e. exactly what should be appended to the struk message for this sale.
-     * A deactivated or web-deleted campaign drops out (deactivate → is_active=0 on pull; delete →
-     * tombstone removes the local row), so it can never be (re)shared.
+     * Active campaigns that target {@code deviceUuid} and are NOT yet fulfilled for this customer —
+     * i.e. the customer hasn't clicked the link yet — so they should be (re)appended to this sale's
+     * struk. A deactivated or web-deleted campaign drops out (deactivate → is_active=0 on pull;
+     * delete → tombstone removes the local row), so it stops being shared too.
      */
     public List<Pending> activeForCustomer(String deviceUuid, long customerLocalId) {
         List<Pending> out = new ArrayList<>();
@@ -63,7 +67,7 @@ public class CampaignDao {
                 long id = c.getLong(0);
                 String targets = c.getString(3);
                 if (!targetsInclude(targets, deviceUuid)) continue;
-                if (hasDelivery(db, id, customerLocalId)) continue;
+                if (hasClickedDelivery(db, id, customerLocalId)) continue;   // sudah diklik → terpenuhi, stop
                 out.add(new Pending(id, c.getString(1), c.getString(2)));
             }
         } finally {
@@ -85,10 +89,12 @@ public class CampaignDao {
         return false;
     }
 
-    private static boolean hasDelivery(SQLiteDatabase db, long campaignLocalId, long customerLocalId) {
+    /** Has this customer CLICKED this campaign's link at least once? (clicked_at is web-set, synced down.) */
+    private static boolean hasClickedDelivery(SQLiteDatabase db, long campaignLocalId, long customerLocalId) {
         Cursor c = db.query(DatabaseHelper.TABLE_CAMPAIGN_DELIVERIES,
                 new String[]{DatabaseHelper.COL_ID},
-                DatabaseHelper.COL_CD_CAMPAIGN_ID + "=? AND " + DatabaseHelper.COL_CD_CUSTOMER_ID + "=?",
+                DatabaseHelper.COL_CD_CAMPAIGN_ID + "=? AND " + DatabaseHelper.COL_CD_CUSTOMER_ID + "=? AND "
+                        + DatabaseHelper.COL_CD_CLICKED_AT + " IS NOT NULL AND " + DatabaseHelper.COL_CD_CLICKED_AT + " != ''",
                 new String[]{String.valueOf(campaignLocalId), String.valueOf(customerLocalId)},
                 null, null, null, "1");
         try {
@@ -98,16 +104,35 @@ public class CampaignDao {
         }
     }
 
+    /** Token of an existing (not-yet-clicked) delivery for this pair, or null — to re-attach the SAME link. */
+    private static String existingToken(SQLiteDatabase db, long campaignLocalId, long customerLocalId) {
+        Cursor c = db.query(DatabaseHelper.TABLE_CAMPAIGN_DELIVERIES,
+                new String[]{DatabaseHelper.COL_CD_TOKEN},
+                DatabaseHelper.COL_CD_CAMPAIGN_ID + "=? AND " + DatabaseHelper.COL_CD_CUSTOMER_ID + "=?",
+                new String[]{String.valueOf(campaignLocalId), String.valueOf(customerLocalId)},
+                null, null, DatabaseHelper.COL_CD_SENT_AT + " DESC", "1");
+        try {
+            return (c.moveToFirst() && c.getString(0) != null && !c.getString(0).isEmpty()) ? c.getString(0) : null;
+        } finally {
+            c.close();
+        }
+    }
+
     /**
-     * Record that {@code campaignLocalId} was shared with {@code customerLocalId}: mint a public
-     * token and insert a dirty "sent" delivery (pushed to the server on the next sync, which is
-     * what makes the {@code /c/{token}} link resolve). Returns the token, or {@code null} on
-     * failure. Idempotent — a duplicate (campaign, customer) is ignored and returns null.
+     * Get-or-create the sharable delivery for (campaign, customer) and return its public token to
+     * attach to the struk. Keeps re-attaching the SAME link on every sale until the customer clicks:
+     *   • already CLICKED → returns {@code null} (fulfilled, stop sharing);
+     *   • an unclicked delivery exists → returns its existing token (re-attach the same {@code /c/{token}});
+     *   • none yet → mints a new token + a dirty "sent" delivery (pushed next sync so the link resolves).
+     * Reusing the token means one delivery per customer (no duplicates), and a delivery another phone
+     * created/whose click synced down is respected here too.
      */
-    public String createDelivery(long campaignLocalId, long customerLocalId) {
+    public String ensureDelivery(long campaignLocalId, long customerLocalId) {
         if (campaignLocalId <= 0 || customerLocalId <= 0) return null;
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        if (hasDelivery(db, campaignLocalId, customerLocalId)) return null;
+        if (hasClickedDelivery(db, campaignLocalId, customerLocalId)) return null;   // sudah diklik → terpenuhi
+        String existing = existingToken(db, campaignLocalId, customerLocalId);
+        if (existing != null) return existing;                                       // lampirkan ulang link sama
         String token = newToken();
         String now = DatabaseHelper.nowIso();
         ContentValues v = new ContentValues();
