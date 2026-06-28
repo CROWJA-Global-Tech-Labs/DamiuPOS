@@ -11,6 +11,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ViewFlipper;
 
+import androidx.activity.result.ActivityResultLauncher;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
@@ -20,9 +21,14 @@ import androidx.core.content.ContextCompat;
 import com.crowja.damiupos.db.DatabaseBackupHelper;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
+import com.crowja.damiupos.sync.SyncEngine;
+import com.crowja.damiupos.sync.SyncScheduler;
+import com.crowja.damiupos.sync.SyncSettings;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.google.android.material.textfield.TextInputEditText;
+import com.journeyapps.barcodescanner.ScanContract;
+import com.journeyapps.barcodescanner.ScanOptions;
 
 import java.io.InputStream;
 
@@ -34,9 +40,16 @@ public class WizardActivity extends AppCompatActivity {
     private static final int TOTAL_STEPS = 6;
 
     private ViewFlipper flipper;
-    private TextView tvStepTitle, tvStepIndicator, tvImportStatus;
+    private TextView tvStepTitle, tvStepIndicator, tvImportStatus, tvProvisionStatus;
     private ProgressBar progress;
     private MaterialButton btnBack, btnNext, btnImportContacts;
+
+    // QR provisioning during onboarding — scans the dashboard's {url,code} QR and
+    // enrolls this fresh phone to its branch (reuses the online sync engine).
+    private final ActivityResultLauncher<ScanOptions> qrLauncher =
+            registerForActivityResult(new ScanContract(), result -> {
+                if (result.getContents() != null) handleProvisionScan(result.getContents());
+            });
 
     private TextInputEditText etDepotName, etDepotAddress, etDepotPhone;
     private TextInputEditText etDefaultOngkir, etHargaBotolGalon, etPointsPerAmount, etPointsReward;
@@ -108,6 +121,19 @@ public class WizardActivity extends AppCompatActivity {
         View btnImportDb = findViewById(R.id.btnImportDbWizard);
         if (btnImportDb != null) {
             btnImportDb.setOnClickListener(v -> startImportDb());
+        }
+
+        tvProvisionStatus = findViewById(R.id.tvProvisionStatus);
+        View btnProvision = findViewById(R.id.btnProvisionWizard);
+        if (btnProvision != null) {
+            btnProvision.setOnClickListener(v -> {
+                ScanOptions options = new ScanOptions();
+                options.setDesiredBarcodeFormats(ScanOptions.QR_CODE);
+                options.setPrompt("Arahkan ke QR provisioning di dashboard (Perangkat → Provisioning)");
+                options.setBeepEnabled(true);
+                options.setOrientationLocked(false);
+                qrLauncher.launch(options);
+            });
         }
 
         updateStepUI();
@@ -322,5 +348,73 @@ public class WizardActivity extends AppCompatActivity {
                     .setPositiveButton("OK", null)
                     .show();
         }
+    }
+
+    // ==========================================================================
+    // Online provisioning via QR (offered on the welcome step so a new depot phone
+    // can connect to its branch during onboarding — same flow as Settings → Sync).
+    // ==========================================================================
+
+    /**
+     * Parse a scanned provisioning QR ({"url":...,"code":...} from the dashboard),
+     * enroll this device on a background thread, then offer to open the app with the
+     * branch's data synced. Falls back to treating the whole scan as the code and the
+     * default server URL.
+     */
+    private void handleProvisionScan(String contents) {
+        String url = "", code = "";
+        try {
+            org.json.JSONObject j = new org.json.JSONObject(contents);
+            url = j.optString("url", "");
+            code = j.optString("code", "");
+        } catch (org.json.JSONException ignored) {}
+        if (code.isEmpty()) code = contents;                      // plain-text QR = the code itself
+        if (url.isEmpty()) url = SyncSettings.DEFAULT_BASE_URL;   // QR may omit the URL
+
+        if (tvProvisionStatus != null) tvProvisionStatus.setText("Menghubungkan ke dashboard…");
+        final String baseUrl = url, credential = code.trim();
+        final String deviceName = (android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).trim();
+        final SyncEngine engine = new SyncEngine(this);
+        new Thread(() -> {
+            SyncEngine.Result r = engine.enroll(baseUrl, credential, deviceName);
+            if (r.ok) engine.sync();   // pull the branch's shared data right away
+            runOnUiThread(() -> {
+                if (r.ok) {
+                    SyncScheduler.schedulePeriodic(getApplicationContext());
+                    if (tvProvisionStatus != null)
+                        tvProvisionStatus.setText("Terhubung ke cabang "
+                                + engine.settings().getBranchName());
+                    showProvisionSuccess(engine.settings().getBranchName());
+                } else {
+                    if (tvProvisionStatus != null)
+                        tvProvisionStatus.setText("Gagal: " + r.error);
+                    new AlertDialog.Builder(this)
+                            .setTitle("Gagal Hubungkan")
+                            .setMessage("Tidak bisa mendaftar ke dashboard:\n\n" + r.error
+                                    + "\n\nPastikan kode masih berlaku (15 menit) dan ada koneksi internet.")
+                            .setPositiveButton("OK", null)
+                            .show();
+                }
+            });
+        }).start();
+    }
+
+    private void showProvisionSuccess(String branchName) {
+        new AlertDialog.Builder(this)
+                .setTitle("Perangkat Terhubung")
+                .setMessage("Berhasil terhubung ke cabang \"" + branchName + "\". "
+                        + "Data cabang akan tersinkron otomatis. Buka aplikasi sekarang, "
+                        + "atau lanjutkan setup untuk mengatur info depot di HP ini.")
+                .setCancelable(false)
+                .setPositiveButton("Buka Aplikasi", (d, w) -> {
+                    settingsDao.setWizardCompleted(true);
+                    startActivity(new Intent(this, MainActivity.class)
+                            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK
+                                    | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                                    | Intent.FLAG_ACTIVITY_NEW_TASK));
+                    finish();
+                })
+                .setNegativeButton("Lanjutkan Setup", null)
+                .show();
     }
 }

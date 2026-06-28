@@ -3,6 +3,11 @@
 Daftar fitur yang sudah diimplementasikan, dari yang terbaru.
 Brand: by FREZ Tech & Innovation Labs.
 
+## Berbasis Web Dashboard
+
+- **Analisa & Prediksi pindah ke web dashboard**: metrik penjualan 30 hari, prediksi order air baku/segel/tutup, serta biaya & laba per galon kini dihitung & ditampilkan di dashboard online (menu **Analisa & Prediksi**), bukan lagi di HP. Liter/galon diatur dari **Konfigurasi** dashboard.
+- **Provisioning saat setup awal**: HP baru bisa langsung terhubung ke cabang dengan **Scan QR** dari dashboard di layar setup awal.
+
 ## Versi 1.2.10 — Transaksi Pending & Penyempurnaan
 
 ### Sinkronisasi Cloud diperluas

@@ -1,5 +1,8 @@
 package com.crowja.damiupos.adapter;
 
+import android.text.Spannable;
+import android.text.SpannableStringBuilder;
+import android.text.style.ForegroundColorSpan;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -13,9 +16,12 @@ import com.crowja.damiupos.model.Transaction;
 import com.crowja.damiupos.model.TransactionItem;
 
 import java.text.NumberFormat;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.TimeZone;
 
 public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.ViewHolder> {
 
@@ -25,6 +31,15 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
     // Hoisted supaya tidak alokasi/lookup per-bind (main-thread, aman dibagi).
     private static final NumberFormat NF = NumberFormat.getInstance(new Locale("id", "ID"));
     private static final int ORANGE = android.graphics.Color.parseColor("#E65100");
+
+    // Palet warna titik item — warna stabil per nama produk (hash → indeks palet).
+    private static final int[] DOT_PALETTE = {
+            0xFF1976D2, 0xFF388E3C, 0xFFE64A19, 0xFF7B1FA2,
+            0xFF00838F, 0xFFC2185B, 0xFFF9A825, 0xFF5D4037,
+    };
+    // Format tampilan tanggal kartu transaksi (waktu lokal perangkat).
+    private static final SimpleDateFormat OUT_DATE_FMT =
+            new SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.US);
 
     private List<Transaction> transactions = new ArrayList<>();
     private boolean showCustomerName = true;
@@ -64,6 +79,59 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
         return transactions.size();
     }
 
+    /** "● ● ●  N produk" — satu titik berwarna per produk (warna stabil per nama produk),
+     *  diikuti jumlah produk. Mengganti daftar nama produk yang panjang. Bekerja sama baik
+     *  untuk transaksi yang dibuat di perangkat maupun di web dashboard (keduanya menyimpan
+     *  items_json yang sama; pid opsional saat parse). */
+    private static CharSequence buildItemDots(Transaction trx) {
+        List<TransactionItem> items = trx.getItems();
+        SpannableStringBuilder sb = new SpannableStringBuilder();
+        int count;
+        if (items != null && !items.isEmpty()) {
+            for (TransactionItem it : items) appendDot(sb, it != null ? it.productName : null);
+            count = items.size();
+        } else {
+            appendDot(sb, trx.getProductName());
+            count = 1;
+        }
+        sb.append(count + " produk");
+        return sb;
+    }
+
+    private static void appendDot(SpannableStringBuilder sb, String productName) {
+        int start = sb.length();
+        sb.append("●"); // ●
+        sb.setSpan(new ForegroundColorSpan(dotColor(productName)),
+                start, sb.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+        sb.append("  ");     // jarak antar titik / sebelum "N item"
+    }
+
+    private static int dotColor(String name) {
+        if (name == null) name = "";
+        return DOT_PALETTE[(name.hashCode() & 0x7fffffff) % DOT_PALETTE.length];
+    }
+
+    /** Format tanggal transaksi → "dd/MM/yyyy HH:mm:ss" (waktu lokal perangkat).
+     *  Menerima "yyyy-MM-dd HH:mm:ss" (lokal) atau ISO UTC "…THH:mm:ss[.ffffff]Z". */
+    private static String formatTanggal(String raw) {
+        if (raw == null) return "";
+        String s = raw.trim();
+        if (s.isEmpty()) return "";
+        try {
+            boolean utc = s.endsWith("Z");
+            String core = utc ? s.substring(0, s.length() - 1) : s;
+            int dot = core.indexOf('.');
+            if (dot > 0) core = core.substring(0, dot);   // buang pecahan detik
+            core = core.replace('T', ' ').trim();
+            SimpleDateFormat in = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
+            if (utc) in.setTimeZone(TimeZone.getTimeZone("UTC"));
+            Date d = in.parse(core);
+            return d != null ? OUT_DATE_FMT.format(d) : raw;
+        } catch (Exception e) {
+            return raw;   // format tak dikenal → tampilkan apa adanya
+        }
+    }
+
     class ViewHolder extends RecyclerView.ViewHolder {
         View cardTransaction;
         TextView tvTypeIcon, tvType, tvCustomerName, tvDate, tvGalonCount, tvHarga;
@@ -89,22 +157,9 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
             if (isJual) {
                 tvTypeIcon.setBackgroundResource(R.drawable.bg_type_jual);
                 tvTypeIcon.setText("\u2191"); // arrow up
-                String typeLabel = "Jual";
-                List<TransactionItem> items = trx.getItems();
-                if (items != null && items.size() > 1) {
-                    StringBuilder sb = new StringBuilder();
-                    for (int i = 0; i < items.size(); i++) {
-                        if (i > 0) sb.append(" + ");
-                        sb.append(items.get(i).productName);
-                    }
-                    typeLabel = sb.toString();
-                } else if (items != null && items.size() == 1) {
-                    typeLabel = items.get(0).productName;
-                } else if (trx.getProductName() != null && !trx.getProductName().isEmpty()) {
-                    typeLabel = trx.getProductName();
-                }
-                tvType.setText(typeLabel);
-                tvType.setTextColor(colorPrimary);
+                // Ganti daftar nama produk \u2192 titik berwarna per item + "N item".
+                tvType.setText(buildItemDots(trx));
+                tvType.setTextColor(colorPrimary);  // warna teks "N item"; titik pakai span warna sendiri
                 tvGalonCount.setTextColor(colorPrimary);
             } else {
                 boolean isGantiRugi = trx.getTotalHarga() > 0
@@ -125,13 +180,18 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
             }
 
             if (showCustomerName && trx.getCustomerName() != null) {
-                tvCustomerName.setText("- " + trx.getCustomerName());
+                // Potong nama pelanggan: maks 20 karakter pertama + "…".
+                String cn = trx.getCustomerName();
+                if (cn.length() > 20) cn = cn.substring(0, 20) + "...";
+                tvCustomerName.setText("- " + cn);
                 tvCustomerName.setVisibility(View.VISIBLE);
             } else {
                 tvCustomerName.setVisibility(View.GONE);
             }
 
-            String dateLine = trx.getTanggal() != null ? trx.getTanggal() : "";
+            // Pakai waktu efektif (edited_at, konsisten) — selaras dengan urutan list &
+            // monoton, sementara tanggal lama hasil sinkron bisa ter-skew tz.
+            String dateLine = formatTanggal(trx.getEffectiveTime());   // dd/MM/yyyy HH:mm:ss (waktu lokal)
             String pay = isJual ? trx.getPaymentMethodLabel() : "";
             if (pay != null && !pay.isEmpty()) dateLine += "  ·  " + pay;
             tvDate.setText(dateLine);

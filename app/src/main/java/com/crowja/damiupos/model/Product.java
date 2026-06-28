@@ -2,6 +2,7 @@ package com.crowja.damiupos.model;
 
 public class Product {
     private long id;
+    private String uuid;   // sync_uuid (sama di web + semua HP) — kunci harga khusus per pelanggan
     private String name;
     private double hargaJual;
     private double hargaModal;
@@ -18,6 +19,9 @@ public class Product {
 
     public long getId() { return id; }
     public void setId(long id) { this.id = id; }
+
+    public String getUuid() { return uuid; }
+    public void setUuid(String uuid) { this.uuid = uuid; }
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }

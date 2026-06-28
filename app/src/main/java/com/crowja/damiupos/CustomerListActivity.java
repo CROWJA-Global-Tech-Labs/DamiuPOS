@@ -170,6 +170,8 @@ public class CustomerListActivity extends AppCompatActivity
                     .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
             menu.add(0, 1, 1, "Sinkronisasi dari Kontak")
                     .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
+            menu.add(0, 3, 2, "Hapus Duplikat")
+                    .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
         }
     }
 
@@ -178,6 +180,7 @@ public class CustomerListActivity extends AppCompatActivity
         int id = item.getItemId();
         if (id == 1) { syncFromContacts(); return true; }
         if (id == 2) { showSortDialog(); return true; }
+        if (id == 3) { confirmDedupe(); return true; }
         if (id == 101) { confirmDeleteSelected(); return true; }
         if (id == 102) { adapter.selectAll(); return true; }
         return super.onOptionsItemSelected(item);
@@ -209,6 +212,48 @@ public class CustomerListActivity extends AppCompatActivity
                 })
                 .setNegativeButton("Batal", null)
                 .show();
+    }
+
+    /** Konfirmasi lalu jalankan pembersihan duplikat pelanggan. */
+    private void confirmDedupe() {
+        new AlertDialog.Builder(this)
+                .setTitle("Hapus Duplikat")
+                .setMessage("Rapikan daftar pelanggan?\n\n"
+                        + "1. Nomor HP SAMA → digabungkan jadi satu (diutamakan yang punya "
+                        + "transaksi, koordinat, lalu foto; data terkait dialihkan, sisanya dihapus).\n\n"
+                        + "2. Nama SAMA tapi nomor BERBEDA (mis. satu usaha dua nomor) → "
+                        + "diberi nomor \"Nama #1\", \"Nama #2\", … (tidak dihapus).")
+                .setPositiveButton("Rapikan", (d, w) -> runDedupe())
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    private void runDedupe() {
+        Toast.makeText(this, "Merapikan pelanggan…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            final CustomerDao.DedupeResult r = customerDao.mergeDuplicatesByPhone();
+            final int renamed = customerDao.numberDuplicateNames();   // setelah merge
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                // Dorong perubahan (penggabungan + penomoran + tombstone) ke dashboard.
+                com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                loadCustomers(etSearch.getText().toString().trim());
+                StringBuilder sb = new StringBuilder();
+                if (r.deleted > 0) {
+                    sb.append(r.deleted).append(" pelanggan duplikat (nomor HP sama) digabungkan dari ")
+                            .append(r.groups).append(" nomor.\n");
+                }
+                if (renamed > 0) {
+                    sb.append(renamed).append(" pelanggan bernama sama diberi nomor #1, #2, ….\n");
+                }
+                if (sb.length() == 0) sb.append("Tidak ada duplikat nomor HP atau nama sama ditemukan.");
+                new AlertDialog.Builder(this)
+                        .setTitle("Rapikan Pelanggan Selesai")
+                        .setMessage(sb.toString().trim())
+                        .setPositiveButton("OK", null)
+                        .show();
+            });
+        }).start();
     }
 
     private void syncFromContacts() {

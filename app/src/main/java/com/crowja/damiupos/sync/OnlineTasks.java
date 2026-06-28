@@ -69,10 +69,10 @@ public final class OnlineTasks {
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject o = arr.optJSONObject(i);
                 if (o == null) continue;
-                OnlineNotifier.postNotif(ctx,
+                OnlineNotifier.deliverAdminMessage(ctx,
                         o.optString("title", "DAMIU POS"),
                         o.optString("body", ""),
-                        7861 + (i % 40));   // distinct ids; avoids the version notif (7842)
+                        7861 + (i % 40));   // notif + popup in-app; distinct ids (avoids version 7842)
                 String at = o.optString("created_at", "");
                 if (at.compareTo(maxAt) > 0) maxAt = at;
             }
@@ -109,13 +109,31 @@ public final class OnlineTasks {
             case "message": {
                 String title = payload != null ? payload.optString("title", "DAMIU POS") : "DAMIU POS";
                 String body = payload != null ? payload.optString("body", "") : "";
-                OnlineNotifier.postNotif(ctx, title, body, 7871);
+                OnlineNotifier.deliverAdminMessage(ctx, title, body, 7871);   // notif + popup in-app
                 break;
             }
             case "locate":
                 // Push a fresh GPS fix if a shift is currently tracking location.
                 LocationService.reconfigure(ctx);
                 break;
+            case "pull_data": {
+                // Dashboard "Pull Data": full-upload customers/transactions/expenses for import.
+                SyncEngine.Result r = new SyncEngine(ctx).fullExport();
+                OnlineNotifier.postNotif(ctx, "Tarik Data",
+                        r.ok ? (r.pushed + " data dikirim ke server" + (r.pulled > 0 ? " · " + r.pulled + " bentrok untuk ditinjau" : ""))
+                             : ("Gagal mengirim data: " + (r.error != null ? r.error : "tidak diketahui")),
+                        7873);
+                break;
+            }
+            case "pull_settings": {
+                // Dashboard "Tarik Pengaturan": upload this phone's shareable settings for review.
+                SyncEngine.Result r = new SyncEngine(ctx).exportSettings();
+                OnlineNotifier.postNotif(ctx, "Tarik Pengaturan",
+                        r.ok ? (r.pushed + " pengaturan dikirim ke server untuk ditinjau di dashboard")
+                             : ("Gagal mengirim pengaturan: " + (r.error != null ? r.error : "tidak diketahui")),
+                        7874);
+                break;
+            }
             case "unbind":
                 cfg.clear();                      // drop token + disable sync
                 SyncScheduler.cancelAll(ctx);     // stop periodic worker

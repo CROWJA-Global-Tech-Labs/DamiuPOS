@@ -26,6 +26,9 @@ public class SettingsDao {
     public static final String KEY_DEPOT_NAME = "depot_name";
     public static final String KEY_DEPOT_ADDRESS = "depot_address";
     public static final String KEY_DEPOT_PHONE = "depot_phone";
+    /** URL logo depot (di-set di web Konfigurasi, disinkron lewat app_settings). Diunduh & di-cache
+     *  lokal lalu ditampilkan di Pengaturan + struk. */
+    public static final String KEY_DEPOT_LOGO_URL = "depot_logo_url";
     public static final String KEY_WIZARD_COMPLETED = "wizard_completed";
     public static final String KEY_FOLLOWUP_DAYS = "followup_days";
     public static final String KEY_STOCK_ALERT = "stock_alert";
@@ -90,6 +93,10 @@ public class SettingsDao {
     /** Id user yang sedang login (clock in). 0 = tidak ada (idle/istirahat). */
     public static final String KEY_CURRENT_USER_ID = "current_user_id";
     public static final String KEY_CURRENT_USER_NAME = "current_user_name";
+    /** User yang sedang istirahat (shift masih terbuka) — supaya bisa "Lanjut Kerja"
+     *  satu ketukan tanpa PIN/selfie. 0 = tidak ada yang istirahat. */
+    public static final String KEY_BREAK_USER_ID = "break_user_id";
+    public static final String KEY_BREAK_USER_NAME = "break_user_name";
     /** 1 = ada shift terbuka (antara clock in pertama s/d Pulang), termasuk saat
      *  istirahat. Dipakai service polling agar tetap aktif selama shift. */
     public static final String KEY_SHIFT_ACTIVE = "shift_active";
@@ -108,9 +115,10 @@ public class SettingsDao {
     public static final Set<String> SHAREABLE_KEYS = new HashSet<>(Arrays.asList(
             KEY_DEFAULT_ONGKIR,
             KEY_POINTS_ENABLED, KEY_POINTS_PER_AMOUNT, KEY_POINTS_REWARD_THRESHOLD,
-            KEY_DEPOT_NAME, KEY_DEPOT_ADDRESS, KEY_DEPOT_PHONE,
+            KEY_DEPOT_NAME, KEY_DEPOT_ADDRESS, KEY_DEPOT_PHONE, KEY_DEPOT_LOGO_URL,
             KEY_FOLLOWUP_DAYS, KEY_FOLLOWUP_TEMPLATE,
             KEY_STOCK_ALERT, KEY_HARGA_BOTOL_GALON, KEY_RESELLER_KOMISI,
+            KEY_MULTIUSER_ENABLED,
             KEY_DAILY_NORMAL_HOURS, KEY_WORK_DAYS_PER_WEEK, KEY_LITERS_PER_GALON,
             KEY_SALES_BONUS_ENABLED, KEY_SALES_BONUS_PER_GALON,
             KEY_PAYROLL_CUTOFF_DAY,
@@ -155,6 +163,21 @@ public class SettingsDao {
             String key = c.getString(0);
             if (!SHAREABLE_KEYS.contains(key)) continue;   // defense in depth
             out.add(new String[]{key, c.getString(1), c.getString(2)});
+        }
+        c.close();
+        return out;
+    }
+
+    /** All whitelisted (shareable) settings as key→value — uploaded for archiving on enroll. */
+    public java.util.Map<String, String> getAllShared() {
+        java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.query(DatabaseHelper.TABLE_SETTINGS,
+                new String[]{DatabaseHelper.COL_SETTING_KEY, DatabaseHelper.COL_SETTING_VALUE},
+                null, null, null, null, null);
+        while (c.moveToNext()) {
+            String key = c.getString(0);
+            if (SHAREABLE_KEYS.contains(key)) out.put(key, c.getString(1));
         }
         c.close();
         return out;
@@ -215,6 +238,29 @@ public class SettingsDao {
         return result;
     }
 
+    // -- Pesan admin tertunda --
+    // Pesan dari dashboard ("Kirim Pesan ke Perangkat") yang belum sempat ditampilkan
+    // sebagai popup karena app sedang di background. Disimpan lokal (bukan SHAREABLE_KEYS,
+    // jadi tidak ikut sync) lalu ditampilkan saat MainActivity berikutnya tampil.
+    private static final String K_PENDING_MSG_TITLE = "pending_admin_msg_title";
+    private static final String K_PENDING_MSG_BODY  = "pending_admin_msg_body";
+
+    public void setPendingAdminMessage(String title, String body) {
+        set(K_PENDING_MSG_TITLE, title != null ? title : "");
+        set(K_PENDING_MSG_BODY, body != null ? body : "");
+    }
+    public String getPendingAdminMessageTitle() { return get(K_PENDING_MSG_TITLE, ""); }
+    public String getPendingAdminMessageBody()  { return get(K_PENDING_MSG_BODY, ""); }
+    /** Ada pesan admin yang belum ditampilkan sebagai popup? */
+    public boolean hasPendingAdminMessage() {
+        String t = getPendingAdminMessageTitle();
+        return t != null && !t.isEmpty();
+    }
+    public void clearPendingAdminMessage() {
+        set(K_PENDING_MSG_TITLE, "");
+        set(K_PENDING_MSG_BODY, "");
+    }
+
     public double getDefaultOngkir() {
         String val = get(KEY_DEFAULT_ONGKIR, "0");
         try {
@@ -273,6 +319,9 @@ public class SettingsDao {
 
     public String getDepotPhone() { return get(KEY_DEPOT_PHONE, ""); }
     public void setDepotPhone(String v) { set(KEY_DEPOT_PHONE, v != null ? v : ""); }
+
+    /** URL logo depot (disinkron dari web). Kosong = belum di-set. */
+    public String getDepotLogoUrl() { return get(KEY_DEPOT_LOGO_URL, ""); }
 
     public boolean isWizardCompleted() { return "1".equals(get(KEY_WIZARD_COMPLETED, "0")); }
     public void setWizardCompleted(boolean v) { set(KEY_WIZARD_COMPLETED, v ? "1" : "0"); }
@@ -523,6 +572,24 @@ public class SettingsDao {
         set(KEY_MULTIUSER_ENABLED, enabled ? "1" : "0");
     }
 
+    /**
+     * Disable multi-user LOCALLY only — write the value clean (synced=1) so it is never
+     * pushed back to the dashboard. Used by the anti-lockout failsafe: a single phone that
+     * somehow ends up with no usable user must not turn off staff login branch-wide (the key
+     * is now dashboard-authoritative via {@link #SHAREABLE_KEYS}). The dashboard value still
+     * wins on the next pull.
+     */
+    public void setMultiUserEnabledLocal(boolean enabled) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_SETTING_KEY, KEY_MULTIUSER_ENABLED);
+        v.put(DatabaseHelper.COL_SETTING_VALUE, enabled ? "1" : "0");
+        v.put(DatabaseHelper.COL_EDITED_AT, DatabaseHelper.nowIso());
+        v.put(DatabaseHelper.COL_SYNCED, 1);
+        db.insertWithOnConflict(DatabaseHelper.TABLE_SETTINGS, null, v,
+                SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
     /** Jam kerja normal per hari (ambang lembur harian + basis normalisasi bulanan). */
     public double getDailyNormalHours() {
         try {
@@ -602,6 +669,18 @@ public class SettingsDao {
         set(KEY_CURRENT_USER_NAME, name != null ? name : "");
     }
     public void clearCurrentUser() { setCurrentUser(0, ""); }
+
+    /** User yang sedang istirahat (shift terbuka) → boleh "Lanjut Kerja" tanpa PIN/selfie. 0 = tidak ada. */
+    public long getBreakUserId() {
+        try { return Long.parseLong(get(KEY_BREAK_USER_ID, "0")); }
+        catch (NumberFormatException e) { return 0L; }
+    }
+    public String getBreakUserName() { return get(KEY_BREAK_USER_NAME, ""); }
+    public void setBreakUser(long id, String name) {
+        set(KEY_BREAK_USER_ID, String.valueOf(id));
+        set(KEY_BREAK_USER_NAME, name != null ? name : "");
+    }
+    public void clearBreakUser() { setBreakUser(0, ""); }
 
     /** Shift terbuka (clock in pertama s/d Pulang, termasuk istirahat). */
     public boolean isShiftActive() { return "1".equals(get(KEY_SHIFT_ACTIVE, "0")); }

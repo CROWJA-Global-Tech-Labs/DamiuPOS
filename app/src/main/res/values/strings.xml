@@ -36,4 +36,5 @@
     <string name="pilih_pelanggan">Pilih Pelanggan</string>
     <string name="wa_tidak_tersedia">WhatsApp tidak terinstall</string>
     <string name="no_telepon_kosong">Nomor telepon pelanggan kosong</string>
+    <string name="wa_autosend_desc">Otomatis menekan tombol "Kirim" di WhatsApp tepat setelah DAMIU POS membagikan struk ke pelanggan, sehingga staf tidak perlu menekan Kirim manual. Layanan ini hanya membaca layar WhatsApp dan hanya aktif beberapa detik setelah Anda membagikan struk.</string>
 </resources>

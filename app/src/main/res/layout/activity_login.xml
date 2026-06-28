@@ -39,6 +39,25 @@
             android:textColor="#CCFFFFFF"
             android:textSize="13sp" />
 
+        <!-- Tombol "Lanjut Kerja" satu ketukan: hanya tampil saat ada user yang sedang
+             istirahat (shift terbuka). Lanjut tanpa PIN/selfie. Diatur di LoginActivity. -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnResume"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="24dp"
+            android:text="▶ Lanjut Kerja"
+            android:textAllCaps="false"
+            android:textColor="@color/white"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:visibility="gone"
+            app:backgroundTint="#2E7D32"
+            app:cornerRadius="14dp"
+            app:icon="@android:drawable/ic_media_play"
+            app:iconGravity="textStart"
+            app:iconTint="@color/white" />
+
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -105,5 +124,37 @@
             android:textColor="#CCFFFFFF"
             android:textSize="12sp"
             android:visibility="gone" />
+
+        <!-- Provisioning entry: connect/re-provision this device to the online
+             server straight from the login screen, no need to sign in first.
+             Enrollment still requires the admin provisioning code/QR. -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="28dp"
+            android:background="#33FFFFFF" />
+
+        <TextView
+            android:id="@+id/tvSyncStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:gravity="center"
+            android:textColor="#CCFFFFFF"
+            android:textSize="12sp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnProvision"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Hubungkan ke Server"
+            android:textAllCaps="false"
+            android:textColor="@color/white"
+            app:cornerRadius="12dp"
+            app:icon="@android:drawable/ic_popup_sync"
+            app:iconTint="@color/white"
+            app:strokeColor="#66FFFFFF" />
     </LinearLayout>
 </ScrollView>

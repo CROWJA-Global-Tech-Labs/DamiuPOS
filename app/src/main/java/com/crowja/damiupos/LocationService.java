@@ -76,16 +76,32 @@ public class LocationService extends Service {
         ContextCompat.startForegroundService(ctx, new Intent(ctx, LocationService.class));
     }
 
-    /** Keep the shift service alive in POLL-ONLY mode during istirahat (no GPS). */
-    public static void startBreak(Context ctx) {
+    /**
+     * (Re)start the service in POLL-ONLY mode (no GPS). Used for istirahat, after
+     * Pulang, and when location sharing is turned off — polling keeps running so the
+     * app stays synced with the dashboard in the background regardless of shift.
+     */
+    public static void pollOnly(Context ctx) {
         SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(ctx)));
         if (!cfg.isEnrolled()) return;
         // The foreground service is typed "location"; starting it needs the location
-        // permission that working mode already held (break always follows working).
+        // permission (the only FGS type without an Android-14 daily time cap).
         if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED) return;
         ContextCompat.startForegroundService(ctx,
                 new Intent(ctx, LocationService.class).putExtra(EXTRA_POLL_ONLY, true));
+    }
+
+    /**
+     * Ensure the continuous online/sync service is running whenever the app is open
+     * and enrolled — independent of any shift — so dashboard changes (new staff,
+     * config, commands, broadcasts) reach the phone in near real-time even in the
+     * background. No-op if already running (keeps its current GPS/poll mode) or if
+     * location permission isn't granted yet (the foreground-service type requires it).
+     */
+    public static void ensureOnline(Context ctx) {
+        if (RUNNING) return;
+        pollOnly(ctx);
     }
 
     public static void stop(Context ctx) {
@@ -97,6 +113,31 @@ public class LocationService extends Service {
         if (RUNNING) start(ctx);
     }
 
+    /**
+     * Best-effort: stamp an attendance event with the device's last known GPS so clock in/out
+     * carries location for the dashboard (no "Tanpa lokasi"). Async + no-op when permission or a
+     * fix is unavailable; updates the row + marks it dirty so the next sync pushes the coordinates.
+     */
+    public static void stampAttendanceLocation(Context ctx, long attendanceId) {
+        if (attendanceId <= 0) return;
+        Context app = ctx.getApplicationContext();
+        if (ContextCompat.checkSelfPermission(app, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
+                && ContextCompat.checkSelfPermission(app, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        try {
+            LocationServices.getFusedLocationProviderClient(app).getLastLocation()
+                    .addOnSuccessListener(loc -> {
+                        if (loc == null) return;
+                        new com.crowja.damiupos.db.AttendanceDao(DatabaseHelper.getInstance(app))
+                                .setLocation(attendanceId, loc.getLatitude(), loc.getLongitude());
+                        com.crowja.damiupos.sync.SyncScheduler.syncNow(app);   // push the coordinates promptly
+                    });
+        } catch (SecurityException ignored) {
+        } catch (Exception ignored) {
+        }
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -105,32 +146,38 @@ public class LocationService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        boolean pollOnly = intent != null && intent.getBooleanExtra(EXTRA_POLL_ONLY, false);
+        boolean reqPollOnly = intent != null && intent.getBooleanExtra(EXTRA_POLL_ONLY, false);
+        SettingsDao sdao = new SettingsDao(DatabaseHelper.getInstance(this));
+        SyncSettings cfg = new SyncSettings(sdao);
+
+        // GPS only when genuinely working: a shift is open, not on break (poll-only),
+        // location sharing is on, and a staff is clocked in. Otherwise poll-only — but
+        // the service still runs (and polls) so the app stays synced in the background.
+        boolean shiftActive = sdao.isShiftActive();
+        boolean wantGps = !reqPollOnly && shiftActive && cfg.isLocationTrackingEnabled()
+                && LocationReporter.currentStaffUuid(this) != null;
+
         ensureChannel();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIF_ID, buildNotification(pollOnly),
+            startForeground(NOTIF_ID, buildNotification(wantGps, shiftActive),
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
         } else {
-            startForeground(NOTIF_ID, buildNotification(pollOnly));
+            startForeground(NOTIF_ID, buildNotification(wantGps, shiftActive));
         }
         RUNNING = true;
 
-        SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
         if (!cfg.isEnrolled()) {
             stopSelf();
             return START_NOT_STICKY;
         }
 
-        // Poll the server for the whole shift (working + break) — this is the
-        // background "active polling" that keeps the app synced & command-ready.
+        // Continuous background polling — runs whenever enrolled (shift or not), so the
+        // app receives dashboard changes (new staff/config/commands) in near real-time.
         ensurePolling();
 
-        if (pollOnly) {
-            stopGps();           // istirahat: no location tracking, polling only
-        } else {
-            startGps(cfg);       // working: GPS + polling
-        }
-        return START_STICKY;     // keep alive until Pulang (stop) or self-stop
+        if (wantGps) startGps(cfg);
+        else stopGps();
+        return START_STICKY;     // keep alive until unenrolled (or explicit full stop)
     }
 
     /** Begin (or re-apply) location updates for the working part of the shift. */
@@ -178,8 +225,9 @@ public class LocationService extends Service {
                 Context app = getApplicationContext();
                 SettingsDao sdao = new SettingsDao(DatabaseHelper.getInstance(app));
                 SyncSettings cfg = new SyncSettings(sdao);
-                // Shift ended elsewhere / unenrolled → wind down the service.
-                if (!cfg.isEnrolled() || !sdao.isShiftActive()) { stopSelf(); return; }
+                // Only wind down when the device is no longer enrolled — otherwise the
+                // poll runs forever (shift or not) for real-time dashboard sync.
+                if (!cfg.isEnrolled()) { stopSelf(); return; }
                 new SyncEngine(app).sync();
                 OnlineTasks.tick(app);   // config (/me heartbeat), version, broadcasts, commands
             } catch (Throwable ignored) {}
@@ -226,14 +274,21 @@ public class LocationService extends Service {
     @Override
     public IBinder onBind(Intent intent) { return null; }
 
-    private Notification buildNotification(boolean pollOnly) {
+    private Notification buildNotification(boolean gps, boolean shiftActive) {
         PendingIntent pi = PendingIntent.getActivity(this, 0,
                 new Intent(this, MainActivity.class),
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        String title = pollOnly ? "Sinkronisasi aktif (istirahat)" : "Lokasi & sinkronisasi aktif";
-        String text = pollOnly
-                ? "Aplikasi tetap tersinkron dengan server. Lokasi tidak dilacak saat istirahat."
-                : "Posisi dibagikan ke admin & data tersinkron selama shift berjalan.";
+        String title, text;
+        if (gps) {
+            title = "Lokasi & sinkronisasi aktif";
+            text = "Posisi dibagikan ke admin & data tersinkron selama shift berjalan.";
+        } else if (shiftActive) {
+            title = "Sinkronisasi aktif (istirahat)";
+            text = "Aplikasi tetap tersinkron dengan server. Lokasi tidak dilacak saat istirahat.";
+        } else {
+            title = "Sinkronisasi aktif";
+            text = "Aplikasi tetap tersinkron dengan dashboard di latar belakang.";
+        }
         return new NotificationCompat.Builder(this, CHANNEL)
                 .setSmallIcon(android.R.drawable.ic_menu_mylocation)
                 .setContentTitle(title)

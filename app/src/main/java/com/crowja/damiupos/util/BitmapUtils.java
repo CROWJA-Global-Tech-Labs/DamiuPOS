@@ -44,11 +44,23 @@ public final class BitmapUtils {
             o.inJustDecodeBounds = true;
             BitmapFactory.decodeFile(path, o);
             if (o.outWidth <= 0 || o.outHeight <= 0) return null;
-            o.inSampleSize = calcInSampleSize(o.outWidth, o.outHeight,
+            int sample = calcInSampleSize(o.outWidth, o.outHeight,
                     Math.max(1, reqW), Math.max(1, reqH));
+            // Jangan biarkan sisi mana pun melampaui batas tekstur GPU → kalau tidak,
+            // hardware Canvas menolak menggambar ("bitmap too large") & foto tampil kosong.
+            while (sample < 32 && (o.outWidth / sample > 4096 || o.outHeight / sample > 4096)) {
+                sample *= 2;
+            }
             o.inJustDecodeBounds = false;
+            o.inSampleSize = sample;
             o.inPreferredConfig = Bitmap.Config.RGB_565;
             Bitmap bmp = BitmapFactory.decodeFile(path, o);
+            if (bmp == null) {
+                // Sebagian file (mis. screenshot Samsung dgn metadata ekstra) gagal di-decode
+                // ke RGB_565 → kembalikan ke ARGB_8888 supaya foto tetap tampil.
+                o.inPreferredConfig = Bitmap.Config.ARGB_8888;
+                bmp = BitmapFactory.decodeFile(path, o);
+            }
             return applyExif(bmp, path);
         } catch (Throwable t) {
             return null;

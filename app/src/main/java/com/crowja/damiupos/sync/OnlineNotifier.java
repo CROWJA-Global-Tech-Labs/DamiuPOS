@@ -14,6 +14,8 @@ import androidx.core.app.NotificationManagerCompat;
 import com.crowja.damiupos.BuildConfig;
 import com.crowja.damiupos.MainActivity;
 import com.crowja.damiupos.R;
+import com.crowja.damiupos.db.DatabaseHelper;
+import com.crowja.damiupos.db.SettingsDao;
 
 import org.json.JSONObject;
 
@@ -25,7 +27,29 @@ public final class OnlineNotifier {
 
     public static final String CHANNEL_PUSH = "damiu_push";
 
+    /** In-app broadcast: pesan admin baru tiba → layar foreground tampilkan popup. */
+    public static final String ACTION_ADMIN_MESSAGE = "com.crowja.damiupos.action.ADMIN_MESSAGE";
+
     private OnlineNotifier() {}
+
+    /**
+     * Sampaikan pesan admin (broadcast/command "message" dari dashboard): selalu
+     * pasang notifikasi, lalu tampilkan juga sebagai popup dialog in-app. Kalau ada
+     * layar yang sedang tampil, dialog muncul seketika lewat {@link #ACTION_ADMIN_MESSAGE};
+     * kalau app di background, pesan disimpan sebagai "pending" dan ditampilkan begitu
+     * dashboard (MainActivity) dibuka lagi.
+     */
+    public static void deliverAdminMessage(Context ctx, String title, String body, int notifId) {
+        postNotif(ctx, title, body, notifId);
+        String t = (title == null || title.isEmpty()) ? "Pesan dari Admin" : title;
+        String b = body != null ? body : "";
+        try {
+            new SettingsDao(DatabaseHelper.getInstance(ctx)).setPendingAdminMessage(t, b);
+        } catch (Throwable ignored) {}
+        try {
+            ctx.sendBroadcast(new Intent(ACTION_ADMIN_MESSAGE).setPackage(ctx.getPackageName()));
+        } catch (Throwable ignored) {}
+    }
 
     /** Store the advertised version; notify if it's newer than the installed build. */
     public static void handleVersion(Context ctx, SyncSettings cfg, JSONObject o) {

@@ -80,7 +80,23 @@ public class ResellerListActivity extends AppCompatActivity {
         rv.setLayoutManager(new LinearLayoutManager(this));
         rv.setAdapter(adapter);
 
-        findViewById(R.id.fabAddReseller).setOnClickListener(v -> showAddResellerPicker());
+        // Tambah reseller: hanya Admin/SPV. Staf/Marketing/Viewer = lihat-saja (FAB disembunyikan).
+        android.view.View fab = findViewById(R.id.fabAddReseller);
+        if (canManageReseller()) {
+            fab.setOnClickListener(v -> showAddResellerPicker());
+        } else {
+            fab.setVisibility(android.view.View.GONE);
+        }
+    }
+
+    /** Admin/SPV boleh kelola reseller; selain itu lihat-saja. Single-user (tanpa login) = penuh. */
+    private boolean canManageReseller() {
+        long uid = settingsDao.getCurrentUserId();
+        if (uid <= 0) {
+            return true;
+        }
+        com.crowja.damiupos.model.User u = new com.crowja.damiupos.db.UserDao(dbHelper).getById(uid);
+        return u == null || u.canManageReseller();
     }
 
     @Override
@@ -136,8 +152,9 @@ public class ResellerListActivity extends AppCompatActivity {
             r.earned = res.totalKomisi;
             r.galon = 0;
             for (ResellerKomisiCalculator.Entry e : res.entries) r.galon += e.totalGalon;
-            r.withdrawn = wdDao.getTotalWithdrawn(c.getId());
-            r.saldo = r.earned - r.withdrawn;
+            // "Cair" = pencairan nyata; tambah-saldo (top-up dashboard) menambah saldo terpisah.
+            r.withdrawn = wdDao.getTotalCashedOut(c.getId());
+            r.saldo = r.earned + wdDao.getTotalDeposits(c.getId()) - r.withdrawn;
             totalSaldo += r.saldo;
             rows.add(r);
         }

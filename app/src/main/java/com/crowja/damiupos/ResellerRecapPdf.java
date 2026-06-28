@@ -246,7 +246,7 @@ public final class ResellerRecapPdf {
     }
 
     private static void footer(Canvas c, int pageNum, Paint pSub) {
-        c.drawText("Halaman " + pageNum + "  •  DAMIU POS by FREZ Tech & Innovation Labs",
+        c.drawText("Halaman " + pageNum + "  •  DAMIU POS by FREZ Tech & Innovations Lab",
                 ML, H - MB + 16f, pSub);
     }
 

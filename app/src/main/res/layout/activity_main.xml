@@ -722,31 +722,6 @@
                         app:iconSize="26dp"
                         app:iconTint="@color/white"
                         app:iconGravity="textStart" />
-
-                    <!-- Badge "Transaksi Pending" (berkedip saat ada pending).
-                         Ketuk → daftar Transaksi Pending. -->
-                    <TextView
-                        android:id="@+id/tvPendingBadge"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_gravity="top|end"
-                        android:layout_marginTop="4dp"
-                        android:layout_marginEnd="4dp"
-                        android:background="@drawable/bg_pending_badge"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:minWidth="22dp"
-                        android:paddingStart="7dp"
-                        android:paddingEnd="7dp"
-                        android:paddingTop="2dp"
-                        android:paddingBottom="2dp"
-                        android:elevation="6dp"
-                        android:gravity="center"
-                        android:text="0"
-                        android:textColor="@color/white"
-                        android:textSize="11sp"
-                        android:textStyle="bold"
-                        android:visibility="gone" />
                 </FrameLayout>
             </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
@@ -777,99 +752,228 @@
                 app:iconTint="@color/white"
                 app:iconGravity="textStart" />
 
-            <!-- Menu Karyawan (absensi) — hanya tampil untuk admin saat multi
-                 user aktif. Pintu masuk kelola pegawai, riwayat & rekap absensi. -->
-            <com.google.android.material.card.MaterialCardView
-                android:id="@+id/cardKaryawan"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:clickable="true"
-                android:focusable="true"
-                android:foreground="?attr/selectableItemBackground"
-                android:visibility="gone"
-                app:cardBackgroundColor="#00897B"
-                app:cardCornerRadius="14dp"
-                app:cardElevation="3dp">
 
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="14dp">
-
-                    <ImageView
-                        android:layout_width="36dp"
-                        android:layout_height="36dp"
-                        android:background="@drawable/bg_icon_circle"
-                        android:padding="7dp"
-                        android:src="@android:drawable/ic_menu_my_calendar"
-                        app:tint="@color/white"
-                        android:contentDescription="Karyawan" />
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:layout_marginStart="12dp"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Karyawan"
-                            android:textColor="@color/white"
-                            android:textSize="16sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="2dp"
-                            android:text="Kelola pegawai, absensi &amp; rekap"
-                            android:textColor="#CCFFFFFF"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <ImageView
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:contentDescription="Buka"
-                        android:src="@android:drawable/ic_media_play"
-                        app:tint="@color/white" />
-                </LinearLayout>
-            </com.google.android.material.card.MaterialCardView>
-
-            <androidx.gridlayout.widget.GridLayout
-                xmlns:grid="http://schemas.android.com/apk/res-auto"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                grid:columnCount="2"
-                grid:useDefaultMargins="false">
+                android:orientation="vertical">
 
-                <FrameLayout
-                    android:layout_width="0dp"
+                <!-- Row 1: Antrian Delivery | Follow Up -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal">
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
+
+                    <FrameLayout
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnAntrianDelivery"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:minHeight="60dp"
+                            android:paddingTop="8dp"
+                            android:paddingBottom="8dp"
+                            android:maxLines="2"
+                            android:text="Antrian\nDelivery"
+                            android:textAllCaps="false"
+                            android:textColor="@color/white"
+                            android:textSize="13sp"
+                            android:textStyle="bold"
+                            app:backgroundTint="#00897B"
+                            app:cornerRadius="14dp"
+                            app:elevation="3dp"
+                            app:icon="@android:drawable/ic_menu_directions"
+                            app:iconGravity="textStart"
+                            app:iconPadding="8dp"
+                            app:iconSize="22dp"
+                            app:iconTint="@color/white" />
+
+                        <TextView
+                            android:id="@+id/tvDeliveryBadge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="top|end"
+                            android:layout_marginTop="2dp"
+                            android:layout_marginEnd="2dp"
+                            android:background="@drawable/bg_pending_badge"
+                            android:minWidth="22dp"
+                            android:paddingStart="6dp"
+                            android:paddingEnd="6dp"
+                            android:paddingTop="1dp"
+                            android:paddingBottom="1dp"
+                            android:elevation="6dp"
+                            android:gravity="center"
+                            android:text="0"
+                            android:textColor="@color/white"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:visibility="gone" />
+                    </FrameLayout>
+
+                    <FrameLayout
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnFollowUp"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:minHeight="60dp"
+                            android:paddingTop="8dp"
+                            android:paddingBottom="8dp"
+                            android:maxLines="1"
+                            android:ellipsize="end"
+                            android:text="Follow Up"
+                            android:textAllCaps="false"
+                            android:textColor="@color/white"
+                            android:textSize="13sp"
+                            android:textStyle="bold"
+                            app:backgroundTint="#FF7043"
+                            app:cornerRadius="14dp"
+                            app:elevation="3dp"
+                            app:icon="@android:drawable/ic_popup_reminder"
+                            app:iconGravity="textStart"
+                            app:iconPadding="8dp"
+                            app:iconSize="22dp"
+                            app:iconTint="@color/white" />
+
+                        <TextView
+                            android:id="@+id/tvFollowUpBadge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="top|end"
+                            android:layout_marginTop="2dp"
+                            android:layout_marginEnd="2dp"
+                            android:background="@drawable/bg_followup_badge"
+                            android:minWidth="22dp"
+                            android:paddingStart="6dp"
+                            android:paddingEnd="6dp"
+                            android:paddingTop="1dp"
+                            android:paddingBottom="1dp"
+                            android:elevation="6dp"
+                            android:gravity="center"
+                            android:text="0"
+                            android:textColor="#FF7043"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:visibility="gone" />
+                    </FrameLayout>
+                </LinearLayout>
+
+                <!-- Row 2: Report & Grafik | Export -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
 
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnAntrianDelivery"
-                        android:layout_width="match_parent"
+                        android:id="@+id/btnLaporan"
+                        android:layout_width="0dp"
                         android:layout_height="64dp"
+                        android:layout_weight="1"
                         android:layout_margin="4dp"
                         android:minHeight="60dp"
                         android:paddingTop="8dp"
                         android:paddingBottom="8dp"
                         android:maxLines="2"
-                        android:text="Antrian\nDelivery"
+                        android:text="Report &amp;\nGrafik"
                         android:textAllCaps="false"
                         android:textColor="@color/white"
                         android:textSize="13sp"
                         android:textStyle="bold"
-                        app:backgroundTint="#00897B"
+                        app:backgroundTint="#EC407A"
+                        app:cornerRadius="14dp"
+                        app:elevation="3dp"
+                        app:icon="@android:drawable/ic_menu_sort_by_size"
+                        app:iconGravity="textStart"
+                        app:iconPadding="8dp"
+                        app:iconSize="22dp"
+                        app:iconTint="@color/white" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnExport"
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        android:minHeight="60dp"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="Export"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#66BB6A"
+                        app:cornerRadius="14dp"
+                        app:elevation="3dp"
+                        app:icon="@android:drawable/ic_menu_save"
+                        app:iconGravity="textStart"
+                        app:iconPadding="8dp"
+                        app:iconSize="22dp"
+                        app:iconTint="@color/white" />
+                </LinearLayout>
+
+                <!-- Row 3: Reseller | Pengeluaran -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnReseller"
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        android:minHeight="60dp"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="Reseller"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#AB47BC"
+                        app:cornerRadius="14dp"
+                        app:elevation="3dp"
+                        app:icon="@android:drawable/ic_menu_share"
+                        app:iconGravity="textStart"
+                        app:iconPadding="8dp"
+                        app:iconSize="22dp"
+                        app:iconTint="@color/white" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPengeluaran"
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        android:minHeight="60dp"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="Pengeluaran"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#EF5350"
                         app:cornerRadius="14dp"
                         app:elevation="3dp"
                         app:icon="@android:drawable/ic_menu_directions"
@@ -877,236 +981,48 @@
                         app:iconPadding="8dp"
                         app:iconSize="22dp"
                         app:iconTint="@color/white" />
+                </LinearLayout>
 
-                    <TextView
-                        android:id="@+id/tvDeliveryBadge"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_gravity="top|end"
-                        android:layout_marginTop="2dp"
-                        android:layout_marginEnd="2dp"
-                        android:background="@drawable/bg_pending_badge"
-                        android:minWidth="22dp"
-                        android:paddingStart="6dp"
-                        android:paddingEnd="6dp"
-                        android:paddingTop="1dp"
-                        android:paddingBottom="1dp"
-                        android:elevation="6dp"
-                        android:gravity="center"
-                        android:text="0"
-                        android:textColor="@color/white"
-                        android:textSize="11sp"
-                        android:textStyle="bold"
-                        android:visibility="gone" />
-                </FrameLayout>
-
-                <FrameLayout
-                    android:layout_width="0dp"
+                <!-- Row 4: Pengaturan (Analisa & Prediksi dipindah ke web dashboard) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal">
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
 
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnFollowUp"
-                        android:layout_width="match_parent"
+                        android:id="@+id/btnPengaturan"
+                        android:layout_width="0dp"
                         android:layout_height="64dp"
+                        android:layout_weight="1"
                         android:layout_margin="4dp"
                         android:minHeight="60dp"
                         android:paddingTop="8dp"
                         android:paddingBottom="8dp"
                         android:maxLines="1"
                         android:ellipsize="end"
-                        android:text="Follow Up"
+                        android:text="Pengaturan"
                         android:textAllCaps="false"
                         android:textColor="@color/white"
                         android:textSize="13sp"
                         android:textStyle="bold"
-                        app:backgroundTint="#FF7043"
+                        app:backgroundTint="#78909C"
                         app:cornerRadius="14dp"
                         app:elevation="3dp"
-                        app:icon="@android:drawable/ic_popup_reminder"
+                        app:icon="@android:drawable/ic_menu_preferences"
                         app:iconGravity="textStart"
                         app:iconPadding="8dp"
                         app:iconSize="22dp"
                         app:iconTint="@color/white" />
 
-                    <TextView
-                        android:id="@+id/tvFollowUpBadge"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_gravity="top|end"
-                        android:layout_marginTop="2dp"
-                        android:layout_marginEnd="2dp"
-                        android:background="@drawable/bg_followup_badge"
-                        android:minWidth="22dp"
-                        android:paddingStart="6dp"
-                        android:paddingEnd="6dp"
-                        android:paddingTop="1dp"
-                        android:paddingBottom="1dp"
-                        android:elevation="6dp"
-                        android:gravity="center"
-                        android:text="0"
-                        android:textColor="#FF7043"
-                        android:textSize="11sp"
-                        android:textStyle="bold"
-                        android:visibility="gone" />
-                </FrameLayout>
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnLaporan"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_margin="4dp"
-                    android:minHeight="60dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:maxLines="2"
-                    android:text="Report &amp;\nGrafik"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="#EC407A"
-                    app:cornerRadius="14dp"
-                    app:elevation="3dp"
-                    app:icon="@android:drawable/ic_menu_sort_by_size"
-                    app:iconGravity="textStart"
-                    app:iconPadding="8dp"
-                    app:iconSize="22dp"
-                    app:iconTint="@color/white"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnExport"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_margin="4dp"
-                    android:minHeight="60dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:text="Export"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="#66BB6A"
-                    app:cornerRadius="14dp"
-                    app:elevation="3dp"
-                    app:icon="@android:drawable/ic_menu_save"
-                    app:iconGravity="textStart"
-                    app:iconPadding="8dp"
-                    app:iconSize="22dp"
-                    app:iconTint="@color/white"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnReseller"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_margin="4dp"
-                    android:minHeight="60dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:text="Reseller"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="#AB47BC"
-                    app:cornerRadius="14dp"
-                    app:elevation="3dp"
-                    app:icon="@android:drawable/ic_menu_share"
-                    app:iconGravity="textStart"
-                    app:iconPadding="8dp"
-                    app:iconSize="22dp"
-                    app:iconTint="@color/white"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnPengeluaran"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_margin="4dp"
-                    android:minHeight="60dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:text="Pengeluaran"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="#EF5350"
-                    app:cornerRadius="14dp"
-                    app:elevation="3dp"
-                    app:icon="@android:drawable/ic_menu_directions"
-                    app:iconGravity="textStart"
-                    app:iconPadding="8dp"
-                    app:iconSize="22dp"
-                    app:iconTint="@color/white"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnPengaturan"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_margin="4dp"
-                    android:minHeight="60dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:text="Pengaturan"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="#78909C"
-                    app:cornerRadius="14dp"
-                    app:elevation="3dp"
-                    app:icon="@android:drawable/ic_menu_preferences"
-                    app:iconGravity="textStart"
-                    app:iconPadding="8dp"
-                    app:iconSize="22dp"
-                    app:iconTint="@color/white"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnAnalisa"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_margin="4dp"
-                    android:minHeight="60dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:maxLines="2"
-                    android:lineSpacingMultiplier="0.95"
-                    android:text="Analisa &amp;\nPrediksi"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="#00897B"
-                    app:cornerRadius="14dp"
-                    app:elevation="3dp"
-                    app:icon="@android:drawable/ic_menu_sort_by_size"
-                    app:iconGravity="textStart"
-                    app:iconPadding="8dp"
-                    app:iconSize="22dp"
-                    app:iconTint="@color/white"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal" />
-            </androidx.gridlayout.widget.GridLayout>
+                    <!-- Empty cell keeps "Pengaturan" half-width & column-aligned. -->
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp" />
+                </LinearLayout>
+            </LinearLayout>
 
             <!-- Recent Transactions -->
             <TextView

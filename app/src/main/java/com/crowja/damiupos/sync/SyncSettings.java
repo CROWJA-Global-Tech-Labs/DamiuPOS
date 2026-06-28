@@ -8,10 +8,18 @@ import com.crowja.damiupos.db.SettingsDao;
  */
 public class SyncSettings {
 
-    /** Production server, pre-filled so staff only need to type the provisioning code. */
-    public static final String DEFAULT_BASE_URL = "https://damiupos.hantechno.my.id";
+    /** Production server, pre-filled so staff only need to type the provisioning code.
+     *  Canonical domain is dashboard.airfrez.com — the old damiupos.hantechno.my.id host
+     *  is retired (returns 410), so a fresh provision must default to the new domain. */
+    public static final String DEFAULT_BASE_URL = "https://dashboard.airfrez.com";
+
+    /** Customer-facing delivery-tracking base — a DEDICATED subdomain, separate from the
+     *  API/dashboard host. Mirrors the backend config/track.php (TRACK_BASE_URL); the
+     *  canonical link is {@code https://order.airfrez.com/tracking/{token}}. */
+    public static final String DEFAULT_TRACK_BASE_URL = "https://order.airfrez.com";
 
     private static final String K_BASE_URL    = "sync_base_url";
+    private static final String K_TRACK_BASE  = "sync_track_base_url"; // override link lacak (opsional)
     private static final String K_TOKEN       = "sync_token";
     private static final String K_DEVICE_UUID = "sync_device_uuid";
     private static final String K_BRANCH_CODE = "sync_branch_code";
@@ -41,6 +49,14 @@ public class SyncSettings {
     // How often to report location while clocked in, in seconds (admin-configurable; default 10 min).
     private static final String K_LOC_INTERVAL = "sync_loc_interval";
 
+    // Branch-authoritative gallon stock from the server (shown verbatim so the device's Stok Galon
+    // == dashboard, regardless of which transactions this phone holds locally).
+    private static final String K_STOK_HAVE     = "sync_stok_have";   // "1" once received at least once
+    private static final String K_STOK_MASUK    = "sync_stok_masuk";
+    private static final String K_STOK_KELUAR   = "sync_stok_keluar";
+    private static final String K_STOK_KEMBALI  = "sync_stok_kembali";
+    private static final String K_STOK_TERSEDIA = "sync_stok_tersedia";
+
     private final SettingsDao settings;
 
     public SyncSettings(SettingsDao settings) {
@@ -49,6 +65,14 @@ public class SyncSettings {
 
     public String getBaseUrl()      { return trimSlash(settings.get(K_BASE_URL, "")); }
     public void setBaseUrl(String v){ settings.set(K_BASE_URL, trimSlash(v)); }
+
+    /** Base link lacak pelanggan ({@link #DEFAULT_TRACK_BASE_URL}); bisa di-override
+     *  (mis. dari app_settings dashboard) kalau domain tracking berubah. */
+    public String getTrackBaseUrl() {
+        String v = trimSlash(settings.get(K_TRACK_BASE, ""));
+        return v.isEmpty() ? DEFAULT_TRACK_BASE_URL : v;
+    }
+    public void setTrackBaseUrl(String v) { settings.set(K_TRACK_BASE, v != null ? trimSlash(v) : ""); }
 
     public String getToken()        { return settings.get(K_TOKEN, ""); }
     public void setToken(String v)  { settings.set(K_TOKEN, v != null ? v : ""); }
@@ -77,6 +101,38 @@ public class SyncSettings {
 
     public String getCursor(String entity)            { return settings.get(K_CURSOR + entity, ""); }
     public void setCursor(String entity, String value){ settings.set(K_CURSOR + entity, value != null ? value : ""); }
+
+    // ---- Branch-authoritative gallon stock (server-computed; device displays it verbatim) ----
+    public void setStokGalon(int masuk, int keluar, int kembali, int tersedia) {
+        settings.set(K_STOK_MASUK, String.valueOf(masuk));
+        settings.set(K_STOK_KELUAR, String.valueOf(keluar));
+        settings.set(K_STOK_KEMBALI, String.valueOf(kembali));
+        settings.set(K_STOK_TERSEDIA, String.valueOf(tersedia));
+        settings.set(K_STOK_HAVE, "1");
+    }
+    /** True once the server's branch stok has been pulled at least once (else fall back to local compute). */
+    public boolean hasServerStok() { return "1".equals(settings.get(K_STOK_HAVE, "0")); }
+    public int getStokMasuk()    { return parseIntOr(settings.get(K_STOK_MASUK, "0")); }
+    public int getStokKeluar()   { return parseIntOr(settings.get(K_STOK_KELUAR, "0")); }
+    public int getStokKembali()  { return parseIntOr(settings.get(K_STOK_KEMBALI, "0")); }
+    public int getStokTersedia() { return parseIntOr(settings.get(K_STOK_TERSEDIA, "0")); }
+
+    private static int parseIntOr(String s) {
+        try { return Integer.parseInt(s != null ? s.trim() : "0"); } catch (Exception e) { return 0; }
+    }
+
+    /** One-time recovery flag: re-pull staff & products once after the "web staff appears" fix
+     *  (their cursor had advanced past rows whose insert previously failed on the NOT NULL pin). */
+    private static final String K_REPULL_STAFF = "sync_repull_staff_v1";
+    public boolean needsStaffRepull() { return ! "1".equals(settings.get(K_REPULL_STAFF, "0")); }
+    public void markStaffRepulled()   { settings.set(K_REPULL_STAFF, "1"); }
+
+    /** Rising-edge flag: sudah pernah memperingatkan admin soal jenis galon ganda
+     *  (Kasus B upgrade). Diset saat duplikat terdeteksi, di-reset saat sudah bersih,
+     *  supaya notifikasi tidak spam tiap sinkron. */
+    private static final String K_WARNED_DUP_PRODUCTS = "sync_warned_dup_products";
+    public boolean wasDupProductsWarned() { return "1".equals(settings.get(K_WARNED_DUP_PRODUCTS, "0")); }
+    public void setDupProductsWarned(boolean v) { settings.set(K_WARNED_DUP_PRODUCTS, v ? "1" : "0"); }
 
     // ---- Latest published app version ----
     public void setLatestVersion(int code, String name, String url, String changelog, boolean mandatory) {

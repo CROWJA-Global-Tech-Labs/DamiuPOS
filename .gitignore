@@ -26,3 +26,9 @@ upload_certificate.pem
 trx_form_screenshot.png
 tools/adb_pair_qr.png
 _bld_tmp.txt
+screenshots/
+curlerr
+
+# Local data dumps — NEVER commit (real customer/depot data; repo is public)
+db-backups/
+device-backups/

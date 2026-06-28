@@ -27,30 +27,14 @@
         android:layout_weight="1"
         android:padding="16dp">
 
-        <!-- Receipt card (white paper simulation) -->
+        <!-- Struk gambar modern (di-capture jadi PNG untuk dibagikan). -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            app:cardCornerRadius="4dp"
+            app:cardCornerRadius="14dp"
             app:cardElevation="4dp">
 
-            <LinearLayout
-                android:id="@+id/receiptContainer"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp"
-                android:background="@color/white">
-
-                <TextView
-                    android:id="@+id/tvReceiptContent"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
-                    android:textSize="13sp"
-                    android:textColor="@color/black"
-                    android:lineSpacingExtra="2dp" />
-            </LinearLayout>
+            <include layout="@layout/receipt_image_card" />
         </com.google.android.material.card.MaterialCardView>
     </ScrollView>
 
@@ -73,6 +57,17 @@
             app:cornerRadius="10dp"
             app:icon="@android:drawable/ic_menu_send"
             app:iconGravity="textStart" />
+
+        <TextView
+            android:id="@+id/tvDeferNote"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="4dp"
+            android:padding="10dp"
+            android:background="#FFF8E1"
+            android:textColor="#8D6E00"
+            android:textSize="12sp"
+            android:visibility="gone" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnShare"

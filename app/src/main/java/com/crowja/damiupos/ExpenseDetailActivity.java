@@ -84,9 +84,13 @@ public class ExpenseDetailActivity extends AppCompatActivity {
 
         ImageView iv = findViewById(R.id.ivFoto);
         TextView tvNoPhoto = findViewById(R.id.tvNoPhoto);
-        if (e.getPhotoPath() != null && !e.getPhotoPath().isEmpty()
-                && new File(e.getPhotoPath()).exists()) {
-            iv.setImageBitmap(loadRotatedBitmap(e.getPhotoPath()));
+        // Decode dulu; baru tampilkan. Kalau decode gagal (null) JANGAN biarkan ImageView
+        // kosong "menggantung" — tampilkan placeholder "tidak ada foto" yang jelas.
+        Bitmap photo = (e.getPhotoPath() != null && !e.getPhotoPath().isEmpty()
+                && new File(e.getPhotoPath()).exists())
+                ? loadRotatedBitmap(e.getPhotoPath()) : null;
+        if (photo != null) {
+            iv.setImageBitmap(photo);
             iv.setVisibility(View.VISIBLE);
             tvNoPhoto.setVisibility(View.GONE);
         } else {

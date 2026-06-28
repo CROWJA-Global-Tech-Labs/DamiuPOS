@@ -29,8 +29,12 @@ import com.crowja.damiupos.model.Customer;
 import com.google.android.material.button.MaterialButton;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -157,10 +161,34 @@ public class ContactPickerActivity extends AppCompatActivity {
         });
     }
 
+    /** Satu kontak telepon + daftar nomornya (urut, sudah dedup di dalam kontak). */
+    private static final class ContactGroup {
+        final String name;
+        final List<String> phones = new ArrayList<>();
+        final Set<String> seen = new HashSet<>();   // dedup 8 digit terakhir DI DALAM kontak
+        ContactGroup(String name) { this.name = name; }
+    }
+
+    /** Rapikan nama: trim + ubah spasi beruntun jadi satu spasi (mis. "AYU  LAUNDRY" → "AYU LAUNDRY"). */
+    private static String cleanName(String s) {
+        return s == null ? "" : s.trim().replaceAll("\\s+", " ");
+    }
+
+    /** 8 digit terakhir (toleran prefix 0812 vs +62812), atau "" kalau terlalu pendek. */
+    private static String phoneSuffix(String phone) {
+        String n = phone.replaceAll("[^0-9]", "");
+        if (n.length() < 4) return "";
+        return n.substring(n.length() - Math.min(n.length(), 8));
+    }
+
     /**
-     * Baca semua kontak yang punya nomor telepon. Dedup dengan 8 digit terakhir
-     * supaya nomor dengan prefix berbeda (0812 vs +62812) tidak muncul dobel.
-     * Untuk setiap kontak, cek apakah sudah terdaftar di DB.
+     * Baca semua kontak yang punya nomor telepon. Nomor identik (8 digit terakhir
+     * sama) di-dedup, baik di dalam satu kontak maupun lintas kontak.
+     *
+     * <p>Tiap nama yang akan muncul lebih dari sekali — entah karena SATU kontak
+     * punya beberapa nomor, ATAU beberapa kontak terpisah memakai nama yang sama —
+     * diberi sufiks " #1", " #2", … berurutan. Mis. "Ayu Laundry" dengan 2 nomor
+     * jadi "Ayu Laundry #1" dan "Ayu Laundry #2". Nama unik tidak diberi sufiks.
      */
     private List<ContactPickerAdapter.ContactEntry> readContacts() {
         List<ContactPickerAdapter.ContactEntry> list = new ArrayList<>();
@@ -168,6 +196,7 @@ public class ContactPickerActivity extends AppCompatActivity {
         Cursor cursor = cr.query(
                 ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
                 new String[]{
+                        ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
                         ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
                         ContactsContract.CommonDataKinds.Phone.NUMBER
                 },
@@ -175,22 +204,55 @@ public class ContactPickerActivity extends AppCompatActivity {
                 ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC");
         if (cursor == null) return list;
 
-        Set<String> seenSuffix = new HashSet<>();
+        // Kumpulkan nomor per kontak (urut nama, lalu urut nomor sesuai cursor).
+        LinkedHashMap<String, ContactGroup> groups = new LinkedHashMap<>();
         while (cursor.moveToNext()) {
-            String name = cursor.getString(0);
-            String phone = cursor.getString(1);
+            String contactId = cursor.getString(0);
+            String name = cursor.getString(1);
+            String phone = cursor.getString(2);
             if (name == null || name.isEmpty() || phone == null || phone.isEmpty()) continue;
+            String suffix = phoneSuffix(phone);
+            if (suffix.isEmpty()) continue;
 
-            String normalized = phone.replaceAll("[^0-9]", "");
-            if (normalized.length() < 4) continue;
-            String suffix = normalized.substring(
-                    normalized.length() - Math.min(normalized.length(), 8));
-            if (!seenSuffix.add(suffix)) continue;
-
-            boolean already = customerDao.existsByPhone(phone);
-            list.add(new ContactPickerAdapter.ContactEntry(name, phone, already));
+            String key = contactId != null ? contactId : name;
+            ContactGroup g = groups.get(key);
+            if (g == null) { g = new ContactGroup(name); groups.put(key, g); }
+            if (g.seen.add(suffix)) g.phones.add(phone);   // dedup di dalam kontak
         }
         cursor.close();
+
+        // Dedup global (8 digit terakhir), kumpulkan pasangan nama+nomor sesuai urutan.
+        Set<String> globalSeen = new HashSet<>();
+        List<String[]> flat = new ArrayList<>();   // [name, phone]
+        for (ContactGroup g : groups.values()) {
+            for (String phone : g.phones) {
+                if (globalSeen.add(phoneSuffix(phone))) flat.add(new String[]{g.name, phone});
+            }
+        }
+
+        // Nama yang muncul >1 kali (kontak banyak nomor ATAU beberapa kontak senama —
+        // termasuk variasi spasi-ganda/kapitalisasi) diberi sufiks " #1", " #2", …
+        // berurutan; nama unik dibiarkan (sudah dirapikan spasinya). Pengelompokan
+        // pakai nama ternormalisasi (lowercase, spasi tunggal) supaya "AYU  LAUNDRY"
+        // dan "AYU LAUNDRY" dianggap sama.
+        Map<String, Integer> nameCount = new HashMap<>();
+        Map<String, String> baseByKey = new HashMap<>();   // key → casing kanonik (rapi)
+        for (String[] fp : flat) {
+            String clean = cleanName(fp[0]);
+            String key = clean.toLowerCase(Locale.ROOT);
+            nameCount.merge(key, 1, Integer::sum);
+            if (!baseByKey.containsKey(key)) baseByKey.put(key, clean);
+        }
+        Map<String, Integer> nameIdx = new HashMap<>();
+        for (String[] fp : flat) {
+            String clean = cleanName(fp[0]);
+            String key = clean.toLowerCase(Locale.ROOT);
+            String displayName = nameCount.get(key) > 1
+                    ? baseByKey.get(key) + " #" + nameIdx.merge(key, 1, Integer::sum)
+                    : clean;
+            boolean already = customerDao.existsByPhone(fp[1]);
+            list.add(new ContactPickerAdapter.ContactEntry(displayName, fp[1], already));
+        }
         return list;
     }
 
@@ -228,12 +290,21 @@ public class ContactPickerActivity extends AppCompatActivity {
                 });
             }
 
+            // Setelah impor: rapikan penomoran nama yang sama (mis. satu usaha dua nomor)
+            // supaya pelanggan baru DAN yang sudah ada sebelumnya konsisten jadi
+            // "Nama #1", "Nama #2", … — bukan campuran "Nama" + "Nama #2".
+            final int renamedFinal = customerDao.numberDuplicateNames();
+            com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+
             final int importedFinal = imported;
             final int skippedFinal = skipped;
             mainHandler.post(() -> {
                 progress.dismiss();
                 String msg = "Sinkronisasi selesai!\n" + importedFinal + " kontak diimpor";
                 if (skippedFinal > 0) msg += ", " + skippedFinal + " dilewati";
+                if (renamedFinal > 0) {
+                    msg += "\n" + renamedFinal + " pelanggan bernama sama diberi nomor #1, #2, …";
+                }
                 Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
                 setResult(RESULT_OK, new Intent().putExtra("imported", importedFinal));
                 finish();

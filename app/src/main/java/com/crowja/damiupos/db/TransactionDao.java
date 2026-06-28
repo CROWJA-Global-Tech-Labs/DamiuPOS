@@ -48,13 +48,56 @@ public class TransactionDao {
         if (trx.getTanggal() != null && !trx.getTanggal().isEmpty()) {
             values.put(DatabaseHelper.COL_TANGGAL, trx.getTanggal());
         }
+        // Atribusi pembuat: operator yang sedang clock-in di perangkat ini (didenormalisasi
+        // namanya). created_via dibiarkan NULL = perangkat asal (web view jatuh ke nama
+        // perangkat). Disinkron agar dashboard menampilkan "dibuat oleh …".
+        String operator = new SettingsDao(dbHelper).getCurrentUserName();
+        if (operator != null && !operator.isEmpty()) {
+            values.put(DatabaseHelper.COL_CREATED_BY_NAME, operator);
+        }
         // Antrian Delivery: JUAL masuk antrian PENDING dengan waktu antri = sekarang
         // (real, bukan `tanggal` yang bisa di-backdate). KEMBALI tidak diantrikan.
         if (Transaction.TYPE_JUAL.equals(trx.getType())) {
             values.put(DatabaseHelper.COL_DELIVERY_STATUS, Transaction.DELIVERY_PENDING);
             values.put(DatabaseHelper.COL_DELIVERY_QUEUED_AT, DatabaseHelper.nowIso());
+            // Token link lacak publik (32 hex) → {base}/track/{token}, dikirim ke
+            // pelanggan agar bisa memantau progres + lokasi kurir saat diantar.
+            values.put(DatabaseHelper.COL_DELIVERY_TOKEN,
+                    java.util.UUID.randomUUID().toString().replace("-", ""));
+            // Operator (kurir) = user yang sedang clock-in; disinkron sebagai staff_uuid
+            // supaya halaman lacak menampilkan GPS kurir yang benar.
+            long uid = new SettingsDao(dbHelper).getCurrentUserId();
+            if (uid > 0) values.put(DatabaseHelper.COL_DELIVERY_STAFF_ID, uid);
         }
-        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_TRANSACTIONS, values);
+        long id = dbHelper.syncInsert(db, DatabaseHelper.TABLE_TRANSACTIONS, values);
+        // Jaring pengaman integritas: kalau pelanggan ini belum ada di web dashboard
+        // (synced=0 → belum terkonfirmasi terkirim), dorong SELURUH riwayat transaksi
+        // miliknya ikut naik bersama datanya — supaya tidak ada transaksi "yatim"
+        // (customer_uuid tanpa padanan pelanggan) di dashboard.
+        requeueHistoryIfCustomerNotOnDashboard(db, trx.getCustomerId());
+        return id;
+    }
+
+    /**
+     * Bila pelanggan belum terkonfirmasi ada di dashboard (synced=0), tandai ulang
+     * semua transaksinya sebagai dirty (synced=0) TANPA mengubah edited_at — sehingga
+     * pada sinkron berikutnya pelanggan + seluruh riwayatnya terkirim, dan
+     * last-write-wins server tetap akurat (baris yang sudah ada tidak ditimpa basi).
+     */
+    private void requeueHistoryIfCustomerNotOnDashboard(SQLiteDatabase db, long customerId) {
+        if (customerId <= 0) return;
+        boolean onDashboard;
+        try (Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMERS,
+                new String[]{DatabaseHelper.COL_SYNCED},
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)},
+                null, null, null)) {
+            onDashboard = c.moveToFirst() && c.getInt(0) == 1;
+        }
+        if (onDashboard) return;   // sudah ada → alur dirty normal sudah cukup
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_SYNCED, 0);   // edited_at sengaja tidak diubah
+        db.update(DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_CUSTOMER_ID + "=?", new String[]{String.valueOf(customerId)});
     }
 
     // ----------------------------------------------------------- Antrian Delivery
@@ -96,9 +139,12 @@ public class TransactionDao {
                 t.setJumlahGalon((int) getLong(c, DatabaseHelper.COL_JUMLAH_GALON));
                 t.setTotalHarga(getDouble(c, DatabaseHelper.COL_TOTAL_HARGA));
                 t.setOngkir(getDouble(c, DatabaseHelper.COL_ONGKIR));
+                t.setPaymentMethod(getStr(c, DatabaseHelper.COL_PAYMENT_METHOD));
+                t.setGalonOwnership(getStr(c, DatabaseHelper.COL_GALON_OWNERSHIP));
                 t.setCatatan(getStr(c, DatabaseHelper.COL_CATATAN));
                 t.setDeliveryStatus(getStr(c, DatabaseHelper.COL_DELIVERY_STATUS));
                 t.setDeliveryQueuedAt(getStr(c, DatabaseHelper.COL_DELIVERY_QUEUED_AT));
+                t.setDeliveryToken(getStr(c, DatabaseHelper.COL_DELIVERY_TOKEN));
                 String itemsJson = getStr(c, DatabaseHelper.COL_ITEMS_JSON);
                 if (itemsJson != null) t.setItems(TransactionItem.listFromJson(itemsJson));
                 t.setCustomerName(getStr(c, "cust_name"));
@@ -119,6 +165,12 @@ public class TransactionDao {
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_DELIVERY_STATUS, Transaction.DELIVERY_DONE);
         v.put(DatabaseHelper.COL_DELIVERY_DONE_AT, DatabaseHelper.nowIso());
+        // Atribusi penyelesai: kurir yang menandai Selesai (bisa ≠ pembuat order, mis.
+        // order disusun admin di web lalu diantar staf ini). Disinkron ke dashboard.
+        String courier = new SettingsDao(dbHelper).getCurrentUserName();
+        if (courier != null && !courier.isEmpty()) {
+            v.put(DatabaseHelper.COL_COMPLETED_BY_NAME, courier);
+        }
         dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
                 DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
     }
@@ -136,6 +188,41 @@ public class TransactionDao {
     private static String getStr(Cursor c, String col) {
         int i = c.getColumnIndex(col);
         return i >= 0 ? c.getString(i) : null;
+    }
+
+    // -- Tanggal: campuran 2 format --
+    // tanggal bisa tersimpan sebagai UTC ISO ("…Z", hasil sinkron dari server) ATAU
+    // wall-clock LOKAL "yyyy-MM-dd HH:mm:ss" (dibuat langsung di perangkat). Untuk
+    // pengelompokan "hari ini"/rentang tanggal, baris UTC HARUS dikonversi ke waktu
+    // lokal dulu — kalau tidak, transaksi sore (yang di UTC jatuh ke tanggal kemarin)
+    // hilang dari filter "Hari Ini". Baris lokal dibiarkan apa adanya.
+    private static String localDt(String col) {
+        return "(CASE WHEN " + col + " LIKE '%Z' THEN datetime(" + col + ",'localtime') ELSE " + col + " END)";
+    }
+    /** date() atas wall-clock lokal kolom tanggal (lihat {@link #localDt}). */
+    private static String localDate(String col) { return "date(" + localDt(col) + ")"; }
+    /** strftime('%Y-%m') atas wall-clock lokal kolom tanggal. */
+    private static String localMonth(String col) { return "strftime('%Y-%m'," + localDt(col) + ")"; }
+
+    /**
+     * Nomor order harian per cabang (reset tiap hari): urutan transaksi JUAL ini di antara
+     * JUAL pada hari kalender LOKAL yang sama, diurut waktu lokal (tanggal). Aturan yang
+     * SAMA dipakai di web dashboard agar nomornya identik. 0 = bukan JUAL / tidak ada.
+     */
+    public int dailyOrderNo(long trxId) {
+        if (trxId <= 0) return 0;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String ld = localDt(DatabaseHelper.COL_TANGGAL);
+        String id = DatabaseHelper.COL_TRX_ID;
+        String tbl = DatabaseHelper.TABLE_TRANSACTIONS;
+        String arg = String.valueOf(trxId);
+        String sql = "SELECT COUNT(*) FROM " + tbl + " WHERE type='JUAL'"
+                + " AND (SELECT type FROM " + tbl + " WHERE " + id + "=?)='JUAL'"
+                + " AND date(" + ld + ") = (SELECT date(" + ld + ") FROM " + tbl + " WHERE " + id + "=?)"
+                + " AND " + ld + " <= (SELECT " + ld + " FROM " + tbl + " WHERE " + id + "=?)";
+        try (Cursor c = db.rawQuery(sql, new String[]{arg, arg, arg})) {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        }
     }
 
     public int delete(long id) {
@@ -167,6 +254,54 @@ public class TransactionDao {
         return t;
     }
 
+    /**
+     * True when the customer was REGISTERED on the same local day as this transaction → "pelanggan
+     * baru / walk-in baru" di struk. Membandingkan {@code customers.created_at} dengan {@code tanggal}
+     * transaksi setelah keduanya dinormalkan ke tanggal kalender LOKAL (lihat {@link #localDt}), jadi
+     * perilakunya identik untuk baris buatan perangkat (waktu lokal) maupun sinkron web (UTC ISO "…Z").
+     *
+     * Sengaja TIDAK memakai "transaksi pertama": pelanggan yang didaftarkan minggu lalu lalu baru
+     * pertama kali beli hari ini BUKAN pelanggan baru. Aturan berbasis created_at juga konsisten
+     * lintas-platform (mirror Transaction::isCustomerNew di web) dan tak bergantung pada apakah seluruh
+     * riwayat transaksi pelanggan tersedia di perangkat ini. customerId ≤ 0 (walk-in tanpa simpan) → false.
+     */
+    public boolean isNewCustomerOnDay(long customerId, String tanggal) {
+        if (customerId <= 0 || tanggal == null || tanggal.isEmpty()) return false;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String custDay = localDate("created_at");   // date(localtime(customers.created_at))
+        String txDay = "date(CASE WHEN ? LIKE '%Z' THEN datetime(?,'localtime') ELSE ? END)";
+        try (Cursor c = db.rawQuery(
+                "SELECT " + custDay + " = " + txDay + " FROM customers WHERE _id = ?",
+                new String[]{tanggal, tanggal, tanggal, String.valueOf(customerId)})) {
+            return c.moveToFirst() && c.getInt(0) == 1;
+        }
+    }
+
+    /**
+     * Empty gallons returned alongside a JUAL — summed from the paired KEMBALI row(s) the sale
+     * recorded for the same customer at the same tanggal. 0 if none. Matches both markers:
+     *   • "Tukar botol galon"            → recorded on the device (TransactionActivity).
+     *   • "Galon kembali dari penjualan…" → recorded by the web dashboard (storePending), so a
+     *     web-created sale's struk also shows its returned gallons on the phone.
+     */
+    public int getReturnedGalonForSale(long customerId, String tanggal) {
+        if (tanggal == null || tanggal.isEmpty()) return 0;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.rawQuery(
+                "SELECT COALESCE(SUM(" + DatabaseHelper.COL_JUMLAH_GALON + "), 0) FROM "
+                        + DatabaseHelper.TABLE_TRANSACTIONS
+                        + " WHERE " + DatabaseHelper.COL_CUSTOMER_ID + " = ?"
+                        + " AND " + DatabaseHelper.COL_TYPE + " = ?"
+                        + " AND " + DatabaseHelper.COL_TANGGAL + " = ?"
+                        + " AND (" + DatabaseHelper.COL_CATATAN + " = 'Tukar botol galon'"
+                        + "      OR " + DatabaseHelper.COL_CATATAN + " LIKE 'Galon kembali dari penjualan%')",
+                new String[]{String.valueOf(customerId), Transaction.TYPE_KEMBALI, tanggal});
+        int n = 0;
+        if (c.moveToFirst()) n = c.getInt(0);
+        c.close();
+        return n;
+    }
+
     /** Get all transactions for a specific customer, newest first */
     public List<Transaction> getByCustomerId(long customerId) {
         List<Transaction> list = new ArrayList<>();
@@ -193,7 +328,9 @@ public class TransactionDao {
                 "FROM transactions t " +
                 "JOIN customers c ON t.customer_id = c._id " +
                 "LEFT JOIN products p ON t.product_id = p._id " +
-                "ORDER BY t.tanggal DESC";
+                // Urut kronologis konsisten: edited_at (stempel sinkron UTC, tak ter-skew tz),
+                // jatuh ke tanggal kalau kosong. tanggal lama hasil sinkron bisa ter-skew.
+                "ORDER BY COALESCE(NULLIF(t.edited_at,''), t.tanggal) DESC";
         Cursor cursor = db.rawQuery(query, null);
         while (cursor.moveToNext()) {
             list.add(cursorToTransaction(cursor));
@@ -210,7 +347,8 @@ public class TransactionDao {
                 "FROM transactions t " +
                 "JOIN customers c ON t.customer_id = c._id " +
                 "LEFT JOIN products p ON t.product_id = p._id " +
-                "ORDER BY t.tanggal DESC " +
+                // Urut kronologis konsisten — lihat getAll().
+                "ORDER BY COALESCE(NULLIF(t.edited_at,''), t.tanggal) DESC " +
                 "LIMIT ?";
         Cursor cursor = db.rawQuery(query, new String[]{String.valueOf(limit)});
         while (cursor.moveToNext()) {
@@ -260,7 +398,7 @@ public class TransactionDao {
     public double getPendapatanHariIni() {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String query = "SELECT COALESCE(SUM(total_harga),0) FROM transactions " +
-                "WHERE type='JUAL' AND date(tanggal) = date('now','localtime')";
+                "WHERE type='JUAL' AND " + localDate("tanggal") + " = date('now','localtime')";
         Cursor cursor = db.rawQuery(query, null);
         double total = 0;
         if (cursor.moveToFirst()) {
@@ -274,7 +412,8 @@ public class TransactionDao {
     public int getTransaksiHariIni() {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String query = "SELECT COUNT(*) FROM transactions " +
-                "WHERE date(tanggal) = date('now','localtime')";
+                "WHERE COALESCE(catatan,'') NOT LIKE '%[PENCAIRAN KOMISI]%' AND "
+                + localDate("tanggal") + " = date('now','localtime')";
         Cursor cursor = db.rawQuery(query, null);
         int count = 0;
         if (cursor.moveToFirst()) {
@@ -348,7 +487,7 @@ public class TransactionDao {
     public int countThisMonth() {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String query = "SELECT COUNT(*) FROM transactions " +
-                "WHERE strftime('%Y-%m', tanggal) = strftime('%Y-%m','now','localtime')";
+                "WHERE " + localMonth("tanggal") + " = strftime('%Y-%m','now','localtime')";
         Cursor cursor = db.rawQuery(query, null);
         int count = 0;
         if (cursor.moveToFirst()) {
@@ -362,7 +501,8 @@ public class TransactionDao {
     public int getGalonTerjualHariIni() {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String query = "SELECT COALESCE(SUM(jumlah_galon),0) FROM transactions " +
-                "WHERE type='JUAL' AND date(tanggal) = date('now','localtime')";
+                "WHERE type='JUAL' AND COALESCE(catatan,'') NOT LIKE '%[PENCAIRAN KOMISI]%' AND "
+                + localDate("tanggal") + " = date('now','localtime')";
         Cursor cursor = db.rawQuery(query, null);
         int count = 0;
         if (cursor.moveToFirst()) {
@@ -380,7 +520,7 @@ public class TransactionDao {
                 "FROM transactions t " +
                 "JOIN customers c ON t.customer_id = c._id " +
                 "LEFT JOIN products p ON t.product_id = p._id " +
-                "WHERE date(t.tanggal) >= ? AND date(t.tanggal) <= ? " +
+                "WHERE " + localDate("t.tanggal") + " >= ? AND " + localDate("t.tanggal") + " <= ? " +
                 "ORDER BY t.tanggal ASC";
         Cursor cursor = db.rawQuery(query, new String[]{startDate, endDate});
         while (cursor.moveToNext()) {
@@ -401,7 +541,8 @@ public class TransactionDao {
         double revenue = 0;
         for (Transaction t : getByDateRange(startDate, endDate)) {
             if (!Transaction.TYPE_JUAL.equals(t.getType())) continue;
-            if (t.getCatatan() != null && t.getCatatan().contains("[JUAL BOTOL KOSONG]")) continue;
+            if (t.getCatatan() != null && (t.getCatatan().contains("[JUAL BOTOL KOSONG]")
+                    || t.getCatatan().contains("[PENCAIRAN KOMISI]"))) continue;
             java.util.List<com.crowja.damiupos.model.TransactionItem> items = t.getItems();
             if (items != null && !items.isEmpty()) {
                 for (com.crowja.damiupos.model.TransactionItem it : items) {
@@ -424,7 +565,7 @@ public class TransactionDao {
                 "COALESCE(SUM(CASE WHEN type='KEMBALI' THEN jumlah_galon ELSE 0 END),0), " +
                 "COALESCE(SUM(CASE WHEN type='JUAL' THEN total_harga ELSE 0 END),0) " +
                 "FROM transactions " +
-                "WHERE date(tanggal) >= ? AND date(tanggal) <= ?";
+                "WHERE " + localDate("tanggal") + " >= ? AND " + localDate("tanggal") + " <= ?";
         Cursor cursor = db.rawQuery(query, new String[]{startDate, endDate});
         double[] result = new double[4];
         if (cursor.moveToFirst()) {
@@ -444,11 +585,12 @@ public class TransactionDao {
     public List<String[]> getMonthlySales(int months) {
         List<String[]> list = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
-        String query = "SELECT strftime('%Y-%m', tanggal) AS bulan, " +
+        String query = "SELECT " + localMonth("tanggal") + " AS bulan, " +
                 "COALESCE(SUM(jumlah_galon),0) AS total_galon, " +
                 "COALESCE(SUM(total_harga),0) AS total_pendapatan " +
                 "FROM transactions " +
-                "WHERE type='JUAL' AND tanggal >= date('now','localtime','-" + months + " months') " +
+                "WHERE type='JUAL' AND COALESCE(catatan,'') NOT LIKE '%[PENCAIRAN KOMISI]%' AND "
+                + localDate("tanggal") + " >= date('now','localtime','-" + months + " months') " +
                 "GROUP BY bulan " +
                 "ORDER BY bulan ASC";
         Cursor cursor = db.rawQuery(query, null);
@@ -467,11 +609,12 @@ public class TransactionDao {
     public List<String[]> getDailySalesThisMonth() {
         List<String[]> list = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
-        String query = "SELECT strftime('%d', tanggal) AS hari, " +
+        String query = "SELECT strftime('%d', " + localDt("tanggal") + ") AS hari, " +
                 "COALESCE(SUM(jumlah_galon),0) AS total_galon, " +
                 "COALESCE(SUM(total_harga),0) AS total_pendapatan " +
                 "FROM transactions " +
-                "WHERE type='JUAL' AND strftime('%Y-%m', tanggal) = strftime('%Y-%m', 'now','localtime') " +
+                "WHERE type='JUAL' AND COALESCE(catatan,'') NOT LIKE '%[PENCAIRAN KOMISI]%' AND "
+                + localMonth("tanggal") + " = strftime('%Y-%m', 'now','localtime') " +
                 "GROUP BY hari " +
                 "ORDER BY hari ASC";
         Cursor cursor = db.rawQuery(query, null);
@@ -530,6 +673,8 @@ public class TransactionDao {
             t.setItems(TransactionItem.listFromJson(itemsJson));
         }
         t.setTanggal(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_TANGGAL)));
+        int editedIdx = cursor.getColumnIndex(DatabaseHelper.COL_EDITED_AT);
+        if (editedIdx >= 0) t.setEditedAt(cursor.getString(editedIdx));
         t.setCatatan(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_CATATAN)));
         int nameIdx = cursor.getColumnIndex("customer_name");
         if (nameIdx >= 0) {
@@ -542,6 +687,10 @@ public class TransactionDao {
         int prodNameIdx = cursor.getColumnIndex("product_name");
         if (prodNameIdx >= 0) {
             t.setProductName(cursor.getString(prodNameIdx));
+        }
+        int dtokIdx = cursor.getColumnIndex(DatabaseHelper.COL_DELIVERY_TOKEN);
+        if (dtokIdx >= 0) {
+            t.setDeliveryToken(cursor.getString(dtokIdx));
         }
         return t;
     }

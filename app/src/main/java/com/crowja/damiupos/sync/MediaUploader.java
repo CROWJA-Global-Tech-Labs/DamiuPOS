@@ -25,6 +25,7 @@ final class MediaUploader {
     private static final String[][] ENTITIES = {
             {"customers", DatabaseHelper.TABLE_CUSTOMERS},
             {"attendance", DatabaseHelper.TABLE_ATTENDANCE},
+            {"expenses", DatabaseHelper.TABLE_EXPENSES},   // foto nota → URL disinkron ke dashboard
     };
 
     private static final int MAX_PER_CYCLE = 12;   // images uploaded per sync run

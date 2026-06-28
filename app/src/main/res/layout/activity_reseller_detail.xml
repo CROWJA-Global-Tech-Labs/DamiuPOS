@@ -142,6 +142,16 @@
                     </LinearLayout>
 
                     <TextView
+                        android:id="@+id/tvTambahSaldo"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:textColor="#FFEB3B"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+
+                    <TextView
                         android:id="@+id/tvKomisiInfo"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"

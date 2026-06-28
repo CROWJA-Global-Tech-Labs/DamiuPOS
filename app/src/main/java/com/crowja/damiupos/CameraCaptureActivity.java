@@ -15,6 +15,8 @@ import android.location.Location;
 import android.location.LocationManager;
 import android.os.Bundle;
 import android.os.CountDownTimer;
+import android.os.Handler;
+import android.os.Looper;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -28,6 +30,11 @@ import androidx.camera.view.LifecycleCameraController;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.Priority;
+import com.google.android.gms.tasks.CancellationTokenSource;
 
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
@@ -61,8 +68,14 @@ public class CameraCaptureActivity extends AppCompatActivity {
 
     private PreviewView previewView;
     private TextView tvCountdown;
+    private TextView tvLabel;
     private LifecycleCameraController controller;
     private boolean capturing = false;
+
+    /** Lokasi GPS WAJIB untuk geotag foto absensi (EXIF + overlay peta). */
+    private Location selfieLocation;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private CancellationTokenSource locCancel;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -71,7 +84,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
 
         previewView = findViewById(R.id.previewView);
         tvCountdown = findViewById(R.id.tvCountdown);
-        TextView tvLabel = findViewById(R.id.tvLabel);
+        tvLabel = findViewById(R.id.tvLabel);
         String label = getIntent().getStringExtra(EXTRA_LABEL);
         tvLabel.setText("Foto Wajah" + (label != null ? " — " + label : ""));
 
@@ -113,9 +126,9 @@ public class CameraCaptureActivity extends AppCompatActivity {
         boolean loc = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED;
         if (cam && loc) {
-            startCamera();
+            acquireLocationThenStart();
         } else {
-            // Minta yang belum diberi. Lokasi opsional (untuk peta PiP).
+            // Kamera DAN lokasi sama-sama wajib (foto absensi harus ber-geotag).
             java.util.List<String> req = new java.util.ArrayList<>();
             if (!cam) req.add(Manifest.permission.CAMERA);
             if (!loc) req.add(Manifest.permission.ACCESS_FINE_LOCATION);
@@ -128,14 +141,91 @@ public class CameraCaptureActivity extends AppCompatActivity {
                                            @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQ_CAMERA) {
-            // Kamera wajib; lokasi opsional (peta PiP best-effort).
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-                    == PackageManager.PERMISSION_GRANTED) {
-                startCamera();
+            boolean cam = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                    == PackageManager.PERMISSION_GRANTED;
+            boolean loc = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED
+                    || ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED;
+            if (!cam) {
+                finishNoPhoto(); // tanpa kamera → tidak ada selfie (absensi lanjut tanpa foto)
+            } else if (!loc) {
+                // Lokasi WAJIB untuk geotag — tanpa izin lokasi, foto absensi tidak diizinkan.
+                blockNoLocation("Izin lokasi diperlukan untuk foto absensi ber-geotag.");
             } else {
-                finishNoPhoto(); // tanpa kamera → lanjut tanpa foto
+                acquireLocationThenStart();
             }
         }
+    }
+
+    /** Dapatkan fix GPS dulu (WAJIB) lalu mulai kamera. Tanpa lokasi → blok + opsi coba lagi. */
+    private void acquireLocationThenStart() {
+        tvCountdown.setText("📍");
+        if (tvLabel != null) tvLabel.setText("Mendapatkan lokasi GPS…");
+        requestFreshLocation(loc -> {
+            if (isFinishing()) return;
+            if (loc != null) {
+                selfieLocation = loc;
+                String label = getIntent().getStringExtra(EXTRA_LABEL);
+                if (tvLabel != null) tvLabel.setText("Foto Wajah" + (label != null ? " — " + label : ""));
+                startCamera();
+            } else {
+                blockNoLocation("Lokasi GPS belum didapat. Pastikan GPS aktif & sinyal cukup (idealnya di luar ruangan).");
+            }
+        });
+    }
+
+    /** Minta 1 fix lokasi terbaru (akurasi tinggi) dengan timeout 12 dtk, fallback last-known. */
+    @SuppressWarnings("MissingPermission")
+    private void requestFreshLocation(java.util.function.Consumer<Location> cb) {
+        boolean granted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED
+                || ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+        if (!granted) { cb.accept(null); return; }
+        final boolean[] done = {false};
+        locCancel = new CancellationTokenSource();
+        final Runnable timeout = () -> {
+            if (done[0]) return;
+            done[0] = true;
+            try { locCancel.cancel(); } catch (Throwable ignored) {}
+            cb.accept(getLastLocation());   // fallback ke last-known
+        };
+        handler.postDelayed(timeout, 12000);
+        try {
+            FusedLocationProviderClient fused = LocationServices.getFusedLocationProviderClient(this);
+            fused.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, locCancel.getToken())
+                    .addOnSuccessListener(loc -> {
+                        if (done[0]) return;
+                        done[0] = true;
+                        handler.removeCallbacks(timeout);
+                        cb.accept(loc != null ? loc : getLastLocation());
+                    })
+                    .addOnFailureListener(e -> {
+                        if (done[0]) return;
+                        done[0] = true;
+                        handler.removeCallbacks(timeout);
+                        cb.accept(getLastLocation());
+                    });
+        } catch (Throwable t) {
+            if (done[0]) return;
+            done[0] = true;
+            handler.removeCallbacks(timeout);
+            cb.accept(getLastLocation());
+        }
+    }
+
+    /** Lokasi wajib tidak terpenuhi → tawarkan Coba Lagi atau Batal (absensi dibatalkan). */
+    private void blockNoLocation(String why) {
+        if (isFinishing()) return;
+        tvCountdown.setText("");
+        new AlertDialog.Builder(this)
+                .setTitle("Lokasi Wajib")
+                .setMessage(why + "\n\nFoto absensi harus memuat lokasi.")
+                .setCancelable(false)
+                .setPositiveButton("Coba Lagi", (d, w) -> startCameraFlow())
+                .setNegativeButton("Batal", (d, w) -> finishUserCancelled())
+                .show();
     }
 
     private void startCamera() {
@@ -210,6 +300,13 @@ public class CameraCaptureActivity extends AppCompatActivity {
         finish();
     }
 
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        try { if (locCancel != null) locCancel.cancel(); } catch (Throwable ignored) {}
+        handler.removeCallbacksAndMessages(null);
+    }
+
     // -------------------------------------------------------- map PiP overlay
 
     /** Tempel peta koordinat (PiP) di pojok kanan bawah foto. */
@@ -229,7 +326,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
                     new Locale("id", "ID")).format(new Date());
             canvas.drawText(stamp, w * 0.03f, h - w * 0.03f, tp);
 
-            Location loc = getLastLocation();
+            Location loc = selfieLocation != null ? selfieLocation : getLastLocation();
             if (loc != null) {
                 Bitmap map = fetchMapBitmap(loc.getLatitude(), loc.getLongitude(), 16);
                 int pip = (int) (w * 0.34f);
@@ -265,6 +362,19 @@ public class CameraCaptureActivity extends AppCompatActivity {
             try (FileOutputStream out = new FileOutputStream(photoFile)) {
                 base.compress(Bitmap.CompressFormat.JPEG, 88, out);
             }
+            // Tulis geotag GPS ke EXIF (tag lokasi WAJIB). compress() di atas menghapus EXIF,
+            // jadi ditulis SETELAH file final tersimpan agar foto benar-benar ber-geotag.
+            Location geo = selfieLocation != null ? selfieLocation : getLastLocation();
+            if (geo != null) {
+                try {
+                    androidx.exifinterface.media.ExifInterface exif =
+                            new androidx.exifinterface.media.ExifInterface(photoFile.getAbsolutePath());
+                    exif.setLatLong(geo.getLatitude(), geo.getLongitude());
+                    exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_GPS_DATESTAMP,
+                            new SimpleDateFormat("yyyy:MM:dd", Locale.US).format(new Date()));
+                    exif.saveAttributes();
+                } catch (Throwable ignored) {}
+            }
         } catch (Throwable ignored) {
         } finally {
             base.recycle();
@@ -295,6 +405,17 @@ public class CameraCaptureActivity extends AppCompatActivity {
                 if (upright != bmp) bmp.recycle();
             } else {
                 upright = bmp;
+            }
+            // Koreksi tambahan: putar 90° berlawanan arah jarum jam (CCW). Hasil selfie
+            // kamera depan tampil miring 90°, jadi diputar agar wajah tegak. Dilakukan
+            // sebelum overlay peta/stempel supaya keduanya ikut orientasi yang benar.
+            {
+                Matrix ccw = new Matrix();
+                ccw.postRotate(-90);
+                Bitmap rotated = Bitmap.createBitmap(
+                        upright, 0, 0, upright.getWidth(), upright.getHeight(), ccw, true);
+                if (rotated != upright) upright.recycle();
+                upright = rotated;
             }
             // Clamp ke 720p (sisi terpanjang ≤ 1280 px).
             int longSide = Math.max(upright.getWidth(), upright.getHeight());

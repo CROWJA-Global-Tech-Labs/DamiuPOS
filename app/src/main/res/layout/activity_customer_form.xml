@@ -114,6 +114,30 @@
                 app:iconGravity="textStart"
                 app:iconSize="18dp" />
 
+            <!-- Harga Air / Galon per Produk (default harga produk standar; bisa diedit per produk) -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="Harga Air / Galon per Produk"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="Default = harga produk standar; dipakai saat transaksi ke pelanggan ini. Kosongkan satu produk untuk ikut harga standarnya."
+                android:textColor="#94A3B8"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:id="@+id/llHargaProduk"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="vertical" />
+
             <!-- Reseller -->
             <com.google.android.material.checkbox.MaterialCheckBox
                 android:id="@+id/cbReseller"

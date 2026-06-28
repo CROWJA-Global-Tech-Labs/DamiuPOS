@@ -6,13 +6,11 @@ import com.crowja.damiupos.db.AttendanceDao;
 import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.ExpenseDao;
-import com.crowja.damiupos.db.PendingTransactionDao;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.db.TransactionDao;
 import com.crowja.damiupos.model.Attendance;
 import com.crowja.damiupos.model.Customer;
 import com.crowja.damiupos.model.Expense;
-import com.crowja.damiupos.model.PendingTransaction;
 import com.crowja.damiupos.model.Transaction;
 import com.crowja.damiupos.model.TransactionItem;
 
@@ -171,31 +169,7 @@ public final class ShiftReporter {
         appendFollowUpPending(sb,
                 customerDao.getFollowUpCandidates(settings.getFollowupDays()), followedIds);
 
-        // Transaksi Pending (pesanan yang belum dieksekusi — perlu di-handle besok).
-        appendPendingTransactions(sb, new PendingTransactionDao(dbHelper).getAllPending());
-
         return sb.toString();
-    }
-
-    /** Daftar Transaksi Pending yang masih menunggu dieksekusi (depot-wide). */
-    private static void appendPendingTransactions(StringBuilder sb, List<PendingTransaction> pendings) {
-        sb.append("\n*Transaksi Pending* (").append(pendings.size()).append(")\n");
-        if (pendings.isEmpty()) {
-            sb.append("- (tidak ada)\n");
-            return;
-        }
-        for (PendingTransaction p : pendings) {
-            String name = p.getCustomerName() != null && !p.getCustomerName().isEmpty()
-                    ? p.getCustomerName() : "Umum";
-            sb.append("- ").append(name);
-            if (p.getNote() != null && !p.getNote().trim().isEmpty()) {
-                sb.append(": ").append(p.getNote().trim());
-            }
-            if (p.getCreatedByName() != null && !p.getCreatedByName().isEmpty()) {
-                sb.append("  ·  oleh ").append(p.getCreatedByName());
-            }
-            sb.append("\n");
-        }
     }
 
     /**

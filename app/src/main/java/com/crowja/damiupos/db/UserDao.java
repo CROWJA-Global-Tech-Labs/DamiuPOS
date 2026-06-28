@@ -39,6 +39,18 @@ public class UserDao {
                 new String[]{String.valueOf(u.getId())});
     }
 
+    /**
+     * Set just the PIN locally (PIN is never synced — it's device-local). Used on the first
+     * login of a staff added on the web dashboard, who arrives without a PIN.
+     */
+    public int setPin(long id, String pin) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_USER_PIN, pin);
+        return db.update(DatabaseHelper.TABLE_USERS, v,
+                DatabaseHelper.COL_USER_ID + "=?", new String[]{String.valueOf(id)});
+    }
+
     /** Hapus user beserta log absensinya (FK cascade). */
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();

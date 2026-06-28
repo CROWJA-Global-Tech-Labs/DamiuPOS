@@ -33,6 +33,20 @@ public class AttendanceDao {
     }
 
     /**
+     * Stamp an attendance event with its GPS location (dipanggil async setelah event dicatat,
+     * begitu fix lokasi tersedia). Marks the row dirty so the next sync pushes the coordinates.
+     */
+    public void setLocation(long attendanceId, double lat, double lng) {
+        if (attendanceId <= 0) return;
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_ATT_LAT, lat);
+        v.put(DatabaseHelper.COL_ATT_LNG, lng);
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_ATTENDANCE, v,
+                DatabaseHelper.COL_ATT_ID + "=?", new String[]{String.valueOf(attendanceId)});
+    }
+
+    /**
      * Kosongkan kolom photo_path untuk semua event dalam rentang tanggal
      * (dipanggil setelah foto periode dihapus agar tidak ada path menggantung).
      */

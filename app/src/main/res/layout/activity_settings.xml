@@ -31,6 +31,16 @@
             android:orientation="vertical"
             android:padding="16dp">
 
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:background="#FFF8E1"
+                android:padding="12dp"
+                android:text="🔒 Pengaturan bisnis dikelola admin di dashboard web dan tersinkron ke perangkat ini (hanya-baca). Yang masih bisa diubah di sini: izin notifikasi, nada dering, dan Backup/Restore database."
+                android:textColor="#8D6E00"
+                android:textSize="12sp" />
+
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/cardUpgradePro"
                 android:layout_width="match_parent"
@@ -110,6 +120,36 @@
                         android:text="Nama, alamat, dan nomor HP depot akan dicetak di bagian atas struk."
                         android:textColor="@color/text_secondary"
                         android:textSize="13sp" />
+
+                    <!-- Logo depot: read-only di HP, diatur di web Konfigurasi & disinkron ke sini. -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="12dp">
+
+                        <ImageView
+                            android:id="@+id/ivDepotLogo"
+                            android:layout_width="56dp"
+                            android:layout_height="56dp"
+                            android:scaleType="fitCenter"
+                            android:adjustViewBounds="true"
+                            android:background="@drawable/bg_circle_grey"
+                            android:padding="4dp"
+                            android:visibility="gone"
+                            android:contentDescription="@null" />
+
+                        <TextView
+                            android:id="@+id/tvDepotLogoLabel"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginStart="10dp"
+                            android:text="Logo depot diatur di web Dashboard → Konfigurasi, lalu otomatis tampil di sini &amp; di struk."
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
 
                     <com.google.android.material.textfield.TextInputLayout
                         android:layout_width="match_parent"
@@ -302,65 +342,6 @@
                             android:layout_height="wrap_content"
                             android:inputType="number" />
                     </com.google.android.material.textfield.TextInputLayout>
-                </LinearLayout>
-            </com.google.android.material.card.MaterialCardView>
-
-            <!-- Kelola Jenis Air Minum (pindahan dari dashboard) -->
-            <com.google.android.material.card.MaterialCardView
-                android:id="@+id/cardJenisAir"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:clickable="true"
-                android:focusable="true"
-                android:foreground="?attr/selectableItemBackground"
-                app:cardCornerRadius="12dp"
-                app:cardElevation="2dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="16dp">
-
-                    <ImageView
-                        android:layout_width="28dp"
-                        android:layout_height="28dp"
-                        android:layout_marginEnd="12dp"
-                        android:contentDescription="Jenis Air Minum"
-                        android:src="@drawable/ic_water_drop"
-                        app:tint="@color/primary" />
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Jenis Air Minum"
-                            android:textColor="@color/text_primary"
-                            android:textSize="16sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="2dp"
-                            android:text="Kelola produk air minum dan harga jual"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <ImageView
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:contentDescription="Buka"
-                        android:src="@android:drawable/ic_media_play"
-                        app:tint="@color/grey_medium" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
@@ -881,18 +862,6 @@
 
 
                         <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnTestParser"
-                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="12dp"
-                            android:text="Test Parser (simulasi pesan WA)"
-                            android:textAllCaps="false"
-                            app:cornerRadius="12dp"
-                            app:icon="@android:drawable/ic_menu_send"
-                            app:iconGravity="textStart" />
-
-                        <com.google.android.material.button.MaterialButton
                             android:id="@+id/btnViewArchive"
                             style="@style/Widget.MaterialComponents.Button.TextButton"
                             android:layout_width="match_parent"
@@ -923,6 +892,80 @@
                                 android:layout_height="wrap_content"
                                 android:inputType="number" />
                         </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Auto-Kirim Struk WhatsApp (AccessibilityService) -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Auto-Kirim Struk WhatsApp"
+                            android:textColor="@color/text_primary"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/switchWaAutoSend"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="Saat menekan &quot;Bagikan ke pelanggan&quot;, struk langsung dikirim ke chat WhatsApp pelanggan TANPA perlu menekan Kirim. Wajib aktifkan layanan Aksesibilitas DAMIU POS dulu. Hanya layar WhatsApp yang dibaca."
+                        android:textColor="@color/text_secondary"
+                        android:textSize="13sp" />
+
+                    <LinearLayout
+                        android:id="@+id/waAutoSendConfig"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:visibility="gone">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnGrantAccessibility"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:text="Buka Pengaturan Aksesibilitas"
+                            android:textAllCaps="false"
+                            app:cornerRadius="12dp"
+                            app:icon="@android:drawable/ic_menu_manage"
+                            app:iconGravity="textStart" />
+
+                        <TextView
+                            android:id="@+id/tvAccessibilityStatus"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:text=""
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
                     </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
@@ -984,43 +1027,11 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="6dp"
-                        android:text="⚠ Import akan menimpa SEMUA data yang ada saat ini. Lakukan export dulu jika ragu."
+                        android:text="Saat Pulihkan kamu bisa pilih: Restore Semua (menimpa semua data) atau Restore Transaksi (hanya menambah transaksi untuk pelanggan yang sudah ada). Export dulu jika ragu."
                         android:textColor="@color/red"
                         android:textSize="12sp" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnSimpan"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:text="Simpan"
-                android:textAllCaps="false"
-                app:cornerRadius="12dp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnGenerateDemo"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:text="Generate Data Demo (Follow Up)"
-                android:textAllCaps="false"
-                android:visibility="gone"
-                app:cornerRadius="12dp"
-                app:icon="@android:drawable/ic_menu_add" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnClearDemo"
-                style="@style/Widget.MaterialComponents.Button.TextButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="Hapus Data Demo"
-                android:textAllCaps="false"
-                android:textColor="@color/red"
-                android:visibility="gone" />
 
             <TextView
                 android:layout_width="match_parent"
@@ -1028,7 +1039,7 @@
                 android:layout_marginTop="24dp"
                 android:layout_marginBottom="8dp"
                 android:gravity="center"
-                android:text="© FREZ Tech &amp; Innovation Labs"
+                android:text="© FREZ Tech &amp; Innovations Lab"
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp"
                 android:textStyle="bold" />

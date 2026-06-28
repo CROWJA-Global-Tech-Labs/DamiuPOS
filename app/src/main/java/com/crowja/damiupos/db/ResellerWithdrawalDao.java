@@ -66,13 +66,35 @@ public class ResellerWithdrawalDao {
                 new String[]{String.valueOf(id)});
     }
 
-    /** Total rupiah yang sudah dicairkan reseller ini. */
+    /**
+     * Net rupiah keluar = pencairan − tambah-saldo. "Tambah saldo" (top-up dari web
+     * dashboard) disimpan sebagai pencairan ber-amount negatif, jadi otomatis menambah
+     * saldo lewat rumus {@code saldo = komisi − net}.
+     */
     public double getTotalWithdrawn(long customerId) {
+        return sumAmount(customerId, null);
+    }
+
+    /** Total pencairan nyata (amount &gt; 0), tanpa memperhitungkan tambah-saldo. */
+    public double getTotalCashedOut(long customerId) {
+        return sumAmount(customerId, true);
+    }
+
+    /** Total "tambah saldo" (kredit) untuk reseller ini — disimpan sebagai amount negatif. */
+    public double getTotalDeposits(long customerId) {
+        return -sumAmount(customerId, false);
+    }
+
+    /** SUM(amount) untuk reseller; positiveOnly=null semua, true amount&gt;0, false amount&lt;0. */
+    private double sumAmount(long customerId, Boolean positiveOnly) {
+        String where = DatabaseHelper.COL_WD_CUSTOMER_ID + "=?";
+        if (positiveOnly != null) {
+            where += " AND " + DatabaseHelper.COL_WD_AMOUNT + (positiveOnly ? ">0" : "<0");
+        }
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         Cursor c = db.rawQuery(
                 "SELECT COALESCE(SUM(" + DatabaseHelper.COL_WD_AMOUNT + "),0) FROM " +
-                        DatabaseHelper.TABLE_RESELLER_WD +
-                        " WHERE " + DatabaseHelper.COL_WD_CUSTOMER_ID + "=?",
+                        DatabaseHelper.TABLE_RESELLER_WD + " WHERE " + where,
                 new String[]{String.valueOf(customerId)});
         double total = 0;
         if (c.moveToFirst()) total = c.getDouble(0);

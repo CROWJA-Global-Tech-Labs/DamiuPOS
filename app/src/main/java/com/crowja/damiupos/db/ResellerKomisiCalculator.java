@@ -60,8 +60,14 @@ public final class ResellerKomisiCalculator {
                 reseller.getId(), reseller.getResellerSince());
 
         for (Transaction t : trxs) {
-            // Botol kosong = bukan air minum → tidak ada komisi.
-            if (t.getCatatan() != null && t.getCatatan().contains("[JUAL BOTOL KOSONG]")) {
+            // Lewati transaksi yang BUKAN sumber komisi:
+            //  • botol kosong (bukan air minum)
+            //  • pencairan/penggunaan saldo komisi (beli air dibayar dari komisi) →
+            //    hindari komisi berputar / circular (komisi tidak menghasilkan komisi lagi).
+            String cat = t.getCatatan();
+            if (cat != null && (cat.contains("[JUAL BOTOL KOSONG]")
+                    || cat.contains("[PENCAIRAN KOMISI]")
+                    || cat.contains("[SALDO KOMISI"))) {
                 continue;
             }
 

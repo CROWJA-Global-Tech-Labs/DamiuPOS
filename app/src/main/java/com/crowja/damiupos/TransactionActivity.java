@@ -70,12 +70,11 @@ public class TransactionActivity extends AppCompatActivity {
      *  (caller: Detail Reseller → "Buat Transaksi Baru"). */
     public static final String EXTRA_RESELLER_ID = "preset_reseller_id";
 
-    /** Intent extra: id Transaksi Pending yang sedang dieksekusi. Catatannya
-     *  di-prefill, dan baris pending dihapus begitu transaksi berhasil disimpan. */
-    public static final String EXTRA_PENDING_ID = "pending_id";
-
-    /** Intent extra: catatan/ringkasan pesanan dari Transaksi Pending → prefill catatan. */
-    public static final String EXTRA_PENDING_NOTE = "pending_note";
+    /** Mode "Pencairan Komisi": reuse layar Transaksi Baru sebagai form payout.
+     *  Caller: Detail Reseller → "Cairkan Komisi". */
+    public static final String EXTRA_KOMISI_PAYOUT = "komisi_payout";
+    public static final String EXTRA_KOMISI_SALDO = "komisi_saldo";
+    public static final String EXTRA_RESELLER_NAME = "reseller_name";
 
     /** Cached inbox sender name dari intent — di-pass ke ReceiptActivity. */
     private String forwardedInboxSenderName;
@@ -91,6 +90,14 @@ public class TransactionActivity extends AppCompatActivity {
     private View ongkirModeContainer, cardCustomer, cardItems, cardOwnership, gantiRugiContainer, returnModeContainer;
     private View cardJualBotol, cardDate, cardReseller, cardKembali;
     private LinearLayout llItems;
+
+    // --- Mode Pencairan Komisi (payout) ---
+    private boolean payoutMode = false;
+    private double payoutSaldo = 0;
+    private MaterialButtonToggleGroup togglePayoutType;
+    private TextInputEditText etPayoutNominal, etPayoutGalonQty, etPayoutNilai, etPayoutNote;
+    private View tilPayoutNominal, layoutPayoutAir;
+    private TextView tvPayoutTotal;
 
     /** Reseller afiliasi terpilih (0 = tidak ada). */
     private long selectedResellerId = 0;
@@ -126,9 +133,16 @@ public class TransactionActivity extends AppCompatActivity {
     private long selectedCustomerId = -1;
     private String selectedCustomerName = "";
     private String selectedCustomerPhone = "";
+    /** Harga khusus per produk pelanggan terpilih { product_uuid: harga } (null = harga produk standar). */
+    private java.util.Map<String, Double> selectedCustomerPrices = null;
 
-    /** Id Transaksi Pending yang sedang dieksekusi (>0 → dihapus setelah sukses). */
-    private long executingPendingId = 0;
+    // --- Gunakan Saldo Komisi (muncul saat pelanggan = reseller, mode JUAL) ---
+    private View cardUseSaldo, layoutSaldoPotong, layoutSaldoBreakdown;
+    private com.google.android.material.checkbox.MaterialCheckBox cbUseSaldo;
+    private TextView tvSaldoKomisi, tvSisaBayar, tvDipotongSaldo;
+    private TextInputEditText etSaldoDipotong;
+    private double resellerSaldo = 0;   // saldo komisi pelanggan reseller terpilih
+    private double lastJualTotal = 0;   // total JUAL terkini (untuk hitung sisa bayar)
 
     // Tanggal+waktu transaksi terpilih (yyyy-MM-dd HH:mm:ss). Default = sekarang.
     // Berlaku untuk Jual Air, Galon Kembali, dan Jual Botol.
@@ -263,6 +277,7 @@ public class TransactionActivity extends AppCompatActivity {
                 selectedCustomerId = c.getId();
                 selectedCustomerName = c.getName();
                 selectedCustomerPhone = c.getPhone();
+                selectedCustomerPrices = c.getProductPrices();
                 tvSelectedCustomer.setText(c.getName());
             }
         }
@@ -319,6 +334,8 @@ public class TransactionActivity extends AppCompatActivity {
         etJumlahBotolJual.addTextChangedListener(calcWatcher);
         etHargaBotolJual.addTextChangedListener(calcWatcher);
 
+        setupUseSaldoCard();
+
         etOngkir.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
@@ -337,21 +354,10 @@ public class TransactionActivity extends AppCompatActivity {
 
         findViewById(R.id.btnSimpan).setOnClickListener(v -> trySave());
 
-        // "Simpan sebagai Pending" — catat pesanan untuk dieksekusi nanti
-        // (mis. staf hendak pulang, transaksi belum bisa di-handle hari ini).
-        View btnSimpanPending = findViewById(R.id.btnSimpanPending);
-        if (btnSimpanPending != null) btnSimpanPending.setOnClickListener(v -> saveAsPending());
-
-        // Eksekusi sebuah Transaksi Pending → prefill catatan + tandai untuk dihapus
-        // setelah transaksi sukses.
-        executingPendingId = getIntent().getLongExtra(EXTRA_PENDING_ID, 0);
-        String pendingNote = getIntent().getStringExtra(EXTRA_PENDING_NOTE);
-        if (pendingNote != null && !pendingNote.trim().isEmpty() && etCatatan != null) {
-            etCatatan.setText(pendingNote.trim());
-        }
-
         // Render semua jenis air sebagai baris entri (jumlah + harga per pcs).
         buildProductEntries();
+        // Terapkan harga air khusus pelanggan (bila Transaksi Baru dibuka dengan pelanggan terpilih).
+        applyResellerPricing();
 
         // Pre-set reseller afiliasi kalau dibuka dari Detail Reseller.
         prefillResellerFromIntent();
@@ -387,6 +393,186 @@ public class TransactionActivity extends AppCompatActivity {
         // updateOwnershipUI yg hide field-nya.
         syncKembaliToTotalJumlah();
         updateTotal();
+        refreshUseSaldoCard();   // tampilkan kartu saldo kalau pelanggan prefilled = reseller
+
+        // Mode Pencairan Komisi: setelah semua setup jual selesai, alihkan layar ini
+        // menjadi form payout (sembunyikan kartu jual, tampilkan kartu pencairan).
+        maybeEnterPayoutMode();
+    }
+
+    /** Aktifkan mode payout kalau dibuka dengan EXTRA_KOMISI_PAYOUT. */
+    private void maybeEnterPayoutMode() {
+        if (!getIntent().getBooleanExtra(EXTRA_KOMISI_PAYOUT, false)) return;
+        long resellerId = getIntent().getLongExtra(EXTRA_RESELLER_ID, 0);
+        if (resellerId <= 0) { Toast.makeText(this, "Reseller tidak valid", Toast.LENGTH_SHORT).show(); finish(); return; }
+        payoutMode = true;
+        payoutSaldo = getIntent().getDoubleExtra(EXTRA_KOMISI_SALDO, 0);
+
+        // Reseller = penerima pencairan (dipakai sbg "pelanggan" transaksi AIR).
+        Customer reseller = customerDao.getById(resellerId);
+        selectedCustomerId = resellerId;
+        selectedCustomerName = reseller != null ? reseller.getName()
+                : getIntent().getStringExtra(EXTRA_RESELLER_NAME);
+        if (selectedCustomerName == null) selectedCustomerName = "Reseller";
+        selectedCustomerPhone = reseller != null ? reseller.getPhone() : null;
+        selectedResellerId = 0; // bukan transaksi afiliasi
+
+        // Sembunyikan semua kartu jual; tampilkan kartu pencairan.
+        int[] hide = {R.id.cardType, R.id.rowCustomerDate, R.id.cardReseller, R.id.cardItems,
+                R.id.cardJualBotol, R.id.cardOwnership, R.id.cardKembali, R.id.cardDetails,
+                R.id.cardUseSaldo, R.id.cardTotal};
+        for (int id : hide) { View v = findViewById(id); if (v != null) v.setVisibility(View.GONE); }
+        findViewById(R.id.cardPayout).setVisibility(View.VISIBLE);
+
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().setTitle("Pencairan Komisi — " + selectedCustomerName);
+        }
+
+        TextView tvReseller = findViewById(R.id.tvPayoutReseller);
+        TextView tvSaldo = findViewById(R.id.tvPayoutSaldo);
+        togglePayoutType = findViewById(R.id.togglePayoutType);
+        tilPayoutNominal = findViewById(R.id.tilPayoutNominal);
+        etPayoutNominal = findViewById(R.id.etPayoutNominal);
+        layoutPayoutAir = findViewById(R.id.layoutPayoutAir);
+        etPayoutGalonQty = findViewById(R.id.etPayoutGalonQty);
+        etPayoutNilai = findViewById(R.id.etPayoutNilai);
+        tvPayoutTotal = findViewById(R.id.tvPayoutTotal);
+        etPayoutNote = findViewById(R.id.etPayoutNote);
+
+        NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
+        tvReseller.setText("Cairkan untuk: " + selectedCustomerName);
+        tvSaldo.setText("Saldo tersedia: Rp " + nf.format(Math.round(payoutSaldo)));
+
+        // Prefill nilai/galon dari harga jual produk pertama (kalau ada).
+        List<Product> products = productDao.getAll();
+        if (!products.isEmpty()) etPayoutNilai.setText(String.valueOf(Math.round(products.get(0).getHargaJual())));
+
+        com.google.android.material.button.MaterialButton btnSimpan = findViewById(R.id.btnSimpan);
+        btnSimpan.setText("Cairkan");
+
+        togglePayoutType.addOnButtonCheckedListener((g, checkedId, isChecked) -> {
+            if (!isChecked) return;
+            if (checkedId == R.id.btnPayoutAir) {
+                // "Air Minum": pencairan diproses lewat layar Transaksi Baru (pilih produk asli),
+                // jadi kosongkan + sembunyikan form galon & kartu total di panel ini, dan ubah
+                // tombol jadi "Cairkan Sebagai Air Minum" (navigate, bukan simpan langsung).
+                etPayoutGalonQty.setText("");
+                etPayoutNilai.setText("");
+                tvPayoutTotal.setText("");
+                layoutPayoutAir.setVisibility(View.GONE);
+                tilPayoutNominal.setVisibility(View.GONE);
+                btnSimpan.setText("Cairkan Sebagai Air Minum");
+            } else {
+                layoutPayoutAir.setVisibility(View.GONE);
+                tilPayoutNominal.setVisibility(View.VISIBLE);
+                btnSimpan.setText("Cairkan");
+            }
+        });
+
+        TextWatcher airWatcher = new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void afterTextChanged(Editable s) {
+                int qty = parseIntOr(etPayoutGalonQty, 0);
+                double nilai = parseDoubleOr(etPayoutNilai, 0);
+                tvPayoutTotal.setText("Total dipotong: Rp " + nf.format(Math.round(qty * nilai)));
+            }
+        };
+        etPayoutGalonQty.addTextChangedListener(airWatcher);
+        etPayoutNilai.addTextChangedListener(airWatcher);
+        airWatcher.afterTextChanged(null);
+
+        btnSimpan.setOnClickListener(v -> {
+            if (togglePayoutType.getCheckedButtonId() == R.id.btnPayoutAir) {
+                // Cairkan sebagai air minum → buka Transaksi Baru dengan reseller sebagai pelanggan
+                // (nama pelanggan sudah terisi). Pencairan UANG tetap disimpan langsung di sini.
+                startActivity(new Intent(this, TransactionActivity.class)
+                        .putExtra("customer_id", selectedCustomerId));
+                finish();
+            } else {
+                trySavePayout();
+            }
+        });
+    }
+
+    /** Simpan pencairan komisi (hybrid): AIR = transaksi galon (gratis, potong stok lewat
+     *  riwayat jual), UANG = pengeluaran depot. Keduanya catat reseller_withdrawal + buka struk. */
+    private void trySavePayout() {
+        if (payoutSaldo <= 0) { Toast.makeText(this, "Saldo komisi belum ada untuk dicairkan", Toast.LENGTH_SHORT).show(); return; }
+        NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
+        boolean air = togglePayoutType.getCheckedButtonId() == R.id.btnPayoutAir;
+        String note = etPayoutNote.getText() != null ? etPayoutNote.getText().toString().trim() : "";
+        com.crowja.damiupos.db.ResellerWithdrawalDao wdDao =
+                new com.crowja.damiupos.db.ResellerWithdrawalDao(DatabaseHelper.getInstance(this));
+
+        Intent r = new Intent(this, ReceiptActivity.class);
+        r.putExtra(ReceiptActivity.EXTRA_IS_KOMISI_PAYOUT, true);
+        r.putExtra(ReceiptActivity.EXTRA_RESELLER_NAME, selectedCustomerName);
+        r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_NAME, selectedCustomerName);
+        r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_PHONE, selectedCustomerPhone);
+        r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_ID, selectedCustomerId);
+        r.putExtra(ReceiptActivity.EXTRA_SALDO_BEFORE, payoutSaldo);
+
+        if (air) {
+            int qty = parseIntOr(etPayoutGalonQty, 0);
+            double nilai = parseDoubleOr(etPayoutNilai, 0);
+            double total = qty * nilai;
+            if (qty <= 0) { etPayoutGalonQty.setError("Minimal 1 galon"); return; }
+            if (nilai <= 0) { etPayoutNilai.setError("Nilai per galon wajib diisi"); return; }
+            if (total > payoutSaldo) { etPayoutGalonQty.setError("Melebihi saldo (Rp " + nf.format(Math.round(payoutSaldo)) + ")"); return; }
+
+            // Transaksi galon (gratis, dibayar dari komisi) — masuk riwayat, ditandai marker.
+            Transaction trx = new Transaction();
+            trx.setCustomerId(selectedCustomerId);
+            trx.setType(Transaction.TYPE_JUAL);
+            trx.setJumlahGalon(qty);
+            trx.setHargaPerGalon(0);
+            trx.setTotalHarga(0);
+            trx.setOngkir(0);
+            trx.setOngkirType(Transaction.ONGKIR_NONE);
+            trx.setGalonOwnership(Transaction.OWNERSHIP_BAWA_SENDIRI); // tak ada botol keluar
+            if (selectedTrxDate != null) trx.setTanggal(selectedTrxDate);
+            List<Product> products = productDao.getAll();
+            if (!products.isEmpty()) {
+                Product p = products.get(0);
+                List<TransactionItem> its = new ArrayList<>();
+                its.add(new TransactionItem(p.getId(), p.getName(), qty, 0));
+                trx.setItems(its);
+                trx.setProductId(p.getId());
+            }
+            String catatan = "[PENCAIRAN KOMISI] " + qty + " galon (nilai Rp " + nf.format(Math.round(total)) + ")";
+            if (!note.isEmpty()) catatan += " — " + note;
+            trx.setCatatan(catatan);
+            transactionDao.insert(trx);
+            wdDao.insert(selectedCustomerId, com.crowja.damiupos.db.ResellerWithdrawalDao.TYPE_AIR, qty, total, note, 0);
+            com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+
+            r.putExtra(ReceiptActivity.EXTRA_PAYOUT_TYPE, "AIR");
+            r.putExtra(ReceiptActivity.EXTRA_PAYOUT_GALON, qty);
+            r.putExtra(ReceiptActivity.EXTRA_PAYOUT_NILAI, nilai);
+            r.putExtra(ReceiptActivity.EXTRA_PAYOUT_AMOUNT, total);
+            r.putExtra(ReceiptActivity.EXTRA_SALDO_AFTER, payoutSaldo - total);
+            Toast.makeText(this, "Dicairkan " + qty + " galon air (Rp " + nf.format(Math.round(total)) + ")", Toast.LENGTH_LONG).show();
+        } else {
+            double nominal = parseDoubleOr(etPayoutNominal, 0);
+            if (nominal <= 0) { etPayoutNominal.setError("Nominal wajib diisi"); return; }
+            if (nominal > payoutSaldo) { etPayoutNominal.setError("Melebihi saldo (Rp " + nf.format(Math.round(payoutSaldo)) + ")"); return; }
+
+            // Pencairan tunai = pengeluaran depot + reseller_withdrawal.
+            String expName = "Komisi Reseller" + (selectedCustomerName != null && !selectedCustomerName.isEmpty() ? " - " + selectedCustomerName : "");
+            String expNote = "[PENCAIRAN KOMISI] Pencairan komisi reseller (uang tunai)" + (!note.isEmpty() ? " — " + note : "");
+            long expId = new com.crowja.damiupos.db.ExpenseDao(DatabaseHelper.getInstance(this))
+                    .insert(new com.crowja.damiupos.model.Expense(expName, nominal, null, expNote));
+            wdDao.insert(selectedCustomerId, com.crowja.damiupos.db.ResellerWithdrawalDao.TYPE_UANG, 0, nominal, note, expId);
+            com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+
+            r.putExtra(ReceiptActivity.EXTRA_PAYOUT_TYPE, "UANG");
+            r.putExtra(ReceiptActivity.EXTRA_PAYOUT_AMOUNT, nominal);
+            r.putExtra(ReceiptActivity.EXTRA_SALDO_AFTER, payoutSaldo - nominal);
+            Toast.makeText(this, "Dicairkan Rp " + nf.format(Math.round(nominal)), Toast.LENGTH_LONG).show();
+        }
+        startActivity(r);
+        finish();
     }
 
     /**
@@ -508,11 +694,7 @@ public class TransactionActivity extends AppCompatActivity {
         if (cardReseller != null) {
             cardReseller.setVisibility(isJual ? View.VISIBLE : View.GONE);
         }
-        // "Simpan sebagai Pending" hanya untuk Jual Air Minum.
-        View btnSimpanPending = findViewById(R.id.btnSimpanPending);
-        if (btnSimpanPending != null) {
-            btnSimpanPending.setVisibility(isJual ? View.VISIBLE : View.GONE);
-        }
+        refreshUseSaldoCard();   // "Gunakan Saldo Komisi" hanya untuk JUAL
         updateTotal();
     }
 
@@ -683,6 +865,105 @@ public class TransactionActivity extends AppCompatActivity {
         }
         NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
         tvTotalHarga.setText("Rp " + nf.format(total));
+        lastJualTotal = total;
+        updateSisaBayar();
+    }
+
+    // --- Gunakan Saldo Komisi (pelanggan reseller) ---
+
+    private void setupUseSaldoCard() {
+        cardUseSaldo = findViewById(R.id.cardUseSaldo);
+        cbUseSaldo = findViewById(R.id.cbUseSaldo);
+        tvSaldoKomisi = findViewById(R.id.tvSaldoKomisi);
+        layoutSaldoPotong = findViewById(R.id.layoutSaldoPotong);
+        etSaldoDipotong = findViewById(R.id.etSaldoDipotong);
+        tvSisaBayar = findViewById(R.id.tvSisaBayar);
+        layoutSaldoBreakdown = findViewById(R.id.layoutSaldoBreakdown);
+        tvDipotongSaldo = findViewById(R.id.tvDipotongSaldo);
+
+        cbUseSaldo.setOnCheckedChangeListener((b, checked) -> {
+            layoutSaldoPotong.setVisibility(checked ? View.VISIBLE : View.GONE);
+            if (checked && etSaldoDipotong.length() == 0) {
+                // Prefill: potong secukupnya untuk menutup total (dibatasi saldo).
+                long prefill = Math.max(0, (long) Math.round(Math.min(lastJualTotal, resellerSaldo)));
+                etSaldoDipotong.setText(String.valueOf(prefill));
+            }
+            updateSisaBayar();
+        });
+        etSaldoDipotong.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void afterTextChanged(Editable s) { updateSisaBayar(); }
+        });
+    }
+
+    /** Hitung saldo komisi pelanggan terpilih & tampilkan kartu (hanya JUAL + reseller). */
+    private void refreshUseSaldoCard() {
+        if (cardUseSaldo == null) return;
+        boolean custIsReseller = false;
+        resellerSaldo = 0;
+        if (selectedCustomerId > 0) {
+            Customer c = customerDao.getById(selectedCustomerId);
+            if (c != null && c.isReseller()) {
+                custIsReseller = true;
+                DatabaseHelper db = DatabaseHelper.getInstance(this);
+                double earned = com.crowja.damiupos.db.ResellerKomisiCalculator
+                        .hitung(db, c).totalKomisi;
+                double withdrawn = new com.crowja.damiupos.db.ResellerWithdrawalDao(db)
+                        .getTotalWithdrawn(selectedCustomerId);
+                resellerSaldo = Math.max(0, earned - withdrawn);
+            }
+        }
+        // Pelanggan sendiri reseller → sembunyikan "Reseller Afiliasi" (tak bisa afiliasi ke
+        // reseller) + bersihkan pilihan afiliasi yang mungkin sudah ter-set.
+        if (cardReseller != null) {
+            boolean showAfil = !payoutMode && isJualSelected() && !custIsReseller;
+            cardReseller.setVisibility(showAfil ? View.VISIBLE : View.GONE);
+            if (custIsReseller && selectedResellerId != 0) {
+                selectedResellerId = 0;
+                selectedResellerName = "";
+                selectedResellerAddToPrice = false;
+                selectedResellerRates = new java.util.HashMap<>();
+                applyResellerPricing();
+                updateResellerLabel();
+            }
+        }
+        // Kartu "Gunakan Saldo Komisi": pelanggan reseller (mode JUAL) dengan saldo > 0.
+        boolean eligibleSaldo = !payoutMode && isJualSelected() && custIsReseller && resellerSaldo > 0;
+        if (eligibleSaldo) {
+            NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
+            tvSaldoKomisi.setText("Saldo komisi tersedia: Rp " + nf.format(Math.round(resellerSaldo)));
+            cardUseSaldo.setVisibility(View.VISIBLE);
+        } else {
+            if (cbUseSaldo != null) cbUseSaldo.setChecked(false);
+            cardUseSaldo.setVisibility(View.GONE);
+        }
+        updateSisaBayar();
+    }
+
+    /** Rupiah yang benar-benar dipotong dari saldo komisi (dibatasi saldo & total order). */
+    private double saldoDipotong() {
+        if (cbUseSaldo == null || !cbUseSaldo.isChecked()) return 0;
+        double v = parseDoubleOr(etSaldoDipotong, 0);
+        if (v < 0) v = 0;
+        if (v > resellerSaldo) v = resellerSaldo;
+        if (v > lastJualTotal) v = lastJualTotal;
+        return v;
+    }
+
+    private void updateSisaBayar() {
+        if (layoutSaldoBreakdown == null) return;
+        // Rincian potong saldo komisi ditampilkan di DALAM kartu Total (bukan di kartu saldo).
+        if (cbUseSaldo != null && cbUseSaldo.isChecked()) {
+            double dipotong = saldoDipotong();
+            double sisa = Math.max(0, lastJualTotal - dipotong);
+            NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
+            tvDipotongSaldo.setText("− Rp " + nf.format(Math.round(dipotong)));
+            tvSisaBayar.setText("Rp " + nf.format(Math.round(sisa)));
+            layoutSaldoBreakdown.setVisibility(View.VISIBLE);
+        } else {
+            layoutSaldoBreakdown.setVisibility(View.GONE);
+        }
     }
 
     // --- Items UI ---
@@ -736,6 +1017,22 @@ public class TransactionActivity extends AppCompatActivity {
             productEntries.add(new ProductEntry(p, etQty, etPrice));
         }
         tvEmptyItems.setVisibility(products.isEmpty() ? View.VISIBLE : View.GONE);
+
+        // Peringatan "Kasus B": jenis galon ganda (nama dobel) akibat upgrade dari versi
+        // lama — katalog lokal ber-uuid beda dari katalog web, jadi sinkron menampilkannya
+        // dobel. Rapikan (hapus duplikat) dari dashboard web.
+        TextView tvDup = findViewById(R.id.tvDupJenisWarning);
+        if (tvDup != null) {
+            java.util.List<String> dups = productDao.getDuplicateJenisNames();
+            if (!dups.isEmpty()) {
+                tvDup.setText("⚠ Jenis galon ganda terdeteksi: "
+                        + android.text.TextUtils.join(", ", dups)
+                        + ".\nPilih dengan teliti, lalu rapikan (hapus duplikat) dari dashboard web.");
+                tvDup.setVisibility(View.VISIBLE);
+            } else {
+                tvDup.setVisibility(View.GONE);
+            }
+        }
     }
 
     /**
@@ -832,7 +1129,10 @@ public class TransactionActivity extends AppCompatActivity {
     private void applyResellerPricing() {
         double globalRate = settingsDao.getResellerKomisi();
         for (ProductEntry pe : productEntries) {
-            double price = pe.product.getHargaJual();
+            // Harga dasar = harga khusus produk untuk pelanggan ini bila diset, selain itu harga jual produk.
+            Double custOverride = (selectedCustomerPrices != null)
+                    ? selectedCustomerPrices.get(pe.product.getUuid()) : null;
+            double price = (custOverride != null) ? custOverride : pe.product.getHargaJual();
             if (selectedResellerAddToPrice && selectedResellerId > 0) {
                 Double override = selectedResellerRates.get(pe.product.getId());
                 double rate = override != null ? override : globalRate;
@@ -929,6 +1229,8 @@ public class TransactionActivity extends AppCompatActivity {
         selectedCustomerId = c.getId();
         selectedCustomerName = c.getName();
         selectedCustomerPhone = c.getPhone() != null ? c.getPhone() : "";
+        selectedCustomerPrices = c.getProductPrices();    // harga khusus per produk (null = harga produk)
+        applyResellerPricing();                            // harga item ikut harga khusus produk (+ komisi bila ada)
         tvSelectedCustomer.setText(c.getName());
         userEditedKembali = false;
         // Pelanggan Umum → ownership default = Beli (Umum tidak pinjam botol)
@@ -938,6 +1240,7 @@ public class TransactionActivity extends AppCompatActivity {
         syncKembaliToTotalJumlah();
         updateOwnershipButtonsForCustomer();
         updateOwnershipUI();
+        refreshUseSaldoCard();   // pelanggan baru terpilih → cek apakah reseller
     }
 
     @Override
@@ -1130,6 +1433,16 @@ public class TransactionActivity extends AppCompatActivity {
             msg.append("\n");
             appendStyled(msg, "Total: Rp " + nf.format(totalHarga),
                     Color.parseColor("#1565C0"), true, 1.1f);
+            // Pencairan komisi: tampilkan rincian potongan dari saldo komisi reseller.
+            double saldoPotong = saldoDipotong();
+            if (saldoPotong > 0) {
+                appendStyled(msg, "\nDibayar dari Saldo Komisi: − Rp "
+                                + nf.format(Math.round(saldoPotong)),
+                        Color.parseColor("#2E7D32"), true, 1.0f);
+                double sisaBayar = Math.max(0, totalHarga - saldoPotong);
+                appendStyled(msg, "\nSisa Dibayar: Rp " + nf.format(Math.round(sisaBayar)),
+                        Color.parseColor("#1565C0"), true, 1.05f);
+            }
         }
 
         final int fTotalJumlah = totalJumlah;
@@ -1258,7 +1571,6 @@ public class TransactionActivity extends AppCompatActivity {
     }
 
     private void doSaveJualBotol(int qty, double hargaBotol, double total) {
-        clearExecutedPending();
         Transaction trx = new Transaction();
         trx.setCustomerId(selectedCustomerId);
         trx.setType(Transaction.TYPE_JUAL);
@@ -1276,12 +1588,19 @@ public class TransactionActivity extends AppCompatActivity {
         String marker = "[JUAL BOTOL KOSONG]";
         catatan = catatan.isEmpty() ? marker : (marker + " " + catatan);
         trx.setCatatan(catatan);
-        transactionDao.insert(trx);
+        long newBotolTrxId = transactionDao.insert(trx);
+        // JUAL masuk Antrian Delivery → dorong segera ke dashboard (jangan tunggu poll).
+        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
 
         // Buka struk
         Intent r = new Intent(this, ReceiptActivity.class);
         r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_NAME, selectedCustomerName);
         r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_PHONE, selectedCustomerPhone);
+        r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_ID, selectedCustomerId);
+        com.crowja.damiupos.model.Transaction savedBotolTrx = transactionDao.getById(newBotolTrxId);
+        if (savedBotolTrx != null && savedBotolTrx.getDeliveryToken() != null) {
+            r.putExtra(ReceiptActivity.EXTRA_DELIVERY_TOKEN, savedBotolTrx.getDeliveryToken());
+        }
         if (forwardedInboxSenderName != null) {
             r.putExtra(ReceiptActivity.EXTRA_INBOX_SENDER_NAME, forwardedInboxSenderName);
         }
@@ -1293,116 +1612,10 @@ public class TransactionActivity extends AppCompatActivity {
         r.putExtra(ReceiptActivity.EXTRA_TOTAL_HARGA, total);
         r.putExtra(ReceiptActivity.EXTRA_CATATAN, catatan);
         if (pendingPayment != null) r.putExtra(ReceiptActivity.EXTRA_PAYMENT_METHOD, pendingPayment);
+        // JUAL masuk Antrian Delivery → struk dikirim ke pelanggan saat order Selesai.
+        r.putExtra(ReceiptActivity.EXTRA_DEFER_CUSTOMER_SEND, true);
         startActivity(r);
         finish();
-    }
-
-    /**
-     * Simpan keadaan form saat ini sebagai "Transaksi Pending" (pelanggan +
-     * ringkasan pesanan + catatan) untuk dieksekusi nanti. Tidak menyimpan
-     * transaksi sungguhan — hanya pengingat yang muncul (pill berkedip) di
-     * tombol "Jual Air Minum".
-     */
-    private void saveAsPending() {
-        String catatan = etCatatan != null && etCatatan.getText() != null
-                ? etCatatan.getText().toString().trim() : "";
-        String itemSummary = buildItemSummary();
-        boolean hasCustomer = selectedCustomerId != -1
-                && selectedCustomerName != null && !selectedCustomerName.isEmpty();
-        // Perlu sesuatu yang bisa dikenali: pelanggan ATAU ringkasan/catatan.
-        if (!hasCustomer && itemSummary.isEmpty() && catatan.isEmpty()) {
-            Toast.makeText(this,
-                    "Pilih pelanggan atau isi pesanan/catatan dulu untuk disimpan sebagai pending",
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
-
-        StringBuilder note = new StringBuilder();
-        if (!itemSummary.isEmpty()) note.append(itemSummary);
-        if (!catatan.isEmpty()) {
-            if (note.length() > 0) note.append(" — ");
-            note.append(catatan);
-        }
-
-        com.crowja.damiupos.model.PendingTransaction p =
-                new com.crowja.damiupos.model.PendingTransaction();
-        p.setCustomerId(selectedCustomerId);
-        p.setCustomerName(hasCustomer ? selectedCustomerName : "Umum");
-        p.setCustomerPhone(selectedCustomerPhone);
-        p.setNote(note.toString());
-        long uid = settingsDao.getCurrentUserId();
-        p.setCreatedBy(uid);
-        p.setCreatedByName(settingsDao.getCurrentUserName());
-        new com.crowja.damiupos.db.PendingTransactionDao(DatabaseHelper.getInstance(this)).insert(p);
-
-        Toast.makeText(this, "Disimpan sebagai Transaksi Pending ✓", Toast.LENGTH_SHORT).show();
-        finish();
-    }
-
-    /** Ringkasan item terisi (jumlah > 0) → "3× Galon 19L, 2× ...". "" kalau kosong. */
-    private String buildItemSummary() {
-        StringBuilder sb = new StringBuilder();
-        for (ProductEntry pe : productEntries) {
-            int qty = parseIntOr(pe.etQty, 0);
-            if (qty <= 0) continue;
-            if (sb.length() > 0) sb.append(", ");
-            sb.append(qty).append("× ").append(pe.product.getName());
-        }
-        return sb.toString();
-    }
-
-    /** Hapus baris Transaksi Pending yang sedang dieksekusi (kalau ada) setelah
-     *  transaksi berhasil disimpan. */
-    private void clearExecutedPending() {
-        if (executingPendingId > 0) {
-            try {
-                new com.crowja.damiupos.db.PendingTransactionDao(
-                        DatabaseHelper.getInstance(this)).delete(executingPendingId);
-            } catch (Exception ignored) {}
-            executingPendingId = 0;
-        }
-    }
-
-    // ---- Indikator "PENDING (N)" di pojok kanan atas (toolbar) ----
-
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        getMenuInflater().inflate(R.menu.menu_transaction, menu);
-        return true;
-    }
-
-    @Override
-    public boolean onPrepareOptionsMenu(Menu menu) {
-        MenuItem mi = menu.findItem(R.id.action_view_pending);
-        if (mi != null) {
-            int n = 0;
-            try {
-                n = new com.crowja.damiupos.db.PendingTransactionDao(
-                        DatabaseHelper.getInstance(this)).countPending();
-            } catch (Exception ignored) {}
-            mi.setVisible(n > 0);
-            // Teks putih agar kontras di toolbar biru.
-            SpannableStringBuilder t = new SpannableStringBuilder("PENDING (" + n + ")");
-            t.setSpan(new ForegroundColorSpan(Color.WHITE), 0, t.length(),
-                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-            mi.setTitle(t);
-        }
-        return super.onPrepareOptionsMenu(menu);
-    }
-
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        if (item.getItemId() == R.id.action_view_pending) {
-            startActivity(new Intent(this, PendingTransactionListActivity.class));
-            return true;
-        }
-        return super.onOptionsItemSelected(item);
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        invalidateOptionsMenu();   // segarkan jumlah "PENDING (N)"
     }
 
     private double parseDoubleOr(EditText et, double def) {
@@ -1438,7 +1651,6 @@ public class TransactionActivity extends AppCompatActivity {
     private void doSave(boolean isJual, int totalJumlah, double ongkir,
                         double totalHarga, int jumlahKembali, String ongkirType,
                         String ownership, double hargaBotol) {
-        clearExecutedPending();
         // Persist last ownership selection for next transaction
         if (isJual && ownership != null) {
             settingsDao.setLastGalonOwnership(ownership);
@@ -1490,24 +1702,54 @@ public class TransactionActivity extends AppCompatActivity {
             String marker = "[GANTI RUGI " + rusak + " galon rusak]";
             catatan = catatan.isEmpty() ? marker : (marker + " " + catatan);
         }
+        // Pelanggan reseller membayar sebagian/seluruh order dari saldo komisinya.
+        double saldoUsed = isJual ? saldoDipotong() : 0;
+        if (saldoUsed > 0) {
+            NumberFormat nfm = NumberFormat.getInstance(new Locale("id", "ID"));
+            String marker = "[SALDO KOMISI Rp " + nfm.format(Math.round(saldoUsed)) + "]";
+            catatan = catatan.isEmpty() ? marker : (marker + " " + catatan);
+        }
         if (!catatan.isEmpty()) trx.setCatatan(catatan);
-        transactionDao.insert(trx);
+        long newTrxId = transactionDao.insert(trx);
+        // Saldo komisi terpakai → catat pencairan (TYPE_UANG, tanpa expense depot)
+        // sehingga saldo komisi reseller berkurang sesuai yang dipotong.
+        if (saldoUsed > 0) {
+            new com.crowja.damiupos.db.ResellerWithdrawalDao(DatabaseHelper.getInstance(this))
+                    .insert(selectedCustomerId, com.crowja.damiupos.db.ResellerWithdrawalDao.TYPE_UANG,
+                            0, saldoUsed, "Bayar transaksi pakai saldo komisi", 0);
+        }
+        // Transaksi baru (JUAL masuk Antrian Delivery) → dorong segera ke dashboard
+        // tanpa menunggu polling ~60 detik, supaya antrean delivery real-time.
+        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
 
         if (isJual) {
             Intent r = new Intent(this, ReceiptActivity.class);
             r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_NAME, selectedCustomerName);
             r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_PHONE, selectedCustomerPhone);
+            r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_ID, selectedCustomerId);
+            // Token link lacak → dibawa ke struk supaya tombol "Kirim Struk + Tracking" bisa
+            // mengirim link pantau pengiriman ke pelanggan.
+            com.crowja.damiupos.model.Transaction savedTrx = transactionDao.getById(newTrxId);
+            if (savedTrx != null && savedTrx.getDeliveryToken() != null) {
+                r.putExtra(ReceiptActivity.EXTRA_DELIVERY_TOKEN, savedTrx.getDeliveryToken());
+            }
             if (forwardedInboxSenderName != null) {
                 r.putExtra(ReceiptActivity.EXTRA_INBOX_SENDER_NAME, forwardedInboxSenderName);
             }
             r.putExtra(ReceiptActivity.EXTRA_ITEMS_JSON,
                     TransactionItem.listToJson(items));
+            r.putExtra(ReceiptActivity.EXTRA_JUMLAH_KEMBALI, jumlahKembali);
             r.putExtra(ReceiptActivity.EXTRA_ONGKIR, ongkir);
             r.putExtra(ReceiptActivity.EXTRA_ONGKIR_TYPE, ongkirType);
             r.putExtra(ReceiptActivity.EXTRA_TOTAL_HARGA, totalHarga);
             String catatanStr = etCatatan.getText() != null ? etCatatan.getText().toString().trim() : "";
             r.putExtra(ReceiptActivity.EXTRA_CATATAN, catatanStr);
             if (pendingPayment != null) r.putExtra(ReceiptActivity.EXTRA_PAYMENT_METHOD, pendingPayment);
+            // Pencairan komisi: bagian yang dibayar dari saldo komisi + sisa saldo, untuk struk.
+            if (saldoUsed > 0) {
+                r.putExtra(ReceiptActivity.EXTRA_SALDO_DIPOTONG, saldoUsed);
+                r.putExtra(ReceiptActivity.EXTRA_SALDO_AFTER, Math.max(0, resellerSaldo - saldoUsed));
+            }
 
             if (settingsDao.isPointsEnabled()) {
                 double ppa = settingsDao.getPointsPerAmount();
@@ -1533,6 +1775,8 @@ public class TransactionActivity extends AppCompatActivity {
                 r.putExtra(ReceiptActivity.EXTRA_REWARD_UNLOCKED, rewardUnlocked);
                 r.putExtra(ReceiptActivity.EXTRA_REWARDS_NEW_COUNT, rewardsAfter - rewardsBefore);
             }
+            // JUAL masuk Antrian Delivery → struk dikirim ke pelanggan saat order Selesai.
+            r.putExtra(ReceiptActivity.EXTRA_DEFER_CUSTOMER_SEND, true);
             startActivity(r);
             finish();
         } else {
@@ -1540,6 +1784,7 @@ public class TransactionActivity extends AppCompatActivity {
                 Intent r = new Intent(this, ReceiptActivity.class);
                 r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_NAME, selectedCustomerName);
                 r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_PHONE, selectedCustomerPhone);
+                r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_ID, selectedCustomerId);
                 if (forwardedInboxSenderName != null) {
                     r.putExtra(ReceiptActivity.EXTRA_INBOX_SENDER_NAME, forwardedInboxSenderName);
                 }

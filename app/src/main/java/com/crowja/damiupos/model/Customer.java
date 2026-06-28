@@ -22,6 +22,10 @@ public class Customer {
     private String resellerSince;   // komisi dihitung dari JUAL setelah tanggal ini
     private int komisiGalon;        // calculated: total galon JUAL sejak jadi reseller
     private boolean komisiAddToPrice = true; // default ON: komisi ditambahkan ke harga jual
+    private java.util.Map<String, Double> productPrices; // harga khusus per produk { product_uuid: harga }
+
+    /** Follow Up: catatan opsional (di-set saat ditambahkan manual dari web). Disinkron. */
+    private String followupNote;
 
     public Customer() {}
 
@@ -55,6 +59,9 @@ public class Customer {
     public String getCreatedAt() { return createdAt; }
     public void setCreatedAt(String createdAt) { this.createdAt = createdAt; }
 
+    public String getFollowupNote() { return followupNote; }
+    public void setFollowupNote(String followupNote) { this.followupNote = followupNote; }
+
     public int getGalonKeluar() { return galonKeluar; }
     public void setGalonKeluar(int galonKeluar) { this.galonKeluar = galonKeluar; }
 
@@ -84,10 +91,20 @@ public class Customer {
             return 0;
         }
         try {
+            // tanggal bisa LOKAL ("yyyy-MM-dd HH:mm:ss") atau ISO UTC tersinkron
+            // ("yyyy-MM-ddTHH:mm:ss[.ffffff]Z"/offset). Normalkan dulu — kalau tidak, baris ISO
+            // gagal di-parse (huruf 'T' ≠ spasi) → balik 0 → kartu salah tampil "<0.1 gl/hr".
+            String s = firstOrderDate.trim();
+            boolean utc = s.endsWith("Z");
+            String core = (utc ? s.substring(0, s.length() - 1) : s).replace('T', ' ');
+            int dot = core.indexOf('.');
+            if (dot > 0) core = core.substring(0, dot);          // buang pecahan detik
+            if (core.length() > 19) core = core.substring(0, 19); // buang ekor offset (mis. +07:00)
+            core = core.trim();
             java.text.SimpleDateFormat sdf =
                     new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US);
-            java.util.Date first = sdf.parse(firstOrderDate.length() >= 19
-                    ? firstOrderDate.substring(0, 19) : firstOrderDate);
+            if (utc) sdf.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+            java.util.Date first = sdf.parse(core);
             if (first == null) return 0;
             long diffMs = System.currentTimeMillis() - first.getTime();
             double days = diffMs / (1000.0 * 60 * 60 * 24);
@@ -111,4 +128,13 @@ public class Customer {
     /** True = komisi reseller ini ditambahkan ke harga air minum saat transaksi. */
     public boolean isKomisiAddToPrice() { return komisiAddToPrice; }
     public void setKomisiAddToPrice(boolean v) { this.komisiAddToPrice = v; }
+
+    /** Harga khusus per produk { product_uuid: harga } (null/kosong = ikut harga produk standar). */
+    public java.util.Map<String, Double> getProductPrices() { return productPrices; }
+    public void setProductPrices(java.util.Map<String, Double> v) { this.productPrices = v; }
+
+    /** Harga khusus untuk satu produk (by uuid), atau null = pakai harga produk standar. */
+    public Double getPriceFor(String productUuid) {
+        return (productPrices != null && productUuid != null) ? productPrices.get(productUuid) : null;
+    }
 }

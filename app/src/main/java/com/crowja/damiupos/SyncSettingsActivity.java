@@ -5,8 +5,12 @@ import android.os.Build;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
+
+import com.journeyapps.barcodescanner.ScanContract;
+import com.journeyapps.barcodescanner.ScanOptions;
 
 import com.crowja.damiupos.sync.SyncEngine;
 import com.crowja.damiupos.sync.SyncScheduler;
@@ -23,6 +27,12 @@ public class SyncSettingsActivity extends AppCompatActivity {
     private SyncEngine engine;
     private TextView tvStatus;
     private TextInputEditText etBaseUrl, etEnrollKey, etProvisioningCode;
+
+    // QR scanner for provisioning — fills URL + code from the dashboard QR, then connects.
+    private final ActivityResultLauncher<ScanOptions> qrLauncher =
+            registerForActivityResult(new ScanContract(), result -> {
+                if (result.getContents() != null) handleScan(result.getContents());
+            });
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -45,13 +55,24 @@ public class SyncSettingsActivity extends AppCompatActivity {
         ((MaterialButton) findViewById(R.id.btnConnect)).setOnClickListener(v -> doConnect());
         ((MaterialButton) findViewById(R.id.btnSyncNow)).setOnClickListener(v -> doSyncNow());
 
+        MaterialButton btnScan = findViewById(R.id.btnScanQr);
+        if (btnScan != null) btnScan.setOnClickListener(v -> {
+            ScanOptions options = new ScanOptions();
+            options.setDesiredBarcodeFormats(ScanOptions.QR_CODE);
+            options.setPrompt("Arahkan ke QR provisioning di dashboard (Kelola → Provisioning)");
+            options.setBeepEnabled(true);
+            options.setOrientationLocked(true);                       // stay portrait
+            options.setCaptureActivity(PortraitCaptureActivity.class);
+            qrLauncher.launch(options);
+        });
+
         com.google.android.material.checkbox.MaterialCheckBox cbLocation = findViewById(R.id.cbLocation);
         cbLocation.setChecked(cfg.isLocationTrackingEnabled());
         cbLocation.setOnCheckedChangeListener((b, checked) -> {
             cfg.setLocationTrackingEnabled(checked);
-            // Disabling stops immediately; enabling takes effect on next clock-in
-            // (MainActivity requests the location permission + starts the service).
-            if (!checked) LocationService.stop(getApplicationContext());
+            // Disabling stops GPS immediately but KEEPS the service polling (sync stays
+            // on in the background); enabling takes effect on the next clock-in.
+            if (!checked) LocationService.pollOnly(getApplicationContext());
         });
         ((MaterialButton) findViewById(R.id.btnDisconnect)).setOnClickListener(v -> {
             cfg.clear();
@@ -61,6 +82,24 @@ public class SyncSettingsActivity extends AppCompatActivity {
         });
 
         refreshStatus();
+    }
+
+    /**
+     * Parse a scanned provisioning QR ({"url":...,"code":...} from the dashboard), fill the
+     * fields and connect. Falls back to treating the whole scanned text as the code.
+     */
+    private void handleScan(String contents) {
+        String url = "", code = "";
+        try {
+            org.json.JSONObject j = new org.json.JSONObject(contents);
+            url = j.optString("url", "");
+            code = j.optString("code", "");
+        } catch (org.json.JSONException ignored) {}
+        if (code.isEmpty()) code = contents;          // plain-text QR = the code itself
+        if (!url.isEmpty()) etBaseUrl.setText(url);
+        if (!code.isEmpty()) etProvisioningCode.setText(code);
+        Toast.makeText(this, "QR terbaca — menghubungkan…", Toast.LENGTH_SHORT).show();
+        doConnect();
     }
 
     private void doConnect() {
@@ -83,10 +122,54 @@ public class SyncSettingsActivity extends AppCompatActivity {
                     if (etProvisioningCode != null) etProvisioningCode.setText("");
                     Toast.makeText(this, "Terhubung ke cabang "
                             + engine.settings().getBranchName(), Toast.LENGTH_LONG).show();
-                    doSyncNow();
+                    promptImportSelection();
                 } else {
                     Toast.makeText(this, "Gagal: " + r.error, Toast.LENGTH_LONG).show();
                 }
+                refreshStatus();
+            });
+        }).start();
+    }
+
+    /**
+     * Right after provisioning, ask which existing on-device data to import to the server.
+     * The selected categories are seeded via the reviewable import path; everything else stays
+     * on the phone only. Default = all checked.
+     */
+    private void promptImportSelection() {
+        final String[] labels = {"Pelanggan", "Karyawan", "Transaksi", "Pengeluaran", "Absensi", "Jenis Galon"};
+        final boolean[] checked = {true, true, true, true, true, true};
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Impor data dari perangkat ini")
+                .setMultiChoiceItems(labels, checked, (d, which, isChecked) -> checked[which] = isChecked)
+                .setCancelable(false)
+                .setNegativeButton("Lewati", (d, w) -> runProvisioningImport(new boolean[6]))   // import nothing
+                .setPositiveButton("Impor", (d, w) -> runProvisioningImport(checked))
+                .show();
+    }
+
+    /** Map the checklist to sync entities (incl. dependent data) and import on a background thread. */
+    private void runProvisioningImport(boolean[] checked) {
+        final java.util.Set<String> entities = new java.util.HashSet<>();
+        if (checked[0]) java.util.Collections.addAll(entities, "customers", "reseller_rates", "reseller_withdrawals");
+        if (checked[1]) java.util.Collections.addAll(entities, "staff", "salary_configs", "salary_items");
+        if (checked[2]) entities.add("transactions");
+        if (checked[3]) entities.add("expenses");
+        if (checked[4]) entities.add("attendance");
+        if (checked[5]) entities.add("products");
+
+        tvStatus.setText("Mengimpor data ke server…");
+        new Thread(() -> {
+            SyncEngine.Result r = engine.provisioningImport(entities);
+            runOnUiThread(() -> {
+                if (r.ok) {
+                    Toast.makeText(this, "Impor selesai — " + r.pushed + " data terkirim"
+                            + (r.pulled > 0 ? (" (" + r.pulled + " konflik untuk ditinjau di dashboard)") : ""),
+                            Toast.LENGTH_LONG).show();
+                } else {
+                    Toast.makeText(this, "Gagal impor: " + r.error, Toast.LENGTH_LONG).show();
+                }
+                doSyncNow();   // pull dashboard config etc. (local backlog already handled)
                 refreshStatus();
             });
         }).start();

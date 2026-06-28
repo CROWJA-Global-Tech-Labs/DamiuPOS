@@ -35,6 +35,8 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.crowja.damiupos.adapter.StockHistoryAdapter;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.GalonStockDao;
+import com.crowja.damiupos.db.SettingsDao;
+import com.crowja.damiupos.sync.SyncSettings;
 import com.google.android.material.textfield.TextInputEditText;
 
 import java.io.File;
@@ -59,6 +61,7 @@ public class GalonStockActivity extends AppCompatActivity {
     private View layoutEditBanner;
     private StockHistoryAdapter adapter;
     private GalonStockDao galonStockDao;
+    private SyncSettings sync;
 
     private String currentPhotoPath; // pending capture path
     /** Id entry stok yang sedang di-edit. 0 = mode tambah baru. */
@@ -74,6 +77,7 @@ public class GalonStockActivity extends AppCompatActivity {
         toolbar.setNavigationOnClickListener(v -> finish());
 
         galonStockDao = new GalonStockDao(DatabaseHelper.getInstance(this));
+        sync = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
 
         tvStokTersedia = findViewById(R.id.tvStokTersedia);
         tvStokMasuk = findViewById(R.id.tvStokMasuk);
@@ -125,7 +129,7 @@ public class GalonStockActivity extends AppCompatActivity {
      * Sistem mencatat entry penyesuaian (selisih) supaya histori tetap auditable.
      */
     private void showKoreksiDialog() {
-        final int current = galonStockDao.getStokTersedia();
+        final int current = currentTersedia();
         final EditText et = new EditText(this);
         et.setInputType(InputType.TYPE_CLASS_NUMBER);
         et.setText(String.valueOf(current));
@@ -150,13 +154,14 @@ public class GalonStockActivity extends AppCompatActivity {
                         Toast.makeText(this, "Nilai tidak valid", Toast.LENGTH_SHORT).show();
                         return;
                     }
-                    int delta = target - galonStockDao.getStokTersedia();
+                    int delta = target - currentTersedia();
                     if (delta == 0) {
                         Toast.makeText(this, "Stok sudah sesuai", Toast.LENGTH_SHORT).show();
                         return;
                     }
                     galonStockDao.addStock(delta, "Koreksi keseluruhan → tersedia " + target
                             + " (selisih " + (delta > 0 ? "+" : "") + delta + ")");
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
                     Toast.makeText(this, "Stok tersedia dikoreksi ke " + target + " galon",
                             Toast.LENGTH_LONG).show();
                     refreshData();
@@ -296,6 +301,14 @@ public class GalonStockActivity extends AppCompatActivity {
         ivStrukPreview.setImageDrawable(null);
         ivStrukPreview.setVisibility(View.GONE);
         btnRemoveStruk.setVisibility(View.GONE);
+        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());   // push ke dashboard
+        refreshData();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Tampilkan angka stok terbaru dari server (galon keluar/kembali) setelah sync di background.
         refreshData();
     }
 
@@ -367,6 +380,7 @@ public class GalonStockActivity extends AppCompatActivity {
                 .setMessage("Yakin ingin menghapus data stok ini?")
                 .setPositiveButton("Hapus", (dialog, which) -> {
                     galonStockDao.deleteStock(id);
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());   // hapus tersinkron
                     Toast.makeText(this, "Data stok dihapus", Toast.LENGTH_SHORT).show();
                     if (editingId == id) exitEditMode(true);
                     refreshData();
@@ -375,10 +389,23 @@ public class GalonStockActivity extends AppCompatActivity {
                 .show();
     }
 
+    /** Galon keluar/kembali = angka OTORITATIF dari server (branch-wide) bila perangkat ter-enroll &
+     *  sudah pernah sync → SELALU sama dgn dashboard (per-device isolation bisa membuat transaksi
+     *  lokal tertinggal). Stok Masuk pakai galon_stock lokal (sudah branch-wide → == server, tapi
+     *  langsung mencerminkan penyesuaian yang baru dibuat di HP ini). */
+    private boolean useServerStok() { return sync.isEnrolled() && sync.hasServerStok(); }
+    private int serverOrLocalKeluar()  { return useServerStok() ? sync.getStokKeluar()  : galonStockDao.getTotalGalonKeluar(); }
+    private int serverOrLocalKembali() { return useServerStok() ? sync.getStokKembali() : galonStockDao.getTotalGalonKembali(); }
+
+    /** Stok tersedia "resmi" (sama dengan badge dashboard & web): delegasi ke satu sumber kebenaran. */
+    private int currentTersedia() {
+        return galonStockDao.getStokTersediaResmi(sync);
+    }
+
     private void refreshData() {
         int stokMasuk = galonStockDao.getTotalStokMasuk();
-        int galonKeluar = galonStockDao.getTotalGalonKeluar();
-        int galonKembali = galonStockDao.getTotalGalonKembali();
+        int galonKeluar = serverOrLocalKeluar();
+        int galonKembali = serverOrLocalKembali();
         int stokTersedia = stokMasuk - galonKeluar + galonKembali;
 
         tvStokTersedia.setText(String.valueOf(stokTersedia));

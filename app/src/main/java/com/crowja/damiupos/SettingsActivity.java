@@ -25,18 +25,32 @@ import com.crowja.damiupos.db.UserDao;
 import com.crowja.damiupos.demo.DemoDataHelper;
 import com.crowja.damiupos.model.OrderInbox;
 import com.crowja.damiupos.model.User;
+import com.crowja.damiupos.util.ReadOnlyForms;
 import com.crowja.damiupos.wa.OrderParseService;
 import com.crowja.damiupos.wa.WaListenerService;
 import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.LayoutInflater;
+import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
+import android.widget.CheckedTextView;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.ListView;
 import android.widget.LinearLayout.LayoutParams;
 
+import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 public class SettingsActivity extends AppCompatActivity {
 
@@ -44,13 +58,19 @@ public class SettingsActivity extends AppCompatActivity {
     private static final int REQUEST_IMPORT_DB = 4102;
     private static final int REQUEST_PICK_RINGTONE = 4103;
 
+    // Restore mode chosen before the file picker opens.
+    private static final int RESTORE_FULL = 0;            // replace the whole database
+    private static final int RESTORE_MERGE_TRX = 1;       // add transactions for existing customers
+    private static final int RESTORE_PICK_CUSTOMERS = 2;  // pick customers to restore + their transactions
+    private int restoreMode = RESTORE_FULL;
+
     private TextInputEditText etDefaultOngkir, etPointsPerAmount, etPointsReward;
     private TextInputEditText etDepotName, etDepotAddress, etDepotPhone;
     private TextInputEditText etFollowupDays, etStockAlert, etFollowUpTemplate;
     private TextInputEditText etHargaBotolGalon, etResellerKomisi;
     private TextInputEditText etClaudeKey, etReplyTemplate, etAutoArchiveHours;
-    private SwitchMaterial switchPoints, switchWaAutoDetect;
-    private LinearLayout pointsConfigContainer, waAutoDetectConfig;
+    private SwitchMaterial switchPoints, switchWaAutoDetect, switchWaAutoSend;
+    private LinearLayout pointsConfigContainer, waAutoDetectConfig, waAutoSendConfig;
     private RadioGroup rgWaParseMode;
     private TextView tvNotifAccessStatus, tvRingtoneName, tvClaudeKeyStatus,
             tvClaudeLastStatus;
@@ -80,6 +100,9 @@ public class SettingsActivity extends AppCompatActivity {
         etDepotName = findViewById(R.id.etDepotName);
         etDepotAddress = findViewById(R.id.etDepotAddress);
         etDepotPhone = findViewById(R.id.etDepotPhone);
+        // Logo depot (read-only di HP): disinkron dari web Konfigurasi, ditampilkan dari cache lokal +
+        // diunduh ulang bila berubah.
+        com.crowja.damiupos.util.DepotLogo.loadInto(findViewById(R.id.ivDepotLogo));
         etFollowupDays = findViewById(R.id.etFollowupDays);
         etStockAlert = findViewById(R.id.etStockAlert);
         etHargaBotolGalon = findViewById(R.id.etHargaBotolGalon);
@@ -173,6 +196,34 @@ public class SettingsActivity extends AppCompatActivity {
 
         if (waEnabled) updateNotifAccessStatus();
 
+        // --- Auto-Kirim Struk WhatsApp (AccessibilityService) ---
+        switchWaAutoSend = findViewById(R.id.switchWaAutoSend);
+        waAutoSendConfig = findViewById(R.id.waAutoSendConfig);
+        boolean autoSendOn = com.crowja.damiupos.wa.WaAutoSendService.isEnabled(this);
+        switchWaAutoSend.setChecked(autoSendOn);
+        waAutoSendConfig.setVisibility(autoSendOn ? View.VISIBLE : View.GONE);
+        switchWaAutoSend.setOnCheckedChangeListener((b, checked) -> {
+            com.crowja.damiupos.wa.WaAutoSendService.setEnabled(this, checked);
+            waAutoSendConfig.setVisibility(checked ? View.VISIBLE : View.GONE);
+            if (checked) {
+                updateAccessibilityStatus();
+                if (!com.crowja.damiupos.wa.WaAutoSendService.isAccessibilityGranted(this)) {
+                    Toast.makeText(this,
+                            "Aktifkan layanan Aksesibilitas \"DAMIU POS — Auto-Kirim Struk WA\" agar auto-kirim bekerja.",
+                            Toast.LENGTH_LONG).show();
+                }
+            }
+        });
+        findViewById(R.id.btnGrantAccessibility).setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+            } catch (android.content.ActivityNotFoundException e) {
+                Toast.makeText(this, "Tidak bisa buka pengaturan Aksesibilitas: "
+                        + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+        });
+        if (autoSendOn) updateAccessibilityStatus();
+
         // Ringtone picker
         tvRingtoneName = findViewById(R.id.tvRingtoneName);
         updateRingtoneLabel();
@@ -186,17 +237,9 @@ public class SettingsActivity extends AppCompatActivity {
         etAutoArchiveHours = findViewById(R.id.etAutoArchiveHours);
         etAutoArchiveHours.setText(String.valueOf(settingsDao.getWaAutoArchiveHours()));
 
-        findViewById(R.id.btnTestParser).setOnClickListener(v -> showTestParserDialog());
-
-        // Kelola jenis air minum (pindahan dari dashboard)
-        findViewById(R.id.cardJenisAir).setOnClickListener(v ->
-                startActivity(new Intent(this, ProductListActivity.class)));
-
         findViewById(R.id.btnViewArchive).setOnClickListener(v ->
                 startActivity(new Intent(this, OrderInboxActivity.class)
                         .putExtra(OrderInboxActivity.EXTRA_SHOW_ARCHIVE, true)));
-
-        findViewById(R.id.btnSimpan).setOnClickListener(v -> save());
 
         View cardUpgrade = findViewById(R.id.cardUpgradePro);
         if (cardUpgrade != null) {
@@ -211,46 +254,20 @@ public class SettingsActivity extends AppCompatActivity {
             }
         }
 
-        findViewById(R.id.btnGenerateDemo).setOnClickListener(v -> {
-            new AlertDialog.Builder(this)
-                    .setTitle("Generate Data Demo")
-                    .setMessage("Akan ditambahkan 6 pelanggan demo dengan transaksi lama agar "
-                            + "fitur Follow Up Pelanggan bisa didemonstrasikan.\n\nLanjutkan?")
-                    .setPositiveButton("Generate", (d, w) -> {
-                        DemoDataHelper helper = new DemoDataHelper(DatabaseHelper.getInstance(this));
-                        int[] result = helper.generateDetailed();
-                        int followupDays = settingsDao.getFollowupDays();
-                        int candidates = new com.crowja.damiupos.db.CustomerDao(
-                                DatabaseHelper.getInstance(this)).countFollowUpCandidates(followupDays);
-                        String msg = "Ditambahkan: " + result[0] + " pelanggan, "
-                                + result[1] + " transaksi.\n"
-                                + "Kandidat Follow Up (>" + followupDays + " hari): "
-                                + candidates;
-                        new AlertDialog.Builder(this)
-                                .setTitle("Selesai")
-                                .setMessage(msg)
-                                .setPositiveButton("OK", null)
-                                .show();
-                    })
-                    .setNegativeButton("Batal", null)
-                    .show();
-        });
-
-        findViewById(R.id.btnClearDemo).setOnClickListener(v -> {
-            new AlertDialog.Builder(this)
-                    .setTitle("Hapus Data Demo")
-                    .setMessage("Semua pelanggan berlabel [DEMO] beserta transaksinya akan dihapus.")
-                    .setPositiveButton("Hapus", (d, w) -> {
-                        int n = new DemoDataHelper(DatabaseHelper.getInstance(this)).clearDemo();
-                        Toast.makeText(this, n + " pelanggan demo dihapus",
-                                Toast.LENGTH_LONG).show();
-                    })
-                    .setNegativeButton("Batal", null)
-                    .show();
-        });
-
         findViewById(R.id.btnExportDb).setOnClickListener(v -> startExportDb());
         findViewById(R.id.btnImportDb).setOnClickListener(v -> startImportDb());
+
+        // Pengaturan bisnis dikelola admin di dashboard web (tersinkron ke perangkat).
+        // Di sini hanya-baca; yang tetap bisa diubah: izin notifikasi, nada dering,
+        // dan Backup/Restore database.
+        ReadOnlyForms.disable(
+                etDefaultOngkir, etPointsPerAmount, etPointsReward, switchPoints,
+                etDepotName, etDepotAddress, etDepotPhone,
+                etFollowupDays, etStockAlert, etHargaBotolGalon, etResellerKomisi,
+                etFollowUpTemplate, etReplyTemplate, etAutoArchiveHours,
+                switchWaAutoDetect);
+        // Disable AI parser key + parse-mode radios (children of the WA config block).
+        ReadOnlyForms.disableTree(waAutoDetectConfig);
     }
 
     // ==========================================================================
@@ -273,25 +290,50 @@ public class SettingsActivity extends AppCompatActivity {
 
     private void startImportDb() {
         new AlertDialog.Builder(this)
-                .setTitle("Import Database")
-                .setMessage("Semua data saat ini (pelanggan, produk, transaksi, "
-                        + "pengaturan) akan DIGANTI dengan isi file backup.\n\n"
-                        + "Lanjutkan?")
-                .setPositiveButton("Pilih File", (d, w) -> {
-                    Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-                    i.addCategory(Intent.CATEGORY_OPENABLE);
-                    // Beberapa file picker tidak menampilkan .db di filter strict;
-                    // pakai */* agar file backup tetap kelihatan.
-                    i.setType("*/*");
-                    try {
-                        startActivityForResult(i, REQUEST_IMPORT_DB);
-                    } catch (android.content.ActivityNotFoundException e) {
-                        Toast.makeText(this, "Tidak ada aplikasi untuk memilih file.",
-                                Toast.LENGTH_LONG).show();
+                .setTitle("Pulihkan Backup")
+                .setItems(new CharSequence[]{
+                        "Restore Semua (ganti seluruh data)",
+                        "Restore Transaksi (pelanggan eksisting)",
+                        "Restore: Pilih Konsumen"
+                }, (d, which) -> {
+                    restoreMode = which;   // 0=full, 1=merge trx, 2=pick customers
+                    String title, msg;
+                    if (restoreMode == RESTORE_FULL) {
+                        title = "Restore Semua";
+                        msg = "Semua data saat ini (pelanggan, produk, transaksi, pengaturan) akan "
+                              + "DIGANTI dengan isi file backup.\n\nLanjutkan?";
+                    } else if (restoreMode == RESTORE_MERGE_TRX) {
+                        title = "Restore Transaksi";
+                        msg = "Hanya transaksi milik pelanggan yang SUDAH ADA di perangkat ini yang "
+                              + "akan ditambahkan dari backup. Pelanggan, produk, dan pengaturan tidak "
+                              + "diubah. Transaksi duplikat dilewati.\n\nLanjutkan?";
+                    } else {
+                        title = "Pilih Konsumen";
+                        msg = "Pilih file backup, lalu pilih konsumen yang ingin dipulihkan. "
+                              + "Konsumen yang belum ada akan ditambahkan beserta transaksinya. "
+                              + "Data lain tidak diubah.\n\nLanjutkan?";
                     }
+                    new AlertDialog.Builder(this)
+                            .setTitle(title)
+                            .setMessage(msg)
+                            .setPositiveButton("Pilih File", (dd, ww) -> launchImportPicker())
+                            .setNegativeButton("Batal", null)
+                            .show();
                 })
                 .setNegativeButton("Batal", null)
                 .show();
+    }
+
+    private void launchImportPicker() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        // Beberapa file picker tidak menampilkan .db di filter strict; pakai */*.
+        i.setType("*/*");
+        try {
+            startActivityForResult(i, REQUEST_IMPORT_DB);
+        } catch (android.content.ActivityNotFoundException e) {
+            Toast.makeText(this, "Tidak ada aplikasi untuk memilih file.", Toast.LENGTH_LONG).show();
+        }
     }
 
     @Override
@@ -370,6 +412,14 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     private void doImportDb(Uri uri) {
+        if (restoreMode == RESTORE_MERGE_TRX) {
+            doMergeTransactions(uri);
+            return;
+        }
+        if (restoreMode == RESTORE_PICK_CUSTOMERS) {
+            doPickCustomers(uri);
+            return;
+        }
         try (InputStream in = getContentResolver().openInputStream(uri)) {
             if (in == null) {
                 Toast.makeText(this, "Gagal membuka file backup",
@@ -401,6 +451,195 @@ public class SettingsActivity extends AppCompatActivity {
         }
     }
 
+    /** Merge-restore: add transactions from the backup for customers that already exist. */
+    private void doMergeTransactions(Uri uri) {
+        try (InputStream in = getContentResolver().openInputStream(uri)) {
+            if (in == null) {
+                Toast.makeText(this, "Gagal membuka file backup", Toast.LENGTH_LONG).show();
+                return;
+            }
+            DatabaseBackupHelper.ImportResult r =
+                    DatabaseBackupHelper.importTransactionsForExistingCustomers(this, in);
+            new AlertDialog.Builder(this)
+                    .setTitle("Restore Transaksi Selesai")
+                    .setMessage(r.imported + " transaksi ditambahkan.\n"
+                            + r.skippedDuplicate + " duplikat dilewati.\n"
+                            + r.skippedNoCustomer + " dilewati (pelanggan tidak ada di perangkat ini).")
+                    .setPositiveButton("OK", null)
+                    .show();
+        } catch (DatabaseBackupHelper.InvalidBackupException e) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Backup tidak valid")
+                    .setMessage(e.getMessage())
+                    .setPositiveButton("OK", null)
+                    .show();
+        } catch (Exception e) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Gagal Restore Transaksi")
+                    .setMessage("Terjadi kesalahan:\n\n" + e.getMessage())
+                    .setPositiveButton("OK", null)
+                    .show();
+        }
+    }
+
+    /** Pick-customers restore: stage the backup, let the user select customers, then import. */
+    private void doPickCustomers(Uri uri) {
+        final File staged;
+        try (InputStream in = getContentResolver().openInputStream(uri)) {
+            if (in == null) {
+                Toast.makeText(this, "Gagal membuka file backup", Toast.LENGTH_LONG).show();
+                return;
+            }
+            staged = DatabaseBackupHelper.stageBackup(this, in);
+        } catch (DatabaseBackupHelper.InvalidBackupException e) {
+            new AlertDialog.Builder(this).setTitle("Backup tidak valid")
+                    .setMessage(e.getMessage()).setPositiveButton("OK", null).show();
+            return;
+        } catch (Exception e) {
+            new AlertDialog.Builder(this).setTitle("Gagal membaca backup")
+                    .setMessage(e.getMessage()).setPositiveButton("OK", null).show();
+            return;
+        }
+
+        final List<DatabaseBackupHelper.BackupCustomer> all;
+        try {
+            all = DatabaseBackupHelper.listCustomers(staged);
+        } catch (Exception e) {
+            staged.delete();
+            new AlertDialog.Builder(this).setTitle("Gagal membaca pelanggan")
+                    .setMessage(e.getMessage()).setPositiveButton("OK", null).show();
+            return;
+        }
+        if (all.isEmpty()) {
+            staged.delete();
+            Toast.makeText(this, "Tidak ada pelanggan di backup", Toast.LENGTH_LONG).show();
+            return;
+        }
+        android.util.Log.i("DAMIU_RESTORE", "pick dialog: listed " + all.size() + " customers from backup");
+
+        View dv = LayoutInflater.from(this).inflate(R.layout.dialog_pick_customers, null);
+        EditText etSearch = dv.findViewById(R.id.etSearchCustomer);
+        ListView lv = dv.findViewById(R.id.lvCustomers);
+        TextView tvCount = dv.findViewById(R.id.tvPickCount);
+        View btnAll = dv.findViewById(R.id.btnSelectAll);
+        View btnNone = dv.findViewById(R.id.btnSelectNone);
+        android.widget.CheckBox cbTrx = dv.findViewById(R.id.cbFilterTrx);
+        android.widget.CheckBox cbGeo = dv.findViewById(R.id.cbFilterGeo);
+        android.widget.CheckBox cbPhoto = dv.findViewById(R.id.cbFilterPhoto);
+
+        final Set<Long> selected = new HashSet<>();
+        final List<DatabaseBackupHelper.BackupCustomer> visible = new ArrayList<>(all);
+
+        ArrayAdapter<DatabaseBackupHelper.BackupCustomer> adapter =
+                new ArrayAdapter<DatabaseBackupHelper.BackupCustomer>(
+                        this, android.R.layout.simple_list_item_multiple_choice, visible) {
+                    @Override
+                    public View getView(int position, View convertView, ViewGroup parent) {
+                        View v = super.getView(position, convertView, parent);
+                        DatabaseBackupHelper.BackupCustomer c = visible.get(position);
+                        String label = (c.name != null && !c.name.isEmpty()) ? c.name : "(tanpa nama)";
+                        if (c.phone != null && !c.phone.isEmpty()) label += " · " + c.phone;
+                        ((CheckedTextView) v).setText(label);
+                        return v;
+                    }
+                };
+        lv.setAdapter(adapter);
+
+        Runnable refreshChecks = () -> {
+            for (int i = 0; i < visible.size(); i++) {
+                lv.setItemChecked(i, selected.contains(visible.get(i).id));
+            }
+            tvCount.setText("Terpilih: " + selected.size());
+        };
+        refreshChecks.run();
+
+        lv.setOnItemClickListener((parent, view, position, id) -> {
+            long cid = visible.get(position).id;
+            if (lv.isItemChecked(position)) selected.add(cid); else selected.remove(cid);
+            tvCount.setText("Terpilih: " + selected.size());
+        });
+
+        // Gabungan filter: kata kunci + checklist eksistensi data (transaksi/koordinat/foto).
+        Runnable applyFilter = () -> {
+            String k = etSearch.getText().toString().trim().toLowerCase(Locale.ROOT);
+            boolean fTrx = cbTrx.isChecked(), fGeo = cbGeo.isChecked(), fPhoto = cbPhoto.isChecked();
+            visible.clear();
+            for (DatabaseBackupHelper.BackupCustomer c : all) {
+                if (fTrx && !c.hasTransactions) continue;
+                if (fGeo && !c.hasGeo) continue;
+                if (fPhoto && !c.hasPhoto) continue;
+                boolean hit = k.isEmpty()
+                        || (c.name != null && c.name.toLowerCase(Locale.ROOT).contains(k))
+                        || (c.phone != null && c.phone.contains(k));
+                if (hit) visible.add(c);
+            }
+            adapter.notifyDataSetChanged();
+            refreshChecks.run();
+        };
+
+        etSearch.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void afterTextChanged(Editable s) { applyFilter.run(); }
+        });
+        android.widget.CompoundButton.OnCheckedChangeListener fl = (b, c) -> applyFilter.run();
+        cbTrx.setOnCheckedChangeListener(fl);
+        cbGeo.setOnCheckedChangeListener(fl);
+        cbPhoto.setOnCheckedChangeListener(fl);
+
+        btnAll.setOnClickListener(v -> {
+            for (DatabaseBackupHelper.BackupCustomer c : visible) selected.add(c.id);
+            refreshChecks.run();
+        });
+        btnNone.setOnClickListener(v -> { selected.clear(); refreshChecks.run(); });
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Pilih Konsumen untuk Dipulihkan")
+                .setView(dv)
+                .setPositiveButton("Restore", null)   // overridden below to validate
+                .setNegativeButton("Batal", (d, w) -> staged.delete())
+                .setOnCancelListener(d -> staged.delete())
+                .create();
+        dialog.setOnShowListener(dd ->
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                    if (selected.isEmpty()) {
+                        Toast.makeText(this, "Pilih minimal 1 konsumen", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    dialog.dismiss();
+                    runRestoreSelectedCustomers(staged, new HashSet<>(selected));
+                }));
+        dialog.show();
+    }
+
+    private void runRestoreSelectedCustomers(File staged, Set<Long> ids) {
+        try {
+            android.util.Log.i("DAMIU_RESTORE", "restore selected: " + ids.size() + " customers chosen");
+            DatabaseBackupHelper.ImportResult r =
+                    DatabaseBackupHelper.importSelectedCustomers(this, staged, ids);
+            android.util.Log.i("DAMIU_RESTORE", "result: customersAdded=" + r.customersAdded
+                    + " trx=" + r.imported + " related=" + r.relatedAdded
+                    + " relinked=" + r.relinked + " dupTrx=" + r.skippedDuplicate);
+            new AlertDialog.Builder(this)
+                    .setTitle("Restore Konsumen Selesai")
+                    .setMessage(r.customersAdded + " konsumen dipulihkan (yang belum ada).\n"
+                            + r.imported + " transaksi baru ditambahkan.\n"
+                            + r.relinked + " transaksi lama dihubungkan ke konsumen ini.\n"
+                            + r.relatedAdded + " data terkait (reseller/pesanan WA) ditambahkan.")
+                    .setPositiveButton("OK", null)
+                    .show();
+        } catch (Exception e) {
+            android.util.Log.e("DAMIU_RESTORE", "restore selected FAILED", e);
+            new AlertDialog.Builder(this)
+                    .setTitle("Gagal Restore Konsumen")
+                    .setMessage("Terjadi kesalahan:\n\n" + e)
+                    .setPositiveButton("OK", null)
+                    .show();
+        } finally {
+            staged.delete();
+        }
+    }
+
     private void restartApp() {
         Intent i = new Intent(this, MainActivity.class);
         i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK
@@ -416,6 +655,10 @@ public class SettingsActivity extends AppCompatActivity {
         // Refresh status setelah user kembali dari pengaturan Notification Access
         if (settingsDao.isWaAutoDetectEnabled()) {
             updateNotifAccessStatus();
+        }
+        // Refresh status setelah user kembali dari pengaturan Aksesibilitas.
+        if (com.crowja.damiupos.wa.WaAutoSendService.isEnabled(this)) {
+            updateAccessibilityStatus();
         }
         updateClaudeLastStatus();
     }
@@ -477,6 +720,18 @@ public class SettingsActivity extends AppCompatActivity {
         } else {
             tvNotifAccessStatus.setText("⚠ Notification Access belum diaktifkan — tap tombol di atas");
             tvNotifAccessStatus.setTextColor(getResources().getColor(R.color.red));
+        }
+    }
+
+    private void updateAccessibilityStatus() {
+        TextView tv = findViewById(R.id.tvAccessibilityStatus);
+        if (tv == null) return;
+        if (com.crowja.damiupos.wa.WaAutoSendService.isAccessibilityGranted(this)) {
+            tv.setText("✅ Layanan Aksesibilitas aktif — struk akan auto-terkirim");
+            tv.setTextColor(getResources().getColor(R.color.green));
+        } else {
+            tv.setText("⚠ Layanan Aksesibilitas belum diaktifkan — tap tombol di atas");
+            tv.setTextColor(getResources().getColor(R.color.red));
         }
     }
 
@@ -615,136 +870,4 @@ public class SettingsActivity extends AppCompatActivity {
         dialog.show();
     }
 
-    private void save() {
-        String ongkirStr = etDefaultOngkir.getText() != null
-                ? etDefaultOngkir.getText().toString().trim() : "";
-        double ongkir = 0;
-        if (!ongkirStr.isEmpty()) {
-            try {
-                ongkir = Double.parseDouble(ongkirStr);
-            } catch (NumberFormatException e) {
-                etDefaultOngkir.setError("Format tidak valid");
-                return;
-            }
-        }
-        settingsDao.setDefaultOngkir(ongkir);
-
-        settingsDao.setDepotName(etDepotName.getText() != null ? etDepotName.getText().toString().trim() : "");
-        settingsDao.setDepotAddress(etDepotAddress.getText() != null ? etDepotAddress.getText().toString().trim() : "");
-        settingsDao.setDepotPhone(etDepotPhone.getText() != null ? etDepotPhone.getText().toString().trim() : "");
-
-        // (Multi user & absensi dipindah ke AttendanceSettingsActivity.)
-
-        // Points settings
-        boolean pointsEnabled = switchPoints.isChecked();
-        settingsDao.setPointsEnabled(pointsEnabled);
-        if (pointsEnabled) {
-            String ppaStr = etPointsPerAmount.getText() != null
-                    ? etPointsPerAmount.getText().toString().trim() : "";
-            double ppa = 10000;
-            if (!ppaStr.isEmpty()) {
-                try {
-                    ppa = Double.parseDouble(ppaStr);
-                    if (ppa <= 0) ppa = 10000;
-                } catch (NumberFormatException e) {
-                    etPointsPerAmount.setError("Format tidak valid");
-                    return;
-                }
-            }
-            settingsDao.setPointsPerAmount(ppa);
-
-            String rewardStr = etPointsReward.getText() != null
-                    ? etPointsReward.getText().toString().trim() : "";
-            int reward = 100;
-            if (!rewardStr.isEmpty()) {
-                try {
-                    reward = Integer.parseInt(rewardStr);
-                    if (reward <= 0) reward = 100;
-                } catch (NumberFormatException e) {
-                    etPointsReward.setError("Format tidak valid");
-                    return;
-                }
-            }
-            settingsDao.setPointsRewardThreshold(reward);
-        }
-
-        // Followup days
-        String fuStr = etFollowupDays.getText() != null ? etFollowupDays.getText().toString().trim() : "";
-        int followupDays = 5;
-        if (!fuStr.isEmpty()) {
-            try {
-                followupDays = Integer.parseInt(fuStr);
-                if (followupDays <= 0) followupDays = 5;
-            } catch (NumberFormatException e) {
-                etFollowupDays.setError("Format tidak valid");
-                return;
-            }
-        }
-        settingsDao.setFollowupDays(followupDays);
-
-        // Follow-up message template (kosong → fallback ke default di getter)
-        if (etFollowUpTemplate != null && etFollowUpTemplate.getText() != null) {
-            settingsDao.setFollowUpTemplate(etFollowUpTemplate.getText().toString());
-        }
-
-        // Komisi reseller per galon
-        if (etResellerKomisi != null && etResellerKomisi.getText() != null) {
-            String rkStr = etResellerKomisi.getText().toString().trim();
-            if (!rkStr.isEmpty()) {
-                try {
-                    settingsDao.setResellerKomisi(Double.parseDouble(rkStr));
-                } catch (NumberFormatException ignored) {}
-            }
-        }
-
-        // Stock alert threshold
-        String saStr = etStockAlert.getText() != null ? etStockAlert.getText().toString().trim() : "";
-        int stockAlert = 30;
-        if (!saStr.isEmpty()) {
-            try {
-                stockAlert = Integer.parseInt(saStr);
-                if (stockAlert < 0) stockAlert = 30;
-            } catch (NumberFormatException e) {
-                etStockAlert.setError("Format tidak valid");
-                return;
-            }
-        }
-        settingsDao.setStockAlert(stockAlert);
-
-        // Harga botol galon
-        String hbgStr = etHargaBotolGalon.getText() != null ? etHargaBotolGalon.getText().toString().trim() : "";
-        double hargaBotol = 35000;
-        if (!hbgStr.isEmpty()) {
-            try {
-                hargaBotol = Double.parseDouble(hbgStr);
-                if (hargaBotol <= 0) hargaBotol = 35000;
-            } catch (NumberFormatException e) {
-                etHargaBotolGalon.setError("Format tidak valid");
-                return;
-            }
-        }
-        settingsDao.setHargaBotolGalon(hargaBotol);
-
-        // Reply template
-        if (etReplyTemplate != null && etReplyTemplate.getText() != null) {
-            settingsDao.setWaReplyTemplate(etReplyTemplate.getText().toString());
-        }
-
-        // Auto-archive hours
-        if (etAutoArchiveHours != null && etAutoArchiveHours.getText() != null) {
-            String s = etAutoArchiveHours.getText().toString().trim();
-            int h = SettingsDao.DEFAULT_WA_AUTO_ARCHIVE_HOURS;
-            if (!s.isEmpty()) {
-                try { h = Integer.parseInt(s); }
-                catch (NumberFormatException e) {
-                    etAutoArchiveHours.setError("Format tidak valid");
-                    return;
-                }
-            }
-            settingsDao.setWaAutoArchiveHours(h);
-        }
-
-        Toast.makeText(this, "Pengaturan disimpan", Toast.LENGTH_SHORT).show();
-        finish();
-    }
 }

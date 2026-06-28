@@ -60,7 +60,16 @@ public class CustomerFormActivity extends AppCompatActivity {
     private String pendingContactPhone;
 
     private TextInputEditText etNama, etTelepon, etAlamat;
+    private android.widget.LinearLayout llHargaProduk;
+    private final java.util.List<PriceRow> priceRows = new ArrayList<>();
     private ImageView ivFotoRumah;
+
+    /** Satu baris harga per produk pada form (kunci = product uuid). */
+    private static final class PriceRow {
+        final String uuid;
+        final TextInputEditText et;
+        PriceRow(String uuid, TextInputEditText et) { this.uuid = uuid; this.et = et; }
+    }
     private TextView tvKoordinat;
     private CustomerDao customerDao;
     private long editId = -1;
@@ -97,6 +106,7 @@ public class CustomerFormActivity extends AppCompatActivity {
         etNama = findViewById(R.id.etNama);
         etTelepon = findViewById(R.id.etTelepon);
         etAlamat = findViewById(R.id.etAlamat);
+        llHargaProduk = findViewById(R.id.llHargaProduk);
         ivFotoRumah = findViewById(R.id.ivFotoRumah);
         tvKoordinat = findViewById(R.id.tvKoordinat);
 
@@ -127,6 +137,8 @@ public class CustomerFormActivity extends AppCompatActivity {
                 cbReseller.setChecked(customer.isReseller());
                 cbKomisiAddToPrice.setChecked(customer.isKomisiAddToPrice());
                 existingResellerSince = customer.getResellerSince();
+                // Harga khusus per produk (override tersimpan; produk tanpa override → kosong = standar).
+                buildProductPriceRows(customer);
 
                 if (customer.getPhotoPath() != null && !customer.getPhotoPath().isEmpty()) {
                     currentPhotoPath = customer.getPhotoPath();
@@ -143,6 +155,9 @@ public class CustomerFormActivity extends AppCompatActivity {
                     tvKoordinat.setText(String.format(Locale.US, "%.6f, %.6f", latitude, longitude));
                 }
             }
+        } else {
+            // Pelanggan baru → satu baris harga per produk, prefill harga standar (bisa diedit).
+            buildProductPriceRows(null);
         }
 
         findViewById(R.id.btnFoto).setOnClickListener(v -> takePhoto());
@@ -395,6 +410,8 @@ public class CustomerFormActivity extends AppCompatActivity {
         } else {
             customer.setResellerSince(existingResellerSince); // simpan utk histori
         }
+        // Harga khusus per produk: kumpulkan input → Map (kosong → null = ikut harga produk standar).
+        customer.setProductPrices(collectProductPrices());
 
         if (editId != -1) {
             customer.setId(editId);
@@ -423,6 +440,51 @@ public class CustomerFormActivity extends AppCompatActivity {
                 finish();
             }
         }
+    }
+
+    /** Bangun satu baris input harga untuk SETIAP produk. Prefill: edit → harga khusus tersimpan
+     *  (produk tanpa override dibiarkan kosong = ikut standar); pelanggan baru → harga standar. */
+    private void buildProductPriceRows(Customer existing) {
+        if (llHargaProduk == null) return;
+        llHargaProduk.removeAllViews();
+        priceRows.clear();
+        java.util.List<com.crowja.damiupos.model.Product> products =
+                new com.crowja.damiupos.db.ProductDao(DatabaseHelper.getInstance(this)).getAll();
+        java.util.Map<String, Double> overrides = existing != null ? existing.getProductPrices() : null;
+        for (com.crowja.damiupos.model.Product p : products) {
+            if (p.getUuid() == null || p.getUuid().isEmpty()) continue;   // butuh uuid sebagai kunci sync
+            View row = android.view.LayoutInflater.from(this)
+                    .inflate(R.layout.item_customer_product_price, llHargaProduk, false);
+            ((TextView) row.findViewById(R.id.tvProdukNama)).setText(p.getName());
+            TextInputEditText et = row.findViewById(R.id.etProdukHarga);
+            Double ov = overrides != null ? overrides.get(p.getUuid()) : null;
+            if (ov != null) {
+                et.setText(fmtPrice(ov));
+            } else if (existing == null) {
+                et.setText(fmtPrice(p.getHargaJual()));   // pelanggan baru → default harga standar
+            }
+            llHargaProduk.addView(row);
+            priceRows.add(new PriceRow(p.getUuid(), et));
+        }
+    }
+
+    /** Kumpulkan harga per produk dari input → Map { uuid: harga }. Kosong → null (ikut standar). */
+    private java.util.Map<String, Double> collectProductPrices() {
+        java.util.Map<String, Double> map = new java.util.HashMap<>();
+        for (PriceRow r : priceRows) {
+            String s = r.et.getText() != null ? r.et.getText().toString().trim() : "";
+            if (s.isEmpty()) continue;
+            try {
+                map.put(r.uuid, Double.parseDouble(s.replace(",", ".")));
+            } catch (NumberFormatException ignored) {}
+        }
+        return map.isEmpty() ? null : map;
+    }
+
+    /** Tampilkan harga tanpa ".0" untuk nilai bulat. */
+    private static String fmtPrice(double v) {
+        if (v == Math.floor(v) && !Double.isInfinite(v)) return String.valueOf((long) v);
+        return String.valueOf(v);
     }
 
     private void saveToContacts(String name, String phone) {

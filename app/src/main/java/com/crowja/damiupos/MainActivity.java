@@ -57,10 +57,6 @@ import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
 
-    /** Intent extra dari LoginActivity: true kalau staf baru saja clock in →
-     *  tampilkan info jumlah Transaksi Pending (popup + notifikasi). */
-    public static final String EXTRA_JUST_CLOCKED_IN = "just_clocked_in";
-
     private TextView tvPendapatan, tvGalonTerjual, tvTransaksiHariIni;
     private TextView tvGalonBeredar, tvTotalPelanggan;
     private TextView tvPendapatanTrend, tvGalonTerjualTrend, tvTransaksiTrend;
@@ -88,6 +84,27 @@ public class MainActivity extends AppCompatActivity {
             refreshOrderInboxBanner();
         }
     };
+
+    /** Receiver: saat sinkron membawa data baru dari server (mis. order delivery
+     *  dibuat di dashboard web), segarkan dashboard supaya badge Antrian Delivery
+     *  langsung update tanpa harus keluar-masuk layar. */
+    private final BroadcastReceiver syncedReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            refreshDashboard();
+        }
+    };
+
+    /** Receiver: pesan admin dari dashboard ("Kirim Pesan ke Perangkat") tiba saat
+     *  layar tampil → tampilkan popup dialog (selain notifikasi Android). */
+    private final BroadcastReceiver adminMsgReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            showPendingAdminMessage();
+        }
+    };
+    /** Popup pesan admin yang sedang tampil (supaya tidak menumpuk). */
+    private androidx.appcompat.app.AlertDialog adminMsgDialog;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -204,9 +221,6 @@ public class MainActivity extends AppCompatActivity {
             startActivity(new Intent(this, SettingsActivity.class));
         });
 
-        findViewById(R.id.btnAnalisa).setOnClickListener(v ->
-                startActivity(new Intent(this, AnalyticsActivity.class)));
-
         // Tap card-card "hari ini" → Daftar Transaksi dengan filter Hari Ini
         View.OnClickListener todayListClick = v -> {
             Intent i = new Intent(this, TransactionListActivity.class);
@@ -247,98 +261,17 @@ public class MainActivity extends AppCompatActivity {
         View btnClockOut = findViewById(R.id.btnClockOut);
         View btnAdminLogout = findViewById(R.id.btnAdminLogout);
         if (btnIstirahat != null) btnIstirahat.setOnClickListener(v -> doIstirahat());
-        // Pulang: ingatkan transaksi pending besok dulu → konfirmasi → selfie →
-        // catat OUT → laporan + apresiasi.
-        if (btnClockOut != null) btnClockOut.setOnClickListener(v -> remindPendingBeforePulang());
+        // Pulang: konfirmasi → selfie → catat OUT → laporan + apresiasi.
+        if (btnClockOut != null) btnClockOut.setOnClickListener(v -> confirmPulang());
         // Admin: logout biasa (tanpa absensi/laporan).
         if (btnAdminLogout != null) btnAdminLogout.setOnClickListener(v -> doAdminLogout());
-
-        // Menu Karyawan (absensi) — admin only.
-        View cardKaryawan = findViewById(R.id.cardKaryawan);
-        if (cardKaryawan != null) {
-            cardKaryawan.setOnClickListener(v ->
-                    startActivity(new Intent(this, UserListActivity.class)));
-        }
 
         // Siapkan channel pengingat jam kerja + minta izin notifikasi (Android 13+).
         ensureNotificationAccess();
 
-        // Staf baru clock in → beritahu jumlah Transaksi Pending (popup + notif).
-        if (getIntent().getBooleanExtra(EXTRA_JUST_CLOCKED_IN, false)) {
-            getIntent().removeExtra(EXTRA_JUST_CLOCKED_IN);   // sekali saja
-            maybeNotifyPendingOnClockIn();
-        }
-
         // Online: keep periodic sync armed + check for a newer app version on launch.
         com.crowja.damiupos.sync.SyncScheduler.schedulePeriodic(getApplicationContext());
         com.crowja.damiupos.sync.VersionUpdater.checkAndPrompt(this);
-    }
-
-    /**
-     * Saat staf masuk kerja kembali: kalau ada Transaksi Pending, tampilkan
-     * popup jumlahnya + notifikasi Android. No-op kalau tidak ada pending.
-     */
-    private void maybeNotifyPendingOnClockIn() {
-        int count;
-        try {
-            count = new com.crowja.damiupos.db.PendingTransactionDao(
-                    DatabaseHelper.getInstance(this)).countPending();
-        } catch (Exception e) { return; }
-        if (count <= 0) return;
-
-        firePendingTrxNotification(count);
-
-        if (isFinishing() || isDestroyed()) return;
-        String first = settingsDao.getCurrentUserName();
-        first = (first != null && !first.isEmpty()) ? first : "Kak";
-        SpannableStringBuilder msg = new SpannableStringBuilder();
-        msg.append("Selamat datang kembali, " + first + "!\n\n");
-        appendStyled(msg, "Ada " + count + " transaksi pending",
-                Color.parseColor("#D32F2F"), true, 1.2f);
-        msg.append(" yang menunggu untuk dieksekusi hari ini. Ketuk pill merah di "
-                + "tombol \"Jual Air Minum\" untuk membukanya.");
-        new AlertDialog.Builder(this)
-                .setTitle("📋 Transaksi Pending")
-                .setMessage(msg)
-                .setPositiveButton("Lihat Sekarang", (d, w) ->
-                        startActivity(new Intent(this, PendingTransactionListActivity.class)))
-                .setNegativeButton("Nanti", null)
-                .show();
-    }
-
-    /** Notifikasi Android: jumlah Transaksi Pending saat clock in. */
-    private void firePendingTrxNotification(int count) {
-        String channelId = "pending_trx";
-        android.app.NotificationManager nm =
-                (android.app.NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        if (nm == null) return;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                && nm.getNotificationChannel(channelId) == null) {
-            android.app.NotificationChannel ch = new android.app.NotificationChannel(
-                    channelId, "Transaksi Pending",
-                    android.app.NotificationManager.IMPORTANCE_DEFAULT);
-            ch.setDescription("Pengingat transaksi pending saat mulai bekerja");
-            nm.createNotificationChannel(ch);
-        }
-        Intent open = new Intent(this, PendingTransactionListActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        int piFlags = android.app.PendingIntent.FLAG_UPDATE_CURRENT
-                | android.app.PendingIntent.FLAG_IMMUTABLE;
-        android.app.PendingIntent pi = android.app.PendingIntent.getActivity(this, 0, open, piFlags);
-        androidx.core.app.NotificationCompat.Builder b =
-                new androidx.core.app.NotificationCompat.Builder(this, channelId)
-                        .setSmallIcon(android.R.drawable.ic_menu_recent_history)
-                        .setContentTitle("Ada " + count + " transaksi pending")
-                        .setContentText("Ketuk untuk melihat & eksekusi transaksi yang tertunda.")
-                        .setPriority(androidx.core.app.NotificationCompat.PRIORITY_DEFAULT)
-                        .setCategory(androidx.core.app.NotificationCompat.CATEGORY_REMINDER)
-                        .setContentIntent(pi)
-                        .setAutoCancel(true);
-        try {
-            androidx.core.app.NotificationManagerCompat.from(this).notify(7821, b.build());
-        } catch (SecurityException ignored) {
-            // POST_NOTIFICATIONS belum diberikan — abaikan.
-        }
     }
 
     private static final int REQ_POST_NOTIF = 9311;
@@ -382,43 +315,6 @@ public class MainActivity extends AppCompatActivity {
                 && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
             LocationService.start(this);
         }
-    }
-
-    /**
-     * Sebelum Pulang: popup pengingat (tanda seru) — apakah ada transaksi/pesanan
-     * yang direncanakan untuk BESOK? Kalau ya, buat Transaksi Pending sekarang
-     * agar tidak terlupa; kalau tidak, lanjut proses Pulang.
-     */
-    private void remindPendingBeforePulang() {
-        int count = 0;
-        try {
-            count = new com.crowja.damiupos.db.PendingTransactionDao(
-                    DatabaseHelper.getInstance(this)).countPending();
-        } catch (Exception ignored) {}
-
-        StringBuilder msg = new StringBuilder();
-        msg.append("Apakah ada transaksi/pesanan yang direncanakan untuk BESOK?\n\n");
-        msg.append("Kalau ada, buat sebagai Transaksi Pending sekarang agar besok "
-                + "tidak terlupa.");
-        if (count > 0) {
-            msg.append("\n\nSaat ini sudah ada ").append(count)
-                    .append(" transaksi pending tercatat.");
-        }
-        new AlertDialog.Builder(this)
-                .setIcon(android.R.drawable.ic_dialog_alert)
-                .setTitle("⚠ Cek Transaksi Pending")
-                .setMessage(msg.toString())
-                .setCancelable(false)
-                // Buat pending dulu → buka Jual Air (pakai tombol "Simpan sebagai
-                // Pending" di sana). Setelah selesai, tekan Pulang lagi.
-                .setPositiveButton("Buat Pending", (d, w) -> {
-                    Intent i = new Intent(this, TransactionActivity.class);
-                    i.putExtra("type", Transaction.TYPE_JUAL);
-                    startActivity(i);
-                })
-                .setNegativeButton("Lanjut Pulang", (d, w) -> confirmPulang())
-                .setNeutralButton("Batal", null)
-                .show();
     }
 
     /** Konfirmasi sebelum Pulang (clock out) — gate selfie + pencatatan OUT. */
@@ -480,10 +376,6 @@ public class MainActivity extends AppCompatActivity {
             isMarketing = cur != null && cur.isMarketing();
         }
         boolean tracksAttendance = show && !isAdmin && !isViewer && !isMarketing; // hanya staf yang absen
-
-        // Menu Karyawan hanya untuk admin yang sedang login.
-        View cardKaryawan = findViewById(R.id.cardKaryawan);
-        if (cardKaryawan != null) cardKaryawan.setVisibility(isAdmin ? View.VISIBLE : View.GONE);
 
         // Viewer tidak boleh buat transaksi → sembunyikan aksi cepat Jual/Kembali.
         View qaJual = findViewById(R.id.btnJualGalon);
@@ -619,18 +511,24 @@ public class MainActivity extends AppCompatActivity {
     private void doIstirahat() {
         long uid = settingsDao.getCurrentUserId();
         if (uid <= 0) return;
+        String uname = settingsDao.getCurrentUserName();
         new AlertDialog.Builder(this)
                 .setTitle("Istirahat?")
-                .setMessage("Aplikasi akan terkunci. Anda perlu clock in lagi (PIN) "
-                        + "untuk melanjutkan bekerja.")
+                .setMessage("Aplikasi terkunci selama istirahat. Tekan \"Lanjut Kerja\" "
+                        + "untuk melanjutkan tanpa PIN, atau rekan lain bisa login.")
                 .setPositiveButton("Ya, Istirahat", (d, w) -> {
-                    new AttendanceDao(DatabaseHelper.getInstance(this))
+                    long attId = new AttendanceDao(DatabaseHelper.getInstance(this))
                             .log(uid, Attendance.EVENT_BREAK);
+                    LocationService.stampAttendanceLocation(this, attId);   // GPS istirahat untuk dashboard
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());   // absensi real-time
                     // Pause pengingat jam kerja — di-rearm saat clock in lagi.
                     WorkHoursReminder.cancel(getApplicationContext(), uid);
                     // Istirahat: berhenti melacak LOKASI, tapi service tetap hidup
                     // (poll-only) supaya polling background tetap aktif selama shift.
-                    LocationService.startBreak(getApplicationContext());
+                    LocationService.pollOnly(getApplicationContext());
+                    // Ingat siapa yang istirahat → tombol "Lanjut Kerja" 1 ketukan di layar login
+                    // (tanpa PIN/selfie). Shift tetap terbuka sampai Pulang.
+                    settingsDao.setBreakUser(uid, uname);
                     settingsDao.clearCurrentUser();
                     Intent i = new Intent(this, LoginActivity.class);
                     i.putExtra(LoginActivity.EXTRA_FROM_BREAK, true);
@@ -699,14 +597,18 @@ public class MainActivity extends AppCompatActivity {
         long workMs = ShiftReporter.workedMillisToday(dbHelper, uid);
 
         // Catat OUT + foto pulang.
-        attDao.log(uid, Attendance.EVENT_OUT, logoutPhoto);
+        long outAttId = attDao.log(uid, Attendance.EVENT_OUT, logoutPhoto);
+        LocationService.stampAttendanceLocation(this, outAttId);   // GPS pulang untuk dashboard
+        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());   // absensi real-time
         // Shift selesai → batalkan pengingat jam kerja + lepas sesi SEGERA
         // (sinkron). Kalau popup apresiasi hilang karena rotasi/destroy, gate
         // onCreate tetap mengarahkan ke login (tidak terjebak masih "login").
         WorkHoursReminder.cancel(getApplicationContext(), uid);
-        // Shift selesai → tutup flag + hentikan service polling/lokasi.
+        // Shift selesai → tutup flag + hentikan GPS, TAPI service tetap hidup dalam
+        // mode poll-only supaya sinkronisasi dengan dashboard tetap jalan di
+        // background (mis. karyawan baru ditambah admin tetap terkirim ke HP).
         settingsDao.setShiftActive(false);
-        LocationService.stop(getApplicationContext());
+        LocationService.pollOnly(getApplicationContext());
         pendingLogoutUid = 0;
         pendingLogoutName = null;
         settingsDao.clearCurrentUser();
@@ -910,10 +812,24 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        // Multi-user login may have just been turned on from the dashboard (synced via
+        // app_settings) — enforce the login/clock-in gate now, without needing a cold restart.
+        // Guard isFinishing() so we don't double-launch when onCreate already gated + finished.
+        if (!isFinishing() && settingsDao.isMultiUserEnabled() && settingsDao.getCurrentUserId() <= 0) {
+            startActivity(new Intent(this, LoginActivity.class));
+            finish();
+            return;
+        }
         refreshDashboard();
         // Online (REST, no MQTT): kick a sync + online tick (config/version/
         // broadcasts) so opening the app pulls fresh data and admin messages.
         com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+        // Hangatkan cache logo depot (disinkron dari web) supaya struk pertama pun sudah ada logonya.
+        new Thread(() -> com.crowja.damiupos.util.DepotLogo.ensureDownloaded(getApplicationContext())).start();
+        // Sinkronisasi berkelanjutan: nyalakan service polling yang berjalan terus
+        // selama app hidup (termasuk background), tidak bergantung pada shift —
+        // sehingga perubahan dari dashboard (karyawan baru, dll.) sampai real-time.
+        LocationService.ensureOnline(getApplicationContext());
         // Listen broadcast pesanan WA baru
         IntentFilter f = new IntentFilter(WaListenerService.ACTION_NEW_ORDER);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -921,15 +837,55 @@ public class MainActivity extends AppCompatActivity {
         } else {
             registerReceiver(newOrderReceiver, f);
         }
+        // Listen broadcast "sinkron membawa data baru" → badge Antrian Delivery
+        // (dan KPI/transaksi terakhir) ikut update real-time saat dashboard terbuka.
+        IntentFilter syncedFilter = new IntentFilter(com.crowja.damiupos.sync.SyncEngine.ACTION_SYNCED);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(syncedReceiver, syncedFilter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(syncedReceiver, syncedFilter);
+        }
+        // Listen pesan admin baru → popup dialog saat dashboard tampil.
+        IntentFilter adminMsgFilter = new IntentFilter(
+                com.crowja.damiupos.sync.OnlineNotifier.ACTION_ADMIN_MESSAGE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(adminMsgReceiver, adminMsgFilter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(adminMsgReceiver, adminMsgFilter);
+        }
         refreshOrderInboxBanner();
         // Re-evaluasi visibilitas ikon inbox (auto-detect bisa di-toggle di Pengaturan).
         invalidateOptionsMenu();
+        // Tampilkan pesan admin yang tertunda (mis. tiba saat app di background).
+        showPendingAdminMessage();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         try { unregisterReceiver(newOrderReceiver); } catch (Exception ignored) {}
+        try { unregisterReceiver(syncedReceiver); } catch (Exception ignored) {}
+        try { unregisterReceiver(adminMsgReceiver); } catch (Exception ignored) {}
+    }
+
+    /**
+     * Tampilkan pesan admin dari dashboard ("Kirim Pesan ke Perangkat") sebagai popup
+     * dialog (selain notifikasi Android). Sumber kebenaran = pending message di settings,
+     * jadi tampil sekali lalu dibersihkan (tidak dobel antara broadcast & onResume).
+     */
+    private void showPendingAdminMessage() {
+        if (isFinishing() || settingsDao == null) return;
+        if (!settingsDao.hasPendingAdminMessage()) return;
+        String title = settingsDao.getPendingAdminMessageTitle();
+        String body = settingsDao.getPendingAdminMessageBody();
+        settingsDao.clearPendingAdminMessage();
+        if (adminMsgDialog != null && adminMsgDialog.isShowing()) adminMsgDialog.dismiss();
+        adminMsgDialog = new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setIcon(android.R.drawable.ic_dialog_email)
+                .setTitle(title == null || title.isEmpty() ? "Pesan dari Admin" : title)
+                .setMessage(body)
+                .setPositiveButton("OK", null)
+                .show();
     }
 
     private void startBlink(View view) {
@@ -966,33 +922,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    /**
-     * Badge "Transaksi Pending" di tombol Jual Air Minum: tampil & berkedip
-     * selama ada pending; ketuk badge → daftar Transaksi Pending. Disembunyikan
-     * untuk Viewer (tombol Jual juga disembunyikan untuknya).
-     */
-    private void updatePendingTrxIndicator() {
-        TextView badge = findViewById(R.id.tvPendingBadge);
-        if (badge == null) return;
-        int count = 0;
-        try {
-            count = new com.crowja.damiupos.db.PendingTransactionDao(
-                    DatabaseHelper.getInstance(this)).countPending();
-        } catch (Exception ignored) {}
-        View jualBtn = findViewById(R.id.btnJualGalon);
-        boolean jualVisible = jualBtn == null || jualBtn.getVisibility() == View.VISIBLE;
-        if (count > 0 && jualVisible) {
-            badge.setText(String.valueOf(count));
-            badge.setVisibility(View.VISIBLE);
-            startBlink(badge);
-            badge.setOnClickListener(v ->
-                    startActivity(new Intent(this, PendingTransactionListActivity.class)));
-        } else {
-            badge.clearAnimation();
-            badge.setVisibility(View.GONE);
-        }
-    }
-
     /** Badge jumlah order di Antrian Delivery (PENDING). */
     private void updateDeliveryBadge() {
         TextView badge = findViewById(R.id.tvDeliveryBadge);
@@ -1015,7 +944,10 @@ public class MainActivity extends AppCompatActivity {
         TextView tvStokBadge = findViewById(R.id.tvStokBadge);
         if (tvStokBadge == null) return;
         int threshold = settingsDao.getStockAlert();
-        int stok = galonStockDao.getStokTersedia();
+        // Pakai tersedia "resmi" (server-authoritative bila sync) — SAMA dengan layar Stok Galon &
+        // dashboard web; sebelumnya badge memakai angka murni lokal sehingga bisa berbeda dari isi menu.
+        int stok = galonStockDao.getStokTersediaResmi(
+                new com.crowja.damiupos.sync.SyncSettings(settingsDao));
 
         tvStokBadge.setText("Stok: " + stok);
 
@@ -1071,9 +1003,6 @@ public class MainActivity extends AppCompatActivity {
         updateFollowUpIndicator();
         updateStockIndicator();
         refreshOperatorBar();
-        // Setelah refreshOperatorBar (visibilitas tombol Jual sudah final untuk
-        // role saat ini) → evaluasi badge Transaksi Pending.
-        updatePendingTrxIndicator();
         updateDeliveryBadge();
 
         // Recent transactions

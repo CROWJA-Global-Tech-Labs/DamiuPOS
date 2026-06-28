@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 29;
+    private static final int DATABASE_VERSION = 37;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -46,6 +46,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     /** 1 = komisi reseller ini ditambahkan ke harga air minum saat transaksi
      *  (pelanggan membayar harga + komisi), bukan diserap margin depot. */
     public static final String COL_KOMISI_ADD_TO_PRICE = "komisi_add_to_price";
+    // Harga khusus per produk untuk pelanggan ini: JSON { product_uuid: harga }.
+    // NULL/kosong = ikut harga produk standar. Disinkron apa adanya (string JSON).
+    public static final String COL_PRODUCT_PRICES = "product_prices";
     /** Timestamp saat pelanggan di-"Remove" dari daftar Follow Up. NULL = tidak
      *  dikecualikan. Pelanggan otomatis muncul lagi kalau beli setelah tanggal ini. */
     public static final String COL_FOLLOWUP_EXCLUDED_AT = "followup_excluded_at";
@@ -54,6 +57,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     /** Timestamp terakhir pelanggan di-follow-up (kirim pesan WA follow-up).
      *  Dipakai laporan harian: konsumen yang di-follow-up hari tsb. */
     public static final String COL_LAST_FOLLOWUP_AT = "last_followup_at";
+    /** Ditambahkan manual ke Follow Up (dari web/dashboard) terlepas dari riwayat beli.
+     *  NULL = tidak ditandai manual. Disinkron agar muncul di daftar Follow Up perangkat. */
+    public static final String COL_FOLLOWUP_MANUAL_AT = "followup_manual_at";
+    /** Catatan opsional untuk follow-up (mis. konteks saat ditambahkan manual). Disinkron. */
+    public static final String COL_FOLLOWUP_NOTE = "followup_note";
 
     // Table products
     public static final String TABLE_PRODUCTS = "products";
@@ -100,6 +108,18 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_DELIVERY_QUEUED_AT = "delivery_queued_at";
     /** Wall-clock saat staf menandai order Selesai. Durasi = done_at − queued_at. */
     public static final String COL_DELIVERY_DONE_AT = "delivery_done_at";
+    /** Token acak per-order untuk link lacak publik web ({base}/track/{token}).
+     *  Pelanggan memantau progres + lokasi kurir langsung. Disinkron ke server. */
+    public static final String COL_DELIVERY_TOKEN = "delivery_token";
+    /** Operator (user lokal) yang membuat/mengantar order — disinkron sebagai
+     *  staff_uuid agar halaman lacak menampilkan GPS kurir yang benar. */
+    public static final String COL_DELIVERY_STAFF_ID = "delivery_staff_id";
+    /** Atribusi terpisah pembuat vs penyelesai transaksi (didenormalisasi namanya) +
+     *  kanal pembuatan ('web' bila disusun di dashboard; null = perangkat asal). Disinkron
+     *  agar dashboard menampilkan "dibuat oleh … (via …)" dan "diselesaikan oleh … (via …)". */
+    public static final String COL_CREATED_BY_NAME = "created_by_name";
+    public static final String COL_CREATED_VIA = "created_via";
+    public static final String COL_COMPLETED_BY_NAME = "completed_by_name";
 
     // Table settings
     public static final String TABLE_SETTINGS = "settings";
@@ -165,6 +185,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_ATT_TS = "ts";
     /** Path foto wajah (selfie) saat clock in / pulang. */
     public static final String COL_ATT_PHOTO_PATH = "photo_path";
+    /** Lokasi GPS saat event absensi (clock in/break/out); null bila izin/lokasi tak tersedia. */
+    public static final String COL_ATT_LAT = "latitude";
+    public static final String COL_ATT_LNG = "longitude";
 
     // Table salary_config — konfigurasi gaji per staf (slip gaji cut-off).
     public static final String TABLE_SALARY = "salary_config";
@@ -236,6 +259,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_FOLLOWUP_EXCLUDED_AT + " TEXT, " +
                     COL_FOLLOWUP_EXCLUDE_REASON + " TEXT, " +
                     COL_LAST_FOLLOWUP_AT + " TEXT, " +
+                    COL_FOLLOWUP_MANUAL_AT + " TEXT, " +
+                    COL_FOLLOWUP_NOTE + " TEXT, " +
+                    COL_PRODUCT_PRICES + " TEXT, " +
                     COL_CREATED_AT + " TEXT DEFAULT (datetime('now','localtime'))" +
                     ");";
 
@@ -277,6 +303,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_DELIVERY_STATUS + " TEXT, " +
                     COL_DELIVERY_QUEUED_AT + " TEXT, " +
                     COL_DELIVERY_DONE_AT + " TEXT, " +
+                    COL_DELIVERY_TOKEN + " TEXT, " +
+                    COL_DELIVERY_STAFF_ID + " INTEGER DEFAULT 0, " +
+                    COL_CREATED_BY_NAME + " TEXT, " +
+                    COL_CREATED_VIA + " TEXT, " +
+                    COL_COMPLETED_BY_NAME + " TEXT, " +
                     COL_TANGGAL + " TEXT DEFAULT (datetime('now','localtime')), " +
                     COL_CATATAN + " TEXT, " +
                     "FOREIGN KEY(" + COL_CUSTOMER_ID + ") REFERENCES " +
@@ -315,6 +346,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_EXPENSE_NAME + " TEXT NOT NULL, " +
                     COL_EXPENSE_AMOUNT + " REAL NOT NULL DEFAULT 0, " +
                     COL_EXPENSE_PHOTO_PATH + " TEXT, " +
+                    COL_PHOTO_URL + " TEXT, " +    // URL nota di server (di-set MediaUploader, disinkron)
                     COL_EXPENSE_NOTE + " TEXT, " +
                     COL_EXPENSE_CATEGORY + " TEXT DEFAULT 'UMUM', " +
                     COL_EXPENSE_LITERS + " REAL DEFAULT 0, " +
@@ -410,8 +442,62 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_ATT_PHOTO_PATH + " TEXT, " +
                     COL_PHOTO_URL + " TEXT, " +
                     COL_ATT_TS + " TEXT DEFAULT (datetime('now','localtime')), " +
+                    COL_ATT_LAT + " REAL, " +
+                    COL_ATT_LNG + " REAL, " +
                     "FOREIGN KEY(" + COL_ATT_USER_ID + ") REFERENCES " +
                     TABLE_USERS + "(" + COL_USER_ID + ") ON DELETE CASCADE" +
+                    ");";
+
+    // ---- Kampanye pelanggan (v37) ---------------------------------------------
+    // Campaigns + questions are authored on the web (pull-only here); deliveries are
+    // created on this device when a campaign link is shared with the struk, then synced
+    // up (two-way). Questions themselves are NOT mirrored — the customer fills them on the
+    // public web link; the phone only needs the campaign text + the per-customer link.
+    public static final String TABLE_CAMPAIGNS = "campaigns";
+    public static final String COL_CAMP_TYPE = "type";            // INFO | KUISIONER
+    public static final String COL_CAMP_TITLE = "title";
+    public static final String COL_CAMP_BODY = "body_text";
+    public static final String COL_CAMP_ACTIVE = "is_active";     // 1 = aktif (boleh dibagikan)
+    public static final String COL_CAMP_TARGETS = "target_devices"; // JSON list of device uuids
+
+    public static final String TABLE_CAMPAIGN_DELIVERIES = "campaign_deliveries";
+    public static final String COL_CD_CAMPAIGN_ID = "campaign_id"; // local ref → campaigns._id (→ campaign_uuid)
+    public static final String COL_CD_CUSTOMER_ID = "customer_id"; // local ref → customers._id (→ customer_uuid)
+    public static final String COL_CD_TOKEN = "token";
+    public static final String COL_CD_SENT_AT = "sent_at";
+    public static final String COL_CD_CLICKED_AT = "clicked_at";
+    public static final String COL_CD_RESPONDED_AT = "responded_at";
+    public static final String COL_CD_REACTION = "reaction";       // UP | DOWN (web-set)
+    public static final String COL_CD_REACTED_AT = "reacted_at";
+
+    private static final String CREATE_TABLE_CAMPAIGNS =
+            "CREATE TABLE " + TABLE_CAMPAIGNS + " (" +
+                    COL_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    COL_CAMP_TYPE + " TEXT, " +
+                    COL_CAMP_TITLE + " TEXT, " +
+                    COL_CAMP_BODY + " TEXT, " +
+                    COL_CAMP_ACTIVE + " INTEGER DEFAULT 0, " +
+                    COL_CAMP_TARGETS + " TEXT, " +
+                    COL_CREATED_AT + " TEXT, " +
+                    COL_SYNC_UUID + " TEXT, " +
+                    COL_EDITED_AT + " TEXT, " +
+                    COL_SYNCED + " INTEGER DEFAULT 0" +
+                    ");";
+
+    private static final String CREATE_TABLE_CAMPAIGN_DELIVERIES =
+            "CREATE TABLE " + TABLE_CAMPAIGN_DELIVERIES + " (" +
+                    COL_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    COL_CD_CAMPAIGN_ID + " INTEGER DEFAULT -1, " +
+                    COL_CD_CUSTOMER_ID + " INTEGER DEFAULT -1, " +
+                    COL_CD_TOKEN + " TEXT, " +
+                    COL_CD_SENT_AT + " TEXT, " +
+                    COL_CD_CLICKED_AT + " TEXT, " +
+                    COL_CD_RESPONDED_AT + " TEXT, " +
+                    COL_CD_REACTION + " TEXT, " +
+                    COL_CD_REACTED_AT + " TEXT, " +
+                    COL_SYNC_UUID + " TEXT, " +
+                    COL_EDITED_AT + " TEXT, " +
+                    COL_SYNCED + " INTEGER DEFAULT 0" +
                     ");";
 
     private static DatabaseHelper instance;
@@ -461,6 +547,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.execSQL(CREATE_TABLE_SALARY);
         db.execSQL(CREATE_TABLE_SALARY_ITEMS);
         db.execSQL(CREATE_TABLE_PENDING_TRX);
+        db.execSQL(CREATE_TABLE_CAMPAIGNS);
+        db.execSQL(CREATE_TABLE_CAMPAIGN_DELIVERIES);
         installSyncInfra(db, false);
     }
 
@@ -653,6 +741,73 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_STATUS + " TEXT");
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_QUEUED_AT + " TEXT");
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_DONE_AT + " TEXT");
+        }
+        if (oldVersion < 30) {
+            // Link lacak pengiriman publik: token per-order + operator (kurir).
+            // Additive; baris lama tetap NULL/0 (tidak punya link lacak). Disinkron
+            // agar dashboard menyajikan /track/{token} + GPS kurir ke pelanggan.
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_TOKEN + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_STAFF_ID + " INTEGER DEFAULT 0");
+        }
+        if (oldVersion < 31) {
+            // Atribusi terpisah: nama pembuat (operator/admin) & penyelesai (kurir) transaksi,
+            // + kanal pembuatan ('web' bila disusun di dashboard; null = perangkat ini). Additif;
+            // baris lama NULL. Disinkron agar dashboard menampilkan "dibuat/diselesaikan oleh".
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_CREATED_BY_NAME + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_CREATED_VIA + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_COMPLETED_BY_NAME + " TEXT");
+        }
+        if (oldVersion < 32) {
+            // Lokasi GPS pada event absensi (selfie clock in/out) → dashboard tampil lokasi, bukan "Tanpa lokasi".
+            tryExec(db, "ALTER TABLE " + TABLE_ATTENDANCE + " ADD COLUMN " + COL_ATT_LAT + " REAL");
+            tryExec(db, "ALTER TABLE " + TABLE_ATTENDANCE + " ADD COLUMN " + COL_ATT_LNG + " REAL");
+        }
+        if (oldVersion < 33) {
+            // Follow Up manual: pelanggan ditandai manual dari web (+ catatan opsional). Additif;
+            // baris lama NULL. Disinkron agar entri manual muncul di daftar Follow Up perangkat.
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_FOLLOWUP_MANUAL_AT + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_FOLLOWUP_NOTE + " TEXT");
+        }
+        if (oldVersion < 34) {
+            // Re-push STOK GALON ke dashboard. Sebagian entri galon_stock lama tak pernah sampai ke
+            // server (web menampilkan 0 baris asal-perangkat → saldo web ≠ HP). Pastikan tiap baris
+            // punya sync_uuid (defensif; harusnya sudah sejak v26), lalu tandai ulang "dirty" agar
+            // sinkron berikutnya meng-upload-nya. Idempoten: baris yang sudah ada di server di-upsert
+            // via uuid (last-write-wins), jadi aman dijalankan ulang.
+            Cursor gc = null;
+            try {
+                gc = db.rawQuery("SELECT " + COL_STOCK_ID + " FROM " + TABLE_GALON_STOCK
+                        + " WHERE " + COL_SYNC_UUID + " IS NULL", null);
+                String nowTs = nowIso();
+                while (gc.moveToNext()) {
+                    ContentValues v = new ContentValues();
+                    v.put(COL_SYNC_UUID, java.util.UUID.randomUUID().toString());
+                    v.put(COL_EDITED_AT, nowTs);
+                    db.update(TABLE_GALON_STOCK, v, COL_STOCK_ID + "=?",
+                            new String[]{String.valueOf(gc.getLong(0))});
+                }
+            } catch (Exception ignored) {
+            } finally {
+                if (gc != null) gc.close();
+            }
+            tryExec(db, "UPDATE " + TABLE_GALON_STOCK + " SET " + COL_SYNCED + " = 0");
+        }
+        if (oldVersion < 35) {
+            // Harga khusus per produk untuk tiap pelanggan (JSON { product_uuid: harga }; default dari
+            // harga produk, bisa diedit). Additif; baris lama NULL = ikut harga produk standar.
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_PRODUCT_PRICES + " TEXT");
+        }
+        if (oldVersion < 36) {
+            // Foto nota pengeluaran kini diunggah ke server (MediaUploader) lalu URL-nya disinkron ke
+            // dashboard. Tambah kolom photo_url; baris lama dengan photo_path akan terunggah otomatis.
+            tryExec(db, "ALTER TABLE " + TABLE_EXPENSES + " ADD COLUMN " + COL_PHOTO_URL + " TEXT");
+        }
+        if (oldVersion < 37) {
+            // Kampanye pelanggan: campaigns ditarik dari web (pull-only), deliveries dibuat di HP
+            // saat link kampanye dibagikan bersama struk lalu disinkron. Tabel baru (additif & aman
+            // untuk perangkat live — tak menyentuh data yang ada). Sync infra dipasang di bawah.
+            tryExec(db, CREATE_TABLE_CAMPAIGNS);
+            tryExec(db, CREATE_TABLE_CAMPAIGN_DELIVERIES);
         }
     }
 

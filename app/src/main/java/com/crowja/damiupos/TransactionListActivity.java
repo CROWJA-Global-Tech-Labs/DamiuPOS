@@ -189,8 +189,8 @@ public class TransactionListActivity extends AppCompatActivity {
         // Sort
         switch (sortMode) {
             case 1: // oldest first
-                java.util.Collections.sort(filtered, (a, b) -> safeStr(a.getTanggal())
-                        .compareTo(safeStr(b.getTanggal())));
+                java.util.Collections.sort(filtered, (a, b) -> safeStr(a.getEffectiveTime())
+                        .compareTo(safeStr(b.getEffectiveTime())));
                 break;
             case 2: // highest total
                 java.util.Collections.sort(filtered, (a, b) -> Double.compare(b.getTotalHarga(), a.getTotalHarga()));
@@ -199,8 +199,8 @@ public class TransactionListActivity extends AppCompatActivity {
                 java.util.Collections.sort(filtered, (a, b) -> Double.compare(a.getTotalHarga(), b.getTotalHarga()));
                 break;
             default: // newest first
-                java.util.Collections.sort(filtered, (a, b) -> safeStr(b.getTanggal())
-                        .compareTo(safeStr(a.getTanggal())));
+                java.util.Collections.sort(filtered, (a, b) -> safeStr(b.getEffectiveTime())
+                        .compareTo(safeStr(a.getEffectiveTime())));
         }
 
         adapter.setData(filtered);

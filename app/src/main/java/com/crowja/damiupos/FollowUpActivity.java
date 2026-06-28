@@ -277,7 +277,15 @@ public class FollowUpActivity extends AppCompatActivity {
 
             long days = daysSince(c.getCreatedAt()); // overloaded: last purchase
             h.tvDays.setText(String.valueOf(days));
-            h.tvLastPurchase.setText("Terakhir beli: " + formatDate(c.getCreatedAt()));
+            // Catatan follow-up (mis. ditambahkan manual dari web) tampil di baris kedua bila ada.
+            String lastPurchase = "Terakhir beli: " + formatDate(c.getCreatedAt());
+            String note = c.getFollowupNote();
+            if (note != null && !note.trim().isEmpty()) {
+                h.tvLastPurchase.setMaxLines(3);
+                h.tvLastPurchase.setText(lastPurchase + "\n📝 " + note.trim());
+            } else {
+                h.tvLastPurchase.setText(lastPurchase);
+            }
             int saldo = c.getSaldoGalon();
             h.tvGalon.setText(saldo + " galon");
             h.tvGalon.setVisibility(saldo > 0 ? View.VISIBLE : View.GONE);

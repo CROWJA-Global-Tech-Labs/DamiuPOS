@@ -39,7 +39,8 @@ public class SyncApi {
     }
 
     public JSONObject enroll(String baseUrl, String enrollKey, @Nullable String deviceUuid,
-                             String name, int versionCode, String versionName) throws Exception {
+                             String name, int versionCode, String versionName,
+                             @Nullable JSONObject settings) throws Exception {
         JSONObject body = new JSONObject();
         body.put("enroll_key", enrollKey);
         if (deviceUuid != null && !deviceUuid.isEmpty()) body.put("device_uuid", deviceUuid);
@@ -47,6 +48,8 @@ public class SyncApi {
         body.put("platform", "android");
         body.put("app_version_code", versionCode);
         body.put("app_version_name", versionName);
+        // Current phone settings → archived server-side before the dashboard config overwrites them.
+        if (settings != null && settings.length() > 0) body.put("settings", settings);
         return post(trim(baseUrl) + "/api/devices/enroll", body, null);
     }
 
@@ -56,6 +59,16 @@ public class SyncApi {
 
     public JSONObject pull(JSONObject body) throws Exception {
         return post(cfg.getBaseUrl() + "/api/sync/pull", body, cfg.getToken());
+    }
+
+    /** Full "Pull Data" upload — every customer/transaction/expense row (dashboard-triggered). */
+    public JSONObject importDump(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/sync/import", body, cfg.getToken());
+    }
+
+    /** "Pull Settings" upload — this phone's shareable settings, archived for review on the dashboard. */
+    public JSONObject uploadSettings(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/settings/upload", body, cfg.getToken());
     }
 
     public JSONObject locationPing(JSONObject body) throws Exception {

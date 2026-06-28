@@ -48,11 +48,13 @@ public class Transaction {
     private String paymentMethod;   // TUNAI | QRIS | TRANSFER (untuk JUAL)
     private long resellerId;        // reseller afiliasi yg dapat komisi (0 = tidak ada)
     private String tanggal;
+    private String editedAt; // stempel sinkron (UTC ISO) — kunci urutan kronologis yang konsisten
     private String catatan;
     // Antrian Delivery (diisi untuk JUAL): status + waktu antri + waktu selesai.
     private String deliveryStatus;
     private String deliveryQueuedAt;
     private String deliveryDoneAt;
+    private String deliveryToken;    // token link lacak publik (web /track/{token})
     private List<TransactionItem> items = new ArrayList<>();
 
     public Transaction() {}
@@ -127,6 +129,16 @@ public class Transaction {
     public String getTanggal() { return tanggal; }
     public void setTanggal(String tanggal) { this.tanggal = tanggal; }
 
+    public String getEditedAt() { return editedAt; }
+    public void setEditedAt(String v) { this.editedAt = v; }
+
+    /** Waktu efektif untuk tampilan & urutan: utamakan edited_at (stempel sinkron yang
+     *  konsisten UTC), jatuh ke tanggal kalau kosong. tanggal lama hasil sinkron bisa
+     *  ter-skew tz, sedangkan edited_at selalu konsisten — jadi ini yang dipakai. */
+    public String getEffectiveTime() {
+        return (editedAt != null && !editedAt.isEmpty()) ? editedAt : tanggal;
+    }
+
     public String getCatatan() { return catatan; }
     public void setCatatan(String catatan) { this.catatan = catatan; }
 
@@ -138,6 +150,9 @@ public class Transaction {
 
     public String getDeliveryDoneAt() { return deliveryDoneAt; }
     public void setDeliveryDoneAt(String v) { this.deliveryDoneAt = v; }
+
+    public String getDeliveryToken() { return deliveryToken; }
+    public void setDeliveryToken(String v) { this.deliveryToken = v; }
 
     public List<TransactionItem> getItems() { return items; }
     public void setItems(List<TransactionItem> items) {
