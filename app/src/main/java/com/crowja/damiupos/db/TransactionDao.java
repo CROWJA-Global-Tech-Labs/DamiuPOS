@@ -4,8 +4,10 @@ import android.content.ContentValues;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 
+import com.crowja.damiupos.model.Attendance;
 import com.crowja.damiupos.model.Transaction;
 import com.crowja.damiupos.model.TransactionItem;
+import com.crowja.damiupos.model.User;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -48,16 +50,24 @@ public class TransactionDao {
         if (trx.getTanggal() != null && !trx.getTanggal().isEmpty()) {
             values.put(DatabaseHelper.COL_TANGGAL, trx.getTanggal());
         }
+        // Resolve operator SEKALI (sebelumnya id/nama/role di-query 5-6× per transaksi).
+        SettingsDao sdao = new SettingsDao(dbHelper);
+        long operatorUid = sdao.getCurrentUserId();
+        User op = operatorUid > 0 ? new UserDao(dbHelper).getById(operatorUid) : null;
         // Atribusi pembuat: operator yang sedang clock-in di perangkat ini (didenormalisasi
         // namanya). created_via dibiarkan NULL = perangkat asal (web view jatuh ke nama
         // perangkat). Disinkron agar dashboard menampilkan "dibuat oleh …".
-        String operator = new SettingsDao(dbHelper).getCurrentUserName();
+        String operator = sdao.getCurrentUserName();
         if (operator != null && !operator.isEmpty()) {
             values.put(DatabaseHelper.COL_CREATED_BY_NAME, operator);
         }
         // Antrian Delivery: JUAL masuk antrian PENDING dengan waktu antri = sekarang
         // (real, bukan `tanggal` yang bisa di-backdate). KEMBALI tidak diantrikan.
-        if (Transaction.TYPE_JUAL.equals(trx.getType())) {
+        // Penjualan oleh MARKETING tidak diantrikan sama sekali: akuisisi di lokasi,
+        // air langsung diserahkan (bukan kiriman kurir) → tanpa delivery_status/token,
+        // jadi tidak muncul di antrean HP maupun halaman Delivery dashboard web.
+        boolean marketing = op != null && op.isMarketing();
+        if (Transaction.TYPE_JUAL.equals(trx.getType()) && !marketing) {
             values.put(DatabaseHelper.COL_DELIVERY_STATUS, Transaction.DELIVERY_PENDING);
             values.put(DatabaseHelper.COL_DELIVERY_QUEUED_AT, DatabaseHelper.nowIso());
             // Token link lacak publik (32 hex) → {base}/track/{token}, dikirim ke
@@ -66,8 +76,27 @@ public class TransactionDao {
                     java.util.UUID.randomUUID().toString().replace("-", ""));
             // Operator (kurir) = user yang sedang clock-in; disinkron sebagai staff_uuid
             // supaya halaman lacak menampilkan GPS kurir yang benar.
-            long uid = new SettingsDao(dbHelper).getCurrentUserId();
-            if (uid > 0) values.put(DatabaseHelper.COL_DELIVERY_STAFF_ID, uid);
+            if (operatorUid > 0) values.put(DatabaseHelper.COL_DELIVERY_STAFF_ID, operatorUid);
+            // Lokasi tujuan pengiriman terpilih (multi-lokasi pelanggan). Hanya ditulis
+            // bila di-set — 0/NULL = pakai koordinat pelanggan saat navigasi.
+            if (trx.getDeliveryDestName() != null && !trx.getDeliveryDestName().isEmpty()) {
+                values.put(DatabaseHelper.COL_DELIVERY_DEST_NAME, trx.getDeliveryDestName());
+            }
+            if (trx.getDeliveryDestLat() != 0 || trx.getDeliveryDestLng() != 0) {
+                values.put(DatabaseHelper.COL_DELIVERY_DEST_LAT, trx.getDeliveryDestLat());
+                values.put(DatabaseHelper.COL_DELIVERY_DEST_LNG, trx.getDeliveryDestLng());
+            }
+        }
+        // Jaring absensi otomatis: kalau operator (staf yang sedang clock-in) BELUM punya event
+        // MASUK hari ini — mis. shift kebawa lewat tengah malam, atau sesi tersambung dari sync
+        // tanpa clock-in — catat MASUK otomatis saat transaksi pertamanya. Tanpa ini, staf yang
+        // jelas bekerja (punya transaksi + ping GPS) bisa tercatat "tidak absen" di dashboard.
+        // Idempoten (sekali per hari) & hanya untuk role ber-absensi (staf/SPV/marketing).
+        if (op != null && op.tracksAttendance()) {
+            AttendanceDao attDao = new AttendanceDao(dbHelper);
+            if (!attDao.hasInToday(operatorUid)) {
+                attDao.log(operatorUid, Attendance.EVENT_IN);
+            }
         }
         long id = dbHelper.syncInsert(db, DatabaseHelper.TABLE_TRANSACTIONS, values);
         // Jaring pengaman integritas: kalau pelanggan ini belum ada di web dashboard
@@ -106,8 +135,17 @@ public class TransactionDao {
     public int countDeliveryQueue() {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         try (Cursor c = db.rawQuery(
-                "SELECT COUNT(*) FROM " + DatabaseHelper.TABLE_TRANSACTIONS
-                        + " WHERE " + DatabaseHelper.COL_DELIVERY_STATUS + "=?",
+                // Hitung identitas unik (sync_uuid/delivery_token/_id) supaya badge tidak
+                // menggelembung karena salinan lokal duplikat dari satu order tersinkron.
+                "SELECT COUNT(DISTINCT COALESCE(" + DatabaseHelper.COL_SYNC_UUID + ", "
+                        + DatabaseHelper.COL_DELIVERY_TOKEN + ", CAST(" + DatabaseHelper.COL_TRX_ID
+                        + " AS TEXT))) FROM " + DatabaseHelper.TABLE_TRANSACTIONS
+                        + " WHERE " + DatabaseHelper.COL_DELIVERY_STATUS + "=?"
+                        // Antrian HP ini = order belum di-route (NULL) ATAU di-route ke HP ini.
+                        + " AND (" + DatabaseHelper.COL_DELIVERY_DEVICE_UUID + " IS NULL OR "
+                        + DatabaseHelper.COL_DELIVERY_DEVICE_UUID + " = COALESCE((SELECT "
+                        + DatabaseHelper.COL_SETTING_VALUE + " FROM " + DatabaseHelper.TABLE_SETTINGS
+                        + " WHERE " + DatabaseHelper.COL_SETTING_KEY + "='sync_device_uuid'), ''))",
                 new String[]{Transaction.DELIVERY_PENDING})) {
             return c.moveToFirst() ? c.getInt(0) : 0;
         }
@@ -129,6 +167,22 @@ public class TransactionDao {
                 + "LEFT JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c ON c."
                 + DatabaseHelper.COL_ID + " = t." + DatabaseHelper.COL_CUSTOMER_ID + " "
                 + "WHERE t." + DatabaseHelper.COL_DELIVERY_STATUS + "=? "
+                // Antrian HP ini = order belum di-route (NULL) ATAU di-route ke HP ini (Efisiensikan
+                // Delivery). Order yang di-route ke HP lain tetap ada lokal (asal) tapi disembunyikan.
+                + "AND (t." + DatabaseHelper.COL_DELIVERY_DEVICE_UUID + " IS NULL OR t."
+                + DatabaseHelper.COL_DELIVERY_DEVICE_UUID + " = COALESCE((SELECT "
+                + DatabaseHelper.COL_SETTING_VALUE + " FROM " + DatabaseHelper.TABLE_SETTINGS
+                + " WHERE " + DatabaseHelper.COL_SETTING_KEY + "='sync_device_uuid'), '')) "
+                // Dedup salinan lokal dari SATU order tersinkron: identitas = sync_uuid, fallback
+                // delivery_token, fallback _id. Tampilkan hanya baris _id terkecil per identitas.
+                // Dua order yang benar-benar berbeda punya uuid+token beda → tetap tampil dua-duanya.
+                + "AND t." + DatabaseHelper.COL_TRX_ID + " = (SELECT MIN(t2." + DatabaseHelper.COL_TRX_ID
+                + ") FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t2 WHERE t2."
+                + DatabaseHelper.COL_DELIVERY_STATUS + " = t." + DatabaseHelper.COL_DELIVERY_STATUS
+                + " AND COALESCE(t2." + DatabaseHelper.COL_SYNC_UUID + ", t2." + DatabaseHelper.COL_DELIVERY_TOKEN
+                + ", CAST(t2." + DatabaseHelper.COL_TRX_ID + " AS TEXT)) = COALESCE(t."
+                + DatabaseHelper.COL_SYNC_UUID + ", t." + DatabaseHelper.COL_DELIVERY_TOKEN
+                + ", CAST(t." + DatabaseHelper.COL_TRX_ID + " AS TEXT))) "
                 + "ORDER BY t." + DatabaseHelper.COL_DELIVERY_QUEUED_AT + " ASC";
         try (Cursor c = db.rawQuery(sql, new String[]{Transaction.DELIVERY_PENDING})) {
             while (c.moveToNext()) {
@@ -145,6 +199,10 @@ public class TransactionDao {
                 t.setDeliveryStatus(getStr(c, DatabaseHelper.COL_DELIVERY_STATUS));
                 t.setDeliveryQueuedAt(getStr(c, DatabaseHelper.COL_DELIVERY_QUEUED_AT));
                 t.setDeliveryToken(getStr(c, DatabaseHelper.COL_DELIVERY_TOKEN));
+                // Lokasi tujuan terpilih (multi-lokasi) — SELECT t.* sudah memuatnya.
+                t.setDeliveryDestName(getStr(c, DatabaseHelper.COL_DELIVERY_DEST_NAME));
+                t.setDeliveryDestLat(getDouble(c, DatabaseHelper.COL_DELIVERY_DEST_LAT));
+                t.setDeliveryDestLng(getDouble(c, DatabaseHelper.COL_DELIVERY_DEST_LNG));
                 String itemsJson = getStr(c, DatabaseHelper.COL_ITEMS_JSON);
                 if (itemsJson != null) t.setItems(TransactionItem.listFromJson(itemsJson));
                 t.setCustomerName(getStr(c, "cust_name"));
@@ -230,6 +288,27 @@ public class TransactionDao {
         return dbHelper.syncDelete(db, DatabaseHelper.TABLE_TRANSACTIONS, "transactions",
                 DatabaseHelper.COL_TRX_ID + "=?",
                 new String[]{String.valueOf(id)});
+    }
+
+    /** Edit terbatas (staf operator): ubah metode pembayaran transaksi JUAL. syncUpdate bump edited_at
+     *  + synced=0 → LWW ke server & perangkat lain. Nominal/total tidak berubah. */
+    public int updatePaymentMethod(long trxId, String method) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_PAYMENT_METHOD, method);
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
+    }
+
+    /** Edit terbatas (staf operator): ubah jumlah galon pada transaksi KEMBALI (galon dikembalikan).
+     *  Saldo galon pelanggan dihitung dari transaksi, jadi otomatis ikut ter-recompute di server &
+     *  perangkat lain setelah sinkron. syncUpdate bump edited_at + synced=0 → LWW. */
+    public int updateKembaliGalon(long trxId, int galon) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_JUMLAH_GALON, galon);
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
     }
 
     /** Get a single transaction by id, or null */

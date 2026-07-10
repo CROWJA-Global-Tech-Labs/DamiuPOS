@@ -221,7 +221,114 @@ public class OrderInboxDao {
         // replied column hanya ada di DB v11+; pakai getColumnIndex (boleh -1)
         int repliedIdx = c.getColumnIndex(DatabaseHelper.COL_INBOX_REPLIED);
         o.setReplied(repliedIdx >= 0 && c.getInt(repliedIdx) == 1);
+        int schedIdx = c.getColumnIndex(DatabaseHelper.COL_INBOX_SCHED_INTERVAL);   // DB v41+
+        o.setSchedIntervalDays(schedIdx >= 0 && !c.isNull(schedIdx) ? c.getInt(schedIdx) : 0);
         o.setReceivedAt(c.getString(c.getColumnIndexOrThrow(DatabaseHelper.COL_INBOX_RECEIVED_AT)));
         return o;
+    }
+
+    /**
+     * Redam pengingat "Pesanan Terjadwal (tiap N hari)" yang sudah TIDAK berlaku: kalau pelanggannya
+     * ternyata sudah melakukan order (JUAL) dalam N hari terakhir menurut data LOKAL — yang lebih
+     * mutakhir daripada data server saat pengingat di-generate (04:30) — pengingat itu ditandai
+     * ARCHIVED supaya tidak lagi terhitung PENDING (tidak membunyikan alarm). Perubahan disinkron
+     * balik (syncUpdate) sehingga web & perangkat lain ikut bersih. Hanya menyentuh pengingat
+     * ber-parser 'scheduled' dengan sched_interval_days &gt; 0; jadwal mingguan & order WA biasa
+     * dibiarkan. Dipanggil tiap sync (lihat SyncEngine) → cek berkala.
+     *
+     * @return jumlah pengingat yang diarsipkan.
+     */
+    public int pruneStaleScheduledReminders() {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+
+        // 1) Pengingat interval yang masih PENDING + nomor pelanggannya.
+        List<long[]> reminders = new ArrayList<>();   // {inboxId, custId, N}
+        List<String> phones = new ArrayList<>();
+        Cursor c = db.rawQuery(
+                "SELECT oi." + DatabaseHelper.COL_INBOX_ID + ", oi." + DatabaseHelper.COL_INBOX_CUSTOMER_ID
+                        + ", oi." + DatabaseHelper.COL_INBOX_SCHED_INTERVAL + ", c." + DatabaseHelper.COL_PHONE
+                        + " FROM " + DatabaseHelper.TABLE_ORDER_INBOX + " oi"
+                        + " LEFT JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c"
+                        + " ON c." + DatabaseHelper.COL_ID + " = oi." + DatabaseHelper.COL_INBOX_CUSTOMER_ID
+                        + " WHERE oi." + DatabaseHelper.COL_INBOX_STATUS + "='" + OrderInbox.STATUS_PENDING + "'"
+                        + " AND oi." + DatabaseHelper.COL_INBOX_PARSER + "='scheduled'"
+                        + " AND oi." + DatabaseHelper.COL_INBOX_SCHED_INTERVAL + " > 0", null);
+        while (c.moveToNext()) {
+            reminders.add(new long[]{c.getLong(0), c.getLong(1), c.getLong(2)});
+            phones.add(c.isNull(3) ? null : c.getString(3));
+        }
+        c.close();
+        if (reminders.isEmpty()) return 0;
+
+        // tanggal dinormalkan ke waktu LOKAL (baris UTC "…Z" hasil sinkron dikonversi dulu) supaya
+        // "dalam N hari terakhir" benar — samakan dengan filter tanggal di TransactionDao.
+        String localDt = "(CASE WHEN t." + DatabaseHelper.COL_TANGGAL + " LIKE '%Z' THEN datetime(t."
+                + DatabaseHelper.COL_TANGGAL + ",'localtime') ELSE t." + DatabaseHelper.COL_TANGGAL + " END)";
+
+        int archived = 0;
+        for (int i = 0; i < reminders.size(); i++) {
+            long[] r = reminders.get(i);
+            long inboxId = r[0], custId = r[1];
+            int n = (int) r[2];
+            List<Long> ids = siblingCustomerIds(db, custId, phones.get(i));
+            if (ids.isEmpty()) continue;
+
+            // Ada JUAL dalam N hari terakhir (waktu lokal)? → pelanggan sudah order, pengingat basi.
+            String sql = "SELECT 1 FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t"
+                    + " WHERE t." + DatabaseHelper.COL_TYPE + "='JUAL'"
+                    + " AND t." + DatabaseHelper.COL_CUSTOMER_ID + " IN (" + joinIds(ids) + ")"
+                    + " AND date(" + localDt + ") > date('now','localtime','-" + n + " days') LIMIT 1";
+            Cursor rc = db.rawQuery(sql, null);
+            boolean orderedRecently = rc.moveToFirst();
+            rc.close();
+
+            if (orderedRecently) {
+                ContentValues v = new ContentValues();
+                v.put(DatabaseHelper.COL_INBOX_STATUS, OrderInbox.STATUS_ARCHIVED);
+                dbHelper.syncUpdate(db, DatabaseHelper.TABLE_ORDER_INBOX, v,
+                        DatabaseHelper.COL_INBOX_ID + "=?", new String[]{String.valueOf(inboxId)});
+                archived++;
+            }
+        }
+        return archived;
+    }
+
+    /** Id semua salinan pelanggan yang nomornya kanonik-sama (duplikat lintas-perangkat); tanpa
+     *  nomor → hanya id itu sendiri. Meniru penghitungan "order terakhir lintas salinan" di server. */
+    private List<Long> siblingCustomerIds(SQLiteDatabase db, long custId, String phone) {
+        List<Long> ids = new ArrayList<>();
+        String canon = canonicalPhone(phone);
+        if (canon == null) {
+            if (custId > 0) ids.add(custId);
+            return ids;
+        }
+        Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMERS,
+                new String[]{DatabaseHelper.COL_ID, DatabaseHelper.COL_PHONE},
+                null, null, null, null, null);
+        while (c.moveToNext()) {
+            String p = c.isNull(1) ? null : c.getString(1);
+            if (canon.equals(canonicalPhone(p))) ids.add(c.getLong(0));
+        }
+        c.close();
+        if (ids.isEmpty() && custId > 0) ids.add(custId);
+        return ids;
+    }
+
+    /** Digit saja, 08xx→628xx (samakan dengan dedup nomor di server). null bila kosong. */
+    private static String canonicalPhone(String phone) {
+        if (phone == null) return null;
+        String d = phone.replaceAll("\\D+", "");
+        if (d.isEmpty()) return null;
+        if (d.startsWith("0")) d = "62" + d.substring(1);
+        return d;
+    }
+
+    private static String joinIds(List<Long> ids) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < ids.size(); i++) {
+            if (i > 0) sb.append(',');
+            sb.append(ids.get(i));
+        }
+        return sb.length() == 0 ? "0" : sb.toString();
     }
 }

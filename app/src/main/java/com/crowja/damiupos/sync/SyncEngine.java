@@ -61,10 +61,13 @@ public class SyncEngine {
                     DatabaseHelper.COL_NAME, DatabaseHelper.COL_PHONE, DatabaseHelper.COL_ADDRESS,
                     DatabaseHelper.COL_LATITUDE, DatabaseHelper.COL_LONGITUDE,
                     DatabaseHelper.COL_IS_RESELLER, DatabaseHelper.COL_RESELLER_SINCE,
-                    DatabaseHelper.COL_KOMISI_ADD_TO_PRICE, DatabaseHelper.COL_FOLLOWUP_EXCLUDED_AT,
+                    DatabaseHelper.COL_KOMISI_ADD_TO_PRICE, DatabaseHelper.COL_LINKED_RESELLER_UUID,
+                    DatabaseHelper.COL_GALON_PINJAM_ADJUST, DatabaseHelper.COL_WAJIB_ONGKIR,
+                    DatabaseHelper.COL_FOLLOWUP_EXCLUDED_AT,
                     DatabaseHelper.COL_FOLLOWUP_EXCLUDE_REASON, DatabaseHelper.COL_LAST_FOLLOWUP_AT,
                     DatabaseHelper.COL_FOLLOWUP_MANUAL_AT, DatabaseHelper.COL_FOLLOWUP_NOTE,
-                    DatabaseHelper.COL_PRODUCT_PRICES,
+                    DatabaseHelper.COL_PRODUCT_PRICES, DatabaseHelper.COL_LOCATIONS,
+                    DatabaseHelper.COL_HANDED_OVER_AT, DatabaseHelper.COL_HANDED_OVER_BY,
                     DatabaseHelper.COL_PHOTO_URL, DatabaseHelper.COL_CREATED_AT,
             }, NO_REFS),
 
@@ -85,6 +88,7 @@ public class SyncEngine {
                     DatabaseHelper.COL_EXPENSE_NAME, DatabaseHelper.COL_EXPENSE_AMOUNT,
                     DatabaseHelper.COL_EXPENSE_NOTE, DatabaseHelper.COL_EXPENSE_CATEGORY,
                     DatabaseHelper.COL_EXPENSE_LITERS, DatabaseHelper.COL_EXPENSE_PCS,
+                    DatabaseHelper.COL_EXPENSE_CREATED_BY,
                     DatabaseHelper.COL_PHOTO_URL,
                     DatabaseHelper.COL_EXPENSE_CREATED_AT,
             }, NO_REFS),
@@ -134,7 +138,7 @@ public class SyncEngine {
                     DatabaseHelper.COL_SAL_ANGSURAN_SISA, DatabaseHelper.COL_SAL_ANGSURAN_BULAN,
                     DatabaseHelper.COL_SAL_JABATAN, DatabaseHelper.COL_SAL_STATUS,
                     DatabaseHelper.COL_SAL_BANK_NAME, DatabaseHelper.COL_SAL_BANK_NO,
-                    DatabaseHelper.COL_SAL_BANK_HOLDER,
+                    DatabaseHelper.COL_SAL_BANK_HOLDER, DatabaseHelper.COL_SAL_PROMO_ENABLED,
             }, new Ref[]{
                     new Ref(DatabaseHelper.COL_SAL_USER_ID, "staff_uuid", DatabaseHelper.TABLE_USERS),
             }, DatabaseHelper.COL_SAL_USER_ID),
@@ -148,7 +152,9 @@ public class SyncEngine {
                     DatabaseHelper.COL_DELIVERY_STATUS, DatabaseHelper.COL_DELIVERY_QUEUED_AT,
                     DatabaseHelper.COL_DELIVERY_DONE_AT, DatabaseHelper.COL_DELIVERY_TOKEN,
                     DatabaseHelper.COL_CREATED_BY_NAME, DatabaseHelper.COL_CREATED_VIA,
-                    DatabaseHelper.COL_COMPLETED_BY_NAME,
+                    DatabaseHelper.COL_COMPLETED_BY_NAME, DatabaseHelper.COL_DELIVERY_DEVICE_UUID,
+                    DatabaseHelper.COL_DELIVERY_DEST_NAME, DatabaseHelper.COL_DELIVERY_DEST_LAT,
+                    DatabaseHelper.COL_DELIVERY_DEST_LNG,
                     DatabaseHelper.COL_TANGGAL, DatabaseHelper.COL_CATATAN,
             }, new Ref[]{
                     new Ref(DatabaseHelper.COL_CUSTOMER_ID, "customer_uuid", DatabaseHelper.TABLE_CUSTOMERS),
@@ -162,7 +168,8 @@ public class SyncEngine {
                     DatabaseHelper.COL_INBOX_SENDER_NAME, DatabaseHelper.COL_INBOX_SENDER_PHONE,
                     DatabaseHelper.COL_INBOX_RAW, DatabaseHelper.COL_INBOX_PARSED_JSON,
                     DatabaseHelper.COL_INBOX_PARSER, DatabaseHelper.COL_INBOX_STATUS,
-                    DatabaseHelper.COL_INBOX_REPLIED, DatabaseHelper.COL_INBOX_RECEIVED_AT,
+                    DatabaseHelper.COL_INBOX_REPLIED, DatabaseHelper.COL_INBOX_SCHED_INTERVAL,
+                    DatabaseHelper.COL_INBOX_RECEIVED_AT,
             }, new Ref[]{
                     new Ref(DatabaseHelper.COL_INBOX_CUSTOMER_ID, "customer_uuid", DatabaseHelper.TABLE_CUSTOMERS),
                     new Ref(DatabaseHelper.COL_INBOX_TRX_ID, "trx_uuid", DatabaseHelper.TABLE_TRANSACTIONS),
@@ -274,6 +281,11 @@ public class SyncEngine {
             if (backfillPending) res.pushed += push();
             pulledManualFollowups.clear();
             res.pulled = pull();
+            // Cek berkala tiap sync: redam pengingat "Pesanan Terjadwal (tiap N hari)" yang sudah tak
+            // berlaku — pelanggannya ternyata sudah order dalam N hari terakhir menurut data lokal
+            // (lebih mutakhir dari server saat generate 04:30). Tidak fatal bila gagal.
+            try { new com.crowja.damiupos.db.OrderInboxDao(dbHelper).pruneStaleScheduledReminders(); }
+            catch (Throwable ignored) {}
             cfg.setLastSyncAt(DatabaseHelper.nowIso());
             res.ok = true;
             // Tell open screens to refresh (e.g. clock-in staff list + badge Follow Up) when the
@@ -284,14 +296,22 @@ public class SyncEngine {
                             .setPackage(appCtx.getPackageName()));
                 } catch (Throwable ignored) {}
             }
+            // Karyawan di-"Pulangkan" lewat dashboard web → event OUT-nya baru saja ditarik.
+            // Tutup sesi login staf tsb di HP dan kembalikan ke halaman login.
+            try { enforceRemoteClockOut(); } catch (Throwable ignored) {}
+            // Kebijakan notifikasi: karyawan marketing HANYA menerima "Pesan & Pembaruan" (pesan
+            // admin), bukan notifikasi operasional/pesanan dari dashboard (follow-up, jenis ganda).
+            boolean marketing = com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(appCtx);
             // Follow-up MANUAL baru dari dashboard → notifikasi + popup + suara.
-            for (int i = 0; i < pulledManualFollowups.size(); i++) {
-                String[] f = pulledManualFollowups.get(i);
-                String body = f[0] + " ditambahkan ke Follow Up dari dashboard."
-                        + (f[1] != null && !f[1].isEmpty() ? " Catatan: " + f[1] : "");
-                try {
-                    OnlineNotifier.deliverAdminMessage(appCtx, "Follow Up Baru", body, 7910 + (i % 10));
-                } catch (Throwable ignored) {}
+            if (!marketing) {
+                for (int i = 0; i < pulledManualFollowups.size(); i++) {
+                    String[] f = pulledManualFollowups.get(i);
+                    String body = f[0] + " ditambahkan ke Follow Up dari dashboard."
+                            + (f[1] != null && !f[1].isEmpty() ? " Catatan: " + f[1] : "");
+                    try {
+                        OnlineNotifier.deliverAdminMessage(appCtx, "Follow Up Baru", body, 7910 + (i % 10));
+                    } catch (Throwable ignored) {}
+                }
             }
             // Kasus B (upgrade): jenis galon ganda — katalog lokal lama ber-uuid beda dari
             // katalog web. Peringatkan admin sekali (rising-edge) supaya dirapikan di dashboard.
@@ -300,10 +320,12 @@ public class SyncEngine {
                         new com.crowja.damiupos.db.ProductDao(dbHelper).getDuplicateJenisNames();
                 if (!dupJenis.isEmpty()) {
                     if (!cfg.wasDupProductsWarned()) {
-                        OnlineNotifier.deliverAdminMessage(appCtx, "Jenis Galon Ganda",
-                                "Terdeteksi jenis galon ganda: "
-                                        + android.text.TextUtils.join(", ", dupJenis)
-                                        + ". Rapikan (hapus duplikat) dari dashboard web.", 7905);
+                        if (!marketing) {
+                            OnlineNotifier.deliverAdminMessage(appCtx, "Jenis Galon Ganda",
+                                    "Terdeteksi jenis galon ganda: "
+                                            + android.text.TextUtils.join(", ", dupJenis)
+                                            + ". Rapikan (hapus duplikat) dari dashboard web.", 7905);
+                        }
                         cfg.setDupProductsWarned(true);
                     }
                 } else if (cfg.wasDupProductsWarned()) {
@@ -317,6 +339,56 @@ public class SyncEngine {
             res.error = e.getMessage();
         }
         return res;
+    }
+
+    /**
+     * Auto-logout saat karyawan di-"Pulangkan" lewat dashboard web: event OUT hasil Pulangkan
+     * tersinkron ke tabel attendance HP, jadi kalau event TERAKHIR staf yang sedang login adalah
+     * OUT (bukan dia yang menutup shift dari HP — alur Pulang lokal menutup sesi seketika),
+     * sesi ditutup di sini dan HP dikembalikan ke halaman login. Kalau staf sempat clock-in
+     * lagi SETELAH OUT web, event terakhirnya IN → tidak di-logout (dia memang bekerja lagi).
+     * Juga membersihkan user "istirahat" yang dipulangkan (tombol Lanjut Kerja ikut hilang).
+     */
+    private void enforceRemoteClockOut() {
+        if (!settingsDao.isMultiUserEnabled()) return;
+        com.crowja.damiupos.db.AttendanceDao attDao = new com.crowja.damiupos.db.AttendanceDao(dbHelper);
+        com.crowja.damiupos.db.UserDao userDao = new com.crowja.damiupos.db.UserDao(dbHelper);
+
+        // User yang sedang istirahat lalu dipulangkan dari web → hapus resume "Lanjut Kerja".
+        long breakUid = settingsDao.getBreakUserId();
+        if (breakUid > 0 && attDao.isLastEventOut(breakUid)) {
+            settingsDao.clearBreakUser();
+        }
+
+        long uid = settingsDao.getCurrentUserId();
+        if (uid <= 0) return;
+        com.crowja.damiupos.model.User u = userDao.getById(uid);
+        if (u == null || !u.tracksAttendance()) return;   // admin/viewer tanpa absensi
+        if (!attDao.isLastEventOut(uid)) return;
+
+        String name = settingsDao.getCurrentUserName();
+        // Tutup sesi — urutan sama dengan alur Pulang lokal (MainActivity.finishClockOut).
+        try { com.crowja.damiupos.WorkHoursReminder.cancel(appCtx, uid); } catch (Throwable ignored) {}
+        settingsDao.setShiftActive(false);
+        try { com.crowja.damiupos.LocationService.pollOnly(appCtx); } catch (Throwable ignored) {}
+        settingsDao.clearCurrentUser();
+        settingsDao.clearBreakUser();
+
+        try {
+            OnlineNotifier.deliverAdminMessage(appCtx, "Shift Ditutup",
+                    (name != null && !name.isEmpty() ? name + " " : "")
+                            + "telah dipulangkan dari dashboard — sesi di perangkat ini ditutup.", 7920);
+        } catch (Throwable ignored) {}
+
+        // Kembalikan UI ke halaman login. Berhasil saat app di depan; kalau app di background
+        // (launch dibatasi OS), sesi sudah bersih — gate MainActivity mengarahkan ke login
+        // begitu app dibuka lagi.
+        try {
+            android.content.Intent i = new android.content.Intent(appCtx, com.crowja.damiupos.LoginActivity.class);
+            i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                    | android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            appCtx.startActivity(i);
+        } catch (Throwable ignored) {}
     }
 
     /** Entities the dashboard "Pull Data" imports (full upload of every row). products & staff
@@ -337,6 +409,48 @@ public class SyncEngine {
         } catch (SyncApi.SyncException se) {
             res.error = se.getMessage();
             if (se.code == 401) handleRevoked();
+        } catch (Exception e) {
+            res.error = e.getMessage();
+        }
+        return res;
+    }
+
+    /**
+     * "Putuskan Provisioning" dengan pengarsipan — pastikan SEMUA data perangkat sampai di web
+     * SEBELUM akses diputus, lalu minta server mengarsipkannya:
+     * <ol>
+     *   <li>unggah SEMUA foto lokal yang belum punya URL (foto rumah pelanggan + nota
+     *       pengeluaran + selfie) — kuota per-siklus diulang sampai habis;</li>
+     *   <li>sync penuh (push baris kotor — termasuk photo_url yang baru distempel — + pull);</li>
+     *   <li>full export SEMUA baris (pelanggan lengkap foto+koordinat, transaksi, pengeluaran,
+     *       produk, staf) via /api/sync/import — baris yang tak pernah dirty pun ikut;</li>
+     *   <li>POST /api/retire → server mengarsipkan data perangkat (kecuali absensi, tetap jadi
+     *       rekam HR) dan mencabut akses.</li>
+     * </ol>
+     * Enrolment lokal TIDAK dihapus di sini — caller yang menghapus SETELAH sukses, supaya
+     * kegagalan jaringan tidak memutus HP dengan data yang belum terselamatkan.
+     */
+    public synchronized Result retireAndArchive() {
+        Result res = new Result();
+        if (!cfg.isEnrolled()) { res.error = "Belum terhubung ke server"; return res; }
+        try {
+            // (1) Semua foto: uploadPending dibatasi kuota per panggilan → ulangi sampai tidak
+            // ada lagi yang terunggah (cap iterasi menjaga dari baris beracun yang tak pernah 0).
+            for (int i = 0; i < 200; i++) {
+                if (MediaUploader.uploadPending(dbHelper.getWritableDatabase(), api) == 0) break;
+            }
+            // (2) Push + pull normal — photo_url yang baru distempel ikut terkirim di sini.
+            Result s = sync();
+            if (!s.ok) { res.error = s.error != null ? s.error : "Sinkronisasi gagal"; return res; }
+            // (3) Full dump semua baris → /api/sync/import (server menstempel origin perangkat ini,
+            // jadi sapuan arsip di langkah 4 mencakup baris yang baru dibuat oleh import ini juga).
+            Result d = dumpAndImport(java.util.Arrays.asList(EXPORT_ENTITIES));
+            if (!d.ok) { res.error = d.error != null ? d.error : "Export penuh gagal"; return res; }
+            // (4) Arsipkan + cabut akses di server. Setelah ini token mati — respons ini yang terakhir.
+            org.json.JSONObject r = api.retire();
+            res.ok = r.optBoolean("ok", false);
+            res.pushed = r.optInt("archived", 0);
+            if (!res.ok) res.error = "Server menolak permintaan arsip";
         } catch (Exception e) {
             res.error = e.getMessage();
         }
@@ -655,6 +769,10 @@ public class SyncEngine {
 
     // ------------------------------------------------------------------ PULL
 
+    /** Batas aman iterasi drain (500 baris/halaman → 60 = 30 000 baris/entitas per sync).
+     *  Mencegah loop tak berujung kalau server keliru selalu melaporkan has_more. */
+    private static final int MAX_PULL_PAGES = 60;
+
     private int pull() throws Exception {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         // One-time recovery: re-pull staff & products from scratch so web-added rows whose insert
@@ -664,63 +782,89 @@ public class SyncEngine {
             cfg.setCursor("products", "1970-01-01 00:00:00.000000");
             cfg.markStaffRepulled();
         }
-        JSONArray names = new JSONArray();
-        JSONObject cursors = new JSONObject();
-        for (Spec s : SPECS) {
-            names.put(s.entity);
-            cursors.put(s.entity, cfg.getCursor(s.entity));
+        // "Pelanggan branch-wide": tarik ULANG semua pelanggan cabang sekali (kursor lokal sudah
+        // lewat pelanggan perangkat lain yang updated_at-nya lebih tua) + isi flag is_mine.
+        if (cfg.needsCustomerRepull()) {
+            cfg.setCursor("customers", "1970-01-01 00:00:00.000000");
+            cfg.markCustomerRepulled();
         }
-        names.put(SETTINGS_ENTITY);
-        cursors.put(SETTINGS_ENTITY, cfg.getCursor(SETTINGS_ENTITY));
-        JSONObject body = new JSONObject();
-        body.put("entities", names);
-        body.put("cursors", cursors);
 
-        JSONObject resp = api.pull(body);
-        JSONObject entities = resp.optJSONObject("entities");
-        JSONObject newCursors = resp.optJSONObject("cursors");
         int applied = 0;
+        boolean firstPage = true;
+        boolean more;
+        int guard = 0;
 
-        for (Spec s : SPECS) {
-            JSONArray arr = entities != null ? entities.optJSONArray(s.entity) : null;
-            if (arr != null) applied += applyRows(db, s, arr);
-            if (newCursors != null) {
-                cfg.setCursor(s.entity, newCursors.optString(s.entity, cfg.getCursor(s.entity)));
+        // Kuras SEMUA halaman dalam satu sync: server membatasi tiap respons (limit 500) dan
+        // melaporkan has_more per entitas. Tanpa loop ini, satu sync cuma menarik 1 halaman/entitas
+        // — pelanggan branch-wide (>500) baru lengkap setelah beberapa siklus (atau tak pernah).
+        do {
+            more = false;
+            JSONArray names = new JSONArray();
+            JSONObject cursors = new JSONObject();
+            for (Spec s : SPECS) {
+                names.put(s.entity);
+                cursors.put(s.entity, cfg.getCursor(s.entity));
             }
-        }
+            names.put(SETTINGS_ENTITY);
+            cursors.put(SETTINGS_ENTITY, cfg.getCursor(SETTINGS_ENTITY));
+            JSONObject body = new JSONObject();
+            body.put("entities", names);
+            body.put("cursors", cursors);
 
-        // Branch-shared settings (app_settings).
-        JSONArray sa = entities != null ? entities.optJSONArray(SETTINGS_ENTITY) : null;
-        if (sa != null) {
-            for (int i = 0; i < sa.length(); i++) {
-                JSONObject o = sa.optJSONObject(i);
-                if (o == null) continue;
-                String key = o.optString("key", null);
-                if (key == null || key.isEmpty()) continue;
-                String value = o.isNull("value") ? null : o.optString("value", null);
-                String editedAt = o.optString("edited_at", "");
-                boolean deleted = !o.isNull("deleted_at")
-                        && !o.optString("deleted_at", "").isEmpty();
-                settingsDao.applySyncedSetting(key, value, editedAt, deleted);
-                applied++;
+            JSONObject resp = api.pull(body);
+            JSONObject entities = resp.optJSONObject("entities");
+            JSONObject newCursors = resp.optJSONObject("cursors");
+            JSONObject hasMore = resp.optJSONObject("has_more");
+
+            for (Spec s : SPECS) {
+                JSONArray arr = entities != null ? entities.optJSONArray(s.entity) : null;
+                if (arr != null) applied += applyRows(db, s, arr);
+                if (newCursors != null) {
+                    cfg.setCursor(s.entity, newCursors.optString(s.entity, cfg.getCursor(s.entity)));
+                }
+                if (hasMore != null && hasMore.optBoolean(s.entity, false)) more = true;
             }
-            // Logo depot mungkin baru/berubah pada batch ini → unduh ke cache di background supaya
-            // struk & Pengaturan langsung punya gambarnya tanpa menunggu (ensureDownloaded no-op bila URL sama).
-            new Thread(() -> com.crowja.damiupos.util.DepotLogo.ensureDownloaded(appCtx)).start();
-        }
-        if (newCursors != null) {
-            cfg.setCursor(SETTINGS_ENTITY,
-                    newCursors.optString(SETTINGS_ENTITY, cfg.getCursor(SETTINGS_ENTITY)));
-        }
 
-        // Branch-authoritative gallon stock from the server → cached and shown verbatim on this
-        // device, so its "Stok Galon Tersedia" is ALWAYS identical to the dashboard (per-device
-        // transaction isolation can otherwise leave the local keluar/kembali behind).
-        JSONObject sg = resp.optJSONObject("stok_galon");
-        if (sg != null) {
-            cfg.setStokGalon(sg.optInt("masuk", 0), sg.optInt("keluar", 0),
-                    sg.optInt("kembali", 0), sg.optInt("tersedia", 0));
-        }
+            // Branch-shared settings (app_settings) + stok galon hanya perlu diproses SEKALI:
+            // app_settings dikirim penuh (semua baris) tiap pull, jadi memprosesnya di halaman
+            // pertama sudah cukup; has_more-nya sengaja TIDAK ikut menentukan `more` (desain full-
+            // resend bisa selalu true bila >500 setting → loop tak berujung).
+            if (firstPage) {
+                JSONArray sa = entities != null ? entities.optJSONArray(SETTINGS_ENTITY) : null;
+                if (sa != null) {
+                    for (int i = 0; i < sa.length(); i++) {
+                        JSONObject o = sa.optJSONObject(i);
+                        if (o == null) continue;
+                        String key = o.optString("key", null);
+                        if (key == null || key.isEmpty()) continue;
+                        String value = o.isNull("value") ? null : o.optString("value", null);
+                        String editedAt = o.optString("edited_at", "");
+                        boolean deleted = !o.isNull("deleted_at")
+                                && !o.optString("deleted_at", "").isEmpty();
+                        settingsDao.applySyncedSetting(key, value, editedAt, deleted);
+                        applied++;
+                    }
+                    // Logo depot mungkin baru/berubah → unduh ke cache di background supaya struk &
+                    // Pengaturan langsung punya gambarnya (ensureDownloaded no-op bila URL sama).
+                    new Thread(() -> com.crowja.damiupos.util.DepotLogo.ensureDownloaded(appCtx)).start();
+                }
+                if (newCursors != null) {
+                    cfg.setCursor(SETTINGS_ENTITY,
+                            newCursors.optString(SETTINGS_ENTITY, cfg.getCursor(SETTINGS_ENTITY)));
+                }
+
+                // Branch-authoritative gallon stock from the server → cached and shown verbatim on
+                // this device, so its "Stok Galon Tersedia" is ALWAYS identical to the dashboard
+                // (per-device transaction isolation can otherwise leave the local keluar/kembali behind).
+                JSONObject sg = resp.optJSONObject("stok_galon");
+                if (sg != null) {
+                    cfg.setStokGalon(sg.optInt("masuk", 0), sg.optInt("keluar", 0),
+                            sg.optInt("kembali", 0), sg.optInt("tersedia", 0));
+                }
+            }
+            firstPage = false;
+        } while (more && ++guard < MAX_PULL_PAGES);
+
         return applied;
     }
 
@@ -758,6 +902,22 @@ public class SyncEngine {
 
             if (localId != -1 && localSynced == 0 && localEdited != null
                     && localEdited.compareTo(editedAt) > 0) {
+                // Kolom data di-skip (edit lokal lebih baru), TAPI field pelanggan yang
+                // server-authoritative (agregat lintas-perangkat + is_mine + origin_label) tetap
+                // disegarkan — tak pernah di-push dari device, jadi tak ada risiko clobber.
+                if ("customers".equals(s.entity)) {
+                    ContentValues sv = new ContentValues();
+                    sv.put(DatabaseHelper.COL_IS_MINE, obj.optBoolean("is_mine", true) ? 1 : 0);
+                    sv.put(DatabaseHelper.COL_SRV_TRX, obj.optInt("agg_trx", 0));
+                    sv.put(DatabaseHelper.COL_SRV_ORDERED, obj.optInt("agg_ordered", 0));
+                    sv.put(DatabaseHelper.COL_SRV_BORROWED, obj.optInt("agg_borrowed", 0));
+                    sv.put(DatabaseHelper.COL_SRV_KEMBALI, obj.optInt("agg_kembali", 0));
+                    sv.put(DatabaseHelper.COL_SRV_FIRST_JUAL,
+                            obj.isNull("agg_first_jual") ? null : obj.optString("agg_first_jual", null));
+                    sv.put(DatabaseHelper.COL_ORIGIN_LABEL, obj.optString("origin_label", ""));
+                    sv.put(DatabaseHelper.COL_SRV_SALDO, obj.optDouble("agg_saldo", 0));
+                    db.update(s.table, sv, DatabaseHelper.COL_SYNC_UUID + "=?", new String[]{uuid});
+                }
                 continue;   // don't clobber a newer un-pushed local edit
             }
 
@@ -785,6 +945,19 @@ public class SyncEngine {
             // Follow-up MANUAL baru dari dashboard: customer yang BARU ditandai
             // (followup_manual_at terisi sekarang, sebelumnya kosong) → kumpulkan untuk notif.
             if ("customers".equals(s.entity)) {
+                // "Hanya Pelanggan Saya": is_mine dari server (origin == perangkat ini). Field khusus
+                // pull — TIDAK ada di spec dataCols, jadi tak ikut di-push balik (bukan kolom server).
+                v.put(DatabaseHelper.COL_IS_MINE, obj.optBoolean("is_mine", true) ? 1 : 0);
+                // Agregat lintas-perangkat (server) + label perangkat asal — juga pull-only.
+                v.put(DatabaseHelper.COL_SRV_TRX, obj.optInt("agg_trx", 0));
+                v.put(DatabaseHelper.COL_SRV_ORDERED, obj.optInt("agg_ordered", 0));
+                v.put(DatabaseHelper.COL_SRV_BORROWED, obj.optInt("agg_borrowed", 0));
+                v.put(DatabaseHelper.COL_SRV_KEMBALI, obj.optInt("agg_kembali", 0));
+                v.put(DatabaseHelper.COL_SRV_FIRST_JUAL,
+                        obj.isNull("agg_first_jual") ? null : obj.optString("agg_first_jual", null));
+                v.put(DatabaseHelper.COL_ORIGIN_LABEL, obj.optString("origin_label", ""));
+                v.put(DatabaseHelper.COL_SRV_SALDO, obj.optDouble("agg_saldo", 0));
+
                 String inManual = obj.isNull(DatabaseHelper.COL_FOLLOWUP_MANUAL_AT) ? null
                         : obj.optString(DatabaseHelper.COL_FOLLOWUP_MANUAL_AT, null);
                 if (inManual != null && !inManual.isEmpty()) {

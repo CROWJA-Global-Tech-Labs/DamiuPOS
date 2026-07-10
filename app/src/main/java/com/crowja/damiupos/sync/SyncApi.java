@@ -32,10 +32,9 @@ public class SyncApi {
 
     public SyncApi(SyncSettings cfg) {
         this.cfg = cfg;
-        this.client = new OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(45, TimeUnit.SECONDS)
-                .build();
+        // Client proses-tunggal (berbagi ConnectionPool → keep-alive dipakai ulang, tak ada
+        // handshake TLS baru tiap request meski SyncApi dibuat ulang tiap sync/tick).
+        this.client = Http.SHARED;
     }
 
     public JSONObject enroll(String baseUrl, String enrollKey, @Nullable String deviceUuid,
@@ -71,16 +70,38 @@ public class SyncApi {
         return post(cfg.getBaseUrl() + "/api/settings/upload", body, cfg.getToken());
     }
 
+    /** "Putuskan Provisioning": minta server MENGARSIPKAN seluruh data perangkat ini (kecuali
+     *  absensi) lalu mencabut aksesnya — dipanggil TERAKHIR, setelah semua data terunggah. */
+    public JSONObject retire() throws Exception {
+        return post(cfg.getBaseUrl() + "/api/retire", new JSONObject(), cfg.getToken());
+    }
+
     public JSONObject locationPing(JSONObject body) throws Exception {
         return post(cfg.getBaseUrl() + "/api/location/ping", body, cfg.getToken());
     }
 
+    /**
+     * Contact-import guard: send the phone numbers about to be imported; the server replies
+     * {@code {"deleted": ["<phone>", …]}} with the subset that match a customer DELETED on the
+     * dashboard (and not re-added active) — so the device won't resurrect them. Echoes the exact
+     * input strings back. Matching is country-code-agnostic, branch-scoped by the token.
+     */
+    public JSONObject customersDeletedCheck(org.json.JSONArray phones) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("phones", phones);
+        return post(cfg.getBaseUrl() + "/api/customers/deleted-check", body, cfg.getToken());
+    }
+
     public JSONObject version(String baseUrl) throws Exception {
-        Request req = new Request.Builder()
+        Request.Builder b = new Request.Builder()
                 .url(trim(baseUrl) + "/api/version")
                 .header("Accept", "application/json")
-                .get().build();
-        return execute(req);
+                .get();
+        // Send the device token so the server can identify this phone for a TARGETED (staged) rollout.
+        // Without it the server sees an anonymous device → a targeted release would never reach it.
+        String token = cfg.getToken();
+        if (token != null && !token.isEmpty()) b.header("Authorization", "Bearer " + token);
+        return execute(b.build());
     }
 
     /** Device identity + branch + live config (e.g. location_interval_seconds). */

@@ -117,4 +117,92 @@ public final class BitmapUtils {
         } catch (Throwable ignored) {}
         return bmp;
     }
+
+    /**
+     * Salin gambar yang dipilih dari galeri (content:// Uri) ke {@code dest} (file lokal app),
+     * supaya alur foto yang sudah ada (path lokal → MediaUploader) tetap berlaku. EXIF ikut tersalin
+     * apa adanya, jadi koreksi rotasi {@link #decodeSampled} tetap bekerja. Return true bila sukses.
+     */
+    /**
+     * Downscale + recompress a photo for upload: long side ≤ {@code maxDim}, JPEG {@code quality}.
+     * Keeps uploads small and safely under the server's size cap — full-res camera/gallery photos
+     * (often &gt; 5 MB) would otherwise be rejected (422) and never reach the dashboard. EXIF rotation
+     * is already baked in by {@link #decodeSampled}. Writes to {@code dest}; true on success.
+     */
+    public static boolean compressForUpload(String srcPath, java.io.File dest, int maxDim, int quality) {
+        Bitmap bmp = decodeSampled(srcPath, maxDim, maxDim);
+        if (bmp == null) return false;
+        try {
+            int longSide = Math.max(bmp.getWidth(), bmp.getHeight());
+            if (longSide > maxDim) {
+                float r = maxDim / (float) longSide;
+                Bitmap scaled = Bitmap.createScaledBitmap(bmp,
+                        Math.max(1, Math.round(bmp.getWidth() * r)),
+                        Math.max(1, Math.round(bmp.getHeight() * r)), true);
+                if (scaled != bmp) { bmp.recycle(); bmp = scaled; }
+            }
+            boolean ok;
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(dest)) {
+                // compress() menelan IOException (mis. disk penuh) dan mengembalikan false,
+                // meninggalkan JPEG parsial — WAJIB dicek; kalau tidak, file korup dianggap sukses
+                // lalu MENIMPA foto asli via rename di pemanggil.
+                ok = bmp.compress(Bitmap.CompressFormat.JPEG, quality, out);
+                out.flush();
+            }
+            if (!ok) { dest.delete(); return false; }
+            return dest.length() > 0;
+        } catch (Throwable t) {
+            return false;
+        } finally {
+            bmp.recycle();
+        }
+    }
+
+    /**
+     * Unduh gambar dari {@code url} ke cache (sekali; dipakai ulang bila sudah ada) lalu kembalikan
+     * file-nya. Untuk menampilkan foto baris hasil sync yang hanya punya photo_url (tanpa file lokal),
+     * mis. struk pengeluaran/pelanggan dari device lain. Panggil OFF main thread. Null bila gagal.
+     */
+    public static java.io.File downloadToCache(Context ctx, String url, String name) {
+        if (ctx == null || url == null || url.isEmpty() || name == null) return null;
+        try {
+            java.io.File dir = new java.io.File(ctx.getCacheDir(), "remote_img");
+            if (!dir.exists() && !dir.mkdirs()) return null;
+            java.io.File out = new java.io.File(dir, name);
+            if (out.exists() && out.length() > 0) return out;   // cached
+            java.io.File tmp = new java.io.File(dir, name + ".part");
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection)
+                    new java.net.URL(url).openConnection();
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(30000);
+            conn.setInstanceFollowRedirects(true);
+            try (java.io.InputStream in = conn.getInputStream();
+                 java.io.OutputStream os = new java.io.FileOutputStream(tmp)) {
+                if (conn.getResponseCode() / 100 != 2) return null;
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) != -1) os.write(buf, 0, n);
+            } finally {
+                conn.disconnect();
+            }
+            if (tmp.length() == 0 || !tmp.renameTo(out)) { tmp.delete(); return null; }
+            return out;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    public static boolean copyUriToFile(Context ctx, android.net.Uri uri, java.io.File dest) {
+        if (ctx == null || uri == null || dest == null) return false;
+        try (java.io.InputStream in = ctx.getContentResolver().openInputStream(uri);
+             java.io.OutputStream out = new java.io.FileOutputStream(dest)) {
+            if (in == null) return false;
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
 }

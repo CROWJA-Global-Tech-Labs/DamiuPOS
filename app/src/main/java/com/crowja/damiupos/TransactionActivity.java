@@ -76,10 +76,23 @@ public class TransactionActivity extends AppCompatActivity {
     public static final String EXTRA_KOMISI_SALDO = "komisi_saldo";
     public static final String EXTRA_RESELLER_NAME = "reseller_name";
 
+    /** Mode "Input Promosi Galon": pelanggan baru terkunci + toggle Gratis/Berbayar.
+     *  Caller: CustomerFormActivity (alur promosi). */
+    public static final String EXTRA_PROMOSI = "promosi_mode";
+    public static final String EXTRA_PROMOSI_CUSTOMER_ID = "promosi_customer_id";
+    /** Penanda catatan untuk promosi GRATIS (membedakan dari penjualan biasa). */
+    public static final String PROMO_MARKER = "[PROMOSI]";
+
     /** Cached inbox sender name dari intent — di-pass ke ReceiptActivity. */
     private String forwardedInboxSenderName;
 
     private MaterialButtonToggleGroup toggleType, toggleOngkirMode, toggleOwnership, toggleReturnMode;
+    /** Pelanggan preset (dibuka dari Detail Pelanggan via extra customer_id) berstatus Wajib Ongkir
+     *  → default Ongkos Kirim Per Galon, diterapkan SETELAH view ongkir siap (setelah updateOngkirUI). */
+    private boolean presetWajibOngkir;
+    /** Status Wajib Ongkir pelanggan yang SEDANG terpilih — dipakai guard di toggle ongkir:
+     *  memilih "Tanpa" (gratis ongkir) ditolak dengan popup lalu dikembalikan ke Per Galon. */
+    private boolean selectedWajibOngkir = false;
     private TextView tvSelectedCustomer, tvTotalHarga, tvEmptyItems;
     private TextView tvSelectedReseller, btnClearReseller, tvSelectedTrxDate;
     private TextInputEditText etJumlahKembali, etOngkir, etCatatan;
@@ -90,6 +103,10 @@ public class TransactionActivity extends AppCompatActivity {
     private View ongkirModeContainer, cardCustomer, cardItems, cardOwnership, gantiRugiContainer, returnModeContainer;
     private View cardJualBotol, cardDate, cardReseller, cardKembali;
     private LinearLayout llItems;
+
+    // --- Mode Input Promosi Galon ---
+    private boolean promosiMode = false;
+    private MaterialButtonToggleGroup toggleGratisBerbayar;
 
     // --- Mode Pencairan Komisi (payout) ---
     private boolean payoutMode = false;
@@ -106,6 +123,8 @@ public class TransactionActivity extends AppCompatActivity {
     private boolean selectedResellerAddToPrice = false;
     /** Override komisi per produk untuk reseller terpilih (fallback rate global). */
     private java.util.Map<Long, Double> selectedResellerRates = new java.util.HashMap<>();
+    /** Afiliasi sedang di-set OTOMATIS ke pelanggan reseller itu sendiri (beli untuk dirinya). */
+    private boolean autoAffiliateActive = false;
 
     /** Satu baris entri produk — semua produk DB di-render sekaligus supaya
      *  user mengatur jumlah & harga tanpa menambah item satu per satu. */
@@ -136,6 +155,17 @@ public class TransactionActivity extends AppCompatActivity {
     /** Harga khusus per produk pelanggan terpilih { product_uuid: harga } (null = harga produk standar). */
     private java.util.Map<String, Double> selectedCustomerPrices = null;
 
+    // --- Multi-lokasi pelanggan → "Kirim ke" (lokasi tujuan pengiriman) ---
+    /** Daftar lokasi pelanggan terpilih (entri pertama = utama; kosong = tanpa lokasi). */
+    private java.util.List<Customer.Location> selectedLocations = new ArrayList<>();
+    /** Lokasi tujuan pengiriman TERPILIH — dipersist ke transaksi JUAL (delivery_dest_*). */
+    private String selectedDestName;
+    private double selectedDestLat, selectedDestLng;
+    private View cardKirimKe;
+    private TextView tvSelectedKirimKe;
+    /** Pelanggan terakhir yang sudah diberi info multi-lokasi — popup sekali per pelanggan. */
+    private long lastLocInfoCustomerId = -1;
+
     // --- Gunakan Saldo Komisi (muncul saat pelanggan = reseller, mode JUAL) ---
     private View cardUseSaldo, layoutSaldoPotong, layoutSaldoBreakdown;
     private com.google.android.material.checkbox.MaterialCheckBox cbUseSaldo;
@@ -165,6 +195,14 @@ public class TransactionActivity extends AppCompatActivity {
         // point (dashboard, detail pelanggan, detail reseller, inbox WA).
         DatabaseHelper dbGuard = DatabaseHelper.getInstance(this);
         SettingsDao sGuard = new SettingsDao(dbGuard);
+        // Gate absensi: multiuser aktif tapi belum ada yang clock-in (mis. flag multiuser baru
+        // tersinkron dari dashboard tanpa login) → paksa login dulu. Mencegah transaksi "tanpa
+        // staf" (delivery_staff_id=0) sekaligus memastikan ada absensi masuk. Cermin MainActivity.
+        if (sGuard.isMultiUserEnabled() && sGuard.getCurrentUserId() <= 0) {
+            startActivity(new Intent(this, LoginActivity.class));
+            finish();
+            return;
+        }
         if (sGuard.isMultiUserEnabled() && sGuard.getCurrentUserId() > 0) {
             com.crowja.damiupos.model.User cur =
                     new com.crowja.damiupos.db.UserDao(dbGuard).getById(sGuard.getCurrentUserId());
@@ -227,6 +265,12 @@ public class TransactionActivity extends AppCompatActivity {
         etJumlahBotolJual = findViewById(R.id.etJumlahBotolJual);
         etHargaBotolJual = findViewById(R.id.etHargaBotolJual);
 
+        // "Kirim ke" (multi-lokasi): kartu pilih lokasi tujuan pengiriman — tampil hanya
+        // saat JUAL & pelanggan punya >1 lokasi (updateKirimKeCard).
+        cardKirimKe = findViewById(R.id.cardKirimKe);
+        tvSelectedKirimKe = findViewById(R.id.tvSelectedKirimKe);
+        cardKirimKe.setOnClickListener(v -> showKirimKePicker());
+
         // Prefill ganti rugi price from settings (default 35.000)
         etHargaGantiRugi.setText(String.valueOf((long) settingsDao.getHargaBotolGalon()));
 
@@ -252,7 +296,23 @@ public class TransactionActivity extends AppCompatActivity {
         });
 
         toggleOngkirMode.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
-            if (isChecked) updateOngkirUI();
+            if (!isChecked) return;
+            // Pelanggan "Wajib Ongkir": opsi "Tanpa" (gratis ongkir) ditolak — beri tahu staf
+            // lewat popup, lalu kembalikan pilihan ke Per Galon. Borongan tetap boleh (berbayar).
+            // Dikecualikan saat Promosi GRATIS: pemberian gratis di lokasi memang tanpa ongkir,
+            // jadi "Tanpa" boleh meng-override status Wajib Ongkir (lihat applyPromosiPricing).
+            if (checkedId == R.id.btnOngkirNone && selectedWajibOngkir && isJualSelected()
+                    && !(promosiMode && isPromosiGratis())) {
+                new AlertDialog.Builder(this)
+                        .setTitle("⚠️ Wajib Ongkir")
+                        .setMessage("Pelanggan ini ditandai \"Wajib Ongkir\" — ongkos kirim tidak "
+                                + "boleh gratis. Pilihan dikembalikan ke Per Galon.")
+                        .setPositiveButton("OK", null)
+                        .setOnDismissListener(d -> toggleOngkirMode.check(R.id.btnOngkirPerGalon))
+                        .show();
+                return;
+            }
+            updateOngkirUI();
         });
 
         toggleReturnMode.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
@@ -278,7 +338,12 @@ public class TransactionActivity extends AppCompatActivity {
                 selectedCustomerName = c.getName();
                 selectedCustomerPhone = c.getPhone();
                 selectedCustomerPrices = c.getProductPrices();
+                // Multi-lokasi: dest default = lokasi utama; selectedWajibOngkir mengikuti
+                // flag lokasi TERPILIH (guard "Tanpa" ongkir aktif juga di jalur preset).
+                applyCustomerLocations(c);
+                presetWajibOngkir = selectedWajibOngkir;
                 tvSelectedCustomer.setText(c.getName());
+                maybeWarnIncompleteCustomer(c);
             }
         }
         // Kalau dari Inbox & user sudah correct nomor di Balas confirm-dialog,
@@ -316,6 +381,7 @@ public class TransactionActivity extends AppCompatActivity {
             selectedResellerName = "";
             selectedResellerAddToPrice = false;
             selectedResellerRates = new java.util.HashMap<>();
+            autoAffiliateActive = false;
             applyResellerPricing(); // kembalikan harga ke normal
             updateResellerLabel();
         });
@@ -387,6 +453,9 @@ public class TransactionActivity extends AppCompatActivity {
         onEntriesChanged();
         updateTypeUI();
         updateOngkirUI();
+        // Pelanggan preset Wajib Ongkir → default Per Galon (setelah view ongkir siap, override default XML).
+        // Hanya untuk JUAL (ongkir tak relevan di KEMBALI).
+        if (isJualSelected() && presetWajibOngkir) toggleOngkirMode.check(R.id.btnOngkirPerGalon);
         // Auto-fill "Jumlah Botol Galon Kembali" berdasarkan total qty items
         // (default behavior — pelanggan setor botol kosong sejumlah botol
         // baru yg dibawa). Untuk Umum/Beli/Botol Sendiri: di-skip via
@@ -398,6 +467,78 @@ public class TransactionActivity extends AppCompatActivity {
         // Mode Pencairan Komisi: setelah semua setup jual selesai, alihkan layar ini
         // menjadi form payout (sembunyikan kartu jual, tampilkan kartu pencairan).
         maybeEnterPayoutMode();
+        // Mode Input Promosi Galon: pelanggan baru terkunci + toggle Gratis/Berbayar.
+        maybeEnterPromosiMode();
+    }
+
+    /** Aktifkan mode Promosi kalau dibuka dengan EXTRA_PROMOSI (dari alur Input Promosi Galon). */
+    private void maybeEnterPromosiMode() {
+        if (!getIntent().getBooleanExtra(EXTRA_PROMOSI, false)) return;
+        long custId = getIntent().getLongExtra(EXTRA_PROMOSI_CUSTOMER_ID, 0);
+        Customer c = custId > 0 ? customerDao.getById(custId) : null;
+        if (c == null) { Toast.makeText(this, "Pelanggan tidak valid", Toast.LENGTH_SHORT).show(); finish(); return; }
+        promosiMode = true;
+
+        // Pelanggan BARU terpilih & dikunci (tak bisa diganti — ini akuisisi pelanggan baru).
+        selectedCustomerId = c.getId();
+        selectedCustomerName = c.getName();
+        selectedCustomerPhone = c.getPhone();
+        selectedCustomerPrices = c.getProductPrices();
+        tvSelectedCustomer.setText(c.getName()
+                + (c.getPhone() != null && !c.getPhone().isEmpty() ? " · " + c.getPhone() : ""));
+        maybeWarnIncompleteCustomer(c);   // akuisisi baru: foto + koordinat wajib lengkap
+        cardCustomer.setOnClickListener(null);
+        cardCustomer.setClickable(false);
+
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().setTitle("Input Promosi Galon — " + selectedCustomerName);
+        }
+
+        // Toggle Gratis/Berbayar (default Gratis). Gratis → semua harga 0; Berbayar → harga normal.
+        View promosiCard = findViewById(R.id.cardPromosiMode);
+        if (promosiCard != null) promosiCard.setVisibility(View.VISIBLE);
+        toggleGratisBerbayar = findViewById(R.id.toggleGratisBerbayar);
+        if (toggleGratisBerbayar != null) {
+            toggleGratisBerbayar.addOnButtonCheckedListener((g, id, checked) -> { if (checked) applyPromosiPricing(); });
+            if (toggleGratisBerbayar.getCheckedButtonId() == View.NO_ID) {
+                toggleGratisBerbayar.check(R.id.btnPromosiGratis);
+            }
+        }
+        applyResellerPricing();   // pastikan harga pelanggan/standar dulu
+        applyPromosiPricing();
+        // Pelanggan promosi = pelanggan baru → tidak punya galon depot untuk ditukar;
+        // pastikan default "Botol Galon Kembali" 0 meskipun qty sudah ter-prefill.
+        syncKembaliToTotalJumlah();
+        // Promosi = akuisisi di lokasi (bukan kiriman kurir) → kartu "Kirim ke" disembunyikan.
+        updateKirimKeCard();
+    }
+
+    /** True kalau toggle promosi di posisi Gratis (default). */
+    private boolean isPromosiGratis() {
+        return toggleGratisBerbayar == null
+                || toggleGratisBerbayar.getCheckedButtonId() != R.id.btnPromosiBerbayar;
+    }
+
+    /** Gratis → kunci semua harga ke 0; Berbayar → kembalikan harga normal & bisa diedit. */
+    private void applyPromosiPricing() {
+        boolean gratis = isPromosiGratis();
+        if (!gratis) applyResellerPricing();   // restore harga pelanggan/standar
+        for (ProductEntry pe : productEntries) {
+            if (gratis) {
+                pe.etPrice.setText("0");
+                pe.etPrice.setEnabled(false);
+            } else {
+                pe.etPrice.setEnabled(true);
+            }
+        }
+        // Promo GRATIS = pemberian langsung di lokasi (kartu "Kirim ke" disembunyikan) → ongkir ikut
+        // digratiskan: paksa "Tanpa" agar total benar-benar Rp 0, meski pelanggan Wajib Ongkir
+        // (guard di toggle ongkir mengecualikan mode ini). Berbayar → ongkir mengikuti pilihan normal.
+        if (gratis && toggleOngkirMode != null
+                && toggleOngkirMode.getCheckedButtonId() != R.id.btnOngkirNone) {
+            toggleOngkirMode.check(R.id.btnOngkirNone);   // memicu updateOngkirUI() → ongkir 0
+        }
+        updateTotal();
     }
 
     /** Aktifkan mode payout kalau dibuka dengan EXTRA_KOMISI_PAYOUT. */
@@ -418,9 +559,9 @@ public class TransactionActivity extends AppCompatActivity {
         selectedResellerId = 0; // bukan transaksi afiliasi
 
         // Sembunyikan semua kartu jual; tampilkan kartu pencairan.
-        int[] hide = {R.id.cardType, R.id.rowCustomerDate, R.id.cardReseller, R.id.cardItems,
-                R.id.cardJualBotol, R.id.cardOwnership, R.id.cardKembali, R.id.cardDetails,
-                R.id.cardUseSaldo, R.id.cardTotal};
+        int[] hide = {R.id.cardType, R.id.rowCustomerDate, R.id.cardReseller, R.id.cardKirimKe,
+                R.id.cardItems, R.id.cardJualBotol, R.id.cardOwnership, R.id.cardKembali,
+                R.id.cardDetails, R.id.cardUseSaldo, R.id.cardTotal};
         for (int id : hide) { View v = findViewById(id); if (v != null) v.setVisibility(View.GONE); }
         findViewById(R.id.cardPayout).setVisibility(View.VISIBLE);
 
@@ -694,6 +835,7 @@ public class TransactionActivity extends AppCompatActivity {
         if (cardReseller != null) {
             cardReseller.setVisibility(isJual ? View.VISIBLE : View.GONE);
         }
+        updateKirimKeCard();     // "Kirim ke" hanya untuk JUAL & pelanggan multi-lokasi
         refreshUseSaldoCard();   // "Gunakan Saldo Komisi" hanya untuk JUAL
         updateTotal();
     }
@@ -902,30 +1044,41 @@ public class TransactionActivity extends AppCompatActivity {
         if (cardUseSaldo == null) return;
         boolean custIsReseller = false;
         resellerSaldo = 0;
-        if (selectedCustomerId > 0) {
-            Customer c = customerDao.getById(selectedCustomerId);
-            if (c != null && c.isReseller()) {
-                custIsReseller = true;
-                DatabaseHelper db = DatabaseHelper.getInstance(this);
-                double earned = com.crowja.damiupos.db.ResellerKomisiCalculator
-                        .hitung(db, c).totalKomisi;
-                double withdrawn = new com.crowja.damiupos.db.ResellerWithdrawalDao(db)
-                        .getTotalWithdrawn(selectedCustomerId);
-                resellerSaldo = Math.max(0, earned - withdrawn);
-            }
+        Customer c = selectedCustomerId > 0 ? customerDao.getById(selectedCustomerId) : null;
+        if (c != null && c.isReseller()) {
+            custIsReseller = true;
+            // Saldo gabungan server-otoritatif (lintas perangkat, = dashboard); fallback lokal offline.
+            boolean online = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled();
+            resellerSaldo = Math.max(0, customerDao.mergedResellerSaldo(selectedCustomerId, online));
         }
-        // Pelanggan sendiri reseller → sembunyikan "Reseller Afiliasi" (tak bisa afiliasi ke
-        // reseller) + bersihkan pilihan afiliasi yang mungkin sudah ter-set.
+        // Reseller beli untuk DIRINYA sendiri → afiliasi otomatis = dirinya: harga reseller (komisi
+        // ke harga bila aktif) berlaku, dan komisi masuk ke saldonya (reseller_id = pelanggan ini).
+        // Selektor "Reseller Afiliasi" disembunyikan; pelanggan non-reseller → selektor tampil normal.
         if (cardReseller != null) {
             boolean showAfil = !payoutMode && isJualSelected() && !custIsReseller;
             cardReseller.setVisibility(showAfil ? View.VISIBLE : View.GONE);
-            if (custIsReseller && selectedResellerId != 0) {
-                selectedResellerId = 0;
-                selectedResellerName = "";
-                selectedResellerAddToPrice = false;
-                selectedResellerRates = new java.util.HashMap<>();
-                applyResellerPricing();
-                updateResellerLabel();
+            if (custIsReseller) {
+                // Reseller beli untuk dirinya → afiliasi = dirinya sendiri.
+                if (selectedResellerId != selectedCustomerId) {
+                    applyAutoAffiliate(c);
+                }
+            } else {
+                // Pelanggan biasa: kalau punya TAUTAN reseller → auto-pilih reseller rujukannya sbg afiliasi.
+                long linkedId = (c != null && c.getLinkedResellerUuid() != null && !c.getLinkedResellerUuid().isEmpty())
+                        ? customerDao.getIdBySyncUuid(c.getLinkedResellerUuid()) : -1;
+                Customer linked = linkedId > 0 ? customerDao.getById(linkedId) : null;
+                if (linked != null && linked.isReseller()) {
+                    if (selectedResellerId != linkedId) applyAutoAffiliate(linked);
+                } else if (autoAffiliateActive) {
+                    // Ganti ke pelanggan tanpa reseller & tanpa tautan → batalkan auto-afiliasi (jangan timpa pilihan manual).
+                    selectedResellerId = 0;
+                    selectedResellerName = "";
+                    selectedResellerAddToPrice = false;
+                    selectedResellerRates = new java.util.HashMap<>();
+                    autoAffiliateActive = false;
+                    applyResellerPricing();
+                    updateResellerLabel();
+                }
             }
         }
         // Kartu "Gunakan Saldo Komisi": pelanggan reseller (mode JUAL) dengan saldo > 0.
@@ -939,6 +1092,18 @@ public class TransactionActivity extends AppCompatActivity {
             cardUseSaldo.setVisibility(View.GONE);
         }
         updateSisaBayar();
+    }
+
+    /** Jadikan reseller r afiliasi OTOMATIS (self-afiliasi / tautan reseller pelanggan): harga
+     *  reseller berlaku & komisi masuk ke saldonya. Ditandai autoAffiliateActive → bisa dibalik. */
+    private void applyAutoAffiliate(Customer r) {
+        selectedResellerId = r.getId();
+        selectedResellerName = r.getName();
+        selectedResellerAddToPrice = r.isKomisiAddToPrice();
+        selectedResellerRates = resellerRateDao.getRates(r.getId());
+        autoAffiliateActive = true;
+        applyResellerPricing();
+        updateResellerLabel();
     }
 
     /** Rupiah yang benar-benar dipotong dari saldo komisi (dibatasi saldo & total order). */
@@ -1057,10 +1222,10 @@ public class TransactionActivity extends AppCompatActivity {
     private void syncKembaliToTotalJumlah() {
         if (!userEditedKembali) {
             syncingKembali = true;
-            // Pelanggan "Umum" (walk-in) jarang punya botol galon untuk
-            // ditukar — default-nya 0 botol kembali, bukan auto-match
-            // dengan jumlah jual.
-            etJumlahKembali.setText(isUmumCustomer()
+            // Pelanggan "Umum" (walk-in) jarang punya botol galon untuk ditukar, dan
+            // Input Promosi Galon selalu untuk PELANGGAN BARU (belum pernah pegang galon
+            // depot) — keduanya default 0 botol kembali, bukan auto-match jumlah jual.
+            etJumlahKembali.setText(isUmumCustomer() || promosiMode
                     ? "0"
                     : String.valueOf(getTotalJumlah()));
             syncingKembali = false;
@@ -1090,7 +1255,8 @@ public class TransactionActivity extends AppCompatActivity {
      * mendapat komisi atas transaksi JUAL ini (lihat ResellerKomisiCalculator).
      */
     private void showResellerPicker() {
-        List<Customer> resellers = customerDao.getResellers();
+        // Dedup salinan lintas-perangkat (nomor sama) → satu reseller per orang di picker.
+        List<Customer> resellers = CustomerDao.dedupeByIdentity(customerDao.getResellers());
         if (resellers.isEmpty()) {
             Toast.makeText(this,
                     "Belum ada reseller. Tandai pelanggan sebagai reseller di menu Reseller.",
@@ -1112,6 +1278,7 @@ public class TransactionActivity extends AppCompatActivity {
                     selectedResellerName = r.getName();
                     selectedResellerAddToPrice = r.isKomisiAddToPrice();
                     selectedResellerRates = resellerRateDao.getRates(r.getId());
+                    autoAffiliateActive = false;   // pilihan afiliasi manual, bukan self-afiliasi otomatis
                     applyResellerPricing();
                     updateResellerLabel();
                 })
@@ -1156,6 +1323,7 @@ public class TransactionActivity extends AppCompatActivity {
         selectedResellerName = r.getName();
         selectedResellerAddToPrice = r.isKomisiAddToPrice();
         selectedResellerRates = resellerRateDao.getRates(r.getId());
+        autoAffiliateActive = false;   // afiliasi eksplisit dari intent, bukan self-afiliasi otomatis
         applyResellerPricing();
         updateResellerLabel();
     }
@@ -1193,7 +1361,9 @@ public class TransactionActivity extends AppCompatActivity {
         });
         rvCustomers.setLayoutManager(new LinearLayoutManager(this));
         rvCustomers.setAdapter(adapter);
-        adapter.setData(customerDao.getAll());
+        // Kartu pemilih SAMA dengan daftar Pelanggan: dedup lintas-perangkat + agregat gabungan
+        // (total galon / transaksi / konsumsi) + tag foto/koordinat & perangkat asal.
+        adapter.setData(CustomerDao.dedupeForDisplay(customerDao.getAll()));
 
         btnPickUmum.setOnClickListener(v -> {
             Customer umum = customerDao.getOrCreateUmum();
@@ -1215,7 +1385,8 @@ public class TransactionActivity extends AppCompatActivity {
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
             @Override public void afterTextChanged(Editable s) {
                 String k = s.toString().trim();
-                adapter.setData(k.isEmpty() ? customerDao.getAll() : customerDao.search(k));
+                adapter.setData(CustomerDao.dedupeForDisplay(
+                        k.isEmpty() ? customerDao.getAll() : customerDao.search(k)));
             }
         });
         dialog.show();
@@ -1231,6 +1402,12 @@ public class TransactionActivity extends AppCompatActivity {
         selectedCustomerPhone = c.getPhone() != null ? c.getPhone() : "";
         selectedCustomerPrices = c.getProductPrices();    // harga khusus per produk (null = harga produk)
         applyResellerPricing();                            // harga item ikut harga khusus produk (+ komisi bila ada)
+        // Multi-lokasi: dest default = lokasi UTAMA; selectedWajibOngkir mengikuti flag lokasi
+        // TERPILIH (fallback flag pelanggan legacy). Lokasi wajib-ongkir → default Ongkos Kirim
+        // = Per Galon (opsi "Tanpa" dijaga popup di listener toggle). Cek tombol memicu listener
+        // → updateOngkirUI() yang mengisi nominal ongkir default. Hanya untuk JUAL.
+        applyCustomerLocations(c);
+        if (isJualSelected() && selectedWajibOngkir) toggleOngkirMode.check(R.id.btnOngkirPerGalon);
         tvSelectedCustomer.setText(c.getName());
         userEditedKembali = false;
         // Pelanggan Umum → ownership default = Beli (Umum tidak pinjam botol)
@@ -1241,6 +1418,158 @@ public class TransactionActivity extends AppCompatActivity {
         updateOwnershipButtonsForCustomer();
         updateOwnershipUI();
         refreshUseSaldoCard();   // pelanggan baru terpilih → cek apakah reseller
+        maybeWarnIncompleteCustomer(c);
+    }
+
+    /**
+     * Muat multi-lokasi pelanggan terpilih: dest default = lokasi UTAMA (entri pertama),
+     * {@code selectedWajibOngkir} mengikuti flag lokasi TERPILIH — fallback flag pelanggan
+     * legacy bila tanpa lokasi. Dipanggil dari {@code applySelectedCustomer} DAN jalur
+     * preset {@code customer_id}; pergantian lokasi lewat picker "Kirim ke" me-re-derive
+     * flag lagi ({@link #showKirimKePicker}).
+     */
+    private void applyCustomerLocations(Customer c) {
+        selectedLocations = (c != null && c.getLocations() != null)
+                ? new ArrayList<>(c.getLocations()) : new ArrayList<>();
+        Customer.Location primary = selectedLocations.isEmpty() ? null : selectedLocations.get(0);
+        if (primary != null) {
+            selectedDestName = primary.name;
+            selectedDestLat = primary.lat;
+            selectedDestLng = primary.lng;
+            selectedWajibOngkir = primary.wajibOngkir;
+        } else {
+            selectedDestName = null;
+            selectedDestLat = 0;
+            selectedDestLng = 0;
+            selectedWajibOngkir = c != null && c.isWajibOngkir();
+        }
+        updateKirimKeCard();
+        maybeShowMultiLocationInfo(c);
+    }
+
+    /** Kartu "Kirim ke" tampil HANYA saat JUAL & pelanggan punya >1 lokasi
+     *  (disembunyikan di mode payout/promosi). Label = nama lokasi terpilih. */
+    private void updateKirimKeCard() {
+        if (cardKirimKe == null) return;
+        boolean show = !payoutMode && !promosiMode
+                && isJualSelected() && selectedLocations.size() > 1;
+        cardKirimKe.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (tvSelectedKirimKe != null) {
+            tvSelectedKirimKe.setText(selectedDestName != null && !selectedDestName.isEmpty()
+                    ? selectedDestName : "—");
+        }
+    }
+
+    /** Info SEKALI per pelanggan (per sesi layar): pelanggan multi-lokasi → ingatkan staf
+     *  memastikan lokasi pengiriman lewat kartu "Kirim ke". */
+    private void maybeShowMultiLocationInfo(Customer c) {
+        if (c == null || payoutMode || promosiMode) return;
+        if (selectedLocations.size() <= 1 || !isJualSelected()) return;
+        if (c.getId() == lastLocInfoCustomerId) return;
+        lastLocInfoCustomerId = c.getId();
+        new AlertDialog.Builder(this)
+                .setTitle("📍 Pelanggan Multi-Lokasi")
+                .setMessage("Pelanggan \"" + c.getName() + "\" punya " + selectedLocations.size()
+                        + " lokasi. Pastikan lokasi pengiriman pada kartu \"Kirim ke\" sudah "
+                        + "benar (default: lokasi utama).")
+                .setPositiveButton("OK", null)
+                .show();
+    }
+
+    /** Picker lokasi tujuan pengiriman. Tiap pergantian me-RE-DERIVE selectedWajibOngkir
+     *  dari lokasi terpilih + re-apply default Ongkos Kirim Per Galon bila wajib. */
+    private void showKirimKePicker() {
+        if (selectedLocations.size() <= 1) return;
+        final CharSequence[] opts = new CharSequence[selectedLocations.size()];
+        for (int i = 0; i < selectedLocations.size(); i++) {
+            Customer.Location l = selectedLocations.get(i);
+            String nm = (l.name == null || l.name.isEmpty())
+                    ? Customer.DEFAULT_LOCATION_NAME : l.name;
+            opts[i] = nm + (i == 0 ? " (utama)" : "") + (l.wajibOngkir ? " · Wajib Ongkir" : "");
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Kirim ke")
+                .setItems(opts, (d, w) -> {
+                    Customer.Location l = selectedLocations.get(w);
+                    selectedDestName = l.name;
+                    selectedDestLat = l.lat;
+                    selectedDestLng = l.lng;
+                    // Re-derive flag wajib ongkir dari lokasi TERPILIH pada SETIAP pergantian —
+                    // guard "Tanpa" ongkir langsung mengikuti lokasi baru.
+                    selectedWajibOngkir = l.wajibOngkir;
+                    if (isJualSelected() && l.wajibOngkir) {
+                        toggleOngkirMode.check(R.id.btnOngkirPerGalon);
+                    }
+                    updateKirimKeCard();
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /** ID pelanggan terakhir yang sudah diperingatkan — supaya popup tidak spam
+     *  saat pelanggan yang sama dipilih ulang dalam satu sesi transaksi. */
+    private long lastIncompleteWarnCustomerId = -1;
+
+    /**
+     * Popup perintah (⚠ + suara nyaring) saat pelanggan yang order BELUM punya foto
+     * rumah dan/atau koordinat: karyawan diminta melengkapinya di tempat, supaya
+     * dashboard (peta persebaran + foto rumah) tidak bolong. Pelanggan Umum
+     * (walk-in) dilewati. "Punya foto" = file lokal ATAU photo_url server, jadi
+     * pelanggan hasil sinkron perangkat lain tidak salah diperingatkan.
+     */
+    private void maybeWarnIncompleteCustomer(Customer c) {
+        if (c == null || isUmumCustomer()) return;
+        boolean noPhoto = !c.hasPhoto();
+        boolean noCoord = !c.hasCoordinates();
+        if (!noPhoto && !noCoord) { lastIncompleteWarnCustomerId = -1; return; }
+        if (c.getId() == lastIncompleteWarnCustomerId) return;
+        lastIncompleteWarnCustomerId = c.getId();
+
+        StringBuilder missing = new StringBuilder();
+        if (noPhoto) missing.append("• Belum ada FOTO rumah\n");
+        if (noCoord) missing.append("• KOORDINAT lokasi belum ditandai\n");
+
+        playIncompleteAlertSound();
+        new AlertDialog.Builder(this)
+                .setIcon(android.R.drawable.ic_dialog_alert)
+                .setTitle("⚠️ Lengkapi Data Pelanggan!")
+                .setMessage("Pelanggan \"" + c.getName() + "\" belum lengkap:\n\n"
+                        + missing
+                        + "\nSegera FOTO rumah dan/atau TANDAI koordinat pelanggan ini "
+                        + "sebelum meninggalkan lokasi.")
+                .setPositiveButton("LENGKAPI SEKARANG", (d, w) ->
+                        startActivity(new Intent(this, CustomerFormActivity.class)
+                                .putExtra("customer_id", c.getId())))
+                .setNegativeButton("NANTI", null)
+                .show();
+    }
+
+    /** Nada alarm default (stream ALARM = nyaring, tidak ikut volume media);
+     *  dibatasi 4 detik untuk nada alarm yang panjang/looping. */
+    private void playIncompleteAlertSound() {
+        try {
+            android.net.Uri uri = android.media.RingtoneManager.getDefaultUri(
+                    android.media.RingtoneManager.TYPE_ALARM);
+            if (uri == null) {
+                uri = android.media.RingtoneManager.getDefaultUri(
+                        android.media.RingtoneManager.TYPE_NOTIFICATION);
+            }
+            if (uri == null) return;
+            final android.media.MediaPlayer mp = new android.media.MediaPlayer();
+            mp.setAudioAttributes(new android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build());
+            mp.setDataSource(this, uri);
+            mp.prepare();
+            mp.start();
+            new android.os.Handler(getMainLooper()).postDelayed(() -> {
+                try { mp.stop(); } catch (Exception ignored) {}
+                try { mp.release(); } catch (Exception ignored) {}
+            }, 4000);
+        } catch (Exception ignored) {
+            // Suara hanya penekanan — popup tetap tampil walau audio gagal.
+        }
     }
 
     @Override
@@ -1460,7 +1789,11 @@ public class TransactionActivity extends AppCompatActivity {
                 .setTitle("Konfirmasi Transaksi")
                 .setMessage(msg)
                 .setPositiveButton(fIsJual ? "Lanjut" : "Simpan", (d, w) -> {
-                    if (fIsJual) {
+                    // Promosi GRATIS dengan total Rp 0 → tidak ada yang dibayar, jadi dialog
+                    // metode pembayaran dilewati. (Gratis + ongkir berbayar → total > 0 →
+                    // metode pembayaran tetap ditanya, untuk pencatatan ongkirnya.)
+                    boolean gratisPromo = promosiMode && isPromosiGratis() && fTotal <= 0;
+                    if (fIsJual && !gratisPromo) {
                         // JUAL: wajib pilih metode pembayaran dulu.
                         showPaymentPicker(method -> {
                             pendingPayment = method;
@@ -1468,7 +1801,7 @@ public class TransactionActivity extends AppCompatActivity {
                                     fOngkirType, fOwnership, fHargaBotol);
                         });
                     } else {
-                        pendingPayment = null; // KEMBALI tidak ada pembayaran
+                        pendingPayment = null; // KEMBALI / promosi gratis: tidak ada pembayaran
                         doSave(fIsJual, fTotalJumlah, fOngkir, fTotal, fJumlahKembali,
                                 fOngkirType, fOwnership, fHargaBotol);
                     }
@@ -1583,6 +1916,12 @@ public class TransactionActivity extends AppCompatActivity {
         trx.setHargaPerGalon(0);
         trx.setPaymentMethod(pendingPayment);
         if (selectedTrxDate != null) trx.setTanggal(selectedTrxDate);
+        // Jual botol juga masuk Antrian Delivery (TYPE_JUAL) → bawa lokasi tujuan terpilih.
+        if (selectedDestLat != 0 || selectedDestLng != 0) {
+            trx.setDeliveryDestName(selectedDestName);
+            trx.setDeliveryDestLat(selectedDestLat);
+            trx.setDeliveryDestLng(selectedDestLng);
+        }
         // items intentionally kosong — penanda transaksi botol-only
         String catatan = etCatatan.getText() != null ? etCatatan.getText().toString().trim() : "";
         String marker = "[JUAL BOTOL KOSONG]";
@@ -1678,6 +2017,13 @@ public class TransactionActivity extends AppCompatActivity {
             trx.setHargaBotolGalon(hargaBotol);
             trx.setPaymentMethod(pendingPayment); // metode bayar dipilih sebelum simpan
             trx.setResellerId(selectedResellerId); // reseller afiliasi (0 = tidak ada)
+            // Lokasi tujuan pengiriman terpilih ("Kirim ke") — navigasi delivery memakai
+            // koordinat ini (fallback koordinat pelanggan bila 0/kosong).
+            if (selectedDestLat != 0 || selectedDestLng != 0) {
+                trx.setDeliveryDestName(selectedDestName);
+                trx.setDeliveryDestLat(selectedDestLat);
+                trx.setDeliveryDestLng(selectedDestLng);
+            }
         }
         double hargaGR = 0;
         int rusak = 0;
@@ -1697,6 +2043,11 @@ public class TransactionActivity extends AppCompatActivity {
             trx.setHargaPerGalon(hargaGR);
         }
         String catatan = etCatatan.getText() != null ? etCatatan.getText().toString().trim() : "";
+        // Promosi GRATIS: tandai supaya bisa dibedakan dari penjualan biasa (poin promosi tetap
+        // dihitung server dari pelanggan baru, marker hanya penanda). Berbayar = penjualan normal.
+        if (promosiMode && isPromosiGratis()) {
+            catatan = catatan.isEmpty() ? PROMO_MARKER : (PROMO_MARKER + " " + catatan);
+        }
         // For ganti rugi, prepend a marker into catatan so receipt can detect on re-view
         if (!isJual && totalHarga > 0) {
             String marker = "[GANTI RUGI " + rusak + " galon rusak]";

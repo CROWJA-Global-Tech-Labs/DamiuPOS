@@ -17,6 +17,23 @@ public class UserDao {
         this.dbHelper = dbHelper;
     }
 
+    /**
+     * Apakah user yang SEDANG login berperan marketing? Dipakai untuk kebijakan notifikasi:
+     * karyawan marketing TIDAK menerima broadcast pesanan/operasional (order baru dari web,
+     * follow-up, dll) — hanya "Pesan & Pembaruan" (pesan admin). Tanpa login staf → false.
+     */
+    public static boolean isCurrentUserMarketing(android.content.Context ctx) {
+        try {
+            DatabaseHelper db = DatabaseHelper.getInstance(ctx);
+            long uid = new SettingsDao(db).getCurrentUserId();
+            if (uid <= 0) return false;
+            User u = new UserDao(db).getById(uid);
+            return u != null && u.isMarketing();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     public long insert(User u) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues v = new ContentValues();
@@ -94,6 +111,24 @@ public class UserDao {
         if (u == null || !u.isActive()) return null;
         if (u.getPin() == null || !u.getPin().equals(pin)) return null;
         return u;
+    }
+
+    /**
+     * Boleh melakukan Promosi (Input Promosi Galon): Marketing & Admin selalu; staf lain hanya bila
+     * salary_config.promo_enabled=1 (disinkron dari dashboard). Mirror aturan insentif promosi server.
+     */
+    public boolean canPromosi(long userId) {
+        User u = getById(userId);
+        if (u == null) return false;
+        if (u.isMarketing() || u.isAdmin()) return true;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.query(DatabaseHelper.TABLE_SALARY,
+                new String[]{DatabaseHelper.COL_SAL_PROMO_ENABLED},
+                DatabaseHelper.COL_SAL_USER_ID + "=?", new String[]{String.valueOf(userId)},
+                null, null, null);
+        boolean enabled = c.moveToFirst() && c.getInt(0) == 1;
+        c.close();
+        return enabled;
     }
 
     /** Apakah ada user dengan role admin (terlepas aktif/tidak). */

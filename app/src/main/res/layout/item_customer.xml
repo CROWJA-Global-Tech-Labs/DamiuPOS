@@ -66,6 +66,23 @@
                     android:textSize="10sp"
                     android:textStyle="bold"
                     android:visibility="gone" />
+
+                <!-- Penanda pelanggan yang tertaut ke reseller (auto-afiliasi di Transaksi Baru) -->
+                <TextView
+                    android:id="@+id/tvAfiliasiBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_affiliated_badge"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:paddingTop="1dp"
+                    android:paddingBottom="1dp"
+                    android:text="TERAFILIASI"
+                    android:textColor="@color/white"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
             </LinearLayout>
 
             <TextView
@@ -82,6 +99,24 @@
                 android:layout_marginTop="2dp"
                 android:textColor="@color/primary"
                 android:textSize="12sp" />
+
+            <!-- Status kelengkapan: sudah ada foto rumah? sudah ada koordinat? -->
+            <TextView
+                android:id="@+id/tvMediaStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textSize="12sp" />
+
+            <!-- Tag perangkat asal pelanggan (nama device / Web), gabungan lintas salinan. -->
+            <TextView
+                android:id="@+id/tvOrigin"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:visibility="gone" />
         </LinearLayout>
 
         <!-- Galon badge -->
@@ -102,7 +137,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="galon"
+                android:text="total galon"
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp" />
         </LinearLayout>

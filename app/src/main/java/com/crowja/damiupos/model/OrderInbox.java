@@ -26,6 +26,7 @@ public class OrderInbox {
     private String status;         // PENDING / APPROVED / REJECTED
     private long trxId;            // Id transaksi setelah approved (kalau ada)
     private boolean replied;       // true setelah user klik "Balas"
+    private int schedIntervalDays; // >0 = pengingat "Pesanan Terjadwal (tiap N hari)"; 0 = bukan interval
     private String receivedAt;
 
     public OrderInbox() {}
@@ -59,6 +60,9 @@ public class OrderInbox {
 
     public boolean isReplied() { return replied; }
     public void setReplied(boolean v) { this.replied = v; }
+
+    public int getSchedIntervalDays() { return schedIntervalDays; }
+    public void setSchedIntervalDays(int v) { this.schedIntervalDays = v; }
 
     public String getReceivedAt() { return receivedAt; }
     public void setReceivedAt(String v) { this.receivedAt = v; }

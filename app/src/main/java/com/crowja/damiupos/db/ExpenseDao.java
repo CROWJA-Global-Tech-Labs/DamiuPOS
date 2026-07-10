@@ -19,7 +19,13 @@ public class ExpenseDao {
 
     public long insert(Expense e) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_EXPENSES, toValues(e));
+        ContentValues v = toValues(e);
+        // Atribusi pembuat: operator yang sedang login (kosong di mode single-user/owner).
+        String operator = new SettingsDao(dbHelper).getCurrentUserName();
+        if (operator != null && !operator.isEmpty()) {
+            v.put(DatabaseHelper.COL_EXPENSE_CREATED_BY, operator);
+        }
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_EXPENSES, v);
     }
 
     public int update(Expense e) {
@@ -39,6 +45,19 @@ public class ExpenseDao {
         v.put(DatabaseHelper.COL_EXPENSE_LITERS, e.getLiters());
         v.put(DatabaseHelper.COL_EXPENSE_PCS, e.getPcs());
         return v;
+    }
+
+    /**
+     * Kosongkan photo_url (URL foto nota di server) supaya foto baru di-upload ulang.
+     * Dipakai saat foto nota pengeluaran diganti; MediaUploader jalan sebelum push,
+     * jadi URL di dashboard tetap mutakhir. Baris sudah dirty dari update() sebelumnya.
+     */
+    public void clearPhotoUrl(long expenseId) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_PHOTO_URL, "");
+        db.update(DatabaseHelper.TABLE_EXPENSES, v,
+                DatabaseHelper.COL_EXPENSE_ID + "=?", new String[]{String.valueOf(expenseId)});
     }
 
     /** Total nominal (Rp) untuk satu kategori, sepanjang waktu. */
@@ -156,6 +175,11 @@ public class ExpenseDao {
         return query(null, null);
     }
 
+    /** Pengeluaran yang DIINPUT operator ini saja (created_by_name = nama), terbaru dulu. */
+    public List<Expense> getAllBy(String creator) {
+        return query(DatabaseHelper.COL_EXPENSE_CREATED_BY + " = ?", new String[]{creator});
+    }
+
     /** Search by name (case-insensitive contains). */
     public List<Expense> search(String keyword) {
         if (keyword == null || keyword.trim().isEmpty()) return getAll();
@@ -163,10 +187,34 @@ public class ExpenseDao {
                 new String[]{"%" + keyword.trim() + "%"});
     }
 
+    /** Search dibatasi pengeluaran yang diinput operator ini. */
+    public List<Expense> searchBy(String keyword, String creator) {
+        if (keyword == null || keyword.trim().isEmpty()) return getAllBy(creator);
+        return query(DatabaseHelper.COL_EXPENSE_NAME + " LIKE ? AND "
+                        + DatabaseHelper.COL_EXPENSE_CREATED_BY + " = ?",
+                new String[]{"%" + keyword.trim() + "%", creator});
+    }
+
     /** All expenses within a date range (inclusive), newest first. Used by reports. */
     public List<Expense> getByDateRange(String startDate, String endDate) {
         return query(localDate(DatabaseHelper.COL_EXPENSE_CREATED_AT) + " BETWEEN date(?) AND date(?)",
                 new String[]{startDate, endDate});
+    }
+
+    /** Total hari ini KHUSUS input operator ini (ringkasan daftar per-staf). */
+    public double getTotalTodayBy(String creator) {
+        return scalar("SELECT COALESCE(SUM(" + DatabaseHelper.COL_EXPENSE_AMOUNT + "),0) FROM "
+                + DatabaseHelper.TABLE_EXPENSES + " WHERE "
+                + localDate(DatabaseHelper.COL_EXPENSE_CREATED_AT) + " = date('now','localtime') AND "
+                + DatabaseHelper.COL_EXPENSE_CREATED_BY + " = ?", creator);
+    }
+
+    /** Total bulan ini KHUSUS input operator ini. */
+    public double getTotalThisMonthBy(String creator) {
+        return scalar("SELECT COALESCE(SUM(" + DatabaseHelper.COL_EXPENSE_AMOUNT + "),0) FROM "
+                + DatabaseHelper.TABLE_EXPENSES + " WHERE "
+                + localMonth(DatabaseHelper.COL_EXPENSE_CREATED_AT) + " = strftime('%Y-%m','now','localtime') AND "
+                + DatabaseHelper.COL_EXPENSE_CREATED_BY + " = ?", creator);
     }
 
     /** Total pengeluaran hari ini (untuk dashboard). */
@@ -214,6 +262,8 @@ public class ExpenseDao {
         e.setAmount(c.getDouble(c.getColumnIndexOrThrow(DatabaseHelper.COL_EXPENSE_AMOUNT)));
         int photoIdx = c.getColumnIndex(DatabaseHelper.COL_EXPENSE_PHOTO_PATH);
         if (photoIdx >= 0 && !c.isNull(photoIdx)) e.setPhotoPath(c.getString(photoIdx));
+        int photoUrlIdx = c.getColumnIndex(DatabaseHelper.COL_PHOTO_URL);
+        if (photoUrlIdx >= 0 && !c.isNull(photoUrlIdx)) e.setPhotoUrl(c.getString(photoUrlIdx));
         int noteIdx = c.getColumnIndex(DatabaseHelper.COL_EXPENSE_NOTE);
         if (noteIdx >= 0 && !c.isNull(noteIdx)) e.setNote(c.getString(noteIdx));
         int catIdx = c.getColumnIndex(DatabaseHelper.COL_EXPENSE_CATEGORY);
@@ -222,6 +272,8 @@ public class ExpenseDao {
         if (litIdx >= 0) e.setLiters(c.getDouble(litIdx));
         int pcsIdx = c.getColumnIndex(DatabaseHelper.COL_EXPENSE_PCS);
         if (pcsIdx >= 0) e.setPcs(c.getInt(pcsIdx));
+        int byIdx = c.getColumnIndex(DatabaseHelper.COL_EXPENSE_CREATED_BY);
+        if (byIdx >= 0 && !c.isNull(byIdx)) e.setCreatedByName(c.getString(byIdx));
         e.setCreatedAt(c.getString(c.getColumnIndexOrThrow(DatabaseHelper.COL_EXPENSE_CREATED_AT)));
         return e;
     }

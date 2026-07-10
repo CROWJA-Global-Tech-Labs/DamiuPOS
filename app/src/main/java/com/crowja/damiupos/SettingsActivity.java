@@ -1,16 +1,13 @@
 package com.crowja.damiupos;
 
-import android.content.ComponentName;
 import android.content.Intent;
 import android.media.Ringtone;
 import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.text.TextUtils;
 import android.view.View;
 import android.widget.LinearLayout;
-import android.widget.RadioGroup;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -23,11 +20,8 @@ import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.db.UserDao;
 import com.crowja.damiupos.demo.DemoDataHelper;
-import com.crowja.damiupos.model.OrderInbox;
 import com.crowja.damiupos.model.User;
 import com.crowja.damiupos.util.ReadOnlyForms;
-import com.crowja.damiupos.wa.OrderParseService;
-import com.crowja.damiupos.wa.WaListenerService;
 import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
@@ -41,7 +35,6 @@ import android.widget.CheckedTextView;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ListView;
-import android.widget.LinearLayout.LayoutParams;
 
 import java.io.File;
 import java.io.InputStream;
@@ -68,12 +61,10 @@ public class SettingsActivity extends AppCompatActivity {
     private TextInputEditText etDepotName, etDepotAddress, etDepotPhone;
     private TextInputEditText etFollowupDays, etStockAlert, etFollowUpTemplate;
     private TextInputEditText etHargaBotolGalon, etResellerKomisi;
-    private TextInputEditText etClaudeKey, etReplyTemplate, etAutoArchiveHours;
-    private SwitchMaterial switchPoints, switchWaAutoDetect, switchWaAutoSend;
-    private LinearLayout pointsConfigContainer, waAutoDetectConfig, waAutoSendConfig;
-    private RadioGroup rgWaParseMode;
-    private TextView tvNotifAccessStatus, tvRingtoneName, tvClaudeKeyStatus,
-            tvClaudeLastStatus;
+    private TextInputEditText etReplyTemplate, etAutoArchiveHours;
+    private SwitchMaterial switchPoints, switchWaAutoSend;
+    private LinearLayout pointsConfigContainer, waAutoSendConfig;
+    private TextView tvRingtoneName;
     private SettingsDao settingsDao;
     private UserDao userDao;
 
@@ -132,69 +123,9 @@ public class SettingsActivity extends AppCompatActivity {
         switchPoints.setOnCheckedChangeListener((buttonView, isChecked) ->
                 pointsConfigContainer.setVisibility(isChecked ? View.VISIBLE : View.GONE));
 
-        // ----- WhatsApp Auto-Detect -----
-        switchWaAutoDetect = findViewById(R.id.switchWaAutoDetect);
-        waAutoDetectConfig = findViewById(R.id.waAutoDetectConfig);
-        rgWaParseMode = findViewById(R.id.rgWaParseMode);
-        etClaudeKey = findViewById(R.id.etClaudeKey);
-        tvNotifAccessStatus = findViewById(R.id.tvNotifAccessStatus);
-
-        boolean waEnabled = settingsDao.isWaAutoDetectEnabled();
-        switchWaAutoDetect.setChecked(waEnabled);
-        waAutoDetectConfig.setVisibility(waEnabled ? View.VISIBLE : View.GONE);
-        switchWaAutoDetect.setOnCheckedChangeListener((b, checked) -> {
-            waAutoDetectConfig.setVisibility(checked ? View.VISIBLE : View.GONE);
-            settingsDao.setWaAutoDetectEnabled(checked);
-            if (checked) updateNotifAccessStatus();
-        });
-
         // Multi user & absensi → pindah ke layar tersendiri (menu Karyawan).
         findViewById(R.id.cardMultiUser).setOnClickListener(v ->
                 startActivity(new Intent(this, AttendanceSettingsActivity.class)));
-
-        // Mode parsing
-        String mode = settingsDao.getWaParseMode();
-        if (SettingsDao.PARSE_MODE_DEFAULT.equals(mode)) {
-            rgWaParseMode.check(R.id.rbParseDefault);
-        } else if (SettingsDao.PARSE_MODE_AI.equals(mode)) {
-            rgWaParseMode.check(R.id.rbParseAi);
-        } else {
-            rgWaParseMode.check(R.id.rbParseHybrid);
-        }
-        rgWaParseMode.setOnCheckedChangeListener((g, id) -> {
-            if (id == R.id.rbParseDefault) settingsDao.setWaParseMode(SettingsDao.PARSE_MODE_DEFAULT);
-            else if (id == R.id.rbParseAi) settingsDao.setWaParseMode(SettingsDao.PARSE_MODE_AI);
-            else settingsDao.setWaParseMode(SettingsDao.PARSE_MODE_HYBRID);
-        });
-
-        // Claude API key — auto-save tiap karakter berubah, plus indikator
-        // visual jelas supaya user tahu key sudah benar2 ter-save.
-        tvClaudeKeyStatus = findViewById(R.id.tvClaudeKeyStatus);
-        tvClaudeLastStatus = findViewById(R.id.tvClaudeLastStatus);
-        etClaudeKey.setText(settingsDao.getClaudeApiKey());
-        updateClaudeKeyStatus();
-        updateClaudeLastStatus();
-        etClaudeKey.addTextChangedListener(new android.text.TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
-            @Override public void afterTextChanged(android.text.Editable s) {
-                String key = s.toString().trim();
-                settingsDao.setClaudeApiKey(key);
-                updateClaudeKeyStatus();
-            }
-        });
-
-        findViewById(R.id.btnGrantNotifAccess).setOnClickListener(v -> {
-            try {
-                startActivity(new Intent(
-                        Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
-            } catch (android.content.ActivityNotFoundException e) {
-                Toast.makeText(this, "Tidak bisa buka pengaturan notifikasi: "
-                        + e.getMessage(), Toast.LENGTH_LONG).show();
-            }
-        });
-
-        if (waEnabled) updateNotifAccessStatus();
 
         // --- Auto-Kirim Struk WhatsApp (AccessibilityService) ---
         switchWaAutoSend = findViewById(R.id.switchWaAutoSend);
@@ -264,10 +195,7 @@ public class SettingsActivity extends AppCompatActivity {
                 etDefaultOngkir, etPointsPerAmount, etPointsReward, switchPoints,
                 etDepotName, etDepotAddress, etDepotPhone,
                 etFollowupDays, etStockAlert, etHargaBotolGalon, etResellerKomisi,
-                etFollowUpTemplate, etReplyTemplate, etAutoArchiveHours,
-                switchWaAutoDetect);
-        // Disable AI parser key + parse-mode radios (children of the WA config block).
-        ReadOnlyForms.disableTree(waAutoDetectConfig);
+                etFollowUpTemplate, etReplyTemplate, etAutoArchiveHours);
     }
 
     // ==========================================================================
@@ -652,74 +580,9 @@ public class SettingsActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        // Refresh status setelah user kembali dari pengaturan Notification Access
-        if (settingsDao.isWaAutoDetectEnabled()) {
-            updateNotifAccessStatus();
-        }
         // Refresh status setelah user kembali dari pengaturan Aksesibilitas.
         if (com.crowja.damiupos.wa.WaAutoSendService.isEnabled(this)) {
             updateAccessibilityStatus();
-        }
-        updateClaudeLastStatus();
-    }
-
-    /** Tampilkan status Claude terakhir — sukses / error / belum pernah call. */
-    private void updateClaudeLastStatus() {
-        if (tvClaudeLastStatus == null) return;
-        String err = settingsDao.getLastClaudeError();
-        long at = settingsDao.getLastClaudeAt();
-        if (at == 0) {
-            tvClaudeLastStatus.setText(""); // belum pernah dipanggil
-            tvClaudeLastStatus.setVisibility(View.GONE);
-            return;
-        }
-        tvClaudeLastStatus.setVisibility(View.VISIBLE);
-        long agoMs = System.currentTimeMillis() - at;
-        String agoStr = formatAgo(agoMs);
-        if (err == null || err.isEmpty()) {
-            tvClaudeLastStatus.setText("Status AI: ✓ sukses (" + agoStr + ")");
-            tvClaudeLastStatus.setTextColor(getResources().getColor(R.color.green));
-        } else {
-            tvClaudeLastStatus.setText("Status AI: ⚠ " + err + " (" + agoStr + ")");
-            tvClaudeLastStatus.setTextColor(getResources().getColor(R.color.red));
-        }
-    }
-
-    private static String formatAgo(long ms) {
-        if (ms < 0) return "baru saja";
-        long sec = ms / 1000;
-        if (sec < 60) return sec + " detik lalu";
-        long min = sec / 60;
-        if (min < 60) return min + " menit lalu";
-        long hr = min / 60;
-        if (hr < 24) return hr + " jam lalu";
-        long d = hr / 24;
-        return d + " hari lalu";
-    }
-
-    /** Tampilkan indikator status token supaya user tahu sudah ter-save. */
-    private void updateClaudeKeyStatus() {
-        if (tvClaudeKeyStatus == null) return;
-        String key = settingsDao.getClaudeApiKey();
-        if (key == null || key.isEmpty()) {
-            tvClaudeKeyStatus.setText("✗ Bearer token belum di-set — AI tidak akan dipanggil");
-            tvClaudeKeyStatus.setTextColor(getResources().getColor(R.color.red));
-        } else {
-            tvClaudeKeyStatus.setText("✓ Bearer token tersimpan (" + key.length()
-                    + " karakter)");
-            tvClaudeKeyStatus.setTextColor(getResources().getColor(R.color.green));
-        }
-    }
-
-    /** Cek apakah WaListenerService sudah granted di Notification Access setting. */
-    private void updateNotifAccessStatus() {
-        boolean granted = isNotificationListenerEnabled();
-        if (granted) {
-            tvNotifAccessStatus.setText("✅ Notification Access aktif");
-            tvNotifAccessStatus.setTextColor(getResources().getColor(R.color.green));
-        } else {
-            tvNotifAccessStatus.setText("⚠ Notification Access belum diaktifkan — tap tombol di atas");
-            tvNotifAccessStatus.setTextColor(getResources().getColor(R.color.red));
         }
     }
 
@@ -733,100 +596,6 @@ public class SettingsActivity extends AppCompatActivity {
             tv.setText("⚠ Layanan Aksesibilitas belum diaktifkan — tap tombol di atas");
             tv.setTextColor(getResources().getColor(R.color.red));
         }
-    }
-
-    private boolean isNotificationListenerEnabled() {
-        String enabled = Settings.Secure.getString(getContentResolver(),
-                "enabled_notification_listeners");
-        if (TextUtils.isEmpty(enabled)) return false;
-        ComponentName self = new ComponentName(this, WaListenerService.class);
-        for (String name : enabled.split(":")) {
-            ComponentName cn = ComponentName.unflattenFromString(name);
-            if (cn != null && cn.equals(self)) return true;
-        }
-        return false;
-    }
-
-    /** Test parser dialog — input pesan, lihat hasil parse instan. */
-    private void showTestParserDialog() {
-        LinearLayout wrap = new LinearLayout(this);
-        wrap.setOrientation(LinearLayout.VERTICAL);
-        int pad = (int) (16 * getResources().getDisplayMetrics().density);
-        wrap.setPadding(pad, pad, pad, 0);
-
-        TextView hint = new TextView(this);
-        hint.setText("Ketik pesan WA simulasi (mis. \"pesan mineral 5\"):");
-        hint.setTextSize(13);
-        hint.setTextColor(getResources().getColor(R.color.text_secondary));
-        wrap.addView(hint);
-
-        EditText etTest = new EditText(this);
-        etTest.setHint("Pesan WA...");
-        etTest.setMinLines(2);
-        etTest.setText("pesan mineral 5");
-        wrap.addView(etTest, new LayoutParams(
-                LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
-
-        new AlertDialog.Builder(this)
-                .setTitle("Test Parser WhatsApp")
-                .setView(wrap)
-                .setPositiveButton("Test", (d, w) -> {
-                    String msg = etTest.getText() != null
-                            ? etTest.getText().toString() : "";
-                    if (msg.trim().isEmpty()) {
-                        Toast.makeText(this, "Pesan kosong", Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    Toast.makeText(this, "Parsing...", Toast.LENGTH_SHORT).show();
-                    OrderParseService.handleIncoming(getApplicationContext(),
-                            "Test User", "", msg,
-                            new OrderParseService.Listener() {
-                                @Override public void onOrderStored(OrderInbox stored) {
-                                    showTestResult(stored, null);
-                                }
-                                @Override public void onError(String err) {
-                                    showTestResult(null, err);
-                                }
-                            });
-                })
-                .setNegativeButton("Batal", null)
-                .show();
-    }
-
-    private void showTestResult(OrderInbox stored, String error) {
-        StringBuilder sb = new StringBuilder();
-        if (error != null) {
-            sb.append("❌ Error: ").append(error);
-        } else if (stored == null) {
-            sb.append("Parser menyimpulkan ini bukan pesanan (skip simpan).\n\n"
-                    + "Tip: kalau mode = Default, regex saja yang dipakai. "
-                    + "Coba ganti ke Hybrid atau Pakai AI di mode parsing.");
-        } else {
-            com.crowja.damiupos.wa.ParsedOrder p =
-                    com.crowja.damiupos.wa.ParsedOrder.fromJson(stored.getParsedJson());
-            sb.append("✅ Disimpan ke Inbox\n\n");
-            sb.append("Parser: ").append(stored.getParserUsed()).append("\n");
-            sb.append("Confidence: ").append(String.format(java.util.Locale.US,
-                    "%.0f%%", p.confidence * 100)).append("\n");
-            sb.append("Tipe: ").append(p.type != null ? p.type : "-").append("\n");
-            sb.append("Urgent: ").append(p.urgent ? "ya" : "tidak").append("\n");
-            sb.append("Items:\n");
-            if (p.items.isEmpty()) {
-                sb.append("  (tidak ada)\n");
-            } else {
-                for (com.crowja.damiupos.wa.ParsedOrder.Item it : p.items) {
-                    sb.append("  • ").append(it.qty).append("× ")
-                            .append(it.product).append("\n");
-                }
-            }
-        }
-        new AlertDialog.Builder(this)
-                .setTitle("Hasil Parse")
-                .setMessage(sb.toString())
-                .setPositiveButton("OK", null)
-                .setNeutralButton("Buka Inbox", (d, w) ->
-                        startActivity(new Intent(this, OrderInboxActivity.class)))
-                .show();
     }
 
     /**

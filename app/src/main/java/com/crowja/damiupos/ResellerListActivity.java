@@ -141,27 +141,47 @@ public class ResellerListActivity extends AppCompatActivity {
 
     private void refresh() {
         double rate = settingsDao.getResellerKomisi();
+        // Saldo OTORITATIF = angka server (ResellerSaldo, lintas SEMUA perangkat) yang tersinkron
+        // ke kolom srv_saldo tiap salinan. Kalkulator lokal hanya melihat transaksi perangkat ini —
+        // afiliasi yang tercatat di perangkat lain tidak pernah sampai ke sini (isolasi per-device),
+        // sehingga saldo lokal ≠ dashboard. Offline (belum provisioning) → fallback rumus lokal.
+        boolean online = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled();
         List<Customer> resellers = customerDao.getResellers();
+        // Satukan salinan lintas-perangkat (kunci dedup sama dengan daftar Pelanggan & web):
+        // satu orang reseller = SATU baris, saldo = Σ saldo semua salinannya (crediting server
+        // OR-level menjamin satu transaksi tak pernah terhitung di dua salinan).
+        java.util.LinkedHashMap<String, List<Customer>> groups = new java.util.LinkedHashMap<>();
+        for (Customer c : resellers) {
+            groups.computeIfAbsent(CustomerDao.dedupKey(c), k -> new ArrayList<>()).add(c);
+        }
         List<Row> rows = new ArrayList<>();
         double totalSaldo = 0;
-        for (Customer c : resellers) {
+        for (List<Customer> group : groups.values()) {
+            Customer rep = group.get(0);
+            for (Customer m : group) if (m.isMine()) { rep = m; break; }
             Row r = new Row();
-            r.customer = c;
-            ResellerKomisiCalculator.Result res =
-                    ResellerKomisiCalculator.hitung(dbHelper, c);
-            r.earned = res.totalKomisi;
+            r.customer = rep;
+            double saldoSrv = 0, earnedLocal = 0, depositsLocal = 0;
             r.galon = 0;
-            for (ResellerKomisiCalculator.Entry e : res.entries) r.galon += e.totalGalon;
-            // "Cair" = pencairan nyata; tambah-saldo (top-up dashboard) menambah saldo terpisah.
-            r.withdrawn = wdDao.getTotalCashedOut(c.getId());
-            r.saldo = r.earned + wdDao.getTotalDeposits(c.getId()) - r.withdrawn;
+            r.withdrawn = 0;
+            for (Customer m : group) {
+                saldoSrv += m.getSrvSaldo();
+                ResellerKomisiCalculator.Result res = ResellerKomisiCalculator.hitung(dbHelper, m);
+                earnedLocal += res.totalKomisi;
+                for (ResellerKomisiCalculator.Entry e : res.entries) r.galon += e.totalGalon;
+                // "Cair" = pencairan nyata; tambah-saldo (top-up dashboard) menambah saldo terpisah.
+                r.withdrawn += wdDao.getTotalCashedOut(m.getId());
+                depositsLocal += wdDao.getTotalDeposits(m.getId());
+            }
+            r.earned = earnedLocal;
+            r.saldo = online ? saldoSrv : (earnedLocal + depositsLocal - r.withdrawn);
             totalSaldo += r.saldo;
             rows.add(r);
         }
         sortRows(rows);
         adapter.setData(rows);
 
-        tvSummary.setText(resellers.size() + " reseller  ·  Komisi default Rp "
+        tvSummary.setText(rows.size() + " reseller  ·  Komisi default Rp "
                 + NF.format(Math.round(rate)) + "/galon  ·  Total saldo: Rp "
                 + NF.format(Math.round(totalSaldo)));
 

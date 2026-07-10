@@ -74,13 +74,78 @@ public class SyncSettingsActivity extends AppCompatActivity {
             // on in the background); enabling takes effect on the next clock-in.
             if (!checked) LocationService.pollOnly(getApplicationContext());
         });
-        ((MaterialButton) findViewById(R.id.btnDisconnect)).setOnClickListener(v -> {
+        ((MaterialButton) findViewById(R.id.btnDisconnect)).setOnClickListener(v -> confirmDisconnect());
+
+        refreshStatus();
+    }
+
+    /**
+     * "Putuskan Provisioning": sebelum akses diputus, SEMUA data perangkat (pelanggan lengkap
+     * dengan foto + koordinat, transaksi, pengeluaran) dikirim ke web lalu diarsipkan di sana
+     * (menu Arsip Data — bisa dipulihkan). Kalau server tak terjangkau, user bisa memilih
+     * putus paksa TANPA pengarsipan (data hanya tersisa di HP ini).
+     */
+    private void confirmDisconnect() {
+        SyncSettings cfg = engine.settings();
+        if (!cfg.isEnrolled()) {   // belum pernah terhubung → cukup bersihkan konfigurasi lokal
             cfg.clear();
             SyncScheduler.cancelAll(this);
             refreshStatus();
             Toast.makeText(this, "Perangkat diputuskan", Toast.LENGTH_SHORT).show();
-        });
+            return;
+        }
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Putuskan Provisioning?")
+                .setMessage("Semua data perangkat ini — pelanggan (lengkap dengan foto & koordinat), "
+                        + "transaksi, dan pengeluaran — akan dikirim ke web lalu DIARSIPKAN di sana "
+                        + "(bisa dipulihkan lewat menu Arsip Data). Setelah itu akses perangkat dicabut "
+                        + "dan HP harus provisioning ulang untuk terhubung lagi.\n\nLanjutkan?")
+                .setPositiveButton("Kirim & Putuskan", (d, w) -> retireAndDisconnect())
+                .setNegativeButton("Batal", null)
+                .show();
+    }
 
+    private void retireAndDisconnect() {
+        android.app.ProgressDialog progress = android.app.ProgressDialog.show(this,
+                "Mengarsipkan ke web…",
+                "Mengunggah foto, transaksi & pengeluaran lalu mengarsipkan. Jangan tutup aplikasi.",
+                true, false);
+        new Thread(() -> {
+            SyncEngine.Result r = engine.retireAndArchive();
+            runOnUiThread(() -> {
+                try { progress.dismiss(); } catch (Throwable ignored) {}
+                if (r.ok) {
+                    finishDisconnect();
+                    new androidx.appcompat.app.AlertDialog.Builder(this)
+                            .setTitle("Perangkat diputuskan")
+                            .setMessage(r.pushed + " data perangkat diarsipkan di web (menu Arsip Data). "
+                                    + "Log absensi & selfie tetap tersimpan sebagai rekam HR.")
+                            .setPositiveButton("OK", null)
+                            .show();
+                } else {
+                    // Gagal (jaringan/server) → JANGAN putus otomatis; tawarkan putus paksa.
+                    new androidx.appcompat.app.AlertDialog.Builder(this)
+                            .setTitle("Gagal mengarsipkan")
+                            .setMessage("Data belum terkirim ke web: " + r.error
+                                    + "\n\nCoba lagi saat jaringan stabil, atau putuskan PAKSA tanpa "
+                                    + "pengarsipan (data hanya tersisa di HP ini).")
+                            .setPositiveButton("Coba Lagi", (d, w) -> retireAndDisconnect())
+                            .setNegativeButton("Putus Paksa", (d, w) -> {
+                                finishDisconnect();
+                                Toast.makeText(this, "Perangkat diputuskan TANPA pengarsipan", Toast.LENGTH_LONG).show();
+                            })
+                            .setNeutralButton("Batal", null)
+                            .show();
+                }
+            });
+        }).start();
+    }
+
+    /** Bersihkan enrolment lokal + hentikan seluruh kerja latar (dipanggil setelah retire sukses / paksa). */
+    private void finishDisconnect() {
+        engine.settings().clear();
+        SyncScheduler.cancelAll(this);
+        try { LocationService.stop(getApplicationContext()); } catch (Throwable ignored) {}
         refreshStatus();
     }
 

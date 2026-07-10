@@ -143,8 +143,9 @@ public class ResellerDetailActivity extends AppCompatActivity {
 
     private void refresh() {
         // Cari reseller ini (dengan komisi_galon) dari query agregat.
+        List<Customer> allResellers = customerDao.getResellers();
         Customer me = null;
-        for (Customer c : customerDao.getResellers()) {
+        for (Customer c : allResellers) {
             if (c.getId() == customerId) { me = c; break; }
         }
         if (me == null) {
@@ -154,22 +155,30 @@ public class ResellerDetailActivity extends AppCompatActivity {
             return;
         }
 
-        // Hitung dengan calculator — mendukung rate per jenis air minum.
-        ResellerKomisiCalculator.Result res = ResellerKomisiCalculator.hitung(dbHelper, me);
-        double earned = res.totalKomisi;
-
-        // Pisahkan pencairan (amount > 0) dari "tambah saldo" yang dikirim admin lewat
-        // web dashboard (amount < 0 = kredit). Keduanya tersinkron sebagai reseller_withdrawals.
-        List<ResellerWithdrawalDao.Withdrawal> wds = wdDao.getByCustomer(customerId);
-        double withdrawn = 0, deposits = 0;
-        for (ResellerWithdrawalDao.Withdrawal w : wds) {
-            if (w.amount < 0) deposits += -w.amount;
-            else withdrawn += w.amount;
-        }
-        saldo = earned + deposits - withdrawn;
-
+        // Grup dedup orang ini (salinan lintas-perangkat, kunci sama dengan web) — saldo
+        // OTORITATIF = Σ srv_saldo salinan (angka ResellerSaldo dashboard, lintas SEMUA
+        // perangkat). Kalkulator lokal hanya melihat transaksi perangkat ini, jadi dipakai
+        // untuk rincian info + fallback offline saja.
+        String key = com.crowja.damiupos.db.CustomerDao.dedupKey(me);
+        double saldoSrv = 0, earned = 0, withdrawn = 0, deposits = 0;
         int totalGalon = 0;
-        for (ResellerKomisiCalculator.Entry e : res.entries) totalGalon += e.totalGalon;
+        ResellerKomisiCalculator.Result res = null;   // rincian per-transaksi utk salinan INI
+        for (Customer c : allResellers) {
+            if (!com.crowja.damiupos.db.CustomerDao.dedupKey(c).equals(key)) continue;
+            saldoSrv += c.getSrvSaldo();
+            ResellerKomisiCalculator.Result r = ResellerKomisiCalculator.hitung(dbHelper, c);
+            if (c.getId() == customerId) res = r;
+            earned += r.totalKomisi;
+            for (ResellerKomisiCalculator.Entry e : r.entries) totalGalon += e.totalGalon;
+            // Pisahkan pencairan (amount > 0) dari "tambah saldo" dashboard (amount < 0 = kredit).
+            for (ResellerWithdrawalDao.Withdrawal w : wdDao.getByCustomer(c.getId())) {
+                if (w.amount < 0) deposits += -w.amount;
+                else withdrawn += w.amount;
+            }
+        }
+        if (res == null) res = ResellerKomisiCalculator.hitung(dbHelper, me);
+        boolean online = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled();
+        saldo = online ? saldoSrv : (earned + deposits - withdrawn);
 
         currentReseller = me;
         resellerName = me.getName() != null ? me.getName() : "";
@@ -202,6 +211,8 @@ public class ResellerDetailActivity extends AppCompatActivity {
                 res.entries.isEmpty() ? View.VISIBLE : View.GONE);
         rvKomisi.setVisibility(res.entries.isEmpty() ? View.GONE : View.VISIBLE);
 
+        // Riwayat pencairan/top-up salinan INI (baris riwayat tetap per-copy seperti semula).
+        List<ResellerWithdrawalDao.Withdrawal> wds = wdDao.getByCustomer(customerId);
         RecyclerView rv = findViewById(R.id.rvWithdrawals);
         rv.setAdapter(new WdAdapter(wds));
         findViewById(R.id.tvEmptyWd).setVisibility(wds.isEmpty() ? View.VISIBLE : View.GONE);

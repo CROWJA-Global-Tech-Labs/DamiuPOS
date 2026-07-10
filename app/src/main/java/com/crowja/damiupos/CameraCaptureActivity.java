@@ -406,10 +406,13 @@ public class CameraCaptureActivity extends AppCompatActivity {
             } else {
                 upright = bmp;
             }
-            // Koreksi tambahan: putar 90° berlawanan arah jarum jam (CCW). Hasil selfie
-            // kamera depan tampil miring 90°, jadi diputar agar wajah tegak. Dilakukan
-            // sebelum overlay peta/stempel supaya keduanya ikut orientasi yang benar.
-            {
+            // Activity ini dikunci portrait → selfie yang benar SELALU portrait. Sebagian perangkat
+            // menulis EXIF orientation dengan benar (setelah koreksi di atas hasilnya sudah portrait);
+            // sebagian lain (quirk CameraX kamera depan) menyimpan piksel landscape dgn EXIF NORMAL.
+            // Dulu di sini ada rotasi -90° TANPA SYARAT untuk quirk itu — yang justru MEMBALIK foto
+            // portrait yang sudah benar di perangkat ber-EXIF benar ("banyak selfie tidak potrait").
+            // Kini rotasi hanya diterapkan BILA hasilnya masih landscape; foto portrait dibiarkan.
+            if (upright.getWidth() > upright.getHeight()) {
                 Matrix ccw = new Matrix();
                 ccw.postRotate(-90);
                 Bitmap rotated = Bitmap.createBitmap(

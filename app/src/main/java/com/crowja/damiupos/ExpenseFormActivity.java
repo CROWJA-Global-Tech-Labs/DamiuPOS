@@ -63,6 +63,7 @@ public class ExpenseFormActivity extends AppCompatActivity {
     private View tilName, tilLiter, tilPcs;
     private ExpenseDao expenseDao;
     private String currentPhotoPath;
+    private String originalPhotoPath;   // foto nota saat form dibuka (edit) — utk deteksi penggantian
     private long editingId = 0;
 
     @Override
@@ -82,6 +83,11 @@ public class ExpenseFormActivity extends AppCompatActivity {
         etLiter = findViewById(R.id.etLiter);
         etPcs = findViewById(R.id.etPcs);
         ivFoto = findViewById(R.id.ivFotoStruk);
+        // Tint abu-abu HANYA untuk ikon placeholder kamera. Jangan taruh app:tint di XML —
+        // tint ikut mewarnai setImageBitmap() sehingga foto struk tampil abu-abu solid.
+        // showFotoPreview() meng-clear tint ini begitu foto asli dipasang.
+        ivFoto.setImageTintList(android.content.res.ColorStateList.valueOf(
+                getResources().getColor(R.color.grey_medium)));
         toggleKategori = findViewById(R.id.toggleKategori);
         tilName = findViewById(R.id.tilName);
         tilLiter = findViewById(R.id.tilLiter);
@@ -115,7 +121,8 @@ public class ExpenseFormActivity extends AppCompatActivity {
                 }
                 if (e.getPhotoPath() != null && !e.getPhotoPath().isEmpty()) {
                     currentPhotoPath = e.getPhotoPath();
-                    ivFoto.setImageBitmap(loadRotatedBitmap(currentPhotoPath));
+                    originalPhotoPath = currentPhotoPath;   // deteksi ganti foto saat simpan
+                    showFotoPreview(loadRotatedBitmap(currentPhotoPath));
                 }
             }
         }
@@ -155,11 +162,13 @@ public class ExpenseFormActivity extends AppCompatActivity {
     }
 
     private void pickFromGallery() {
-        Intent intent = new Intent(Intent.ACTION_PICK,
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
+        // ACTION_GET_CONTENT (document/photo picker) — andal di semua versi Android & tanpa izin
+        // storage. (ACTION_PICK + setType sebelumnya saling meniadakan data/type → picker gagal.)
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.setType("image/*");
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
         try {
-            startActivityForResult(intent, REQUEST_PICK_IMAGE);
+            startActivityForResult(Intent.createChooser(intent, "Pilih foto"), REQUEST_PICK_IMAGE);
         } catch (Exception ex) {
             Toast.makeText(this, "Tidak dapat membuka galeri", Toast.LENGTH_SHORT).show();
         }
@@ -192,7 +201,7 @@ public class ExpenseFormActivity extends AppCompatActivity {
 
         if (requestCode == REQUEST_CAMERA) {
             if (currentPhotoPath != null) {
-                ivFoto.setImageBitmap(loadRotatedBitmap(currentPhotoPath));
+                showFotoPreview(loadRotatedBitmap(currentPhotoPath));
             }
         } else if (requestCode == REQUEST_PICK_IMAGE && data != null) {
             Uri uri = data.getData();
@@ -200,12 +209,28 @@ public class ExpenseFormActivity extends AppCompatActivity {
             try {
                 File dest = createImageFile();
                 copyUriToFile(uri, dest);
-                ivFoto.setImageBitmap(loadRotatedBitmap(currentPhotoPath));
+                showFotoPreview(loadRotatedBitmap(currentPhotoPath));
             } catch (Exception ex) {
                 Toast.makeText(this, "Gagal salin foto: " + ex.getMessage(),
                         Toast.LENGTH_SHORT).show();
                 currentPhotoPath = null;
             }
+        }
+    }
+
+    /**
+     * Tampilkan foto struk di preview. Tint placeholder WAJIB di-clear dulu — kalau tidak,
+     * bitmap ikut diwarnai tint (SRC_IN) dan tampil sebagai kotak abu-abu solid (bug
+     * "foto struk abu-abu"). Bitmap null (decode gagal) → kembali ke ikon placeholder ber-tint.
+     */
+    private void showFotoPreview(Bitmap photo) {
+        if (photo != null) {
+            ivFoto.setImageTintList(null);
+            ivFoto.setImageBitmap(photo);
+        } else {
+            ivFoto.setImageTintList(android.content.res.ColorStateList.valueOf(
+                    getResources().getColor(R.color.grey_medium)));
+            ivFoto.setImageResource(android.R.drawable.ic_menu_camera);
         }
     }
 
@@ -317,6 +342,15 @@ public class ExpenseFormActivity extends AppCompatActivity {
 
         if (editingId > 0) {
             expenseDao.update(e);
+            // Foto nota diganti → kosongkan URL server yang basi supaya file baru di-upload ulang
+            // (MediaUploader jalan sebelum push, jadi nota di dashboard tetap mutakhir).
+            if (currentPhotoPath != null && !currentPhotoPath.equals(originalPhotoPath)) {
+                expenseDao.clearPhotoUrl(editingId);
+                // Foto lama tak lagi direferensikan — hapus supaya storage HP tidak membengkak.
+                if (originalPhotoPath != null) {
+                    try { new File(originalPhotoPath).delete(); } catch (Exception ignored) {}
+                }
+            }
             Toast.makeText(this, "Pengeluaran diupdate", Toast.LENGTH_SHORT).show();
         } else {
             long id = expenseDao.insert(e);
@@ -327,6 +361,9 @@ public class ExpenseFormActivity extends AppCompatActivity {
                 return;
             }
         }
+        // Kirim segera ke web (unggah foto nota + push baris) tanpa menunggu worker 15-menit —
+        // struk pengeluaran langsung persistent di storage web begitu dibuat dari HP.
+        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
         finish();
     }
 

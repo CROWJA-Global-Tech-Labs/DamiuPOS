@@ -50,6 +50,10 @@ public class Expense {
     public String getPhotoPath() { return photoPath; }
     public void setPhotoPath(String photoPath) { this.photoPath = photoPath; }
 
+    private String photoUrl;    // URL foto struk di server (untuk baris hasil sync tanpa file lokal)
+    public String getPhotoUrl() { return photoUrl; }
+    public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
+
     public String getNote() { return note; }
     public void setNote(String note) { this.note = note; }
 
@@ -79,4 +83,9 @@ public class Expense {
 
     public String getCreatedAt() { return createdAt; }
     public void setCreatedAt(String createdAt) { this.createdAt = createdAt; }
+
+    /** Nama operator yang menginput (atribusi; null utk baris lama/web tanpa nama). */
+    private String createdByName;
+    public String getCreatedByName() { return createdByName; }
+    public void setCreatedByName(String v) { this.createdByName = v; }
 }

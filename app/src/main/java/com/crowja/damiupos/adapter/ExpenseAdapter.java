@@ -56,12 +56,19 @@ public class ExpenseAdapter extends RecyclerView.Adapter<ExpenseAdapter.VH> {
         h.tvAmount.setText("- Rp " + NF.format(Math.round(e.getAmount())));
 
         // Thumbnail foto (kalau ada) — ter-cache, RGB_565, sampling ke ukuran kecil.
+        // Tint HANYA untuk ikon placeholder; wajib di-clear saat foto asli dipasang
+        // (tint SRC_IN mewarnai bitmap → thumbnail tampil abu-abu solid). ViewHolder
+        // di-recycle, jadi KEDUA cabang harus set tint secara eksplisit.
         android.graphics.Bitmap thumb = e.getPhotoPath() != null && !e.getPhotoPath().isEmpty()
                 ? com.crowja.damiupos.util.BitmapUtils.cachedThumb(e.getPhotoPath(), 160, 160)
                 : null;
         if (thumb != null) {
+            h.ivThumb.setImageTintList(null);
             h.ivThumb.setImageBitmap(thumb);
         } else {
+            h.ivThumb.setImageTintList(android.content.res.ColorStateList.valueOf(
+                    androidx.core.content.ContextCompat.getColor(
+                            h.itemView.getContext(), R.color.grey_medium)));
             h.ivThumb.setImageResource(android.R.drawable.ic_menu_gallery);
         }
 
@@ -85,16 +92,19 @@ public class ExpenseAdapter extends RecyclerView.Adapter<ExpenseAdapter.VH> {
         return items.size();
     }
 
+    // Dipakai ulang (bind hanya di UI thread) — hindari 2 alokasi SimpleDateFormat tiap baris scroll.
+    private static final SimpleDateFormat EXP_IN_FMT =
+            new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
+    private static final SimpleDateFormat EXP_OUT_FMT =
+            new SimpleDateFormat("d MMM yyyy, HH:mm", new Locale("id", "ID"));
+
     private static String formatDate(String iso) {
         if (iso == null || iso.isEmpty()) return "";
         try {
             // SQLite default format: "yyyy-MM-dd HH:mm:ss"
-            SimpleDateFormat in = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
-            Date d = in.parse(iso);
+            Date d = EXP_IN_FMT.parse(iso);
             if (d == null) return iso;
-            SimpleDateFormat out = new SimpleDateFormat("d MMM yyyy, HH:mm",
-                    new Locale("id", "ID"));
-            return out.format(d);
+            return EXP_OUT_FMT.format(d);
         } catch (Throwable t) {
             return iso;
         }

@@ -46,6 +46,48 @@
                 android:maxLines="1" />
         </com.google.android.material.textfield.TextInputLayout>
 
+        <!-- Filter khusus karyawan marketing: default hanya pelanggan yang didaftarkan
+             HARI INI (visibility diatur dari CustomerListActivity). -->
+        <com.google.android.material.checkbox.MaterialCheckBox
+            android:id="@+id/cbHariIni"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="-8dp"
+            android:text="Hanya Pelanggan Hari Ini"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
+        <com.google.android.material.checkbox.MaterialCheckBox
+            android:id="@+id/cbSaya"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="-8dp"
+            android:text="Hanya Pelanggan Saya"
+            android:textSize="14sp" />
+
+        <!-- Filter tanggal DITAMBAHKAN (created_at) — rentang tanggal pendaftaran pelanggan. -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnDateRange"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="4dp"
+            android:gravity="start|center_vertical"
+            android:text="Ditambahkan: Semua"
+            android:textAllCaps="false"
+            android:textSize="13sp"
+            app:icon="@android:drawable/ic_menu_my_calendar"
+            app:iconSize="18dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp" />
+
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/rvCustomers"
             android:layout_width="match_parent"

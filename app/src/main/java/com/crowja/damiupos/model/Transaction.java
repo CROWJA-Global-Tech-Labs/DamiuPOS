@@ -55,6 +55,11 @@ public class Transaction {
     private String deliveryQueuedAt;
     private String deliveryDoneAt;
     private String deliveryToken;    // token link lacak publik (web /track/{token})
+    // Lokasi tujuan pengiriman terpilih (multi-lokasi pelanggan). Persisted & disinkron.
+    // 0/null = tidak dipilih → navigasi fallback ke koordinat pelanggan.
+    private String deliveryDestName;
+    private double deliveryDestLat;
+    private double deliveryDestLng;
     private List<TransactionItem> items = new ArrayList<>();
 
     public Transaction() {}
@@ -153,6 +158,15 @@ public class Transaction {
 
     public String getDeliveryToken() { return deliveryToken; }
     public void setDeliveryToken(String v) { this.deliveryToken = v; }
+
+    public String getDeliveryDestName() { return deliveryDestName; }
+    public void setDeliveryDestName(String v) { this.deliveryDestName = v; }
+
+    public double getDeliveryDestLat() { return deliveryDestLat; }
+    public void setDeliveryDestLat(double v) { this.deliveryDestLat = v; }
+
+    public double getDeliveryDestLng() { return deliveryDestLng; }
+    public void setDeliveryDestLng(double v) { this.deliveryDestLng = v; }
 
     public List<TransactionItem> getItems() { return items; }
     public void setItems(List<TransactionItem> items) {

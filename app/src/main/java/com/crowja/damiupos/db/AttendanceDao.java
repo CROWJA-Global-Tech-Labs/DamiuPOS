@@ -83,6 +83,28 @@ public class AttendanceDao {
     }
 
     /**
+     * True bila event TERAKHIR user (urut waktu) adalah OUT → user sudah dipulangkan, termasuk
+     * lewat "Pulangkan" di dashboard web (event OUT hasil sync). Dipakai SyncEngine untuk
+     * auto-logout sesi di HP. Urutan pakai wall-clock LOKAL karena ts campuran dua format:
+     * baris lokal "yyyy-MM-dd HH:mm:ss" vs baris sync web ISO UTC "…Z" (pola yang sama dengan
+     * TransactionDao.localDt); tie-break _id supaya deterministik.
+     */
+    public boolean isLastEventOut(long userId) {
+        if (userId <= 0) return false;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String ts = DatabaseHelper.COL_ATT_TS;
+        String localTs = "(CASE WHEN " + ts + " LIKE '%Z' THEN datetime(" + ts
+                + ",'localtime') ELSE " + ts + " END)";
+        try (Cursor c = db.rawQuery(
+                "SELECT " + DatabaseHelper.COL_ATT_EVENT + " FROM " + DatabaseHelper.TABLE_ATTENDANCE
+                        + " WHERE " + DatabaseHelper.COL_ATT_USER_ID + "=?"
+                        + " ORDER BY " + localTs + " DESC, " + DatabaseHelper.COL_ATT_ID + " DESC LIMIT 1",
+                new String[]{String.valueOf(userId)})) {
+            return c.moveToFirst() && Attendance.EVENT_OUT.equals(c.getString(0));
+        }
+    }
+
+    /**
      * Timestamp awal shift berjalan: event IN pertama SETELAH OUT terakhir.
      * Kalau belum pernah OUT → IN pertama. Null kalau tidak ada IN.
      */
@@ -137,6 +159,27 @@ public class AttendanceDao {
         while (c.moveToNext()) out.add(fromCursor(c));
         c.close();
         return out;
+    }
+
+    /**
+     * Apakah user sudah punya event MASUK (IN) bertanggal HARI INI (waktu lokal perangkat)?
+     * Dipakai jaring absensi otomatis di TransactionDao: staf yang jelas bekerja (bikin transaksi)
+     * tapi belum absen masuk hari ini akan dibuatkan MASUK otomatis. date(ts) mengambil bagian
+     * tanggal dari ts lokal ("yyyy-MM-dd HH:mm:ss") — event yang dibuat perangkat ini selalu lokal.
+     */
+    public boolean hasInToday(long userId) {
+        String today = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                .format(new java.util.Date());
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.rawQuery(
+                "SELECT 1 FROM " + DatabaseHelper.TABLE_ATTENDANCE +
+                        " WHERE " + DatabaseHelper.COL_ATT_USER_ID + "=?" +
+                        " AND " + DatabaseHelper.COL_ATT_EVENT + "='" + Attendance.EVENT_IN + "'" +
+                        " AND date(" + DatabaseHelper.COL_ATT_TS + ")=? LIMIT 1",
+                new String[]{String.valueOf(userId), today});
+        boolean has = c.moveToFirst();
+        c.close();
+        return has;
     }
 
     /** Semua event user, terbaru dulu, dibatasi {@code limit} baris (0 = semua). */

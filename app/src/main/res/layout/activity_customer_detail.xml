@@ -92,6 +92,28 @@
                                 android:layout_marginTop="4dp"
                                 android:textColor="@color/text_secondary"
                                 android:textSize="14sp" />
+
+                            <!-- Tag perangkat asal pelanggan (gabungan lintas salinan). -->
+                            <TextView
+                                android:id="@+id/tvOrigin"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:textColor="@color/primary"
+                                android:textSize="12sp"
+                                android:visibility="gone" />
+
+                            <!-- Reseller yang terafiliasi (linked_reseller_uuid) — Transaksi Baru
+                                 ke pelanggan ini otomatis memilih reseller ini sebagai afiliasi. -->
+                            <TextView
+                                android:id="@+id/tvAfiliasi"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:textColor="#0D9488"
+                                android:textSize="13sp"
+                                android:textStyle="bold"
+                                android:visibility="gone" />
                         </LinearLayout>
                     </LinearLayout>
 
@@ -218,7 +240,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Keluar"
+                            android:text="Total Galon"
                             android:textColor="@color/text_secondary"
                             android:textSize="12sp" />
                     </LinearLayout>
@@ -286,7 +308,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="@string/saldo_galon"
+                            android:text="Sisa Pinjam"
                             android:textColor="@color/white"
                             android:textSize="12sp" />
                     </LinearLayout>
@@ -357,6 +379,7 @@
 
             <!-- Transaction History -->
             <TextView
+                android:id="@+id/tvHistoryHeader"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
@@ -364,6 +387,16 @@
                 android:textColor="@color/text_primary"
                 android:textSize="16sp"
                 android:textStyle="bold" />
+
+            <!-- Catatan bila sebagian transaksi orang ini ada di perangkat lain (isolasi per-perangkat). -->
+            <TextView
+                android:id="@+id/tvHistoryNote"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:visibility="gone" />
 
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/rvTransactions"

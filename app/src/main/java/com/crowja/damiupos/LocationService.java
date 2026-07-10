@@ -58,6 +58,7 @@ public class LocationService extends Service {
     public static final String EXTRA_POLL_ONLY = "poll_only";
     /** How often to poll the server while a shift is open (working or on break). */
     private static final long POLL_SECONDS = 60;
+    private static final long POLL_MS = POLL_SECONDS * 1000L;
 
     /** True while the shift service is live; lets a config change reconfigure it. */
     public static volatile boolean RUNNING = false;
@@ -66,6 +67,8 @@ public class LocationService extends Service {
     private LocationCallback callback;
     private String staffUuid;
     private ScheduledExecutorService poller;
+    /** True while a dedicated high-frequency GPS request is subscribed (delivery in progress). */
+    private volatile boolean fastGpsOn = false;
 
     /** Start/continue the shift service in WORKING mode (GPS + polling). */
     public static void start(Context ctx) {
@@ -118,6 +121,29 @@ public class LocationService extends Service {
      * carries location for the dashboard (no "Tanpa lokasi"). Async + no-op when permission or a
      * fix is unavailable; updates the row + marks it dirty so the next sync pushes the coordinates.
      */
+    /**
+     * Ambil lokasi terakhir perangkat (async) → callback dengan Location, atau null bila izin
+     * belum diberi / tak ada fix. Dipakai Antrian Delivery untuk anchor "rute terpendek".
+     */
+    public static void lastLocation(Context ctx,
+            com.google.android.gms.tasks.OnSuccessListener<Location> cb) {
+        Context app = ctx.getApplicationContext();
+        if (ContextCompat.checkSelfPermission(app, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
+                && ContextCompat.checkSelfPermission(app, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            cb.onSuccess(null);
+            return;
+        }
+        try {
+            LocationServices.getFusedLocationProviderClient(app).getLastLocation()
+                    .addOnSuccessListener(cb)
+                    .addOnFailureListener(e -> cb.onSuccess(null));
+        } catch (SecurityException se) {
+            cb.onSuccess(null);
+        } catch (Exception e) {
+            cb.onSuccess(null);
+        }
+    }
+
     public static void stampAttendanceLocation(Context ctx, long attendanceId) {
         if (attendanceId <= 0) return;
         Context app = ctx.getApplicationContext();
@@ -175,8 +201,7 @@ public class LocationService extends Service {
         // app receives dashboard changes (new staff/config/commands) in near real-time.
         ensurePolling();
 
-        if (wantGps) startGps(cfg);
-        else stopGps();
+        applyLocationMode(cfg, wantGps);
         return START_STICKY;     // keep alive until unenrolled (or explicit full stop)
     }
 
@@ -205,15 +230,41 @@ public class LocationService extends Service {
         };
         try {
             fused.requestLocationUpdates(req, callback, Looper.getMainLooper());
+            fastGpsOn = true;
         } catch (SecurityException ignored) {}
     }
 
-    /** Stop location updates (entering istirahat) — polling keeps running. */
+    /** Stop the dedicated GPS request (istirahat or no active delivery) — polling keeps running. */
     private void stopGps() {
         if (fused != null && callback != null) {
             try { fused.removeLocationUpdates(callback); } catch (Exception ignored) {}
             callback = null;
         }
+        fastGpsOn = false;
+    }
+
+    /**
+     * Pick the GPS cadence. A dedicated GPS request runs ONLY while working AND the server interval is
+     * at most our poll — i.e. a delivery is in progress (server hands back 60s) → fresh fixes pushed
+     * every minute. With no active delivery the interval is the slow battery-friendly value (> poll), so
+     * we drop the dedicated GPS and let the ~60s poll report one fix ("berbarengan dengan sinkron pooling").
+     */
+    private void applyLocationMode(SyncSettings cfg, boolean working) {
+        boolean fast = working && cfg.getLocationIntervalMs() <= POLL_MS;
+        if (fast && !fastGpsOn) startGps(cfg);
+        else if (!fast && fastGpsOn) stopGps();
+    }
+
+    /** Idle reporting: post the last known fix once, piggybacked on a server poll (no dedicated GPS). */
+    private void reportLastLocationOnce() {
+        final String uuid = LocationReporter.currentStaffUuid(this);
+        if (uuid == null) return;
+        staffUuid = uuid;
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) return;
+        try {
+            fused.getLastLocation().addOnSuccessListener(loc -> { if (loc != null) sendFix(loc); });
+        } catch (SecurityException ignored) {}
     }
 
     /** Start the ~60s server-poll loop once (off the main thread). */
@@ -230,6 +281,13 @@ public class LocationService extends Service {
                 if (!cfg.isEnrolled()) { stopSelf(); return; }
                 new SyncEngine(app).sync();
                 OnlineTasks.tick(app);   // config (/me heartbeat), version, broadcasts, commands
+
+                // Re-evaluate the live interval pulled by the tick: switch to dedicated 60s GPS when a
+                // delivery is active, drop it when not. When idle, send a fix together with this poll.
+                boolean working = sdao.isShiftActive() && cfg.isLocationTrackingEnabled()
+                        && LocationReporter.currentStaffUuid(app) != null;
+                applyLocationMode(cfg, working);
+                if (working && cfg.getLocationIntervalMs() > POLL_MS) reportLastLocationOnce();
             } catch (Throwable ignored) {}
         }, 0, POLL_SECONDS, TimeUnit.SECONDS);
     }

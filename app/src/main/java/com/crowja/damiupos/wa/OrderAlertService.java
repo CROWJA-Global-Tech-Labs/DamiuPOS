@@ -58,6 +58,8 @@ public class OrderAlertService extends Service {
 
     /** Helper static — ke{a}m caller cukup panggil ini, kalau service belum running otomatis start. */
     public static void start(Context ctx) {
+        // Karyawan marketing tidak menangani pesanan → jangan bunyikan alarm pesanan sama sekali.
+        if (com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(ctx)) return;
         Intent i = new Intent(ctx, OrderAlertService.class).setAction(ACTION_START);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             ctx.startForegroundService(i);
@@ -67,6 +69,9 @@ public class OrderAlertService extends Service {
     }
 
     public static void refresh(Context ctx) {
+        // Karyawan marketing tidak menangani pesanan → jangan mulai/ulangi alarm; pastikan berhenti
+        // (mis. dibuka dari Inbox saat masih ada pesanan pending hasil sinkron web).
+        if (com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(ctx)) { stop(ctx); return; }
         Intent i = new Intent(ctx, OrderAlertService.class).setAction(ACTION_REFRESH);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             ctx.startForegroundService(i);
@@ -111,6 +116,16 @@ public class OrderAlertService extends Service {
 
         // Selalu pasang foreground notif dulu (Android 8+ requirement)
         startForegroundWithNotif();
+
+        // Choke-point terakhir: apa pun jalur pemicunya (restart START_STICKY, ganti user saat alarm
+        // jalan, intent langsung), kalau user yang login sekarang MARKETING → jangan bunyikan/tahan
+        // notifikasi pesanan. startForeground sudah dipanggil di atas (memenuhi kontrak FGS) jadi
+        // aman langsung lepas & berhenti.
+        if (com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(this)) {
+            stopForegroundCompat();
+            stopSelf();
+            return START_NOT_STICKY;
+        }
 
         if (ACTION_REFRESH.equals(action)) {
             int pending = countPending();

@@ -1189,11 +1189,18 @@ public class ReceiptActivity extends AppCompatActivity {
         return base + "/tracking/" + token;
     }
 
-    /** Pesan WhatsApp: sapaan + (jika ada) link lacak pengiriman live + teks kampanye aktif. */
+    /** Pesan WhatsApp: template (Konfigurasi web, sinkron semua perangkat; placeholder {nama}
+     *  {depot}) + (jika ada) link lacak pengiriman live + teks kampanye aktif. */
     private String composeTrackingCaption(String custName) {
         String name = (custName != null && !custName.isEmpty()) ? custName : "Pelanggan";
-        StringBuilder sb = new StringBuilder("👋 Assalamu'alaikum " + name
-                + ", berikut struk pembelian air minum Anda. Terima kasih 🙏");
+        SettingsDao settings = new SettingsDao(DatabaseHelper.getInstance(this));
+        // Urutan pesan: salam template dulu, BARU rincian pembelian (teks, tanpa foto struk),
+        // baru tracking + kampanye di bawahnya.
+        StringBuilder sb = new StringBuilder(settings.getWaStrukTemplate()
+                .replace("{nama}", name)
+                .replace("{depot}", settings.getDepotName()));
+        String strukText = composeTextStruk();
+        if (!strukText.isEmpty()) sb.append("\n\n").append(strukText);
         String url = trackingUrl();
         if (url != null) {
             sb.append("\n\n🚚 Pantau progres pengiriman & lokasi kurir secara langsung di sini:\n")
@@ -1201,6 +1208,69 @@ public class ReceiptActivity extends AppCompatActivity {
         }
         appendActiveCampaigns(sb);
         return sb.toString();
+    }
+
+    /**
+     * Struk ringkas berbentuk teks untuk pesan WA (menggantikan foto struk):
+     * <pre>
+     * Produk A 1 x Rp9.000 = Rp9.000
+     * Ongkir Per Galon Rp2.000 x 3 = Rp6.000
+     * *Total: Rp21.000*
+     * Pembayaran: Tunai
+     * </pre>
+     * Data dari intent extras (items_json / fallback produk tunggal + ongkir + total + metode bayar).
+     */
+    private String composeTextStruk() {
+        try {
+            java.text.NumberFormat nf = java.text.NumberFormat.getInstance(new java.util.Locale("id", "ID"));
+            android.content.Intent in = getIntent();
+            StringBuilder sb = new StringBuilder("🧾 *Rincian Pembelian*");
+            int totalGalon = 0;
+            String itemsJson = in.getStringExtra(EXTRA_ITEMS_JSON);
+            List<TransactionItem> items = itemsJson != null ? TransactionItem.listFromJson(itemsJson) : null;
+            if (items != null && !items.isEmpty()) {
+                for (TransactionItem it : items) {
+                    if (it.jumlah <= 0) continue;
+                    totalGalon += it.jumlah;
+                    sb.append("\n").append(it.productName != null ? it.productName : "Produk")
+                            .append(" ").append(it.jumlah)
+                            .append(" x Rp").append(nf.format(Math.round(it.hargaPerGalon)))
+                            .append(" = Rp").append(nf.format(Math.round(it.jumlah * it.hargaPerGalon)));
+                }
+            } else {
+                // Transaksi lama tanpa items_json → satu baris dari extras produk tunggal.
+                String pname = in.getStringExtra(EXTRA_PRODUCT_NAME);
+                int jumlah = in.getIntExtra(EXTRA_JUMLAH, 0);
+                double harga = in.getDoubleExtra(EXTRA_HARGA_PER_GALON, 0);
+                if (jumlah > 0) {
+                    totalGalon = jumlah;
+                    sb.append("\n").append(pname != null ? pname : "Air Minum")
+                            .append(" ").append(jumlah)
+                            .append(" x Rp").append(nf.format(Math.round(harga)))
+                            .append(" = Rp").append(nf.format(Math.round(jumlah * harga)));
+                }
+            }
+            double ongkir = in.getDoubleExtra(EXTRA_ONGKIR, 0);
+            String ongkirType = in.getStringExtra(EXTRA_ONGKIR_TYPE);
+            if (ongkir > 0 && "per_galon".equals(ongkirType) && totalGalon > 0) {
+                sb.append("\nOngkir Per Galon Rp").append(nf.format(Math.round(ongkir)))
+                        .append(" x ").append(totalGalon)
+                        .append(" = Rp").append(nf.format(Math.round(ongkir * totalGalon)));
+            } else if (ongkir > 0) {
+                sb.append("\nOngkir = Rp").append(nf.format(Math.round(ongkir)));
+            }
+            double total = in.getDoubleExtra(EXTRA_TOTAL_HARGA, 0);
+            sb.append("\n*Total: Rp").append(nf.format(Math.round(total))).append("*");
+            String pay = in.getStringExtra(EXTRA_PAYMENT_METHOD);
+            if (pay != null && !pay.isEmpty()) {
+                String label = pay.substring(0, 1).toUpperCase()
+                        + pay.substring(1).toLowerCase(java.util.Locale.ROOT);
+                sb.append("\nPembayaran: ").append(label);
+            }
+            return sb.toString();
+        } catch (Throwable t) {
+            return "";   // struk teks best-effort — jangan gagalkan pengiriman pesan
+        }
     }
 
     /**
@@ -1247,28 +1317,21 @@ public class ReceiptActivity extends AppCompatActivity {
     }
 
     /**
-     * Kirim GAMBAR struk + (caption) link lacak ke pelanggan via WhatsApp. Pakai extra "jid"
-     * agar WA langsung membuka chat pelanggan (tanpa pemilih kontak) bila nomornya ada.
+     * Kirim struk TEKS (rincian pembelian di awal pesan + link lacak) ke pelanggan via
+     * WhatsApp — TANPA foto struk. Karena murni teks, extra "jid" aman dipakai → WA langsung
+     * membuka chat pelanggan (tanpa pemilih kontak) bila nomornya ada.
      * Fallback: chooser sistem. Dipanggil dari tombol akhir struk penjualan.
      */
     private void sendStrukWithTracking() {
-        final Uri uri = prepareReceiptImageUri();
-        if (uri == null) {
-            Toast.makeText(this, "Gambar struk belum siap", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        // Gambar struk + caption berisi link tracking (jadi pesan teks di WA).
         String caption = composeTrackingCaption(getIntent().getStringExtra(EXTRA_CUSTOMER_NAME));
-        String jid = waJid(getIntent().getStringExtra(EXTRA_CUSTOMER_PHONE));
         String waPackage = pickWaPackage();
 
         Intent send = new Intent(Intent.ACTION_SEND);
-        send.setType("image/png");
-        send.putExtra(Intent.EXTRA_STREAM, uri);
+        send.setType("text/plain");
         send.putExtra(Intent.EXTRA_TEXT, caption);
-        if (jid != null) send.putExtra("jid", jid);   // buka langsung chat pelanggan bila ada nomor
-        send.setClipData(android.content.ClipData.newRawUri("", uri));
-        send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        // Teks murni (tanpa lampiran gambar) → jalur direct-to-chat "jid" tidak men-drop apa pun.
+        String jid = waJid(getIntent().getStringExtra(EXTRA_CUSTOMER_PHONE));
+        if (jid != null) send.putExtra("jid", jid);
 
         if (waPackage != null) {
             // PENTING: pakai DIRECT COMPONENT, bukan setPackage. Samsung Freecess DIAM-DIAM men-drop
@@ -1277,7 +1340,7 @@ public class ReceiptActivity extends AppCompatActivity {
             // activity tujuan lalu setComponent (pola yang sama dengan exportToWhatsApp).
             android.content.pm.PackageManager pm = getPackageManager();
             Intent probe = new Intent(Intent.ACTION_SEND);
-            probe.setType("image/png");
+            probe.setType("text/plain");
             probe.setPackage(waPackage);
             android.content.pm.ResolveInfo info = pm.resolveActivity(probe, 0);
             if (info != null) {
@@ -1295,8 +1358,7 @@ public class ReceiptActivity extends AppCompatActivity {
             send.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             try { startActivity(send); return; } catch (Exception ignored) { send.setPackage(null); }
         }
-        // Fallback terakhir: chooser sistem (gambar + caption).
-        send.removeExtra("jid");
+        // Fallback terakhir: chooser sistem (teks).
         send.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
             startActivity(Intent.createChooser(send, "Kirim Struk ke Pelanggan"));
@@ -1306,19 +1368,54 @@ public class ReceiptActivity extends AppCompatActivity {
     }
 
     private Bitmap captureView(View view) {
+        // Belt-and-suspenders vs OS "force dark" (Samsung One UI inverts Light-themed views before
+        // draw(), turning the captured struk into a solid dark/gray PNG). The theme already sets
+        // android:forceDarkAllowed=false; here we also force it off on the exact view tree we draw,
+        // and fill the canvas white so any residual transparency composites to white (not grey).
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            view.setForceDarkAllowed(false);
+        }
         Bitmap bitmap = Bitmap.createBitmap(view.getWidth(), view.getHeight(), Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(bitmap);
+        canvas.drawColor(android.graphics.Color.WHITE);
         view.draw(canvas);
         return bitmap;
     }
 
     @Override
     public boolean onCreateOptionsMenu(android.view.Menu menu) {
-        // Hanya tampilkan menu hapus kalau struk dibuka dari record DB.
-        if (loadedTransactionId > 0) {
+        // Menu (Edit/Hapus) hanya untuk struk yang dibuka dari record DB. Item ditampilkan per-izin:
+        // Hapus = Admin saja; Edit terbatas = staf operator (Staf/SPV/Admin). Marketing/Viewer: tak ada.
+        boolean canDelete = currentUserCanDeleteTransaction();
+        boolean canEdit = currentUserCanEditLimited();
+        if (loadedTransactionId > 0 && (canDelete || canEdit)) {
             getMenuInflater().inflate(R.menu.menu_receipt, menu);
+            android.view.MenuItem del = menu.findItem(R.id.action_delete_transaction);
+            if (del != null) del.setVisible(canDelete);
+            android.view.MenuItem edit = menu.findItem(R.id.action_edit_transaction);
+            if (edit != null) edit.setVisible(canEdit);
         }
         return super.onCreateOptionsMenu(menu);
+    }
+
+    /** Marketing tidak boleh hapus transaksi; tanpa login (single-user) = boleh. */
+    private boolean currentUserCanDeleteTransaction() {
+        long uid = new com.crowja.damiupos.db.SettingsDao(
+                DatabaseHelper.getInstance(this)).getCurrentUserId();
+        if (uid <= 0) return true;
+        com.crowja.damiupos.model.User u =
+                new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid);
+        return u == null || u.canDeleteTransaction();
+    }
+
+    /** Edit terbatas (metode pembayaran / jumlah galon kembali): staf operator; single-user = boleh. */
+    private boolean currentUserCanEditLimited() {
+        long uid = new com.crowja.damiupos.db.SettingsDao(
+                DatabaseHelper.getInstance(this)).getCurrentUserId();
+        if (uid <= 0) return true;
+        com.crowja.damiupos.model.User u =
+                new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid);
+        return u == null || u.canEditTransactionLimited();
     }
 
     @Override
@@ -1327,11 +1424,100 @@ public class ReceiptActivity extends AppCompatActivity {
             confirmDeleteTransaction();
             return true;
         }
+        if (item.getItemId() == R.id.action_edit_transaction) {
+            showEditTransactionDialog();
+            return true;
+        }
         return super.onOptionsItemSelected(item);
+    }
+
+    /**
+     * Edit TERBATAS transaksi untuk staf operator. Tergantung jenis transaksi:
+     *  - JUAL → ubah METODE PEMBAYARAN (Tunai/QRIS/Transfer). Nominal tidak berubah.
+     *  - KEMBALI → ubah JUMLAH GALON yang dikembalikan (perbaiki salah hitung botol).
+     * Perubahan disinkron (edited_at bump → LWW) lalu struk dimuat ulang.
+     */
+    private void showEditTransactionDialog() {
+        if (loadedTransactionId <= 0) return;
+        if (!currentUserCanEditLimited()) {
+            Toast.makeText(this, "Anda tidak boleh mengubah transaksi", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        com.crowja.damiupos.model.Transaction t =
+                new TransactionDao(DatabaseHelper.getInstance(this)).getById(loadedTransactionId);
+        if (t == null) {
+            Toast.makeText(this, "Transaksi tidak ditemukan", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (com.crowja.damiupos.model.Transaction.TYPE_KEMBALI.equals(t.getType())) {
+            showEditKembaliGalon(t);
+        } else {
+            showEditPaymentMethod(t);
+        }
+    }
+
+    private void showEditPaymentMethod(com.crowja.damiupos.model.Transaction t) {
+        final String[] methods = {
+                com.crowja.damiupos.model.Transaction.PAY_TUNAI,
+                com.crowja.damiupos.model.Transaction.PAY_QRIS,
+                com.crowja.damiupos.model.Transaction.PAY_TRANSFER };
+        final String[] labels = { "Tunai", "QRIS", "Transfer" };
+        int sel = 0;
+        for (int i = 0; i < methods.length; i++) {
+            if (methods[i].equals(t.getPaymentMethod())) { sel = i; break; }
+        }
+        final int[] choice = { sel };
+        new AlertDialog.Builder(this)
+                .setTitle("Ubah Metode Pembayaran")
+                .setSingleChoiceItems(labels, sel, (d, w) -> choice[0] = w)
+                .setPositiveButton("Simpan", (d, w) -> {
+                    new TransactionDao(DatabaseHelper.getInstance(this))
+                            .updatePaymentMethod(loadedTransactionId, methods[choice[0]]);
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                    Toast.makeText(this, "Metode pembayaran diperbarui", Toast.LENGTH_SHORT).show();
+                    recreate();   // muat ulang struk dengan nilai baru
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    private void showEditKembaliGalon(com.crowja.damiupos.model.Transaction t) {
+        final android.widget.EditText input = new android.widget.EditText(this);
+        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        input.setText(String.valueOf(t.getJumlahGalon()));
+        input.setSelectAllOnFocus(true);
+        int pad = Math.round(getResources().getDisplayMetrics().density * 20);
+        android.widget.FrameLayout wrap = new android.widget.FrameLayout(this);
+        wrap.setPadding(pad, pad / 2, pad, 0);
+        wrap.addView(input);
+        new AlertDialog.Builder(this)
+                .setTitle("Ubah Jumlah Galon Kembali")
+                .setView(wrap)
+                .setPositiveButton("Simpan", (d, w) -> {
+                    int g;
+                    try { g = Integer.parseInt(input.getText().toString().trim()); }
+                    catch (Exception e) { g = -1; }
+                    if (g <= 0) {
+                        Toast.makeText(this, "Jumlah galon harus lebih dari 0", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    new TransactionDao(DatabaseHelper.getInstance(this))
+                            .updateKembaliGalon(loadedTransactionId, g);
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                    Toast.makeText(this, "Jumlah galon kembali diperbarui", Toast.LENGTH_SHORT).show();
+                    recreate();
+                })
+                .setNegativeButton("Batal", null)
+                .show();
     }
 
     private void confirmDeleteTransaction() {
         if (loadedTransactionId <= 0) return;
+        if (!currentUserCanDeleteTransaction()) {
+            Toast.makeText(this, "Hanya admin yang bisa menghapus transaksi",
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
         new AlertDialog.Builder(this)
                 .setTitle("Hapus Transaksi?")
                 .setMessage("Yakin hapus transaksi ini? Tindakan tidak bisa dibatalkan.")

@@ -28,6 +28,8 @@
             app:cardCornerRadius="6dp"
             app:cardElevation="0dp">
 
+            <!-- JANGAN pakai app:tint: ikut mewarnai thumbnail foto (setImageBitmap) jadi
+                 abu-abu solid. Tint placeholder diatur dari kode (ExpenseAdapter). -->
             <ImageView
                 android:id="@+id/ivThumb"
                 android:layout_width="match_parent"
@@ -35,8 +37,7 @@
                 android:background="@color/grey_light"
                 android:contentDescription="Foto struk"
                 android:scaleType="centerCrop"
-                android:src="@android:drawable/ic_menu_gallery"
-                app:tint="@color/grey_medium" />
+                android:src="@android:drawable/ic_menu_gallery" />
         </androidx.cardview.widget.CardView>
 
         <LinearLayout

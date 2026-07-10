@@ -3,6 +3,10 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <item
+        android:id="@+id/action_edit_transaction"
+        android:title="Edit Transaksi"
+        app:showAsAction="never" />
+    <item
         android:id="@+id/action_delete_transaction"
         android:title="Hapus Transaksi"
         app:showAsAction="never" />

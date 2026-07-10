@@ -17,6 +17,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -25,8 +26,14 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.crowja.damiupos.adapter.ContactPickerAdapter;
 import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
+import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.model.Customer;
+import com.crowja.damiupos.sync.SyncApi;
+import com.crowja.damiupos.sync.SyncSettings;
 import com.google.android.material.button.MaterialButton;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -272,12 +279,19 @@ public class ContactPickerActivity extends AppCompatActivity {
         progress.show();
 
         executor.execute(() -> {
+            // Cross-check with the server FIRST: skip any number an admin deleted on the dashboard so
+            // we don't resurrect it. Offline / not enrolled → empty set → import behaves as before.
+            final Set<String> deletedOnServer = fetchDeletedOnServer(selected);
+
             int imported = 0;
             int skipped = 0;
+            final List<ContactPickerAdapter.ContactEntry> deletedSkipped = new ArrayList<>();
             int total = selected.size();
             for (int i = 0; i < total; i++) {
                 ContactPickerAdapter.ContactEntry e = selected.get(i);
-                if (customerDao.existsByPhone(e.phone)) {
+                if (deletedOnServer.contains(e.phone)) {
+                    deletedSkipped.add(e);   // dihapus di server → jangan di-import lagi
+                } else if (customerDao.existsByPhone(e.phone)) {
                     skipped++;
                 } else {
                     customerDao.insert(new Customer(e.name, e.phone, ""));
@@ -300,16 +314,67 @@ public class ContactPickerActivity extends AppCompatActivity {
             final int skippedFinal = skipped;
             mainHandler.post(() -> {
                 progress.dismiss();
-                String msg = "Sinkronisasi selesai!\n" + importedFinal + " kontak diimpor";
-                if (skippedFinal > 0) msg += ", " + skippedFinal + " dilewati";
+                String summary = importedFinal + " kontak diimpor";
+                if (skippedFinal > 0) summary += ", " + skippedFinal + " dilewati (sudah ada)";
                 if (renamedFinal > 0) {
-                    msg += "\n" + renamedFinal + " pelanggan bernama sama diberi nomor #1, #2, …";
+                    summary += "\n" + renamedFinal + " pelanggan bernama sama diberi nomor #1, #2, …";
                 }
-                Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
-                setResult(RESULT_OK, new Intent().putExtra("imported", importedFinal));
-                finish();
+
+                if (!deletedSkipped.isEmpty()) {
+                    // Pelanggan yang sudah dihapus di server → laporkan jumlah + daftarnya.
+                    StringBuilder sb = new StringBuilder();
+                    sb.append(deletedSkipped.size())
+                            .append(" pelanggan tidak di-import karena sudah dihapus di server:\n");
+                    for (ContactPickerAdapter.ContactEntry e : deletedSkipped) {
+                        sb.append("\n• ").append(e.name);
+                        if (e.phone != null && !e.phone.isEmpty()) sb.append(" (").append(e.phone).append(")");
+                    }
+                    sb.append("\n\n").append(summary);
+                    new AlertDialog.Builder(this)
+                            .setTitle("Sebagian tidak di-import")
+                            .setMessage(sb.toString())
+                            .setCancelable(false)
+                            .setPositiveButton("Mengerti", (d, w) -> {
+                                setResult(RESULT_OK, new Intent().putExtra("imported", importedFinal));
+                                finish();
+                            })
+                            .show();
+                } else {
+                    Toast.makeText(this, "Sinkronisasi selesai!\n" + summary, Toast.LENGTH_LONG).show();
+                    setResult(RESULT_OK, new Intent().putExtra("imported", importedFinal));
+                    finish();
+                }
             });
         });
+    }
+
+    /**
+     * Ask the server which of these contacts' phone numbers were DELETED on the dashboard. Returns the
+     * exact input phone strings to skip. Best-effort: offline / not enrolled / any error → empty set,
+     * so contact import still works without a connection (it just can't honour server-side deletions).
+     */
+    private Set<String> fetchDeletedOnServer(List<ContactPickerAdapter.ContactEntry> selected) {
+        Set<String> result = new HashSet<>();
+        try {
+            SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
+            if (!cfg.isEnrolled()) return result;
+            JSONArray phones = new JSONArray();
+            for (ContactPickerAdapter.ContactEntry e : selected) {
+                if (e.phone != null && !e.phone.isEmpty()) phones.put(e.phone);
+            }
+            if (phones.length() == 0) return result;
+            JSONObject r = new SyncApi(cfg).customersDeletedCheck(phones);
+            JSONArray arr = r.optJSONArray("deleted");
+            if (arr != null) {
+                for (int i = 0; i < arr.length(); i++) {
+                    String p = arr.optString(i, "");
+                    if (!p.isEmpty()) result.add(p);
+                }
+            }
+        } catch (Throwable ignored) {
+            // Offline or server error — import normally (server deletions just aren't enforced now).
+        }
+        return result;
     }
 
     @Override

@@ -46,7 +46,6 @@ import com.crowja.damiupos.model.OrderInbox;
 import com.crowja.damiupos.model.Transaction;
 import com.crowja.damiupos.wa.NotificationAlertHelper;
 import com.crowja.damiupos.wa.ParsedOrder;
-import com.crowja.damiupos.wa.WaListenerService;
 
 import java.text.NumberFormat;
 import java.text.SimpleDateFormat;
@@ -76,14 +75,6 @@ public class MainActivity extends AppCompatActivity {
     private Toolbar mainToolbar;
     private int originalToolbarColor;
     private static final String DEFAULT_TOOLBAR_SUBTITLE = "Point of Sales Khusus Depot Air Minum";
-
-    /** Receiver untuk update toolbar saat ada pesanan baru dari WA. */
-    private final BroadcastReceiver newOrderReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            refreshOrderInboxBanner();
-        }
-    };
 
     /** Receiver: saat sinkron membawa data baru dari server (mis. order delivery
      *  dibuat di dashboard web), segarkan dashboard supaya badge Antrian Delivery
@@ -187,9 +178,12 @@ public class MainActivity extends AppCompatActivity {
             startActivity(intent);
         });
 
+        // Input Promosi Galon: buat pelanggan BARU dulu (form lengkap), lalu lanjut ke Transaksi
+        // Baru mode Promosi (toggle Gratis/Berbayar). Poin promosi otomatis dihitung di server.
         View btnPromosi = findViewById(R.id.btnPromosi);
         if (btnPromosi != null) btnPromosi.setOnClickListener(v ->
-                startActivity(new Intent(this, PromosiActivity.class)));
+                startActivity(new Intent(this, CustomerFormActivity.class)
+                        .putExtra(CustomerFormActivity.EXTRA_PROMOSI_FLOW, true)));
 
         btnFollowUp = findViewById(R.id.btnFollowUp);
         originalFollowUpTint = btnFollowUp.getBackgroundTintList();
@@ -389,9 +383,19 @@ public class MainActivity extends AppCompatActivity {
         if (cardQuickActions != null) {
             cardQuickActions.setVisibility(isMarketing ? View.GONE : View.VISIBLE);
         }
+        // Marketing tidak ikut flow delivery (antrean kiriman dikerjakan kurir/staf depot)
+        // → sembunyikan tombol Delivery beserta badge-nya (parent FrameLayout keduanya).
+        View btnDelivery = findViewById(R.id.btnAntrianDelivery);
+        if (btnDelivery != null && btnDelivery.getParent() instanceof View) {
+            ((View) btnDelivery.getParent()).setVisibility(isMarketing ? View.GONE : View.VISIBLE);
+        }
+
+        // Input Promosi Galon: Marketing & Admin selalu; staf lain bila promo_enabled (salary_config).
         View btnPromosi = findViewById(R.id.btnPromosi);
         if (btnPromosi != null) {
-            btnPromosi.setVisibility((show && (isMarketing || isAdmin)) ? View.VISIBLE : View.GONE);
+            boolean canPromosi = show
+                    && new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).canPromosi(uid);
+            btnPromosi.setVisibility(canPromosi ? View.VISIBLE : View.GONE);
         }
 
         if (!show) return;
@@ -830,13 +834,6 @@ public class MainActivity extends AppCompatActivity {
         // selama app hidup (termasuk background), tidak bergantung pada shift —
         // sehingga perubahan dari dashboard (karyawan baru, dll.) sampai real-time.
         LocationService.ensureOnline(getApplicationContext());
-        // Listen broadcast pesanan WA baru
-        IntentFilter f = new IntentFilter(WaListenerService.ACTION_NEW_ORDER);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(newOrderReceiver, f, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(newOrderReceiver, f);
-        }
         // Listen broadcast "sinkron membawa data baru" → badge Antrian Delivery
         // (dan KPI/transaksi terakhir) ikut update real-time saat dashboard terbuka.
         IntentFilter syncedFilter = new IntentFilter(com.crowja.damiupos.sync.SyncEngine.ACTION_SYNCED);
@@ -863,7 +860,6 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
-        try { unregisterReceiver(newOrderReceiver); } catch (Exception ignored) {}
         try { unregisterReceiver(syncedReceiver); } catch (Exception ignored) {}
         try { unregisterReceiver(adminMsgReceiver); } catch (Exception ignored) {}
     }
@@ -1111,13 +1107,20 @@ public class MainActivity extends AppCompatActivity {
      */
     private void refreshOrderInboxBanner() {
         if (tvToolbarTitle == null || orderInboxDao == null) return;
-        int pendingCount = orderInboxDao.countPending();
+        // Karyawan marketing tidak menangani pesanan → jangan tampilkan/bunyikan alert pesanan
+        // (order baru dari WA/web). Perlakukan seperti tidak ada pesanan pending.
+        int pendingCount = com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(this)
+                ? 0 : orderInboxDao.countPending();
         if (pendingCount == 0) {
             // Reset ke tampilan default + matikan alert
             tvToolbarTitle.setText(R.string.app_name);
             tvToolbarSubtitle.setText(DEFAULT_TOOLBAR_SUBTITLE);
             mainToolbar.setBackgroundColor(originalToolbarColor);
             NotificationAlertHelper.stopAlert();
+            // Hentikan juga service SUARA pesanan (OrderAlertService) — untuk marketing pendingCount
+            // dipaksa 0, jadi cabang ini mematikan alarm yang mungkin tertinggal jalan dari sesi user
+            // sebelumnya (non-marketing) saat kini yang login marketing / saat pesanan sudah beres.
+            com.crowja.damiupos.wa.OrderAlertService.stop(this);
             return;
         }
         OrderInbox latest = orderInboxDao.getLatestPending();

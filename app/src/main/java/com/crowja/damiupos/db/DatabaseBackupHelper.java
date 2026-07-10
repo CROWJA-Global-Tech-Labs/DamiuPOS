@@ -6,6 +6,7 @@ import android.database.Cursor;
 import android.database.DatabaseUtils;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteException;
+import android.os.Environment;
 import android.util.Log;
 
 import java.io.File;
@@ -16,9 +17,11 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -49,6 +52,16 @@ public final class DatabaseBackupHelper {
     public static final String BACKUP_MIME = "application/octet-stream";
     private static final String TAG = "DAMIU_RESTORE";
 
+    /**
+     * Helper table embedded in the exported db that carries each customer "Foto Rumah" image as a
+     * BLOB (name = photo file basename, data = bytes). Photos live OUTSIDE the db (customers only
+     * store their path), so a plain db backup loses them; bundling them as a table keeps the backup a
+     * single VALID SQLite .db — so the web "Import dari perangkat" (CustomerImportController /
+     * StaffImportController, which read it as SQLite) still works and just ignores this extra table.
+     * Restore writes the blobs back to image files, then drops the table so the live db isn't bloated.
+     */
+    private static final String TABLE_BACKUP_MEDIA = "_backup_media";
+
     private DatabaseBackupHelper() {}
 
     /** Generate a filename like "DAMIU-POS-backup-20260424_153012.db". */
@@ -58,12 +71,13 @@ public final class DatabaseBackupHelper {
     }
 
     /**
-     * Copy the live SQLite db file to {@code out}. Caller is responsible
-     * for closing the OutputStream.
+     * Write a full backup to {@code out}: a self-contained SQLite .db that, beyond the normal tables,
+     * carries each customer "Foto Rumah" image as a BLOB in {@link #TABLE_BACKUP_MEDIA}. Photos live
+     * OUTSIDE the db (customers only store their path), so a plain db backup loses them. The bytes are
+     * embedded in a STAGING COPY so the live db is never polluted. Caller closes the OutputStream.
      */
     public static void exportTo(Context ctx, OutputStream out) throws IOException {
-        // Force any pending WAL pages back into the main db file so the
-        // copied file is self-contained.
+        // Force any pending WAL pages back into the main db file so the copy is self-contained.
         try {
             SQLiteDatabase db = DatabaseHelper.getInstance(ctx).getWritableDatabase();
             db.execSQL("PRAGMA wal_checkpoint(FULL);");
@@ -71,14 +85,171 @@ public final class DatabaseBackupHelper {
             // Not in WAL mode → nothing to do
         }
         File src = ctx.getDatabasePath(DatabaseHelper.getDatabaseFileName());
-        try (FileInputStream in = new FileInputStream(src)) {
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = in.read(buf)) > 0) {
-                out.write(buf, 0, n);
+        File staged = new File(src.getParentFile(), DatabaseHelper.getDatabaseFileName() + ".export-tmp");
+        deleteDbWithSidecars(staged);
+        try {
+            copyFile(src, staged);
+            embedCustomerPhotos(ctx, staged);   // adds TABLE_BACKUP_MEDIA blobs to the COPY
+            try (FileInputStream in = new FileInputStream(staged)) {
+                copyStream(in, out);
             }
-            out.flush();
+        } finally {
+            deleteDbWithSidecars(staged);
         }
+    }
+
+    /** Copy the customers' "Foto Rumah" image files into {@code dbFile} as {@link #TABLE_BACKUP_MEDIA} blobs. */
+    private static void embedCustomerPhotos(Context ctx, File dbFile) {
+        List<File> photos = collectCustomerPhotoFiles(ctx);
+        if (photos.isEmpty()) return;
+        SQLiteDatabase db = null;
+        try {
+            db = SQLiteDatabase.openDatabase(dbFile.getAbsolutePath(), null, SQLiteDatabase.OPEN_READWRITE);
+            db.execSQL("CREATE TABLE IF NOT EXISTS " + TABLE_BACKUP_MEDIA + " (name TEXT PRIMARY KEY, data BLOB)");
+            db.execSQL("DELETE FROM " + TABLE_BACKUP_MEDIA);
+            db.beginTransaction();
+            try {
+                Set<String> added = new HashSet<>();
+                for (File photo : photos) {
+                    String name = photo.getName();
+                    if (!added.add(name)) continue;     // app names photos uniquely
+                    byte[] bytes = readAllBytes(photo);
+                    if (bytes == null) continue;
+                    ContentValues cv = new ContentValues();
+                    cv.put("name", name);
+                    cv.put("data", bytes);
+                    db.insertWithOnConflict(TABLE_BACKUP_MEDIA, null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+                }
+                db.setTransactionSuccessful();
+            } finally {
+                db.endTransaction();
+            }
+            try { db.execSQL("PRAGMA wal_checkpoint(FULL);"); } catch (SQLiteException ignored) {}
+        } catch (SQLiteException e) {
+            Log.w(TAG, "embedCustomerPhotos failed", e);
+        } finally {
+            if (db != null) { try { db.close(); } catch (Exception ignored) {} }
+        }
+    }
+
+    /** Existing files referenced by {@code customers.photo_path} (locally captured "Foto Rumah"). */
+    private static List<File> collectCustomerPhotoFiles(Context ctx) {
+        List<File> files = new ArrayList<>();
+        try {
+            SQLiteDatabase db = DatabaseHelper.getInstance(ctx).getReadableDatabase();
+            try (Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMERS,
+                    new String[]{DatabaseHelper.COL_PHOTO_PATH},
+                    DatabaseHelper.COL_PHOTO_PATH + " IS NOT NULL AND "
+                            + DatabaseHelper.COL_PHOTO_PATH + " <> ''",
+                    null, null, null, null)) {
+                while (c.moveToNext()) {
+                    String p = c.getString(0);
+                    if (p == null || p.trim().isEmpty()) continue;
+                    File f = new File(p);
+                    if (f.exists() && f.isFile()) files.add(f);
+                }
+            }
+        } catch (SQLiteException ignored) {
+            // No customers table / unreadable → no photos to bundle.
+        }
+        return files;
+    }
+
+    /**
+     * Restore any {@link #TABLE_BACKUP_MEDIA} blobs in {@code dbFile} back to image files under
+     * getExternalFilesDir(Pictures)/{basename} — the exact path {@code customers.photo_path} points to,
+     * so restored rows find their photo again — then DROP the table so it doesn't bloat / re-export.
+     *
+     * <p>Backward compatibility: older backups predate the photo table. They are detected with a
+     * READ-ONLY probe and left completely untouched (never opened read-write, never modified), so a
+     * legacy .db restores exactly as before — just without photos. Tolerant of errors: best-effort.
+     */
+    private static void restoreAndStripMedia(Context ctx, File dbFile) {
+        if (!hasTable(dbFile, TABLE_BACKUP_MEDIA)) {
+            return;   // legacy backup without bundled photos → leave the file untouched
+        }
+        SQLiteDatabase db = null;
+        try {
+            db = SQLiteDatabase.openDatabase(dbFile.getAbsolutePath(), null, SQLiteDatabase.OPEN_READWRITE);
+            File picturesDir = ctx.getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+            if (picturesDir != null && !picturesDir.exists()) picturesDir.mkdirs();
+            if (picturesDir != null) {
+                try (Cursor c = db.query(TABLE_BACKUP_MEDIA, new String[]{"name", "data"},
+                        null, null, null, null, null)) {
+                    while (c.moveToNext()) {
+                        String name = c.getString(0);
+                        byte[] data = c.getBlob(1);
+                        if (name == null || data == null) continue;
+                        String base = new File(name).getName();   // guards path traversal
+                        if (base.isEmpty()) continue;
+                        try (FileOutputStream fos = new FileOutputStream(new File(picturesDir, base))) {
+                            fos.write(data);
+                        } catch (IOException ioe) {
+                            Log.w(TAG, "restore photo failed: " + base, ioe);
+                        }
+                    }
+                }
+            }
+            db.execSQL("DROP TABLE IF EXISTS " + TABLE_BACKUP_MEDIA);
+            // Collapse WAL into the main file so a subsequent full-restore file swap keeps the drop.
+            try { db.execSQL("PRAGMA wal_checkpoint(FULL);"); } catch (SQLiteException ignored) {}
+        } catch (Exception e) {
+            Log.w(TAG, "restoreAndStripMedia failed", e);
+        } finally {
+            if (db != null) { try { db.close(); } catch (Exception ignored) {} }
+        }
+    }
+
+    /** READ-ONLY probe: does {@code dbFile} contain a table named {@code table}? False on any error
+     *  (e.g. legacy backup). Never opens the file read-write, so legacy backups stay byte-untouched. */
+    private static boolean hasTable(File dbFile, String table) {
+        SQLiteDatabase db = null;
+        try {
+            db = SQLiteDatabase.openDatabase(dbFile.getAbsolutePath(), null, SQLiteDatabase.OPEN_READONLY);
+            try (Cursor c = db.rawQuery(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    new String[]{table})) {
+                return c.moveToFirst();
+            }
+        } catch (SQLiteException e) {
+            return false;
+        } finally {
+            if (db != null) { try { db.close(); } catch (Exception ignored) {} }
+        }
+    }
+
+    private static byte[] readAllBytes(File f) {
+        try (FileInputStream in = new FileInputStream(f);
+             java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream()) {
+            copyStream(in, bos);
+            return bos.toByteArray();
+        } catch (IOException e) {
+            Log.w(TAG, "read photo failed: " + f.getName(), e);
+            return null;
+        }
+    }
+
+    private static void copyFile(File src, File dst) throws IOException {
+        try (FileInputStream in = new FileInputStream(src);
+             FileOutputStream out = new FileOutputStream(dst)) {
+            copyStream(in, out);
+        }
+    }
+
+    private static void copyStream(InputStream in, OutputStream out) throws IOException {
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = in.read(buf)) > 0) {
+            out.write(buf, 0, n);
+        }
+        out.flush();
+    }
+
+    private static void deleteDbWithSidecars(File db) {
+        deleteIfExists(db);
+        deleteIfExists(new File(db.getAbsolutePath() + "-journal"));
+        deleteIfExists(new File(db.getAbsolutePath() + "-wal"));
+        deleteIfExists(new File(db.getAbsolutePath() + "-shm"));
     }
 
     /**
@@ -723,7 +894,10 @@ public final class DatabaseBackupHelper {
         return s == null ? "" : s.trim().toLowerCase(Locale.ROOT);
     }
 
-    /** Drain {@code in} to a temp file beside the db and validate it's a DAMIU POS backup. */
+    /**
+     * Drain {@code in} to a temp file beside the db, validate it's a DAMIU POS backup, then restore
+     * any bundled "Foto Rumah" photos ({@link #TABLE_BACKUP_MEDIA}) to image files and strip the table.
+     */
     private static File drainToValidatedTemp(Context ctx, InputStream in, String suffix)
             throws IOException, InvalidBackupException {
         File dbFile = ctx.getDatabasePath(DatabaseHelper.getDatabaseFileName());
@@ -732,12 +906,7 @@ public final class DatabaseBackupHelper {
 
         File tmp = new File(parent, DatabaseHelper.getDatabaseFileName() + suffix);
         try (FileOutputStream fos = new FileOutputStream(tmp)) {
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = in.read(buf)) > 0) {
-                fos.write(buf, 0, n);
-            }
-            fos.flush();
+            copyStream(in, fos);
         }
 
         SQLiteDatabase test = null;
@@ -766,6 +935,10 @@ public final class DatabaseBackupHelper {
         } finally {
             if (test != null) { try { test.close(); } catch (Exception ignored) {} }
         }
+
+        // Restore bundled "Foto Rumah" photos back to image files + strip the helper table. Runs for
+        // every restore mode (full/merge/pick); a no-op for legacy backups without the table.
+        restoreAndStripMedia(ctx, tmp);
         return tmp;
     }
 

@@ -44,12 +44,7 @@ public class SettingsDao {
     /** Last rewarded ad watched — untuk enforce cooldown (REWARD_COOLDOWN_MS). */
     public static final String KEY_LAST_REWARD_AT = "last_reward_at";
     public static final String KEY_WA_AUTO_DETECT = "wa_auto_detect";
-    public static final String KEY_WA_PARSE_MODE = "wa_parse_mode";   // default | ai | hybrid
-    public static final String KEY_CLAUDE_API_KEY = "claude_api_key";
     public static final String KEY_WA_RINGTONE_URI = "wa_ringtone_uri";
-    /** Last Claude call error message (untuk diagnose di UI Settings). Empty = success. */
-    public static final String KEY_LAST_CLAUDE_ERROR = "last_claude_error";
-    public static final String KEY_LAST_CLAUDE_AT = "last_claude_at";
     public static final String KEY_WA_REPLY_TEMPLATE = "wa_reply_template";
     public static final String DEFAULT_WA_REPLY_TEMPLATE = "Baik, siap kak";
     /** Komisi reseller per galon (Rupiah). Default 1000. */
@@ -62,6 +57,12 @@ public class SettingsDao {
             "Bismillah, menginformasikan kakak terakhir membeli air minum di "
             + "{hari}, {tanggal} (sudah {hari_lalu} hari). "
             + "Mau saya kirim lagi hari ini kak? Terima kasih";
+    /** Template pesan WA yang dikirim bersama gambar struk. Placeholder: {nama} {depot}.
+     *  Diatur di dashboard (Konfigurasi → Pesan WA Struk), tersinkron ke semua perangkat;
+     *  link tracking & kampanye tetap ditambahkan otomatis setelah pesan ini. */
+    public static final String KEY_WA_STRUK_TEMPLATE = "wa_struk_template";
+    public static final String DEFAULT_WA_STRUK_TEMPLATE =
+            "👋 Assalamu'alaikum,\nPelanggan Yth, berikut struk pembelian air minum Anda. Terima kasih 🙏";
     /** Waktu (jam) sebelum item APPROVED/REJECTED di-arsipkan otomatis.
      *  Default 24 jam; 0 = matikan auto-archive. */
     public static final String KEY_WA_AUTO_ARCHIVE_HOURS = "wa_auto_archive_hours";
@@ -101,14 +102,10 @@ public class SettingsDao {
      *  istirahat. Dipakai service polling agar tetap aktif selama shift. */
     public static final String KEY_SHIFT_ACTIVE = "shift_active";
 
-    public static final String PARSE_MODE_DEFAULT = "default"; // regex saja
-    public static final String PARSE_MODE_AI = "ai";           // AI saja
-    public static final String PARSE_MODE_HYBRID = "hybrid";   // regex dulu, AI fallback
-
     /**
      * Kunci konfigurasi bisnis BRANCH yang aman disinkronkan lintas perangkat
      * (app_settings). ALLOWLIST — apa pun di luar daftar ini TIDAK PERNAH dikirim
-     * ke server. Sengaja EXCLUDE: rahasia (sync_*, claude_api_key, pro_*), state
+     * ke server. Sengaja EXCLUDE: rahasia (sync_*, pro_*), state
      * sesi/perangkat (current_user_*, wizard, cursor, last_*), dan toggle
      * device-spesifik (wa_auto_detect, ringtone).
      */
@@ -116,13 +113,13 @@ public class SettingsDao {
             KEY_DEFAULT_ONGKIR,
             KEY_POINTS_ENABLED, KEY_POINTS_PER_AMOUNT, KEY_POINTS_REWARD_THRESHOLD,
             KEY_DEPOT_NAME, KEY_DEPOT_ADDRESS, KEY_DEPOT_PHONE, KEY_DEPOT_LOGO_URL,
-            KEY_FOLLOWUP_DAYS, KEY_FOLLOWUP_TEMPLATE,
+            KEY_FOLLOWUP_DAYS, KEY_FOLLOWUP_TEMPLATE, KEY_WA_STRUK_TEMPLATE,
             KEY_STOCK_ALERT, KEY_HARGA_BOTOL_GALON, KEY_RESELLER_KOMISI,
             KEY_MULTIUSER_ENABLED,
             KEY_DAILY_NORMAL_HOURS, KEY_WORK_DAYS_PER_WEEK, KEY_LITERS_PER_GALON,
             KEY_SALES_BONUS_ENABLED, KEY_SALES_BONUS_PER_GALON,
             KEY_PAYROLL_CUTOFF_DAY,
-            KEY_WA_REPLY_TEMPLATE, KEY_WA_AUTO_ARCHIVE_HOURS, KEY_WA_PARSE_MODE
+            KEY_WA_REPLY_TEMPLATE, KEY_WA_AUTO_ARCHIVE_HOURS
     ));
 
     private final DatabaseHelper dbHelper;
@@ -483,38 +480,6 @@ public class SettingsDao {
         set(KEY_WA_AUTO_DETECT, enabled ? "1" : "0");
     }
 
-    /** {@link #PARSE_MODE_DEFAULT} | {@link #PARSE_MODE_AI} | {@link #PARSE_MODE_HYBRID} */
-    public String getWaParseMode() {
-        String v = get(KEY_WA_PARSE_MODE, PARSE_MODE_HYBRID);
-        if (PARSE_MODE_DEFAULT.equals(v) || PARSE_MODE_AI.equals(v) || PARSE_MODE_HYBRID.equals(v)) {
-            return v;
-        }
-        return PARSE_MODE_HYBRID;
-    }
-
-    public void setWaParseMode(String mode) {
-        set(KEY_WA_PARSE_MODE, mode != null ? mode : PARSE_MODE_HYBRID);
-    }
-
-    public String getClaudeApiKey() {
-        return get(KEY_CLAUDE_API_KEY, "");
-    }
-
-    public void setClaudeApiKey(String key) {
-        set(KEY_CLAUDE_API_KEY, key != null ? key.trim() : "");
-    }
-
-    /** Status terakhir panggilan Claude API. Empty = success / belum pernah call. */
-    public String getLastClaudeError() { return get(KEY_LAST_CLAUDE_ERROR, ""); }
-    public void setLastClaudeError(String err) {
-        set(KEY_LAST_CLAUDE_ERROR, err != null ? err : "");
-        set(KEY_LAST_CLAUDE_AT, String.valueOf(System.currentTimeMillis()));
-    }
-    public long getLastClaudeAt() {
-        try { return Long.parseLong(get(KEY_LAST_CLAUDE_AT, "0")); }
-        catch (NumberFormatException e) { return 0L; }
-    }
-
     /** URI nada dering yang dipilih user untuk notifikasi pesanan WA.
      *  Empty = pakai default sistem. */
     public String getWaRingtoneUri() { return get(KEY_WA_RINGTONE_URI, ""); }
@@ -693,6 +658,12 @@ public class SettingsDao {
     }
     public void setFollowUpTemplate(String s) {
         set(KEY_FOLLOWUP_TEMPLATE, s != null ? s.trim() : "");
+    }
+
+    /** Template pesan WA struk. Lihat {@link #KEY_WA_STRUK_TEMPLATE} untuk placeholder. */
+    public String getWaStrukTemplate() {
+        String v = get(KEY_WA_STRUK_TEMPLATE, DEFAULT_WA_STRUK_TEMPLATE);
+        return v != null && !v.isEmpty() ? v : DEFAULT_WA_STRUK_TEMPLATE;
     }
 
 }

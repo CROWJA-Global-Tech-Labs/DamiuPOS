@@ -124,7 +124,7 @@ public class CustomerAdapter extends RecyclerView.Adapter<CustomerAdapter.ViewHo
     }
 
     class ViewHolder extends RecyclerView.ViewHolder {
-        TextView tvInitial, tvName, tvPhone, tvSaldoGalon, tvStats, tvResellerBadge;
+        TextView tvInitial, tvName, tvPhone, tvSaldoGalon, tvStats, tvResellerBadge, tvAfiliasiBadge, tvOrigin, tvMediaStatus;
         MaterialCardView card;
         int defaultStrokeColor;
         int defaultStrokeWidth;
@@ -138,6 +138,9 @@ public class CustomerAdapter extends RecyclerView.Adapter<CustomerAdapter.ViewHo
             tvSaldoGalon = itemView.findViewById(R.id.tvSaldoGalon);
             tvStats = itemView.findViewById(R.id.tvStats);
             tvResellerBadge = itemView.findViewById(R.id.tvResellerBadge);
+            tvAfiliasiBadge = itemView.findViewById(R.id.tvAfiliasiBadge);
+            tvOrigin = itemView.findViewById(R.id.tvOrigin);
+            tvMediaStatus = itemView.findViewById(R.id.tvMediaStatus);
             defaultStrokeColor = card.getStrokeColor();
             defaultStrokeWidth = card.getStrokeWidth();
 
@@ -169,28 +172,73 @@ public class CustomerAdapter extends RecyclerView.Adapter<CustomerAdapter.ViewHo
             String name = customer.getName();
             tvInitial.setText(name != null && !name.isEmpty()
                     ? String.valueOf(name.charAt(0)).toUpperCase() : "?");
-            tvName.setText(name);
+            // Nama gabungan bila orang yang sama bernama beda antar-perangkat ("NAMA1 / NAMA2");
+            // fallback ke nama asli untuk daftar non-dedup. Inisial avatar tetap dari nama wakil.
+            tvName.setText(customer.getDisplayName());
             tvPhone.setText(customer.getPhone() != null ? customer.getPhone() : "-");
-            tvSaldoGalon.setText(String.valueOf(customer.getSaldoGalon()));
+            // Angka galon BESAR = TOTAL galon yang diambil pelanggan (akuisisi/pembelian), bukan
+            // hanya saldo pinjam (yang 0 untuk galon yang dibeli, mis. reseller) — supaya "jumlah
+            // galon" akuisisi selalu terlihat. Saldo pinjam pindah ke baris stats.
+            int totalOrdered = customer.getGalonTotalOrdered();
+            int trxCount = customer.getTotalTransaksi();
+            int pinjam = customer.getSaldoGalon();
+            tvSaldoGalon.setText(String.valueOf(totalOrdered));
 
             // Penanda reseller pada card pelanggan.
             if (tvResellerBadge != null) {
                 tvResellerBadge.setVisibility(customer.isReseller() ? View.VISIBLE : View.GONE);
             }
+            // Penanda "TERAFILIASI" — pelanggan tertaut ke reseller (linked_reseller_uuid terisi;
+            // sudah diangkat ke wakil lintas salinan oleh applyMergedAggregates).
+            if (tvAfiliasiBadge != null) {
+                String linked = customer.getLinkedResellerUuid();
+                tvAfiliasiBadge.setVisibility(linked != null && !linked.isEmpty() ? View.VISIBLE : View.GONE);
+            }
 
-            // Stats: total galon yang diberi · konsumsi gl/hr.
-            // Selalu tampil supaya info konsisten di tiap kartu pelanggan.
-            int totalOrdered = customer.getGalonTotalOrdered();
-            if (totalOrdered > 0) {
+            // Stats: jumlah transaksi · sisa pinjam (bila ada) · konsumsi gl/hr (agregat gabungan
+            // lintas-perangkat, jadi sama seperti dashboard web). Selalu tampil.
+            if (totalOrdered > 0 || trxCount > 0) {
                 double perDay = customer.getKonsumsiPerHari();
                 String konsumsiStr = perDay >= 0.1
                         ? String.format(java.util.Locale.US, "%.1f gl/hr", perDay)
                         : "<0.1 gl/hr";
-                tvStats.setText(totalOrdered + " galon diberi  ·  " + konsumsiStr);
+                tvStats.setText(trxCount + "x transaksi"
+                        + (pinjam > 0 ? "  ·  pinjam " + pinjam : "")
+                        + "  ·  " + konsumsiStr);
             } else {
                 tvStats.setText("Belum ada order");
             }
             tvStats.setVisibility(View.VISIBLE);
+
+            // Tag kelengkapan: sudah ada FOTO rumah? sudah ada KOORDINAT? (hijau=ada, merah=belum).
+            // hasPhoto = file lokal ATAU photo_url server (pelanggan dari perangkat lain tetap benar).
+            if (tvMediaStatus != null) {
+                boolean hasPhoto = customer.hasPhoto();
+                boolean hasCoord = customer.hasCoordinates();
+                int green = 0xFF2E7D32, red = 0xFFC62828;
+                android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
+                int a = sb.length();
+                sb.append(hasPhoto ? "📷 Foto ✓" : "📷 Tanpa foto ✕");
+                sb.setSpan(new android.text.style.ForegroundColorSpan(hasPhoto ? green : red),
+                        a, sb.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                sb.append("    ");
+                int b = sb.length();
+                sb.append(hasCoord ? "📍 Lokasi ✓" : "📍 Tanpa lokasi ✕");
+                sb.setSpan(new android.text.style.ForegroundColorSpan(hasCoord ? green : red),
+                        b, sb.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                tvMediaStatus.setText(sb);
+            }
+
+            // Tag perangkat asal (gabungan lintas salinan) — mis. "📱 SPPG + Web".
+            java.util.List<String> origins = customer.getOriginLabels();
+            if (tvOrigin != null) {
+                if (origins != null && !origins.isEmpty()) {
+                    tvOrigin.setText("📱 " + android.text.TextUtils.join(" + ", origins));
+                    tvOrigin.setVisibility(View.VISIBLE);
+                } else {
+                    tvOrigin.setVisibility(View.GONE);
+                }
+            }
 
             // Visual selection state — stroke biru tebal kalau terpilih
             boolean selected = selectionMode && selectedIds.contains(customer.getId());

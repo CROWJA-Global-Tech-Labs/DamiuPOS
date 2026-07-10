@@ -223,6 +223,9 @@
                 app:cardCornerRadius="8dp"
                 app:cardElevation="0dp">
 
+                <!-- JANGAN pakai app:tint di sini: tint ImageView ikut mewarnai bitmap dari
+                     setImageBitmap() → foto struk yang dilampirkan tampil abu-abu solid.
+                     Tint ikon placeholder diatur dari kode (ExpenseFormActivity). -->
                 <ImageView
                     android:id="@+id/ivFotoStruk"
                     android:layout_width="match_parent"
@@ -230,8 +233,7 @@
                     android:background="@color/grey_light"
                     android:contentDescription="Foto struk pengeluaran"
                     android:scaleType="centerCrop"
-                    android:src="@android:drawable/ic_menu_camera"
-                    app:tint="@color/grey_medium" />
+                    android:src="@android:drawable/ic_menu_camera" />
             </androidx.cardview.widget.CardView>
 
             <LinearLayout

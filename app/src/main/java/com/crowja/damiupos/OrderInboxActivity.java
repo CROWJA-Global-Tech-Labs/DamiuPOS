@@ -124,7 +124,7 @@ public class OrderInboxActivity extends AppCompatActivity {
         }
         // Update title supaya jelas mode mana
         if (toolbar != null) {
-            toolbar.setTitle(showArchive ? "Arsip Pesanan WA" : "Pesanan dari WhatsApp");
+            toolbar.setTitle(showArchive ? "Arsip Pesanan" : "Pesanan Terjadwal");
         }
     }
 
@@ -349,7 +349,9 @@ public class OrderInboxActivity extends AppCompatActivity {
      * Kalau pelanggan terpilih tidak punya nomor, fallback ke WA main + clipboard.
      */
     private void promptPickCustomerForReply(OrderInbox o) {
-        java.util.List<Customer> customers = customerDao.getAll();
+        // getAllForMatching: lampirkan pesanan = pencocokan identitas — pelanggan "Sudah Order
+        // Ulang" (tersembunyi dari daftar) tetap bisa dipilih agar tidak dibuat duplikat baru.
+        java.util.List<Customer> customers = customerDao.getAllForMatching();
         if (customers.isEmpty()) {
             // Tidak ada pelanggan sama sekali → fallback langsung
             openWhatsAppMainFallback();

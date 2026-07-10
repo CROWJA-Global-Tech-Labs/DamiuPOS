@@ -32,3 +32,6 @@ curlerr
 # Local data dumps — NEVER commit (real customer/depot data; repo is public)
 db-backups/
 device-backups/
+
+# Local device DB backups (contain real customer data — never commit; repo is public)
+backups/

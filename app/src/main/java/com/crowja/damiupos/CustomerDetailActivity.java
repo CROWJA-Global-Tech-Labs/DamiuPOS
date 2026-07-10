@@ -33,13 +33,19 @@ import java.util.List;
 
 public class CustomerDetailActivity extends AppCompatActivity {
 
+    /** Menu: tandai "Sudah Order Ulang" (serah-terima pelanggan marketing → perangkat lain). */
+    private static final int MENU_HANDOFF = 10;
+
     private long customerId;
+    private DatabaseHelper dbHelper;
     private CustomerDao customerDao;
     private TransactionDao transactionDao;
+    private com.crowja.damiupos.db.SettingsDao settingsDao;
+    private Customer currentCustomer;
 
-    private TextView tvNama, tvTelepon, tvAlamat;
+    private TextView tvNama, tvTelepon, tvAlamat, tvOrigin, tvAfiliasi;
     private TextView tvGalonKeluar, tvGalonKembali, tvSaldoGalon;
-    private TextView tvEmptyHistory;
+    private TextView tvEmptyHistory, tvHistoryHeader, tvHistoryNote;
     private RecyclerView rvTransactions;
     private TransactionAdapter adapter;
     private ShapeableImageView ivFoto;
@@ -56,9 +62,10 @@ public class CustomerDetailActivity extends AppCompatActivity {
         setSupportActionBar(toolbar);
         toolbar.setNavigationOnClickListener(v -> finish());
 
-        DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
+        dbHelper = DatabaseHelper.getInstance(this);
         customerDao = new CustomerDao(dbHelper);
         transactionDao = new TransactionDao(dbHelper);
+        settingsDao = new com.crowja.damiupos.db.SettingsDao(dbHelper);
 
         customerId = getIntent().getLongExtra("customer_id", -1);
         if (customerId == -1) {
@@ -69,6 +76,10 @@ public class CustomerDetailActivity extends AppCompatActivity {
         tvNama = findViewById(R.id.tvNama);
         tvTelepon = findViewById(R.id.tvTelepon);
         tvAlamat = findViewById(R.id.tvAlamat);
+        tvOrigin = findViewById(R.id.tvOrigin);
+        tvAfiliasi = findViewById(R.id.tvAfiliasi);
+        tvHistoryHeader = findViewById(R.id.tvHistoryHeader);
+        tvHistoryNote = findViewById(R.id.tvHistoryNote);
         ivFoto = findViewById(R.id.ivFoto);
         cardMap = findViewById(R.id.cardMap);
         webMap = findViewById(R.id.webMap);
@@ -80,6 +91,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
 
         adapter = new TransactionAdapter(false);
         rvTransactions.setLayoutManager(new LinearLayoutManager(this));
+        // Tanpa setHasFixedSize: RV riwayat ini tingginya wrap_content (di dalam ScrollView),
+        // ukurannya berubah mengikuti isi → setHasFixedSize(true) salah di sini.
         rvTransactions.setAdapter(adapter);
 
         adapter.setOnItemClickListener(trx -> {
@@ -123,31 +136,178 @@ public class CustomerDetailActivity extends AppCompatActivity {
         loadData();
     }
 
+    @Override
+    public boolean onCreateOptionsMenu(android.view.Menu menu) {
+        menu.add(0, MENU_HANDOFF, 0, "✔ Sudah Order Ulang")
+                .setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_NEVER);
+        return true;
+    }
+
+    @Override
+    public boolean onPrepareOptionsMenu(android.view.Menu menu) {
+        android.view.MenuItem item = menu.findItem(MENU_HANDOFF);
+        if (item != null) {
+            item.setVisible(canShowHandoff());
+        }
+        return super.onPrepareOptionsMenu(menu);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(android.view.MenuItem item) {
+        if (item.getItemId() == MENU_HANDOFF) {
+            confirmHandoff();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    /**
+     * Menu "Sudah Order Ulang" tampil hanya bila: peran boleh (Admin/Marketing — single-user
+     * tanpa login = boleh), sinkronisasi online aktif (serah-terima butuh server), pelanggan
+     * bukan "Umum", dan belum pernah diserahterimakan.
+     */
+    private boolean canShowHandoff() {
+        if (currentCustomer == null || currentCustomer.isHandedOver()) return false;
+        if (CustomerDao.UMUM_NAME.equalsIgnoreCase(
+                currentCustomer.getName() != null ? currentCustomer.getName().trim() : "")) {
+            return false;
+        }
+        com.crowja.damiupos.sync.SyncSettings sync =
+                new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+        if (!sync.isEnabled() || sync.getDeviceUuid().isEmpty()) return false;
+        long uid = settingsDao.getCurrentUserId();
+        if (uid <= 0) return true;   // single-user (tanpa login) = akses penuh
+        com.crowja.damiupos.model.User u = new com.crowja.damiupos.db.UserDao(dbHelper).getById(uid);
+        return u == null || u.canHandoffCustomer();
+    }
+
+    /**
+     * Konfirmasi lalu tandai "Sudah Order Ulang": pelanggan disembunyikan dari daftar perangkat
+     * INI dan (lewat sync) dikirim ke SEMUA perangkat lain di cabang + dashboard. Data & riwayat
+     * tidak dihapus. Offline-first — kalau sedang offline, serah-terima terjadi di sync berikutnya.
+     */
+    private void confirmHandoff() {
+        // Pilih KAPAN pelanggan terakhir order (default hari ini/sekarang) via date + time picker,
+        // lalu konfirmasi. Waktu itu jadi tanggal serah-terima (handed_over_at).
+        final java.util.Calendar cal = java.util.Calendar.getInstance();
+        android.app.DatePickerDialog dp = new android.app.DatePickerDialog(this, (view, y, m, d) -> {
+            cal.set(java.util.Calendar.YEAR, y);
+            cal.set(java.util.Calendar.MONTH, m);
+            cal.set(java.util.Calendar.DAY_OF_MONTH, d);
+            new android.app.TimePickerDialog(this, (tv, h, min) -> {
+                cal.set(java.util.Calendar.HOUR_OF_DAY, h);
+                cal.set(java.util.Calendar.MINUTE, min);
+                cal.set(java.util.Calendar.SECOND, 0);
+                confirmHandoffAt(cal);
+            }, cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE), true).show();
+        }, cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH), cal.get(java.util.Calendar.DAY_OF_MONTH));
+        dp.setTitle("Kapan terakhir order?");
+        dp.getDatePicker().setMaxDate(System.currentTimeMillis());   // order terakhir tak mungkin di masa depan
+        dp.show();
+    }
+
+    /** Konfirmasi akhir + tandai "Sudah Order Ulang" pada waktu order terakhir yang dipilih. */
+    private void confirmHandoffAt(java.util.Calendar cal) {
+        String name = currentCustomer != null && currentCustomer.getName() != null
+                ? currentCustomer.getName() : "Pelanggan";
+        final String ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                .format(cal.getTime());
+        String tsLabel = new java.text.SimpleDateFormat("d MMM yyyy HH:mm", new java.util.Locale("id"))
+                .format(cal.getTime());
+        new AlertDialog.Builder(this)
+                .setTitle("Sudah Order Ulang?")
+                .setMessage("Tandai \"" + name + "\" sudah order ulang pada " + tsLabel + "?\n\n"
+                        + "• Pelanggan akan HILANG dari daftar di perangkat ini\n"
+                        + "• Otomatis DIKIRIM ke perangkat depot lain & dashboard\n"
+                        + "• Riwayat transaksi tidak dihapus")
+                .setNegativeButton("Batal", null)
+                .setPositiveButton("Tandai", (d, w) -> {
+                    com.crowja.damiupos.sync.SyncSettings sync =
+                            new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+                    customerDao.markHandedOver(customerId, sync.getDeviceUuid(), ts);
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                    Toast.makeText(this, name + " ditandai sudah order ulang — dikirim ke perangkat lain",
+                            Toast.LENGTH_LONG).show();
+                    finish();   // kembali ke daftar (pelanggan sudah tidak tampil di sini)
+                })
+                .show();
+    }
+
     private void loadData() {
-        Customer customer = customerDao.getById(customerId);
+        // Agregat GABUNGAN lintas-perangkat (jumlah transaksi/galon/konsumsi dijumlah dari semua
+        // salinan orang ini) → angka SAMA seperti dashboard web & antar perangkat.
+        Customer customer = customerDao.getByIdMerged(customerId);
         if (customer == null) {
             finish();
             return;
         }
+        currentCustomer = customer;
+        invalidateOptionsMenu();   // menu "Sudah Order Ulang" bergantung status pelanggan
 
-        tvNama.setText(customer.getName());
+        // Nama gabungan lintas-perangkat ("NAMA1 / NAMA2") bila orang yang sama bernama beda;
+        // getByIdMerged mengisinya lewat applyMergedAggregates. Fallback ke nama asli.
+        tvNama.setText(customer.getDisplayName());
         tvTelepon.setText(customer.getPhone() != null && !customer.getPhone().isEmpty()
                 ? customer.getPhone() : "-");
         tvAlamat.setText(customer.getAddress() != null && !customer.getAddress().isEmpty()
                 ? customer.getAddress() : "-");
 
-        loadPhoto(customer.getPhotoPath());
+        // Tag perangkat asal pelanggan (gabungan lintas salinan).
+        java.util.List<String> origins = customer.getOriginLabels();
+        if (origins != null && !origins.isEmpty()) {
+            tvOrigin.setText("📱 Perangkat: " + android.text.TextUtils.join(" + ", origins));
+            tvOrigin.setVisibility(View.VISIBLE);
+        } else {
+            tvOrigin.setVisibility(View.GONE);
+        }
+
+        // Reseller yang terafiliasi (linked_reseller_uuid, sudah diangkat ke wakil lintas salinan).
+        // Resolusi nama by sync_uuid; sembunyikan bila tak tertaut / reseller belum ada di HP ini.
+        String linkedUuid = customer.getLinkedResellerUuid();
+        String linkedName = (linkedUuid != null && !linkedUuid.isEmpty())
+                ? customerDao.nameBySyncUuid(linkedUuid) : null;
+        if (linkedName != null && !linkedName.isEmpty()) {
+            tvAfiliasi.setText("🤝 Terafiliasi ke reseller: " + linkedName);
+            tvAfiliasi.setVisibility(View.VISIBLE);
+        } else if (linkedUuid != null && !linkedUuid.isEmpty()) {
+            tvAfiliasi.setText("🤝 Terafiliasi ke reseller");
+            tvAfiliasi.setVisibility(View.VISIBLE);
+        } else {
+            tvAfiliasi.setVisibility(View.GONE);
+        }
+
+        loadPhoto(customer.getPhotoPath(), customer.getPhotoUrl());
         loadMap(customer);
 
-        tvGalonKeluar.setText(String.valueOf(customer.getGalonKeluar()));
+        // "Total Galon" = semua galon JUAL yang diambil pelanggan (akuisisi/beli/pinjam) — supaya
+        // jumlah galon selalu terlihat walau galon dibeli (bukan dipinjam). "Sisa Pinjam" = saldo.
+        tvGalonKeluar.setText(String.valueOf(customer.getGalonTotalOrdered()));
         tvGalonKembali.setText(String.valueOf(customer.getGalonKembali()));
         tvSaldoGalon.setText(String.valueOf(customer.getSaldoGalon()));
 
-        // Load transaction history
+        // Jumlah transaksi GABUNGAN (lintas perangkat) di header histori.
+        int mergedTrx = customer.getTotalTransaksi();
+        tvHistoryHeader.setText(getString(R.string.histori_transaksi)
+                + (mergedTrx > 0 ? " (" + mergedTrx + ")" : ""));
+
+        // Riwayat yang bisa ditampilkan = transaksi LOKAL perangkat ini (transaksi isolasi
+        // per-perangkat, tidak branch-wide). Kalau total gabungan > lokal, beri catatan jujur.
         List<Transaction> transactions = transactionDao.getByCustomerId(customerId);
         adapter.setData(transactions);
 
+        int otherDevices = mergedTrx - transactions.size();
+        if (otherDevices > 0 && !transactions.isEmpty()) {
+            tvHistoryNote.setText("+" + otherDevices + " transaksi lain tercatat di perangkat lain");
+            tvHistoryNote.setVisibility(View.VISIBLE);
+        } else {
+            tvHistoryNote.setVisibility(View.GONE);
+        }
+
         if (transactions.isEmpty()) {
+            // Ada transaksi (di perangkat lain) tapi tak ada yang lokal → jelaskan, jangan "kosong".
+            tvEmptyHistory.setText(mergedTrx > 0
+                    ? mergedTrx + " transaksi tercatat di perangkat lain"
+                    : getString(R.string.belum_ada_transaksi));
             tvEmptyHistory.setVisibility(View.VISIBLE);
             rvTransactions.setVisibility(View.GONE);
         } else {
@@ -156,7 +316,9 @@ public class CustomerDetailActivity extends AppCompatActivity {
         }
     }
 
-    private void loadPhoto(String path) {
+    /** Foto rumah: file lokal kalau ada; kalau tidak (baris hasil sync dari perangkat lain) unduh
+     *  dari {@code photoUrl} ke cache lalu tampilkan — meniru pola ExpenseDetailActivity. */
+    private void loadPhoto(String path, String photoUrl) {
         if (path != null && !path.isEmpty()) {
             File f = new File(path);
             if (f.exists()) {
@@ -169,8 +331,31 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 } catch (Exception ignored) {}
             }
         }
+        if (photoUrl != null && !photoUrl.isEmpty()) {
+            loadPhotoFromUrl(photoUrl);
+            return;
+        }
         ivFoto.setImageResource(android.R.drawable.ic_menu_gallery);
         ivFoto.setOnClickListener(null);
+    }
+
+    /** Unduh foto rumah dari server (baris sinkron tanpa file lokal) di background lalu tampilkan. */
+    private void loadPhotoFromUrl(String url) {
+        ivFoto.setImageResource(android.R.drawable.ic_menu_gallery);
+        ivFoto.setOnClickListener(null);
+        final String name = "cust_" + customerId + "_" + Integer.toHexString(url.hashCode()) + ".jpg";
+        new Thread(() -> {
+            final File f = com.crowja.damiupos.util.BitmapUtils.downloadToCache(
+                    getApplicationContext(), url, name);
+            final android.graphics.Bitmap b = f != null
+                    ? com.crowja.damiupos.util.BitmapUtils.decodeSampled(f.getAbsolutePath(), 1024, 1024)
+                    : null;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed() || b == null) return;
+                ivFoto.setImageBitmap(b);
+                ivFoto.setOnClickListener(v -> showFullScreenPhoto(f.getAbsolutePath()));
+            });
+        }).start();
     }
 
     private void showFullScreenPhoto(String path) {

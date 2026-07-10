@@ -51,16 +51,20 @@ public final class OnlineNotifier {
         } catch (Throwable ignored) {}
     }
 
-    /** Store the advertised version; notify if it's newer than the installed build. */
-    public static void handleVersion(Context ctx, SyncSettings cfg, JSONObject o) {
-        if (!o.optBoolean("available", true)) return;
-        int code = o.optInt("version_code", 0);
-        cfg.setLatestVersion(code, o.optString("version_name"), o.optString("apk_url"),
-                o.optString("changelog"), o.optBoolean("mandatory", false));
-        if (code > BuildConfig.VERSION_CODE && code != cfg.getDismissedVersion()) {
-            postNotif(ctx, "Pembaruan tersedia",
-                    "Versi " + o.optString("version_name")
-                            + " siap dipasang. Ketuk untuk memperbarui.", 7842);
+    /**
+     * Store the published APK (url + sha) and, when this device's installed APK differs and isn't
+     * snoozed, post a MANDATORY update notification. When nothing is published, clear it.
+     */
+    public static void handleUpdate(Context ctx, SyncSettings cfg, JSONObject o) {
+        if (o == null || !o.optBoolean("available", false)) {
+            cfg.setUpdate("", "", "");
+            return;
+        }
+        cfg.setUpdate(o.optString("apk_url"), o.optString("apk_sha256"), o.optString("version_name"));
+        if (VersionUpdater.updateNeeded(ctx, cfg)
+                && System.currentTimeMillis() >= cfg.getSnoozeUntil()) {
+            postNotif(ctx, "Pembaruan Wajib",
+                    "Versi baru aplikasi wajib dipasang. Ketuk untuk memperbarui.", 7842);
         }
     }
 

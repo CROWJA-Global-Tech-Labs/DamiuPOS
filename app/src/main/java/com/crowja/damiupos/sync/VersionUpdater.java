@@ -3,6 +3,7 @@ package com.crowja.damiupos.sync;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
@@ -11,31 +12,34 @@ import android.widget.Toast;
 import androidx.appcompat.app.AlertDialog;
 import androidx.core.content.FileProvider;
 
-import com.crowja.damiupos.BuildConfig;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
 
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.security.MessageDigest;
 
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
 /**
- * In-app auto-update. When the dashboard publishes a newer build, {@code /api/version}
- * advertises it; the app downloads the APK in the background (during polling or on
- * resume) and then asks the logged-in user to install now or postpone for later. The
- * downloaded APK is kept so "Nanti" can install instantly next time.
+ * Mandatory in-app update. The dashboard just uploads an APK; {@code /api/version} advertises its
+ * SHA-256. A device whose own installed APK hash differs MUST update. The prompt is non-dismissible
+ * except "Update Sekarang" or "Tunda 1 jam" — snoozing hides it for 1 hour, then it notifies again.
  */
 public final class VersionUpdater {
 
     private VersionUpdater() {}
 
-    /** Background REST check → store latest → pre-download → prompt on the UI thread. */
+    /** 1-hour snooze for "Tunda 1 jam". */
+    public static final long SNOOZE_MS = 60 * 60 * 1000L;
+
+    /** Background REST check → store the published APK → pre-download → prompt on the UI thread. */
     public static void checkAndPrompt(Activity activity) {
         Context app = activity.getApplicationContext();
         SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(app)));
@@ -44,99 +48,118 @@ public final class VersionUpdater {
         new Thread(() -> {
             try {
                 JSONObject r = new SyncApi(cfg).version(cfg.getBaseUrl());
-                if (r.optBoolean("available", false)) {
-                    OnlineNotifier.handleVersion(app, cfg, r);   // stores latest + maybe notifies
-                }
+                OnlineNotifier.handleUpdate(app, cfg, r);   // stores latest + maybe notifies
             } catch (Throwable ignored) {}
             autoDownloadIfNeeded(app);   // blocking on this bg thread; ready before we prompt
             activity.runOnUiThread(() -> maybePrompt(activity));
         }).start();
     }
 
-    /**
-     * Download the latest published APK in the background if it's newer than this build
-     * and not already downloaded. Safe to call repeatedly (no-op once the APK is ready).
-     * Call OFF the main thread (it blocks on the network).
-     */
+    /** True when the server published an APK whose hash differs from this device's installed APK. */
+    public static boolean updateNeeded(Context ctx, SyncSettings cfg) {
+        String serverSha = cfg.getUpdateSha();
+        if (serverSha == null || serverSha.isEmpty()) return false;
+        String mine = myApkSha(ctx, cfg);
+        return mine != null && !serverSha.equalsIgnoreCase(mine);
+    }
+
+    /** Pre-download the published APK so "Update Sekarang" installs instantly. Call OFF the main thread. */
     public static void autoDownloadIfNeeded(Context ctx) {
         Context app = ctx.getApplicationContext();
         SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(app)));
-        int code = cfg.getLatestVersionCode();
-        if (code <= BuildConfig.VERSION_CODE) return;
-        if (cfg.getDownloadedVersion() == code && apkFileFor(app, code).exists()) return;
-        String url = cfg.getLatestVersionUrl();
-        if (url == null || url.isEmpty()) return;
-        File apk = download(app, url, code);
-        if (apk != null) cfg.setDownloadedVersion(code);
+        if (!updateNeeded(app, cfg)) return;
+        File apk = apkFile(app);
+        String have = sha256(apk);
+        if (apk.exists() && have != null && have.equalsIgnoreCase(cfg.getUpdateSha())) return;
+        download(app, cfg.getUpdateUrl());
     }
 
-    /** Show the update dialog if a newer (non-dismissed) version is known. */
+    /** Show the mandatory update dialog if an update is needed and not currently snoozed. */
     public static void maybePrompt(Activity activity) {
         if (activity.isFinishing() || activity.isDestroyed()) return;
-        SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(activity)));
-        int code = cfg.getLatestVersionCode();
-        boolean mandatory = cfg.isLatestVersionMandatory();
-        if (code <= BuildConfig.VERSION_CODE) return;
-        if (!mandatory && code == cfg.getDismissedVersion()) return;
+        Context app = activity.getApplicationContext();
+        SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(app)));
+        if (!updateNeeded(app, cfg)) return;
+        if (System.currentTimeMillis() < cfg.getSnoozeUntil()) return;
 
-        boolean ready = cfg.getDownloadedVersion() == code && apkFileFor(activity, code).exists();
-        String log = cfg.getLatestVersionChangelog();
-        String msg = "Versi " + cfg.getLatestVersionName() + " tersedia."
-                + (ready ? "\nSudah terunduh & siap dipasang." : "")
-                + (log != null && !log.isEmpty() ? "\n\n" + log : "");
+        File apk = apkFile(app);
+        String have = sha256(apk);
+        boolean ready = apk.exists() && have != null && have.equalsIgnoreCase(cfg.getUpdateSha());
+        String msg = "Versi baru aplikasi wajib dipasang untuk melanjutkan."
+                + (ready ? "\nSudah terunduh & siap dipasang." : "");
 
-        AlertDialog.Builder b = new AlertDialog.Builder(activity)
-                .setTitle("Pembaruan Aplikasi")
-                .setMessage(msg);
-        if (ready) {
-            b.setPositiveButton("Pasang Sekarang", (d, w) -> installApk(activity, apkFileFor(activity, code)));
-        } else {
-            b.setPositiveButton("Perbarui", (d, w) -> startUpdate(activity, cfg.getLatestVersionUrl(), code));
+        new AlertDialog.Builder(activity)
+                .setTitle("Pembaruan Wajib")
+                .setMessage(msg)
+                .setCancelable(false)
+                .setPositiveButton("Update Sekarang", (d, w) -> {
+                    if (ready) installApk(activity, apk);
+                    else startUpdate(activity, cfg.getUpdateUrl());
+                })
+                .setNegativeButton("Tunda 1 jam", (d, w) -> snooze(app))
+                .show();
+    }
+
+    /** Snooze for 1 hour and schedule a reminder notification at the deadline. */
+    public static void snooze(Context ctx) {
+        Context app = ctx.getApplicationContext();
+        SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(app)));
+        long until = System.currentTimeMillis() + SNOOZE_MS;
+        cfg.setSnoozeUntil(until);
+        UpdateReminderReceiver.scheduleAt(app, until);
+        Toast.makeText(app, "Diingatkan lagi 1 jam lagi", Toast.LENGTH_SHORT).show();
+    }
+
+    /** SHA-256 of this device's own installed APK, cached by PackageInfo.lastUpdateTime. */
+    public static String myApkSha(Context ctx, SyncSettings cfg) {
+        try {
+            PackageInfo pi = ctx.getPackageManager().getPackageInfo(ctx.getPackageName(), 0);
+            long lut = pi.lastUpdateTime;
+            if (cfg.getCachedMyApkShaAt() == lut) {
+                String cached = cfg.getCachedMyApkSha();
+                if (cached != null && !cached.isEmpty()) return cached;
+            }
+            String path = ctx.getApplicationInfo().sourceDir;
+            String sha = sha256(new File(path));
+            if (sha != null) cfg.setCachedMyApkSha(sha, lut);
+            return sha;
+        } catch (Throwable t) {
+            return null;
         }
-        if (mandatory) {
-            b.setCancelable(false);
-        } else {
-            // "Nanti" = pasang lain kali; APK yang sudah diunduh tetap disimpan.
-            b.setNegativeButton("Nanti", (d, w) -> cfg.setDismissedVersion(code));
-        }
-        b.show();
     }
 
     /** Fallback when the APK wasn't pre-downloaded: download now, then install. */
-    private static void startUpdate(Activity activity, String url, int code) {
+    private static void startUpdate(Activity activity, String url) {
         if (url == null || url.isEmpty()) {
-            Toast.makeText(activity, "URL APK belum diatur oleh admin", Toast.LENGTH_LONG).show();
+            Toast.makeText(activity, "APK belum diunggah oleh admin", Toast.LENGTH_LONG).show();
             return;
         }
         Toast.makeText(activity, "Mengunduh pembaruan…", Toast.LENGTH_SHORT).show();
         Context app = activity.getApplicationContext();
         new Thread(() -> {
-            File apk = download(app, url, code);
-            if (apk != null) {
-                new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(app))).setDownloadedVersion(code);
-            }
+            File apk = download(app, url);
             activity.runOnUiThread(() -> {
-                if (apk != null) {
-                    installApk(activity, apk);
-                } else {
-                    Toast.makeText(activity, "Gagal mengunduh pembaruan", Toast.LENGTH_LONG).show();
-                }
+                if (apk != null) installApk(activity, apk);
+                else Toast.makeText(activity, "Gagal mengunduh pembaruan", Toast.LENGTH_LONG).show();
             });
         }).start();
     }
 
-    private static File apkFileFor(Context ctx, int code) {
-        return new File(new File(ctx.getExternalFilesDir(null), "updates"), "update-" + code + ".apk");
+    private static File apkFile(Context ctx) {
+        return new File(new File(ctx.getExternalFilesDir(null), "updates"), "update.apk");
     }
 
-    /** Download to update-<code>.apk via a .part temp + atomic rename; clean older APKs. */
-    private static File download(Context ctx, String url, int code) {
+    /** Download to update.apk via a .part temp + atomic rename. */
+    private static File download(Context ctx, String url) {
+        if (url == null || url.isEmpty()) return null;
         try {
             File dir = new File(ctx.getExternalFilesDir(null), "updates");
             if (!dir.exists() && !dir.mkdirs()) return null;
-            File out = apkFileFor(ctx, code);
-            File tmp = new File(dir, "update-" + code + ".apk.part");
-            OkHttpClient client = new OkHttpClient();
+            File out = apkFile(ctx);
+            File tmp = new File(dir, "update.apk.part");
+            // Berbagi ConnectionPool proses; timeout baca lebih panjang untuk unduhan APK besar.
+            OkHttpClient client = Http.SHARED.newBuilder()
+                    .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS).build();
             Request req = new Request.Builder().url(url).build();
             try (Response r = client.newCall(req).execute()) {
                 if (!r.isSuccessful() || r.body() == null) return null;
@@ -147,31 +170,33 @@ public final class VersionUpdater {
                     while ((n = in.read(buf)) != -1) fos.write(buf, 0, n);
                 }
             }
-            if (out.exists() && !out.delete()) { /* will overwrite via rename below */ }
+            if (out.exists() && !out.delete()) { /* overwrite via rename */ }
             if (!tmp.renameTo(out)) { tmp.delete(); return null; }
-            cleanupOld(dir, out);
             return out;
         } catch (Throwable t) {
             return null;
         }
     }
 
-    /** Remove stale update files (older versions / interrupted .part) to free space. */
-    private static void cleanupOld(File dir, File keep) {
-        File[] files = dir.listFiles();
-        if (files == null) return;
-        for (File f : files) {
-            if (!f.equals(keep) && f.getName().startsWith("update")) {
-                //noinspection ResultOfMethodCallIgnored
-                f.delete();
-            }
+    /** SHA-256 of a file as lowercase hex, or null on error. */
+    static String sha256(File f) {
+        if (f == null || !f.exists()) return null;
+        try (InputStream in = new FileInputStream(f)) {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) != -1) md.update(buf, 0, n);
+            StringBuilder sb = new StringBuilder();
+            for (byte b : md.digest()) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Throwable t) {
+            return null;
         }
     }
 
     /**
-     * Launch the system installer for {@code apk}. On Android 8+ the user must first
-     * allow "install unknown apps" for this app; if not granted yet, route them to that
-     * setting and let them return and tap Pasang again.
+     * Launch the system installer for {@code apk}. On Android 8+ the user must first allow
+     * "install unknown apps" for this app; if not granted yet, route them to that setting.
      */
     private static void installApk(Activity activity, File apk) {
         Context ctx = activity.getApplicationContext();
@@ -185,7 +210,7 @@ public final class VersionUpdater {
                     .setTitle("Izinkan Pemasangan")
                     .setMessage("Agar pembaruan bisa dipasang, izinkan aplikasi ini memasang APK. "
                             + "Kamu akan diarahkan ke Pengaturan — aktifkan \"Izinkan dari sumber ini\", "
-                            + "lalu kembali dan tekan Pasang lagi.")
+                            + "lalu kembali dan tekan Update lagi.")
                     .setPositiveButton("Buka Pengaturan", (d, w) -> {
                         try {
                             activity.startActivity(new Intent(

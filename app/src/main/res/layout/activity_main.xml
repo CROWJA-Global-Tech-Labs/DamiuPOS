@@ -726,8 +726,8 @@
             </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- Promosi Galon Gratis — hanya untuk akun Marketing (dan Admin).
-                 Alur mirip Transaksi Baru: pelanggan baru + galon gratis. -->
+            <!-- Input Promosi Galon — Marketing & Admin selalu; staf lain bila promo_enabled.
+                 Buat pelanggan BARU dulu, lalu Transaksi Baru mode Promosi (Gratis/Berbayar). -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnPromosi"
                 android:layout_width="match_parent"
@@ -736,7 +736,7 @@
                 android:minHeight="76dp"
                 android:paddingTop="16dp"
                 android:paddingBottom="16dp"
-                android:text="🎁 Promosi Galon Gratis"
+                android:text="🎁 Input Promosi Galon"
                 android:textAllCaps="false"
                 android:textColor="@color/white"
                 android:textSize="16sp"

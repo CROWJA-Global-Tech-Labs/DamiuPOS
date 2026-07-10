@@ -1,13 +1,18 @@
 package com.crowja.damiupos;
 
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.CheckBox;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -45,11 +50,30 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     private TextView tvEmpty, tvSummary;
     private QueueAdapter adapter;
 
+    // --- Mode pilih untuk "Buat Rute" Google Maps ---
+    private boolean selectionMode = false;
+    private final java.util.LinkedHashSet<Long> selectedIds = new java.util.LinkedHashSet<>();
+    private View barRute;
+    private TextView tvSelCount;
+    private MaterialButton btnBuatRute;
+    /** Batas titik pada URL Google Maps konsumen (destinasi + 9 waypoint). */
+    private static final int MAX_ROUTE_STOPS = 10;
+
     private final Handler tick = new Handler(Looper.getMainLooper());
     private final Runnable ticker = new Runnable() {
         @Override public void run() {
             adapter.refreshTimers();
             tick.postDelayed(this, 1000);
+        }
+    };
+
+    /** Saat sinkron membawa data baru (mis. order di-route ke HP ini via "Efisiensikan Delivery" di
+     *  web), muat ulang antrian supaya order pindah masuk/keluar tanpa keluar-masuk layar. Tidak saat
+     *  mode pilih rute (agar seleksi tak terganggu). */
+    private final BroadcastReceiver syncedReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (!selectionMode) loadData();
         }
     };
 
@@ -69,7 +93,67 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
         adapter = new QueueAdapter();
         rv.setLayoutManager(new LinearLayoutManager(this));
+        rv.setHasFixedSize(true);
         rv.setAdapter(adapter);
+
+        barRute = findViewById(R.id.barRute);
+        tvSelCount = findViewById(R.id.tvSelCount);
+        btnBuatRute = findViewById(R.id.btnBuatRute);
+        btnBuatRute.setOnClickListener(v -> askPriorityThenRoute());
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(android.view.Menu menu) {
+        getMenuInflater().inflate(R.menu.menu_delivery_queue, menu);
+        return super.onCreateOptionsMenu(menu);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(android.view.MenuItem item) {
+        if (item.getItemId() == R.id.action_route_select) {
+            if (selectionMode) exitSelectionMode();
+            else enterSelectionMode();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (selectionMode) { exitSelectionMode(); return; }
+        super.onBackPressed();
+    }
+
+    private void enterSelectionMode() {
+        if (adapter.getItemCount() == 0) {
+            Toast.makeText(this, "Antrian kosong", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        selectionMode = true;
+        selectedIds.clear();
+        barRute.setVisibility(View.VISIBLE);
+        updateSelectionUi();
+        adapter.notifyDataSetChanged();
+        Toast.makeText(this, "Pilih order lalu tekan Buat Rute", Toast.LENGTH_SHORT).show();
+    }
+
+    private void exitSelectionMode() {
+        selectionMode = false;
+        selectedIds.clear();
+        barRute.setVisibility(View.GONE);
+        adapter.notifyDataSetChanged();
+    }
+
+    private void toggleSelected(Transaction t) {
+        if (selectedIds.contains(t.getId())) selectedIds.remove(t.getId());
+        else selectedIds.add(t.getId());
+        updateSelectionUi();
+    }
+
+    private void updateSelectionUi() {
+        int n = selectedIds.size();
+        tvSelCount.setText(n + " dipilih");
+        btnBuatRute.setEnabled(n > 0);
     }
 
     @Override
@@ -77,12 +161,19 @@ public class DeliveryQueueActivity extends AppCompatActivity {
         super.onResume();
         loadData();
         tick.postDelayed(ticker, 1000);
+        IntentFilter f = new IntentFilter(com.crowja.damiupos.sync.SyncEngine.ACTION_SYNCED);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(syncedReceiver, f, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(syncedReceiver, f);
+        }
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         tick.removeCallbacks(ticker);
+        try { unregisterReceiver(syncedReceiver); } catch (Exception ignored) {}
     }
 
     private void loadData() {
@@ -93,15 +184,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
         rv.setVisibility(list.isEmpty() ? View.GONE : View.VISIBLE);
     }
 
-    /** Buka navigasi peta ke lokasi pelanggan (koordinat → fallback alamat). */
+    /** Buka navigasi peta ke lokasi TUJUAN order — lokasi terpilih "Kirim ke" bila ada,
+     *  fallback koordinat pelanggan → fallback alamat. */
     private void navigate(Transaction t) {
         Intent i;
-        if (t.getCustomerLat() != 0 || t.getCustomerLng() != 0) {
-            Uri nav = Uri.parse("google.navigation:q=" + t.getCustomerLat() + "," + t.getCustomerLng());
+        double lat = effectiveLat(t), lng = effectiveLng(t);
+        if (lat != 0 || lng != 0) {
+            Uri nav = Uri.parse("google.navigation:q=" + lat + "," + lng);
             i = new Intent(Intent.ACTION_VIEW, nav).setPackage("com.google.android.apps.maps");
             if (i.resolveActivity(getPackageManager()) == null) {
                 i = new Intent(Intent.ACTION_VIEW, Uri.parse(
-                        "https://www.google.com/maps?q=" + t.getCustomerLat() + "," + t.getCustomerLng()));
+                        "https://www.google.com/maps?q=" + lat + "," + lng));
             }
         } else if (t.getCustomerAddress() != null && !t.getCustomerAddress().trim().isEmpty()) {
             i = new Intent(Intent.ACTION_VIEW, Uri.parse(
@@ -219,6 +312,152 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                 .show();
     }
 
+    // ---------------------------------------------------------- Buat Rute Google Maps
+
+    /** Order terpilih dalam URUTAN ANTRIAN (queued_at ASC = urutan list) + punya koordinat. */
+    private List<Transaction> selectedGeoStops() {
+        List<Transaction> geo = new ArrayList<>();
+        for (Transaction t : adapter.data) {
+            if (selectedIds.contains(t.getId()) && hasGeo(t)) geo.add(t);
+        }
+        return geo;
+    }
+
+    /** Lat EFEKTIF tujuan order: lokasi terpilih "Kirim ke" (delivery_dest_*) menang bila
+     *  non-nol; fallback koordinat pelanggan. (0,0) = tidak ada koordinat. */
+    private static double effectiveLat(Transaction t) {
+        return (t.getDeliveryDestLat() != 0 || t.getDeliveryDestLng() != 0)
+                ? t.getDeliveryDestLat() : t.getCustomerLat();
+    }
+
+    /** Lng EFEKTIF tujuan order — lihat {@link #effectiveLat}. */
+    private static double effectiveLng(Transaction t) {
+        return (t.getDeliveryDestLat() != 0 || t.getDeliveryDestLng() != 0)
+                ? t.getDeliveryDestLng() : t.getCustomerLng();
+    }
+
+    private static boolean hasGeo(Transaction t) {
+        return effectiveLat(t) != 0 || effectiveLng(t) != 0;
+    }
+
+    /** Tanya prioritas rute → bangun & buka Google Maps. */
+    private void askPriorityThenRoute() {
+        int total = selectedIds.size();
+        int withGeo = selectedGeoStops().size();
+        if (withGeo == 0) {
+            Toast.makeText(this, "Order terpilih belum punya titik koordinat — set lokasi pelanggan dulu",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Prioritas Rute")
+                .setItems(new CharSequence[]{
+                        "Efisiensi rute terpendek",
+                        "Pesanan yang masuk dahulu"
+                }, (d, which) -> {
+                    boolean shortest = (which == 0);
+                    if (shortest) {
+                        // Anchor = lokasi kurir saat ini (async); fallback = order pertama.
+                        LocationService.lastLocation(this, loc -> buildAndOpenRoute(true, loc));
+                    } else {
+                        buildAndOpenRoute(false, null);
+                    }
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /** {@code shortest} → urut nearest-neighbor dari {@code anchor} (atau order pertama bila null);
+     *  selain itu → urutan antrian (FIFO). Origin URL dikosongkan = lokasi kurir saat link dibuka. */
+    private void buildAndOpenRoute(boolean shortest, android.location.Location anchor) {
+        int totalSelected = selectedIds.size();
+        List<Transaction> stops = selectedGeoStops();
+        int skippedNoGeo = totalSelected - stops.size();
+        if (stops.isEmpty()) {
+            Toast.makeText(this, "Tidak ada order dengan koordinat", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        if (shortest) {
+            double alat, alng;
+            if (anchor != null) { alat = anchor.getLatitude(); alng = anchor.getLongitude(); }
+            else { alat = effectiveLat(stops.get(0)); alng = effectiveLng(stops.get(0)); }
+            stops = orderNearestNeighbor(stops, alat, alng);
+        }
+
+        boolean capped = false;
+        if (stops.size() > MAX_ROUTE_STOPS) {
+            stops = new ArrayList<>(stops.subList(0, MAX_ROUTE_STOPS));
+            capped = true;
+        }
+
+        String url = buildMapsDirUrl(stops);
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (Exception e) {
+            Toast.makeText(this, "Tidak ada aplikasi peta", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        StringBuilder note = new StringBuilder("Rute " + stops.size() + " tujuan dibuka");
+        if (skippedNoGeo > 0) note.append(" · ").append(skippedNoGeo).append(" tanpa koordinat dilewati");
+        if (capped) note.append(" · dibatasi ").append(MAX_ROUTE_STOPS).append(" tujuan (batas Google Maps)");
+        Toast.makeText(this, note.toString(), Toast.LENGTH_LONG).show();
+        exitSelectionMode();
+    }
+
+    /** Greedy nearest-neighbor: dari anchor, tiap langkah pilih tujuan terdekat berikutnya. */
+    private static List<Transaction> orderNearestNeighbor(List<Transaction> stops, double lat, double lng) {
+        List<Transaction> remaining = new ArrayList<>(stops);
+        List<Transaction> route = new ArrayList<>(stops.size());
+        double clat = lat, clng = lng;
+        while (!remaining.isEmpty()) {
+            int best = 0;
+            double bestD = Double.MAX_VALUE;
+            for (int i = 0; i < remaining.size(); i++) {
+                double dd = haversineKm(clat, clng,
+                        effectiveLat(remaining.get(i)), effectiveLng(remaining.get(i)));
+                if (dd < bestD) { bestD = dd; best = i; }
+            }
+            Transaction next = remaining.remove(best);
+            route.add(next);
+            clat = effectiveLat(next);
+            clng = effectiveLng(next);
+        }
+        return route;
+    }
+
+    /** URL arah Google Maps lintas-platform: origin dikosongkan (lokasi kurir), waypoint =
+     *  semua kecuali terakhir, destination = terakhir. Order dijaga urutannya oleh Google. */
+    private static String buildMapsDirUrl(List<Transaction> stops) {
+        Transaction dest = stops.get(stops.size() - 1);
+        StringBuilder url = new StringBuilder("https://www.google.com/maps/dir/?api=1&travelmode=driving");
+        url.append("&destination=").append(coord(dest));
+        if (stops.size() > 1) {
+            StringBuilder wp = new StringBuilder();
+            for (int i = 0; i < stops.size() - 1; i++) {
+                if (i > 0) wp.append('|');
+                wp.append(coord(stops.get(i)));
+            }
+            url.append("&waypoints=").append(Uri.encode(wp.toString()));
+        }
+        return url.toString();
+    }
+
+    private static String coord(Transaction t) {
+        return effectiveLat(t) + "," + effectiveLng(t);
+    }
+
+    /** Jarak haversine (km) untuk urutan nearest-neighbor. */
+    private static double haversineKm(double lat1, double lng1, double lat2, double lng2) {
+        double r = 6371.0;
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLng = Math.toRadians(lng2 - lng1);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        return r * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
     /** Tampilkan detail order (popup) saat item antrian diketuk. */
     private void showOrderDetail(Transaction t) {
         StringBuilder sb = new StringBuilder();
@@ -226,6 +465,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             sb.append("📞 ").append(t.getCustomerPhone().trim()).append('\n');
         if (t.getCustomerAddress() != null && !t.getCustomerAddress().trim().isEmpty())
             sb.append("📍 ").append(t.getCustomerAddress().trim()).append('\n');
+        // Lokasi tujuan terpilih (pelanggan multi-lokasi) — kurir tahu ke titik mana antar.
+        if (t.getDeliveryDestName() != null && !t.getDeliveryDestName().trim().isEmpty())
+            sb.append("📍 Kirim ke: ").append(t.getDeliveryDestName().trim()).append('\n');
         if (sb.length() > 0) sb.append('\n');
 
         sb.append("Pesanan:\n");
@@ -394,8 +636,21 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             h.btnSelesai.setOnClickListener(v -> complete(t));
             h.btnLacak.setOnClickListener(v -> sendTrackLink(t));
             h.btnSalinLink.setOnClickListener(v -> copyTrackLink(t));
-            // Ketuk kartu (di luar tombol) → tampilkan detail order.
-            h.itemView.setOnClickListener(v -> showOrderDetail(t));
+
+            // Mode pilih: checkbox tampil, tombol aksi disembunyikan, ketuk kartu = pilih/batal.
+            // Mode normal: checkbox gone, ketuk kartu = detail order.
+            h.cbSelect.setVisibility(selectionMode ? View.VISIBLE : View.GONE);
+            h.cbSelect.setChecked(selectionMode && selectedIds.contains(t.getId()));
+            h.actionsNav.setVisibility(selectionMode ? View.GONE : View.VISIBLE);
+            h.actionsLink.setVisibility(selectionMode ? View.GONE : View.VISIBLE);
+            if (selectionMode) {
+                h.itemView.setOnClickListener(v -> {
+                    toggleSelected(t);
+                    h.cbSelect.setChecked(selectedIds.contains(t.getId()));
+                });
+            } else {
+                h.itemView.setOnClickListener(v -> showOrderDetail(t));
+            }
         }
 
         @Override
@@ -404,6 +659,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
         class VH extends RecyclerView.ViewHolder {
             TextView tvCustomer, tvPhone, tvOrder, tvNote, tvAddress, tvElapsed;
             MaterialButton btnNavigasi, btnSelesai, btnLacak, btnSalinLink;
+            CheckBox cbSelect;
+            View actionsNav, actionsLink;
             VH(View v) {
                 super(v);
                 tvCustomer = v.findViewById(R.id.tvCustomer);
@@ -416,6 +673,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                 btnSelesai = v.findViewById(R.id.btnSelesai);
                 btnLacak = v.findViewById(R.id.btnLacak);
                 btnSalinLink = v.findViewById(R.id.btnSalinLink);
+                cbSelect = v.findViewById(R.id.cbSelect);
+                actionsNav = v.findViewById(R.id.actionsNav);
+                actionsLink = v.findViewById(R.id.actionsLink);
             }
         }
     }

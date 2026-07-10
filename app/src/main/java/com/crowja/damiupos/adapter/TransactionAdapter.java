@@ -40,6 +40,9 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
     // Format tampilan tanggal kartu transaksi (waktu lokal perangkat).
     private static final SimpleDateFormat OUT_DATE_FMT =
             new SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.US);
+    // Parser input dipakai ulang (hanya di-bind pada UI thread) — hindari alokasi tiap baris scroll.
+    private static final SimpleDateFormat IN_DATE_FMT =
+            new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
 
     private List<Transaction> transactions = new ArrayList<>();
     private boolean showCustomerName = true;
@@ -123,9 +126,8 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
             int dot = core.indexOf('.');
             if (dot > 0) core = core.substring(0, dot);   // buang pecahan detik
             core = core.replace('T', ' ').trim();
-            SimpleDateFormat in = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
-            if (utc) in.setTimeZone(TimeZone.getTimeZone("UTC"));
-            Date d = in.parse(core);
+            IN_DATE_FMT.setTimeZone(utc ? TimeZone.getTimeZone("UTC") : TimeZone.getDefault());
+            Date d = IN_DATE_FMT.parse(core);
             return d != null ? OUT_DATE_FMT.format(d) : raw;
         } catch (Exception e) {
             return raw;   // format tak dikenal → tampilkan apa adanya

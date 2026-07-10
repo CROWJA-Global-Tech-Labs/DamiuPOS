@@ -81,7 +81,6 @@
         <activity android:name=".FollowUpActivity" />
         <activity android:name=".FollowUpMapActivity" />
         <activity android:name=".DeliveryQueueActivity" />
-        <activity android:name=".PromosiActivity" />
         <activity android:name=".ChangelogActivity" />
         <activity android:name=".SyncSettingsActivity" />
         <activity android:name=".UpgradeActivity" />
@@ -106,21 +105,6 @@
             android:windowSoftInputMode="stateAlwaysHidden" />
 
         <!--
-            NotificationListenerService untuk auto-detect pesan WA.
-            User HARUS enable manual via:
-            Settings → Notifications → Special access → Notification access
-        -->
-        <service
-            android:name=".wa.WaListenerService"
-            android:exported="true"
-            android:label="DAMIU POS — Auto Detect Pesanan WA"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
-
-        <!--
             Auto-kirim struk WhatsApp: menekan tombol "Kirim" otomatis setelah struk dibagikan
             ke chat pelanggan. AccessibilityService dibatasi ke paket WhatsApp saja
             (res/xml/wa_autosend_service.xml) & hanya aktif beberapa detik setelah share.
@@ -137,20 +121,6 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/wa_autosend_service" />
         </service>
-
-        <!--
-            Test injection receiver — hanya berfungsi di debug build
-            (lihat WaTestInjectionReceiver.onReceive). Dipakai untuk
-            simulasi pesan WA via `adb shell am broadcast` tanpa harus
-            kirim WA real.
-        -->
-        <receiver
-            android:name=".wa.WaTestInjectionReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="com.crowja.damiupos.TEST_PARSE" />
-            </intent-filter>
-        </receiver>
 
         <!--
             Foreground service untuk play nada dering loop saat ada
@@ -175,6 +145,11 @@
         -->
         <receiver
             android:name=".WorkHoursReminderReceiver"
+            android:exported="false" />
+
+        <!-- Re-notify wajib update setelah "Tunda 1 jam" habis. -->
+        <receiver
+            android:name=".sync.UpdateReminderReceiver"
             android:exported="false" />
 
         <!-- Re-arm pengingat jam kerja setelah perangkat reboot. -->

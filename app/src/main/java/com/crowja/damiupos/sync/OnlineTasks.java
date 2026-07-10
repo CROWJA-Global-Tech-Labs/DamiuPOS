@@ -21,13 +21,26 @@ public final class OnlineTasks {
 
     private OnlineTasks() {}
 
+    private static final long CONFIG_CHECK_INTERVAL_MS  = 15 * 60 * 1000L;   // /me (interval lokasi) tiap 15 mnt
+    private static final long VERSION_CHECK_INTERVAL_MS  = 60 * 60 * 1000L;  // /version tiap 1 jam
+
     /** Run config + version + broadcasts over REST. Call off the main thread. */
     public static void tick(Context ctx) {
         SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(ctx)));
         if (!cfg.isEnrolled()) return;
         SyncApi api = new SyncApi(cfg);
-        refreshConfig(ctx, cfg, api);
-        checkVersion(ctx, cfg, api);
+        long now = System.currentTimeMillis();
+        // /me & /version tak perlu tiap tick (~60 dtk) — pull sudah membawa data live + heartbeat
+        // last_seen. Throttle keduanya untuk hemat radio/CPU pada HP 24/7. Broadcast & command
+        // (pesan/perintah admin) tetap tiap tick agar tiba segera.
+        if (now - cfg.getConfigCheckAt() > CONFIG_CHECK_INTERVAL_MS) {
+            refreshConfig(ctx, cfg, api);
+            cfg.setConfigCheckAt(now);
+        }
+        if (now - cfg.getVersionCheckAt() > VERSION_CHECK_INTERVAL_MS) {
+            checkVersion(ctx, cfg, api);
+            cfg.setVersionCheckAt(now);
+        }
         fetchBroadcasts(ctx, cfg, api);
         fetchCommands(ctx, cfg, api);
     }
@@ -46,14 +59,12 @@ public final class OnlineTasks {
         } catch (Throwable ignored) {}
     }
 
-    /** /api/version → store latest + notify if newer, then pre-download the APK in the
-     *  background so the in-app prompt can install instantly (UI prompt is separate). */
+    /** /api/version → store the published APK + notify if our hash differs (mandatory), then
+     *  pre-download it in the background so "Update Sekarang" installs instantly. */
     private static void checkVersion(Context ctx, SyncSettings cfg, SyncApi api) {
         try {
             JSONObject r = api.version(cfg.getBaseUrl());
-            if (r.optBoolean("available", false)) {
-                OnlineNotifier.handleVersion(ctx, cfg, r);
-            }
+            OnlineNotifier.handleUpdate(ctx, cfg, r);   // handles available + cleared cases
         } catch (Throwable ignored) {}
         // Auto-download the published update (no-op once it's already downloaded).
         try { VersionUpdater.autoDownloadIfNeeded(ctx); } catch (Throwable ignored) {}

@@ -50,8 +50,14 @@ public class TransactionListActivity extends AppCompatActivity {
     private String startDate = null;   // yyyy-MM-dd
     private String endDate = null;
     private String search = "";
+    private final android.os.Handler searchHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private Runnable pendingSearch;
     private int sortMode = 0; // 0=newest, 1=oldest, 2=highest, 3=lowest
 
+    // RV rvTransactions di layout ini height=0dp+weight=1 → ukurannya TETAP (mengisi ruang, tak
+    // berubah oleh isi), jadi setHasFixedSize(true) valid & bermanfaat. Lint keliru menandainya
+    // (dibingungkan id 'rvTransactions' yang juga dipakai layout lain yang wrap_content).
+    @android.annotation.SuppressLint("InvalidSetHasFixedSize")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -107,6 +113,7 @@ public class TransactionListActivity extends AppCompatActivity {
 
         adapter = new TransactionAdapter(true);
         rv.setLayoutManager(new LinearLayoutManager(this));
+        rv.setHasFixedSize(true);
         rv.setAdapter(adapter);
 
         adapter.setOnItemClickListener(trx -> {
@@ -132,8 +139,12 @@ public class TransactionListActivity extends AppCompatActivity {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
             @Override public void afterTextChanged(Editable s) {
+                // Debounce: reload() memuat SEMUA transaksi + parse items_json + filter/sort di Java —
+                // jangan jalankan tiap huruf; satukan ketikan cepat jadi satu reload.
                 search = s.toString().trim().toLowerCase(Locale.getDefault());
-                reload();
+                if (pendingSearch != null) searchHandler.removeCallbacks(pendingSearch);
+                pendingSearch = () -> reload();
+                searchHandler.postDelayed(pendingSearch, 280);
             }
         });
 
@@ -153,6 +164,12 @@ public class TransactionListActivity extends AppCompatActivity {
             endDate = today;
             btnDateRange.setText("Hari Ini");
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        searchHandler.removeCallbacksAndMessages(null);
     }
 
     @Override
@@ -236,6 +253,19 @@ public class TransactionListActivity extends AppCompatActivity {
     private String safeStr(String s) { return s != null ? s : ""; }
 
     private void confirmDelete(Transaction trx) {
+        // Marketing: akuisisi saja — tidak boleh menghapus riwayat penjualan
+        // (mencegah manipulasi poin promosi dari HP marketing).
+        long uid = new com.crowja.damiupos.db.SettingsDao(
+                DatabaseHelper.getInstance(this)).getCurrentUserId();
+        if (uid > 0) {
+            com.crowja.damiupos.model.User u =
+                    new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid);
+            if (u != null && !u.canDeleteTransaction()) {
+                Toast.makeText(this, "Hanya admin yang bisa menghapus transaksi",
+                        Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
         String title = "Hapus Transaksi?";
         String custName = trx.getCustomerName() != null ? trx.getCustomerName() : "-";
         NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));

@@ -58,6 +58,20 @@ public class User {
     /** Boleh menandai transaksi GRATIS (promosi): Admin & Marketing. */
     public boolean canGiveFree() { return isAdmin() || isMarketing(); }
 
+    /** Boleh menandai pelanggan "Sudah Order Ulang" (serah-terima ke perangkat lain):
+     *  Admin & Marketing — mengikuti pola {@link #canGiveFree()}. */
+    public boolean canHandoffCustomer() { return isAdmin() || isMarketing(); }
+
+    /** Hapus transaksi: HANYA Admin. Karyawan non-admin (Staf/SPV/Marketing/Viewer)
+     *  tidak boleh menghapus riwayat penjualan — mencegah manipulasi omzet/poin dari HP.
+     *  Mode single-user (belum/tanpa login, uid<=0) tetap boleh — itu owner (di-handle pemanggil). */
+    public boolean canDeleteTransaction() { return isAdmin(); }
+
+    /** Edit TERBATAS transaksi (staf operator di konter): hanya metode pembayaran (JUAL) & jumlah
+     *  galon pada transaksi KEMBALI — memperbaiki salah input tanpa bisa mengubah nominal/omzet.
+     *  Staf, SPV, Admin (operasional konter); BUKAN Marketing (tak menangani transaksi) / Viewer. */
+    public boolean canEditTransactionLimited() { return isStaf() || isSpv() || isAdmin(); }
+
     /** @deprecated pakai {@link #canGiveFree()} — dipertahankan untuk pemanggil lama. */
     public boolean canPromote() { return canGiveFree(); }
 

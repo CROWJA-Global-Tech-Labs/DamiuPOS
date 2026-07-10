@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.DAMIUPOS" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <!-- App is intentionally Light-only (no values-night/, no DayNight). Opt out of the
+             OS "force dark" auto-inversion (aggressive on Samsung One UI) so the struk PNG
+             capture — and every screen — keeps its real light colors instead of being inverted
+             to a solid dark/gray image. No-op below API 29. -->
+        <item name="android:forceDarkAllowed">false</item>
         <item name="colorPrimary">@color/primary</item>
         <item name="colorPrimaryDark">@color/primary_dark</item>
         <item name="colorAccent">@color/accent</item>

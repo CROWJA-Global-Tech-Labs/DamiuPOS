@@ -21,6 +21,16 @@
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
+            <!-- Checkbox multi-pilih (untuk buat rute) — hanya tampil di mode pilih. -->
+            <CheckBox
+                android:id="@+id/cbSelect"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:clickable="false"
+                android:focusable="false"
+                android:visibility="gone" />
+
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
@@ -91,6 +101,7 @@
 
         <!-- Actions -->
         <LinearLayout
+            android:id="@+id/actionsNav"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
@@ -122,6 +133,7 @@
 
         <!-- Link lacak pengiriman (live): kirim ke pelanggan via WA, atau salin ke clipboard -->
         <LinearLayout
+            android:id="@+id/actionsLink"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"

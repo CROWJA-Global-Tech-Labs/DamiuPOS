@@ -1,6 +1,7 @@
 package com.crowja.damiupos;
 
 import android.Manifest;
+import android.app.DatePickerDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
@@ -28,8 +29,11 @@ import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.model.Customer;
 import com.crowja.damiupos.paywall.PaywallDialogFragment;
+import com.google.android.material.button.MaterialButton;
 
+import java.util.Calendar;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 public class CustomerListActivity extends AppCompatActivity
@@ -45,6 +49,21 @@ public class CustomerListActivity extends AppCompatActivity
     private CustomerDao customerDao;
     private int sortMode = CustomerDao.SORT_NAME;
     private Toolbar toolbar;
+    /** Marketing: filter "Hanya Pelanggan Hari Ini" (default AKTIF) — fokus ke akuisisi
+     *  hari berjalan; hilangkan centang untuk melihat semua pelanggan. */
+    private com.google.android.material.checkbox.MaterialCheckBox cbHariIni;
+    /** Filter "Hanya Pelanggan Saya" (semua role): pelanggan kini branch-wide (semua perangkat),
+     *  centang ini untuk fokus ke pelanggan milik perangkat ini saja. Default tak dicentang. */
+    private com.google.android.material.checkbox.MaterialCheckBox cbSaya;
+    private boolean marketingUser = false;
+    /** Filter "Ditambahkan" — rentang tanggal pendaftaran (created_at). Null = semua tanggal.
+     *  STATIC (in-memory, level proses): filter TETAP berlaku saat user berpindah-pindah activity
+     *  lalu kembali ke daftar pelanggan, dan otomatis BERSIH saat aplikasi di-restart (proses mati).
+     *  Sengaja TIDAK disimpan ke SharedPreferences/DB. Clear manual = pilih "Semua Tanggal (Clear)". */
+    private MaterialButton btnDateRange;
+    private static String createdFrom = null;   // yyyy-MM-dd (tanggal lokal)
+    private static String createdTo = null;
+    private static String createdLabel = "Semua";   // label tombol utk dipulihkan saat kembali
     /** Kalau true, toolbar di-switch jadi mode "N dipilih" + menu Hapus. */
     private int selectedCount = 0;
 
@@ -79,14 +98,64 @@ public class CustomerListActivity extends AppCompatActivity
 
         findViewById(R.id.fabAdd).setOnClickListener(v -> tryAddCustomer());
 
+        // Marketing → tampilkan filter "Hanya Pelanggan Hari Ini", default dicentang.
+        // (setChecked SEBELUM listener supaya tidak memicu load ganda; onResume yang memuat.)
+        SettingsDao sess = new SettingsDao(DatabaseHelper.getInstance(this));
+        long uid = sess.getCurrentUserId();
+        com.crowja.damiupos.model.User cur = uid > 0
+                ? new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid)
+                : null;
+        marketingUser = cur != null && cur.isMarketing();
+        cbHariIni = findViewById(R.id.cbHariIni);
+        if (marketingUser) {
+            cbHariIni.setVisibility(View.VISIBLE);
+            // Default dicentang — KECUALI filter "Ditambahkan" (static, lintas-activity) sedang
+            // aktif: keduanya memfilter created_at, jadi jangan tampil saling bertentangan.
+            cbHariIni.setChecked(createdFrom == null);
+            cbHariIni.setOnCheckedChangeListener((b, checked) -> {
+                // "Hari Ini" dan rentang "Ditambahkan" sama-sama memfilter created_at → jangan
+                // berlaku bersamaan; mengaktifkan "Hari Ini" mereset rentang ke Semua.
+                if (checked) clearDateRange();
+                loadCustomers(etSearch.getText().toString().trim());
+            });
+        }
+
+        // "Hanya Pelanggan Saya" — semua role. Pelanggan sekarang branch-wide (tersinkron ke semua
+        // perangkat); centang untuk hanya menampilkan milik perangkat ini.
+        cbSaya = findViewById(R.id.cbSaya);
+        cbSaya.setOnCheckedChangeListener((b, checked) ->
+                loadCustomers(etSearch.getText().toString().trim()));
+
+        // Filter "Ditambahkan" — rentang tanggal pendaftaran pelanggan (untuk semua role).
+        btnDateRange = findViewById(R.id.btnDateRange);
+        btnDateRange.setOnClickListener(v -> pickDateRange());
+        // Pulihkan tampilan filter yang masih aktif (state static, bertahan lintas-activity).
+        btnDateRange.setText("Ditambahkan: " + createdLabel);
+
         etSearch.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
             @Override
             public void afterTextChanged(Editable s) {
-                loadCustomers(s.toString().trim());
+                // Debounce: satukan ketikan cepat → 1 query, bukan 1 query per huruf (berat di HP lama).
+                scheduleSearch(s.toString().trim());
             }
         });
+    }
+
+    private final android.os.Handler searchHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private Runnable pendingSearch;
+
+    private void scheduleSearch(String keyword) {
+        if (pendingSearch != null) searchHandler.removeCallbacks(pendingSearch);
+        pendingSearch = () -> loadCustomers(keyword);
+        searchHandler.postDelayed(pendingSearch, 280);
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        searchHandler.removeCallbacksAndMessages(null);   // jangan biarkan debounce menembak activity mati
     }
 
     @Override
@@ -120,11 +189,34 @@ public class CustomerListActivity extends AppCompatActivity
     }
 
     private void loadCustomers(String keyword) {
+        // Rentang "Ditambahkan" mendahului centang "Hari Ini" (keduanya memfilter created_at).
+        boolean rangeActive = createdFrom != null && createdTo != null;
+        boolean todayOnly = !rangeActive && marketingUser && cbHariIni != null && cbHariIni.isChecked();
+        // Label selalu memuat jumlah pelanggan HARI INI (terlepas dari status centang),
+        // supaya marketing tahu capaian akuisisi hari berjalan sekilas pandang.
+        if (marketingUser && cbHariIni != null) {
+            cbHariIni.setText("Hanya Pelanggan Hari Ini (" + customerDao.countRegisteredToday() + ")");
+        }
         List<Customer> list;
         if (keyword.isEmpty()) {
-            list = customerDao.getAll(sortMode);
+            if (rangeActive) list = customerDao.getAllCreatedBetween(sortMode, createdFrom, createdTo);
+            else if (todayOnly) list = customerDao.getRegisteredToday(sortMode);
+            else list = customerDao.getAll(sortMode);
         } else {
-            list = customerDao.search(keyword, sortMode);
+            if (rangeActive) list = customerDao.searchCreatedBetween(keyword, sortMode, createdFrom, createdTo);
+            else if (todayOnly) list = customerDao.searchRegisteredToday(keyword, sortMode);
+            else list = customerDao.search(keyword, sortMode);
+        }
+        // Dedup tampilan DULU: satukan salinan lintas-perangkat (nomor sama, atau nama bila tanpa
+        // nomor) jadi satu baris + JUMLAHKAN agregatnya — wakil = salinan MILIK perangkat ini bila
+        // ada. Merge sebelum filter "Hanya Pelanggan Saya" supaya total tidak under-report.
+        list = CustomerDao.dedupeForDisplay(list);
+        // "Hanya Pelanggan Saya" di level ORANG: rep dipilih mengutamakan salinan sendiri, jadi
+        // rep.isMine()==true iff grup punya salinan milik perangkat ini. Tetap tampilkan total penuh.
+        if (cbSaya != null && cbSaya.isChecked()) {
+            List<Customer> mine = new java.util.ArrayList<>();
+            for (Customer c : list) if (c.isMine()) mine.add(c);
+            list = mine;
         }
         // Konsumsi gl/hr butuh perhitungan hari → sort di Java (DAO balikin urut nama).
         if (sortMode == CustomerDao.SORT_KONSUMSI) {
@@ -134,6 +226,11 @@ public class CustomerListActivity extends AppCompatActivity
         adapter.setData(list);
 
         if (list.isEmpty()) {
+            tvEmpty.setText(rangeActive
+                    ? "Tidak ada pelanggan ditambahkan pada rentang ini"
+                    : todayOnly
+                        ? "Belum ada pelanggan baru hari ini"
+                        : getString(R.string.belum_ada_pelanggan));
             tvEmpty.setVisibility(View.VISIBLE);
             rvCustomers.setVisibility(View.GONE);
         } else {
@@ -212,6 +309,90 @@ public class CustomerListActivity extends AppCompatActivity
                 })
                 .setNegativeButton("Batal", null)
                 .show();
+    }
+
+    // ==========================================================================
+    // Filter "Ditambahkan" (rentang tanggal pendaftaran / created_at)
+    // ==========================================================================
+
+    /** Dialog preset rentang tanggal "Ditambahkan" (+ opsi rentang kustom). */
+    private void pickDateRange() {
+        String[] options = {"Semua Tanggal (Clear)", "Hari Ini", "7 Hari Terakhir",
+                "30 Hari Terakhir", "Bulan Ini", "Rentang Kustom..."};
+        new AlertDialog.Builder(this)
+                .setTitle("Ditambahkan (Tanggal Daftar)")
+                .setItems(options, (d, which) -> {
+                    Calendar cal = Calendar.getInstance();
+                    String today = fmt(cal);
+                    switch (which) {
+                        case 0: applyDateRange(null, null, "Semua"); break;
+                        case 1: applyDateRange(today, today, "Hari Ini"); break;
+                        case 2:
+                            cal.add(Calendar.DAY_OF_YEAR, -6);
+                            applyDateRange(fmt(cal), today, "7 Hari"); break;
+                        case 3:
+                            cal.add(Calendar.DAY_OF_YEAR, -29);
+                            applyDateRange(fmt(cal), today, "30 Hari"); break;
+                        case 4:
+                            cal.set(Calendar.DAY_OF_MONTH, 1);
+                            applyDateRange(fmt(cal), today, "Bulan Ini"); break;
+                        case 5: pickCustomRange(); break;
+                    }
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /** Rentang kustom: pilih tanggal awal lalu tanggal akhir (dibalik otomatis bila terbalik). */
+    private void pickCustomRange() {
+        Calendar cal = Calendar.getInstance();
+        DatePickerDialog start = new DatePickerDialog(this, (vS, y1, m1, d1) -> {
+            Calendar s = Calendar.getInstance();
+            s.set(y1, m1, d1);
+            String sd = fmt(s);
+            DatePickerDialog end = new DatePickerDialog(this, (vE, y2, m2, d2) -> {
+                Calendar e = Calendar.getInstance();
+                e.set(y2, m2, d2);
+                String ed = fmt(e);
+                String from = sd, to = ed;
+                if (from.compareTo(to) > 0) { String tmp = from; from = to; to = tmp; }
+                applyDateRange(from, to, from + " → " + to);
+            }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH));
+            end.setTitle("Tanggal Akhir");
+            end.show();
+        }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH));
+        start.setTitle("Tanggal Awal");
+        start.show();
+    }
+
+    /** Terapkan rentang (from/to = null → Semua) + segarkan daftar tepat sekali.
+     *  State-nya static → tetap berlaku saat user berpindah activity (sampai Clear / app restart). */
+    private void applyDateRange(String from, String to, String label) {
+        createdFrom = from;
+        createdTo = to;
+        createdLabel = label;
+        btnDateRange.setText("Ditambahkan: " + label);
+        // Memilih tanggal via tombol = mengambil alih filter created_at → matikan centang "Hari Ini"
+        // (marketing) supaya tak saling menimpa, termasuk saat memilih "Semua" (lihat semua tanggal).
+        // setChecked(false) sudah memicu reload (nilai rentang sudah di-set), jadi tak memuat dobel.
+        if (marketingUser && cbHariIni != null && cbHariIni.isChecked()) {
+            cbHariIni.setChecked(false);
+        } else {
+            loadCustomers(etSearch.getText().toString().trim());
+        }
+    }
+
+    /** Reset rentang ke Semua (tanpa reload — pemanggil yang memuat ulang). */
+    private void clearDateRange() {
+        createdFrom = null;
+        createdTo = null;
+        createdLabel = "Semua";
+        if (btnDateRange != null) btnDateRange.setText("Ditambahkan: Semua");
+    }
+
+    private String fmt(Calendar c) {
+        return String.format(Locale.US, "%04d-%02d-%02d",
+                c.get(Calendar.YEAR), c.get(Calendar.MONTH) + 1, c.get(Calendar.DAY_OF_MONTH));
     }
 
     /** Konfirmasi lalu jalankan pembersihan duplikat pelanggan. */

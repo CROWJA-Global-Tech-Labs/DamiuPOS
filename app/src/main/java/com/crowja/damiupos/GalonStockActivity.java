@@ -50,6 +50,7 @@ public class GalonStockActivity extends AppCompatActivity {
 
     private static final int REQUEST_CAMERA = 500;
     private static final int REQUEST_PERMISSION_CAMERA = 501;
+    private static final int REQUEST_PICK_GALLERY = 502;
 
     private TextView tvStokTersedia, tvStokMasuk, tvGalonKeluar, tvGalonKembali;
     private TextView tvEmptyHistory, tvFormTitle;
@@ -102,6 +103,7 @@ public class GalonStockActivity extends AppCompatActivity {
 
         btnTambahStok.setOnClickListener(v -> saveStock());
         findViewById(R.id.btnFotoStruk).setOnClickListener(v -> takePhoto());
+        findViewById(R.id.btnPickGalleryStruk).setOnClickListener(v -> pickFromGallery());
         findViewById(R.id.btnBatalEdit).setOnClickListener(v -> exitEditMode(true));
         btnRemoveStruk.setOnClickListener(v -> clearPendingPhoto());
         ivStrukPreview.setOnClickListener(v -> {
@@ -170,6 +172,18 @@ public class GalonStockActivity extends AppCompatActivity {
                 .show();
     }
 
+    /** Pilih gambar dari galeri (tanpa izin storage; pakai document picker). */
+    private void pickFromGallery() {
+        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        i.setType("image/*");
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        try {
+            startActivityForResult(Intent.createChooser(i, "Pilih foto"), REQUEST_PICK_GALLERY);
+        } catch (Exception e) {
+            Toast.makeText(this, "Tidak ada aplikasi galeri", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void takePhoto() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -225,6 +239,24 @@ public class GalonStockActivity extends AppCompatActivity {
                 ivStrukPreview.setImageBitmap(bmp);
                 ivStrukPreview.setVisibility(View.VISIBLE);
                 btnRemoveStruk.setVisibility(View.VISIBLE);
+            }
+        } else if (requestCode == REQUEST_PICK_GALLERY && resultCode == RESULT_OK && data != null
+                && data.getData() != null) {
+            try {
+                File dest = createImageFile();   // sets currentPhotoPath
+                if (com.crowja.damiupos.util.BitmapUtils.copyUriToFile(this, data.getData(), dest)) {
+                    Bitmap bmp = loadRotated(currentPhotoPath);
+                    if (bmp != null) {
+                        ivStrukPreview.setImageBitmap(bmp);
+                        ivStrukPreview.setVisibility(View.VISIBLE);
+                        btnRemoveStruk.setVisibility(View.VISIBLE);
+                    }
+                } else {
+                    currentPhotoPath = null;
+                    Toast.makeText(this, "Gagal memuat foto dari galeri", Toast.LENGTH_SHORT).show();
+                }
+            } catch (IOException e) {
+                Toast.makeText(this, "Gagal menyimpan foto", Toast.LENGTH_SHORT).show();
             }
         }
     }

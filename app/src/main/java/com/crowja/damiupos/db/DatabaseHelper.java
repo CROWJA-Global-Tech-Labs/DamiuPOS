@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 37;
+    private static final int DATABASE_VERSION = 50;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -46,9 +46,41 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     /** 1 = komisi reseller ini ditambahkan ke harga air minum saat transaksi
      *  (pelanggan membayar harga + komisi), bukan diserap margin depot. */
     public static final String COL_KOMISI_ADD_TO_PRICE = "komisi_add_to_price";
+    /** Tautan reseller: uuid reseller rujukan pelanggan ini → Transaksi Baru auto-pilih afiliasi. */
+    public static final String COL_LINKED_RESELLER_UUID = "linked_reseller_uuid";
+    /** Koreksi manual "Galon Dipinjam" (offset): ditambahkan ke saldo hasil hitung transaksi
+     *  (JUAL PINJAM − KEMBALI). Disetel dari web, disinkron dua-arah. 0 = tanpa koreksi. */
+    public static final String COL_GALON_PINJAM_ADJUST = "galon_pinjam_adjust";
+    /** 1 = pelanggan wajib ongkir → Transaksi Baru auto-set Ongkos Kirim ke "Per Galon". */
+    public static final String COL_WAJIB_ONGKIR = "wajib_ongkir";
+    /** 1 = pelanggan ini MILIK perangkat ini (origin = perangkat sendiri di server), 0 = dari
+     *  perangkat lain. Semua pelanggan cabang kini ditarik ke tiap HP (branch-wide); flag ini
+     *  (dari field pull 'is_mine', BUKAN di-push balik) menyalakan filter "Hanya Pelanggan Saya". */
+    public static final String COL_IS_MINE = "is_mine";
+    /** Agregat pelanggan yang dihitung SERVER lintas-cabang (semua perangkat), dikirim saat pull —
+     *  supaya jumlah transaksi/galon/konsumsi TAMPIL SAMA di tiap HP walau transaksinya ada di
+     *  perangkat lain. Field pull-only (tidak di-push balik). Untuk pelanggan MILIK perangkat ini
+     *  (is_mine=1) tampilan pakai agregat LOKAL yang lebih segar; salinan perangkat lain pakai ini. */
+    public static final String COL_SRV_TRX = "srv_trx";                 // COUNT semua transaksi
+    public static final String COL_SRV_ORDERED = "srv_ordered";         // SUM galon JUAL (semua ownership)
+    public static final String COL_SRV_BORROWED = "srv_borrowed";       // SUM galon JUAL PINJAM
+    public static final String COL_SRV_KEMBALI = "srv_kembali";         // SUM galon KEMBALI
+    public static final String COL_SRV_FIRST_JUAL = "srv_first_jual";   // MIN tanggal JUAL
+    /** Label perangkat asal pelanggan (nama device, atau "Web") — untuk tag di daftar mobile. */
+    public static final String COL_ORIGIN_LABEL = "origin_label";
+    /** Saldo komisi reseller dari SERVER (ResellerSaldo — lintas semua perangkat), pull-only.
+     *  Kalkulator lokal HP hanya melihat transaksi perangkat sendiri, jadi salinan reseller
+     *  perangkat lain wajib pakai angka server ini agar sama dengan dashboard. */
+    public static final String COL_SRV_SALDO = "srv_saldo";
     // Harga khusus per produk untuk pelanggan ini: JSON { product_uuid: harga }.
     // NULL/kosong = ikut harga produk standar. Disinkron apa adanya (string JSON).
     public static final String COL_PRODUCT_PRICES = "product_prices";
+    /** Multi-lokasi pelanggan: JSON array terurut [{name,lat,lng,wajib_ongkir}] —
+     *  entri PERTAMA = lokasi utama. Kosong/"[]" = hanya koordinat legacy (latitude/longitude).
+     *  Mirror kompatibilitas: locations[0] disalin ke latitude/longitude/wajib_ongkir saat save.
+     *  Saat user menghapus semua lokasi tulis literal "[]" (BUKAN null) agar clear ikut tersinkron
+     *  (push meniadakan kolom null). Disinkron apa adanya (string JSON). */
+    public static final String COL_LOCATIONS = "locations";
     /** Timestamp saat pelanggan di-"Remove" dari daftar Follow Up. NULL = tidak
      *  dikecualikan. Pelanggan otomatis muncul lagi kalau beli setelah tanggal ini. */
     public static final String COL_FOLLOWUP_EXCLUDED_AT = "followup_excluded_at";
@@ -62,6 +94,14 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_FOLLOWUP_MANUAL_AT = "followup_manual_at";
     /** Catatan opsional untuk follow-up (mis. konteks saat ditambahkan manual). Disinkron. */
     public static final String COL_FOLLOWUP_NOTE = "followup_note";
+    /** "Sudah Order Ulang" (serah-terima marketing): timestamp saat marketing menandai pelanggan
+     *  sudah order ulang. Server lalu memindahkan kepemilikan baris ke 'web' sehingga pelanggan
+     *  tersinkron ke SEMUA perangkat cabang. NULL = belum diserahterimakan. Disinkron. */
+    public static final String COL_HANDED_OVER_AT = "handed_over_at";
+    /** Device uuid yang MENANDAI serah-terima. Perangkat menyembunyikan pelanggan yang
+     *  ditandainya sendiri (uuid == sync_device_uuid miliknya) dari semua daftar — "terhapus"
+     *  di perangkat marketing, tetap tampil di perangkat lain. Disinkron. */
+    public static final String COL_HANDED_OVER_BY = "handed_over_by_device";
 
     // Table products
     public static final String TABLE_PRODUCTS = "products";
@@ -120,6 +160,16 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_CREATED_BY_NAME = "created_by_name";
     public static final String COL_CREATED_VIA = "created_via";
     public static final String COL_COMPLETED_BY_NAME = "completed_by_name";
+    /** Perangkat tujuan hasil "Efisiensikan Delivery" (di-set web = sync_device_uuid HP kurir).
+     *  Antrian HP menampilkan order bila delivery_device_uuid NULL (belum di-route, tetap di HP asal)
+     *  ATAU = HP ini. NULL = default. origin_device_uuid (atribusi) tak berubah. */
+    public static final String COL_DELIVERY_DEVICE_UUID = "delivery_device_uuid";
+    /** Lokasi tujuan pengiriman TERPILIH untuk transaksi JUAL (dari multi-lokasi pelanggan).
+     *  Skalar tersinkron; 0/NULL = tidak dipilih → navigasi delivery fallback ke koordinat
+     *  pelanggan. Nama ikut disimpan agar struk/antrian bisa menampilkan "Kirim ke: …". */
+    public static final String COL_DELIVERY_DEST_NAME = "delivery_dest_name";
+    public static final String COL_DELIVERY_DEST_LAT = "delivery_dest_lat";
+    public static final String COL_DELIVERY_DEST_LNG = "delivery_dest_lng";
 
     // Table settings
     public static final String TABLE_SETTINGS = "settings";
@@ -141,6 +191,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     /** 1 kalau user sudah klik "Balas" pada item ini, 0 kalau belum.
      *  Dipakai sebagai gate sebelum boleh "Buat Trx + Selesai". */
     public static final String COL_INBOX_REPLIED = "replied";
+    /** Pengingat "Pesanan Terjadwal (tiap N hari)" membawa N-nya (dari server). >0 = interval;
+     *  0/NULL = order WA biasa atau jadwal mingguan. HP memakainya untuk meredam pengingat yang
+     *  sudah tak berlaku (pelanggan sudah order dalam N hari terakhir menurut data lokal). */
+    public static final String COL_INBOX_SCHED_INTERVAL = "sched_interval_days";
 
     // Table expenses — operational expenses (listrik, gaji, beli botol, dll)
     public static final String TABLE_EXPENSES = "expenses";
@@ -152,6 +206,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_EXPENSE_CREATED_AT = "created_at";
     /** Kategori pengeluaran: 'AIR_BAKU' | 'SEGEL' | 'TUTUP' | 'UMUM'. */
     public static final String COL_EXPENSE_CATEGORY = "category";
+    /** Nama operator yang menginput pengeluaran (atribusi; cermin transactions.created_by_name).
+     *  Disinkron dua arah — basis filter "hanya pengeluaran yang dia input" per staf di HP. */
+    public static final String COL_EXPENSE_CREATED_BY = "created_by_name";
     /** Jumlah liter air baku yang dibeli (untuk kategori AIR_BAKU; 0 untuk lainnya). */
     public static final String COL_EXPENSE_LITERS = "liters";
     /** Jumlah pcs (untuk kategori SEGEL / TUTUP; 0 untuk lainnya). */
@@ -203,6 +260,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_SAL_BANK_NAME = "bank_name";
     public static final String COL_SAL_BANK_NO = "bank_no";
     public static final String COL_SAL_BANK_HOLDER = "bank_holder";
+    public static final String COL_SAL_PROMO_ENABLED = "promo_enabled";   // non-marketing boleh Promosi
 
     // Table salary_items — komponen gaji bebas per staf (tunjangan/potongan).
     public static final String TABLE_SALARY_ITEMS = "salary_items";
@@ -256,12 +314,26 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_IS_RESELLER + " INTEGER DEFAULT 0, " +
                     COL_RESELLER_SINCE + " TEXT, " +
                     COL_KOMISI_ADD_TO_PRICE + " INTEGER DEFAULT 1, " +
+                    COL_LINKED_RESELLER_UUID + " TEXT, " +
+                    COL_GALON_PINJAM_ADJUST + " INTEGER DEFAULT 0, " +
+                    COL_WAJIB_ONGKIR + " INTEGER DEFAULT 0, " +
+                    COL_IS_MINE + " INTEGER DEFAULT 1, " +
+                    COL_SRV_TRX + " INTEGER DEFAULT 0, " +
+                    COL_SRV_ORDERED + " INTEGER DEFAULT 0, " +
+                    COL_SRV_BORROWED + " INTEGER DEFAULT 0, " +
+                    COL_SRV_KEMBALI + " INTEGER DEFAULT 0, " +
+                    COL_SRV_FIRST_JUAL + " TEXT, " +
+                    COL_ORIGIN_LABEL + " TEXT, " +
+                    COL_SRV_SALDO + " REAL DEFAULT 0, " +
                     COL_FOLLOWUP_EXCLUDED_AT + " TEXT, " +
                     COL_FOLLOWUP_EXCLUDE_REASON + " TEXT, " +
                     COL_LAST_FOLLOWUP_AT + " TEXT, " +
                     COL_FOLLOWUP_MANUAL_AT + " TEXT, " +
                     COL_FOLLOWUP_NOTE + " TEXT, " +
                     COL_PRODUCT_PRICES + " TEXT, " +
+                    COL_LOCATIONS + " TEXT, " +
+                    COL_HANDED_OVER_AT + " TEXT, " +
+                    COL_HANDED_OVER_BY + " TEXT, " +
                     COL_CREATED_AT + " TEXT DEFAULT (datetime('now','localtime'))" +
                     ");";
 
@@ -308,6 +380,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_CREATED_BY_NAME + " TEXT, " +
                     COL_CREATED_VIA + " TEXT, " +
                     COL_COMPLETED_BY_NAME + " TEXT, " +
+                    COL_DELIVERY_DEVICE_UUID + " TEXT, " +
+                    COL_DELIVERY_DEST_NAME + " TEXT, " +
+                    COL_DELIVERY_DEST_LAT + " REAL DEFAULT 0, " +
+                    COL_DELIVERY_DEST_LNG + " REAL DEFAULT 0, " +
                     COL_TANGGAL + " TEXT DEFAULT (datetime('now','localtime')), " +
                     COL_CATATAN + " TEXT, " +
                     "FOREIGN KEY(" + COL_CUSTOMER_ID + ") REFERENCES " +
@@ -337,6 +413,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_INBOX_STATUS + " TEXT DEFAULT 'PENDING', " +
                     COL_INBOX_TRX_ID + " INTEGER DEFAULT 0, " +
                     COL_INBOX_REPLIED + " INTEGER DEFAULT 0, " +
+                    COL_INBOX_SCHED_INTERVAL + " INTEGER DEFAULT 0, " +
                     COL_INBOX_RECEIVED_AT + " TEXT DEFAULT (datetime('now','localtime'))" +
                     ");";
 
@@ -351,6 +428,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_EXPENSE_CATEGORY + " TEXT DEFAULT 'UMUM', " +
                     COL_EXPENSE_LITERS + " REAL DEFAULT 0, " +
                     COL_EXPENSE_PCS + " INTEGER DEFAULT 0, " +
+                    COL_EXPENSE_CREATED_BY + " TEXT, " +
                     COL_EXPENSE_CREATED_AT + " TEXT DEFAULT (datetime('now','localtime'))" +
                     ");";
 
@@ -403,6 +481,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_SAL_BANK_NAME + " TEXT, " +
                     COL_SAL_BANK_NO + " TEXT, " +
                     COL_SAL_BANK_HOLDER + " TEXT, " +
+                    COL_SAL_PROMO_ENABLED + " INTEGER DEFAULT 0, " +
                     // Sync columns (1:1 dgn staf — sync_uuid = sync_uuid staf).
                     COL_SYNC_UUID + " TEXT, " +
                     COL_EDITED_AT + " TEXT, " +
@@ -550,6 +629,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.execSQL(CREATE_TABLE_CAMPAIGNS);
         db.execSQL(CREATE_TABLE_CAMPAIGN_DELIVERIES);
         installSyncInfra(db, false);
+        createIndexes(db);
     }
 
     @Override
@@ -809,6 +889,116 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             tryExec(db, CREATE_TABLE_CAMPAIGNS);
             tryExec(db, CREATE_TABLE_CAMPAIGN_DELIVERIES);
         }
+        if (oldVersion < 38) {
+            // Promosi untuk non-marketing: flag per staf (disinkron dari salary_configs web).
+            tryExec(db, "ALTER TABLE " + TABLE_SALARY + " ADD COLUMN " + COL_SAL_PROMO_ENABLED + " INTEGER DEFAULT 0");
+        }
+        if (oldVersion < 39) {
+            // "Sudah Order Ulang" (serah-terima pelanggan marketing → perangkat lain): pelanggan
+            // ditandai lalu server memindahkan kepemilikannya ke 'web' (tersinkron ke semua
+            // perangkat); perangkat penanda menyembunyikannya dari daftar (lihat CustomerDao).
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_HANDED_OVER_AT + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_HANDED_OVER_BY + " TEXT");
+        }
+        if (oldVersion < 40) {
+            // Tautan reseller: uuid reseller rujukan pelanggan → Transaksi Baru auto-pilih afiliasi.
+            // Additif; baris lama NULL = tak ditautkan. Disinkron dua-arah (customers spec).
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_LINKED_RESELLER_UUID + " TEXT");
+        }
+        if (oldVersion < 41) {
+            // N (interval_days) pengingat "Pesanan Terjadwal (tiap N hari)" dari server → HP bisa
+            // meredam pengingat yang sudah tak berlaku. Additif; 0 = bukan interval.
+            tryExec(db, "ALTER TABLE " + TABLE_ORDER_INBOX + " ADD COLUMN " + COL_INBOX_SCHED_INTERVAL + " INTEGER DEFAULT 0");
+        }
+        if (oldVersion < 42) {
+            // Koreksi manual "Galon Dipinjam" (offset) dari web → ditambahkan ke saldo pinjam. Additif.
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_GALON_PINJAM_ADJUST + " INTEGER DEFAULT 0");
+        }
+        if (oldVersion < 43) {
+            // Pelanggan kini branch-wide (semua ditarik ke tiap HP). is_mine (dari pull) menyalakan
+            // filter "Hanya Pelanggan Saya". Baris lama default 1 (dulu HP hanya punya miliknya + web);
+            // SyncEngine memicu full re-pull sekali (needsCustomerRepull) supaya is_mine terisi benar
+            // dan pelanggan perangkat lain ikut tertarik.
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_IS_MINE + " INTEGER DEFAULT 1");
+        }
+        if (oldVersion < 44) {
+            // Agregat pelanggan lintas-perangkat dari server (pull-only) + label perangkat asal →
+            // jumlah transaksi/galon/konsumsi tampil SAMA di tiap HP walau transaksinya di device lain.
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_SRV_TRX + " INTEGER DEFAULT 0");
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_SRV_ORDERED + " INTEGER DEFAULT 0");
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_SRV_BORROWED + " INTEGER DEFAULT 0");
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_SRV_KEMBALI + " INTEGER DEFAULT 0");
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_SRV_FIRST_JUAL + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_ORIGIN_LABEL + " TEXT");
+        }
+        if (oldVersion < 45) {
+            // Flag "Wajib Ongkir" pelanggan → Transaksi Baru default Ongkos Kirim = Per Galon.
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_WAJIB_ONGKIR + " INTEGER DEFAULT 0");
+        }
+        if (oldVersion < 46) {
+            // Indeks sekunder — sebelumnya NOL indeks, jadi tiap sync (WHERE sync_uuid) + tiap
+            // agregat pelanggan (JOIN transactions ON customer_id) full-scan. Berat di HP lama.
+            createIndexes(db);
+        }
+        if (oldVersion < 47) {
+            // "Efisiensikan Delivery": perangkat tujuan order (di-route dari web). Additif; baris lama
+            // NULL = belum di-route. Antrian HP memfilter (delivery_device_uuid NULL OR = HP ini).
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_DEVICE_UUID + " TEXT");
+        }
+        if (oldVersion < 48) {
+            // Saldo komisi reseller otoritatif dari server (pull-only) → saldo di HP == dashboard
+            // walau transaksi afiliasinya tercatat di perangkat lain.
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_SRV_SALDO + " REAL DEFAULT 0");
+        }
+        if (oldVersion < 49) {
+            // Atribusi pembuat pengeluaran → HP memfilter daftar per operator yang login.
+            tryExec(db, "ALTER TABLE " + TABLE_EXPENSES + " ADD COLUMN " + COL_EXPENSE_CREATED_BY + " TEXT");
+        }
+        if (oldVersion < 50) {
+            // Multi-lokasi pelanggan (JSON array, entri pertama = utama) + lokasi tujuan
+            // pengiriman terpilih per transaksi JUAL. Additif; baris lama NULL/0 = pakai
+            // koordinat legacy pelanggan (lazy synthesis "Kediaman" saat baca).
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_LOCATIONS + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_DEST_NAME + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_DEST_LAT + " REAL DEFAULT 0");
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_DEST_LNG + " REAL DEFAULT 0");
+        }
+    }
+
+    /**
+     * Indeks sekunder untuk semua jalur panas. Tanpa ini setiap {@code WHERE}/{@code JOIN}/
+     * {@code GROUP BY} pada kolom non-{@code _id} adalah full-table scan — penyebab utama sync &
+     * daftar lambat di HP lama (A325F/A750GN, eMMC lambat) dengan ribuan transaksi. Semua pakai
+     * {@code IF NOT EXISTS} (idempoten) + {@link #tryExec} (abaikan tabel/kolom lama yang belum ada).
+     * Dipanggil dari {@code onCreate} & upgrade v46.
+     */
+    private void createIndexes(SQLiteDatabase db) {
+        // sync_uuid tiap tabel syncable — dipakai per-baris SETIAP siklus sync (applyRows lookup,
+        // localIdForUuid ref-resolve, flushPush, tombstone). Ini offender terbesar.
+        for (String t : SYNCABLE_TABLES) {
+            tryExec(db, "CREATE INDEX IF NOT EXISTS idx_" + t + "_uuid ON " + t + "(" + COL_SYNC_UUID + ")");
+        }
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_campaigns_uuid ON campaigns(" + COL_SYNC_UUID + ")");
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_campdeliv_uuid ON campaign_deliveries(" + COL_SYNC_UUID + ")");
+
+        // transactions.customer_id / reseller_id — tulang punggung agregat pelanggan + cascade delete.
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_trx_customer ON " + TABLE_TRANSACTIONS + "(" + COL_CUSTOMER_ID + ")");
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_trx_reseller ON " + TABLE_TRANSACTIONS + "(" + COL_TRX_RESELLER_ID + ")");
+        // transactions.type — semua agregat dashboard/laporan filter type='JUAL'/'KEMBALI'.
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_trx_type ON " + TABLE_TRANSACTIONS + "(" + COL_TYPE + ")");
+        // Partial index: hanya baris kotor (push scan) & antrean delivery (badge) — kecil & tepat sasaran.
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_trx_dirty ON " + TABLE_TRANSACTIONS + "(" + COL_SYNCED + ") WHERE " + COL_SYNCED + "=0");
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_cust_dirty ON " + TABLE_CUSTOMERS + "(" + COL_SYNCED + ") WHERE " + COL_SYNCED + "=0");
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_exp_dirty ON " + TABLE_EXPENSES + "(" + COL_SYNCED + ") WHERE " + COL_SYNCED + "=0");
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_att_dirty ON " + TABLE_ATTENDANCE + "(" + COL_SYNCED + ") WHERE " + COL_SYNCED + "=0");
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_inbox_dirty ON " + TABLE_ORDER_INBOX + "(" + COL_SYNCED + ") WHERE " + COL_SYNCED + "=0");
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_trx_delivery ON " + TABLE_TRANSACTIONS + "(" + COL_DELIVERY_STATUS + ") WHERE " + COL_DELIVERY_STATUS + " IS NOT NULL");
+        // attendance(user_id, ts) — tiap insert transaksi cek hasInToday + semua query shift.
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_att_user_ts ON " + TABLE_ATTENDANCE + "(" + COL_ATT_USER_ID + "," + COL_ATT_TS + ")");
+        // order_inbox.status / expenses.category / salary_items.user_id.
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_inbox_status ON " + TABLE_ORDER_INBOX + "(" + COL_INBOX_STATUS + ")");
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_exp_category ON " + TABLE_EXPENSES + "(" + COL_EXPENSE_CATEGORY + ")");
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_salitem_user ON " + TABLE_SALARY_ITEMS + "(" + COL_SI_USER_ID + ")");
     }
 
     /** Tables that participate in online sync (all keyed by COL_ID = "_id"). */
@@ -840,23 +1030,31 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
         if (!backfill) return;
         String now = nowIso();
-        for (String table : SYNCABLE_TABLES) {
-            Cursor c = null;
-            try {
-                c = db.rawQuery("SELECT " + COL_ID + " FROM " + table
-                        + " WHERE " + COL_SYNC_UUID + " IS NULL", null);
-                while (c.moveToNext()) {
-                    ContentValues v = new ContentValues();
-                    v.put(COL_SYNC_UUID, java.util.UUID.randomUUID().toString());
-                    v.put(COL_EDITED_AT, now);
-                    v.put(COL_SYNCED, 0);    // dirty → uploaded on first sync
-                    db.update(table, v, COL_ID + "=?",
-                            new String[]{String.valueOf(c.getLong(0))});
+        // Satu transaksi untuk SELURUH backfill: tanpa ini tiap UPDATE = 1 fsync (ribuan fsync di
+        // eMMC lambat = first-launch bisa hang berpuluh detik pada HP lama).
+        db.beginTransaction();
+        try {
+            for (String table : SYNCABLE_TABLES) {
+                Cursor c = null;
+                try {
+                    c = db.rawQuery("SELECT " + COL_ID + " FROM " + table
+                            + " WHERE " + COL_SYNC_UUID + " IS NULL", null);
+                    while (c.moveToNext()) {
+                        ContentValues v = new ContentValues();
+                        v.put(COL_SYNC_UUID, java.util.UUID.randomUUID().toString());
+                        v.put(COL_EDITED_AT, now);
+                        v.put(COL_SYNCED, 0);    // dirty → uploaded on first sync
+                        db.update(table, v, COL_ID + "=?",
+                                new String[]{String.valueOf(c.getLong(0))});
+                    }
+                } catch (Exception ignored) {
+                } finally {
+                    if (c != null) c.close();
                 }
-            } catch (Exception ignored) {
-            } finally {
-                if (c != null) c.close();
             }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
         }
     }
 

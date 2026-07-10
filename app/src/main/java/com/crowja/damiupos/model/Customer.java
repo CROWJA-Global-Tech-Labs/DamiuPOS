@@ -1,6 +1,29 @@
 package com.crowja.damiupos.model;
 
 public class Customer {
+
+    /** Nama default lokasi pelanggan (dipakai lazy synthesis & baris kosong di form). */
+    public static final String DEFAULT_LOCATION_NAME = "Kediaman";
+
+    /** Satu lokasi bernama milik pelanggan (multi-lokasi, entri pertama = utama).
+     *  wajibOngkir kini hidup PER LOKASI — flag legacy tingkat pelanggan hanya mirror
+     *  dari lokasi utama untuk kompatibilitas. */
+    public static class Location {
+        public String name;          // mis. "Kediaman", "Kantor"
+        public double lat;
+        public double lng;
+        public boolean wajibOngkir;
+
+        public Location() {}
+
+        public Location(String name, double lat, double lng, boolean wajibOngkir) {
+            this.name = name;
+            this.lat = lat;
+            this.lng = lng;
+            this.wajibOngkir = wajibOngkir;
+        }
+    }
+
     private long id;
     private String name;
     private String phone;
@@ -19,13 +42,20 @@ public class Customer {
 
     // Reseller
     private boolean isReseller;
+    private boolean wajibOngkir; // 1 = Transaksi Baru default Ongkos Kirim = Per Galon
     private String resellerSince;   // komisi dihitung dari JUAL setelah tanggal ini
     private int komisiGalon;        // calculated: total galon JUAL sejak jadi reseller
     private boolean komisiAddToPrice = true; // default ON: komisi ditambahkan ke harga jual
+    private String linkedResellerUuid;       // uuid reseller rujukan pelanggan ini (auto-afiliasi di Transaksi Baru)
+    private int galonPinjamAdjust;           // koreksi manual saldo galon dipinjam (offset dari web, disinkron)
+    private boolean isMine = true;           // true = milik perangkat ini (origin sendiri); filter "Hanya Pelanggan Saya"
     private java.util.Map<String, Double> productPrices; // harga khusus per produk { product_uuid: harga }
 
     /** Follow Up: catatan opsional (di-set saat ditambahkan manual dari web). Disinkron. */
     private String followupNote;
+
+    /** "Sudah Order Ulang": timestamp serah-terima marketing (NULL = belum). Disinkron. */
+    private String handedOverAt;
 
     public Customer() {}
 
@@ -50,6 +80,19 @@ public class Customer {
     public String getPhotoPath() { return photoPath; }
     public void setPhotoPath(String photoPath) { this.photoPath = photoPath; }
 
+    private String photoUrl;   // URL foto rumah di server (baris sinkron dari perangkat lain/web)
+    public String getPhotoUrl() { return photoUrl; }
+    public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
+
+    /** Punya foto rumah? true bila ada file lokal ATAU sudah terunggah ke server (photo_url). */
+    public boolean hasPhoto() {
+        return (photoPath != null && !photoPath.isEmpty())
+                || (photoUrl != null && !photoUrl.isEmpty());
+    }
+
+    /** Punya koordinat lokasi yang sudah ditandai? */
+    public boolean hasCoordinates() { return latitude != 0 || longitude != 0; }
+
     public double getLatitude() { return latitude; }
     public void setLatitude(double latitude) { this.latitude = latitude; }
 
@@ -62,6 +105,11 @@ public class Customer {
     public String getFollowupNote() { return followupNote; }
     public void setFollowupNote(String followupNote) { this.followupNote = followupNote; }
 
+    /** Timestamp "Sudah Order Ulang" (serah-terima marketing), atau null. */
+    public String getHandedOverAt() { return handedOverAt; }
+    public void setHandedOverAt(String v) { this.handedOverAt = v; }
+    public boolean isHandedOver() { return handedOverAt != null && !handedOverAt.isEmpty(); }
+
     public int getGalonKeluar() { return galonKeluar; }
     public void setGalonKeluar(int galonKeluar) { this.galonKeluar = galonKeluar; }
 
@@ -71,16 +119,81 @@ public class Customer {
     public int getTotalTransaksi() { return totalTransaksi; }
     public void setTotalTransaksi(int totalTransaksi) { this.totalTransaksi = totalTransaksi; }
 
-    /** Saldo galon yang masih berada di pelanggan */
+    /** Saldo galon yang masih berada di pelanggan (hasil hitung transaksi + koreksi manual dari web). */
     public int getSaldoGalon() {
-        return galonKeluar - galonKembali;
+        return galonKeluar - galonKembali + galonPinjamAdjust;
     }
+
+    /** Koreksi manual "Galon Dipinjam" (offset) — disetel dari web, disinkron. */
+    public int getGalonPinjamAdjust() { return galonPinjamAdjust; }
+    public void setGalonPinjamAdjust(int v) { this.galonPinjamAdjust = v; }
+
+    /** true = pelanggan milik perangkat ini (origin sendiri). Basis filter "Hanya Pelanggan Saya". */
+    public boolean isMine() { return isMine; }
+    public void setMine(boolean v) { this.isMine = v; }
+
+    // --- Agregat lintas-perangkat dari server (pull-only) + label perangkat asal ---
+    // Untuk salinan MILIK perangkat ini dipakai agregat LOKAL (lebih segar); salinan perangkat
+    // lain (is_mine=0) pakai agregat server ini. Daftar menjumlahkannya per grup dedup.
+    private int srvTrx, srvOrdered, srvBorrowed, srvKembali;
+    private String srvFirstJual;
+    private String originLabel;                       // label perangkat asal baris ini (nama device / "Web")
+    private java.util.List<String> originLabels;      // gabungan label seluruh salinan (untuk tag daftar)
+
+    public int getSrvTrx() { return srvTrx; }
+    public void setSrvTrx(int v) { this.srvTrx = v; }
+    public int getSrvOrdered() { return srvOrdered; }
+    public void setSrvOrdered(int v) { this.srvOrdered = v; }
+    public int getSrvBorrowed() { return srvBorrowed; }
+    public void setSrvBorrowed(int v) { this.srvBorrowed = v; }
+    public int getSrvKembali() { return srvKembali; }
+    public void setSrvKembali(int v) { this.srvKembali = v; }
+    public String getSrvFirstJual() { return srvFirstJual; }
+    public void setSrvFirstJual(String v) { this.srvFirstJual = v; }
+    public String getOriginLabel() { return originLabel; }
+    public void setOriginLabel(String v) { this.originLabel = v; }
+
+    /** Saldo komisi reseller menurut SERVER (lintas semua perangkat) — pull-only. */
+    private double srvSaldo;
+    public double getSrvSaldo() { return srvSaldo; }
+    public void setSrvSaldo(double v) { this.srvSaldo = v; }
+    public java.util.List<String> getOriginLabels() { return originLabels; }
+    public void setOriginLabels(java.util.List<String> v) { this.originLabels = v; }
+
+    // Nama tampilan gabungan bila orang yang SAMA punya nama berbeda antar-perangkat, mis.
+    // "Hanny Taman Sentosa / Bp Okky". Diisi saat dedup (applyMergedAggregates); null → pakai name.
+    private String displayName;
+    private int mergedNameCount = 1;   // jumlah nama unik dalam grup dedup (>1 = nama beda antar-perangkat)
+    /** Nama untuk DITAMPILKAN (gabungan lintas-perangkat bila ada); fallback ke name asli. */
+    public String getDisplayName() {
+        return (displayName == null || displayName.isEmpty()) ? name : displayName;
+    }
+    public void setDisplayName(String v) { this.displayName = v; }
+    public int getMergedNameCount() { return mergedNameCount; }
+    public void setMergedNameCount(int v) { this.mergedNameCount = v; }
+
+    /** Agregat efektif per baris: salinan sendiri pakai lokal (segar), lainnya pakai server. */
+    public int effectiveTrx()      { return isMine ? totalTransaksi : srvTrx; }
+    public int effectiveOrdered()  { return isMine ? galonTotalOrdered : srvOrdered; }
+    public int effectiveBorrowed() { return isMine ? galonKeluar : srvBorrowed; }
+    public int effectiveKembali()  { return isMine ? galonKembali : srvKembali; }
+    public String effectiveFirstJual() { return isMine ? firstOrderDate : srvFirstJual; }
 
     public int getGalonTotalOrdered() { return galonTotalOrdered; }
     public void setGalonTotalOrdered(int v) { this.galonTotalOrdered = v; }
 
     public String getFirstOrderDate() { return firstOrderDate; }
     public void setFirstOrderDate(String v) { this.firstOrderDate = v; }
+
+    /** SimpleDateFormat mahal & tak thread-safe → satu per thread, dipakai ulang (getKonsumsiPerHari
+     *  dipanggil sekali per bind kartu pelanggan saat scroll). */
+    private static final ThreadLocal<java.text.SimpleDateFormat> DT_FMT =
+            new ThreadLocal<java.text.SimpleDateFormat>() {
+                @Override protected java.text.SimpleDateFormat initialValue() {
+                    return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US);
+                }
+            };
+    private static final java.util.TimeZone UTC_TZ = java.util.TimeZone.getTimeZone("UTC");
 
     /**
      * Konsumsi galon per hari = total galon di-order / jumlah hari sejak order
@@ -101,9 +214,8 @@ public class Customer {
             if (dot > 0) core = core.substring(0, dot);          // buang pecahan detik
             if (core.length() > 19) core = core.substring(0, 19); // buang ekor offset (mis. +07:00)
             core = core.trim();
-            java.text.SimpleDateFormat sdf =
-                    new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US);
-            if (utc) sdf.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+            java.text.SimpleDateFormat sdf = DT_FMT.get();
+            sdf.setTimeZone(utc ? UTC_TZ : java.util.TimeZone.getDefault());
             java.util.Date first = sdf.parse(core);
             if (first == null) return 0;
             long diffMs = System.currentTimeMillis() - first.getTime();
@@ -118,6 +230,9 @@ public class Customer {
     public boolean isReseller() { return isReseller; }
     public void setReseller(boolean v) { this.isReseller = v; }
 
+    public boolean isWajibOngkir() { return wajibOngkir; }
+    public void setWajibOngkir(boolean v) { this.wajibOngkir = v; }
+
     public String getResellerSince() { return resellerSince; }
     public void setResellerSince(String v) { this.resellerSince = v; }
 
@@ -129,6 +244,9 @@ public class Customer {
     public boolean isKomisiAddToPrice() { return komisiAddToPrice; }
     public void setKomisiAddToPrice(boolean v) { this.komisiAddToPrice = v; }
 
+    public String getLinkedResellerUuid() { return linkedResellerUuid; }
+    public void setLinkedResellerUuid(String v) { this.linkedResellerUuid = v; }
+
     /** Harga khusus per produk { product_uuid: harga } (null/kosong = ikut harga produk standar). */
     public java.util.Map<String, Double> getProductPrices() { return productPrices; }
     public void setProductPrices(java.util.Map<String, Double> v) { this.productPrices = v; }
@@ -136,5 +254,18 @@ public class Customer {
     /** Harga khusus untuk satu produk (by uuid), atau null = pakai harga produk standar. */
     public Double getPriceFor(String productUuid) {
         return (productPrices != null && productUuid != null) ? productPrices.get(productUuid) : null;
+    }
+
+    /** Multi-lokasi bernama (terurut, entri pertama = utama). Null/kosong = hanya koordinat
+     *  legacy — DAO melakukan lazy synthesis "Kediaman" saat baca, jadi setelah lewat DAO
+     *  daftar ini terisi bila pelanggan punya koordinat. */
+    private java.util.List<Location> locations;
+
+    public java.util.List<Location> getLocations() { return locations; }
+    public void setLocations(java.util.List<Location> v) { this.locations = v; }
+
+    /** Lokasi utama (entri pertama), atau null bila tidak ada lokasi. */
+    public Location getPrimaryLocation() {
+        return (locations != null && !locations.isEmpty()) ? locations.get(0) : null;
     }
 }
