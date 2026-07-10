@@ -8,8 +8,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Hasil parser pesan WA. Dipakai sebagai DTO antara
- * {@link OrderParseService} → {@link com.crowja.damiupos.db.OrderInboxDao}.
+ * DTO isi pesanan yang dirender di Inbox Pesanan (mis. pesanan terjadwal)
+ * dan dipakai untuk prefill Transaksi Baru. Disimpan via
+ * {@link com.crowja.damiupos.db.OrderInboxDao}.
  *
  * <p>Diserialisasi ke JSON saat disimpan di kolom
  * {@code order_inbox.parsed_json} supaya UI inbox bisa render
