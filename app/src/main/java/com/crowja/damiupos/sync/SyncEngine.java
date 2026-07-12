@@ -13,9 +13,12 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -68,6 +71,7 @@ public class SyncEngine {
                     DatabaseHelper.COL_FOLLOWUP_MANUAL_AT, DatabaseHelper.COL_FOLLOWUP_NOTE,
                     DatabaseHelper.COL_PRODUCT_PRICES, DatabaseHelper.COL_LOCATIONS,
                     DatabaseHelper.COL_HANDED_OVER_AT, DatabaseHelper.COL_HANDED_OVER_BY,
+                    DatabaseHelper.COL_CUST_CREATED_BY,
                     DatabaseHelper.COL_PHOTO_URL, DatabaseHelper.COL_CREATED_AT,
             }, NO_REFS),
 
@@ -194,6 +198,22 @@ public class SyncEngine {
                     new Ref(DatabaseHelper.COL_CD_CAMPAIGN_ID, "campaign_uuid", DatabaseHelper.TABLE_CAMPAIGNS),
                     new Ref(DatabaseHelper.COL_CD_CUSTOMER_ID, "customer_uuid", DatabaseHelper.TABLE_CUSTOMERS),
             }),
+
+            // Gift pelanggan (branch-wide) — assignment ditulis di web (pull), redemption ditulis di
+            // HP saat JUAL meng-klaim-nya (push). product_uuid & redeemed_transaction_uuid dibawa
+            // sebagai kolom data mentah (bukan Ref): transaksi device-isolated jadi struk-nya tak
+            // selalu ada di tiap HP; yang penting redeemed_at menandai gift tak lagi pending di mana
+            // pun. customer_uuid di-resolve via Ref (customers branch-wide → selalu ada). Setelah
+            // customers agar ref-nya resolve saat pull.
+            new Spec("customer_gifts", DatabaseHelper.TABLE_CUSTOMER_GIFTS, new String[]{
+                    DatabaseHelper.COL_GIFT_ITEM_TYPE, DatabaseHelper.COL_GIFT_PRODUCT_UUID,
+                    DatabaseHelper.COL_GIFT_ITEM_NAME, DatabaseHelper.COL_GIFT_QTY,
+                    DatabaseHelper.COL_GIFT_REASON, DatabaseHelper.COL_GIFT_REDEEMED_AT,
+                    DatabaseHelper.COL_GIFT_REDEEMED_TRX_UUID, DatabaseHelper.COL_GIFT_REDEEMED_BY,
+                    DatabaseHelper.COL_CREATED_AT,
+            }, new Ref[]{
+                    new Ref(DatabaseHelper.COL_GIFT_CUSTOMER_ID, "customer_uuid", DatabaseHelper.TABLE_CUSTOMERS),
+            }),
     };
 
     public static final class Result {
@@ -279,6 +299,11 @@ public class SyncEngine {
             // A push can reveal customers the dashboard is missing (e.g. after re-provisioning):
             // they + their full transaction history were just re-queued — push once more to seed them.
             if (backfillPending) res.pushed += push();
+            // Safety-net: ask the server which of our RECENT transactions/expenses it never received
+            // and re-push them. Catches any sale that slipped through (dropped push, an old build that
+            // wrongly marked a skipped row synced) so a struk'd sale can't stay missing on the web.
+            try { if (reconcile()) res.pushed += push(); }
+            catch (Throwable ignored) {}
             pulledManualFollowups.clear();
             res.pulled = pull();
             // Cek berkala tiap sync: redam pengingat "Pesanan Terjadwal (tiap N hari)" yang sudah tak
@@ -610,6 +635,69 @@ public class SyncEngine {
 
     // ------------------------------------------------------------------ PUSH
 
+    /** Entities the reconcile safety-net checks (the operational rows a customer "receives" — sales +
+     *  expenses), with the local table + how far back to look. Keep small: only what would be a real
+     *  loss if it never reached the dashboard. */
+    private static final String[][] RECONCILE = {
+        {"transactions", DatabaseHelper.TABLE_TRANSACTIONS},
+        {"expenses", DatabaseHelper.TABLE_EXPENSES},
+    };
+    private static final int RECONCILE_DAYS = 30;
+    private static final int RECONCILE_CAP = 1500;   // per entity; server also caps at 2000
+
+    /**
+     * Reconciliation safety-net: send the server the uuids of our RECENT transactions/expenses; for
+     * any it reports missing, mark them dirty (synced=0) so the very next push re-sends them. This is
+     * the last line of defence against a struk'd sale never reaching the dashboard — no matter the
+     * cause (dropped push mid-request, an older build that wrongly marked a skipped row synced, etc.).
+     * Returns true when at least one row was re-queued (caller then pushes again this cycle).
+     */
+    private boolean reconcile() throws Exception {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        JSONObject entities = new JSONObject();
+        // Map entity → its uuid list we're asking about (also lets us re-queue by table afterwards).
+        for (String[] ent : RECONCILE) {
+            JSONArray uuids = new JSONArray();
+            Cursor c = db.rawQuery(
+                    "SELECT " + DatabaseHelper.COL_SYNC_UUID + " FROM " + ent[1]
+                    + " WHERE " + DatabaseHelper.COL_SYNC_UUID + " IS NOT NULL"
+                    + " AND " + DatabaseHelper.COL_CREATED_AT + " >= datetime('now','-" + RECONCILE_DAYS + " days')"
+                    + " ORDER BY " + DatabaseHelper.COL_CREATED_AT + " DESC LIMIT " + RECONCILE_CAP,
+                    null);
+            try {
+                while (c.moveToNext()) {
+                    String u = c.getString(0);
+                    if (u != null && !u.isEmpty()) uuids.put(u);
+                }
+            } finally { c.close(); }
+            if (uuids.length() > 0) entities.put(ent[0], uuids);
+        }
+        if (entities.length() == 0) return false;
+
+        JSONObject body = new JSONObject();
+        body.put("entities", entities);
+        JSONObject resp = api.reconcile(body);   // throws on HTTP failure → caller swallows, retry next cycle
+        JSONObject missing = resp != null ? resp.optJSONObject("missing") : null;
+        if (missing == null || missing.length() == 0) return false;
+
+        int requeued = 0;
+        for (String[] ent : RECONCILE) {
+            JSONArray arr = missing.optJSONArray(ent[0]);
+            if (arr == null) continue;
+            ContentValues v = new ContentValues();
+            v.put(DatabaseHelper.COL_SYNCED, 0);   // dirty → next push() resends it
+            for (int i = 0; i < arr.length(); i++) {
+                String u = arr.optString(i, null);
+                if (u == null || u.isEmpty()) continue;
+                requeued += db.update(ent[1], v, DatabaseHelper.COL_SYNC_UUID + "=?", new String[]{u});
+            }
+        }
+        if (requeued > 0) {
+            android.util.Log.w("SyncEngine", "reconcile re-queued " + requeued + " row(s) the server was missing");
+        }
+        return requeued > 0;
+    }
+
     /** Rows per push request — keeps a big backlog (e.g. thousands of freshly-imported
      *  customers + tombstones) under the server's per-request time limit (shared hosting
      *  caps PHP execution at ~30s; one giant push otherwise 500s). */
@@ -727,18 +815,56 @@ public class SyncEngine {
         if (settings != null && settings.length() > 0) body.put("settings", settings);
         JSONObject resp = api.push(body);   // throws on failure → these rows stay dirty
 
+        // Per-row ACK gating: mark a row synced ONLY when the server actually acknowledged it with a
+        // success status. Previously EVERY row in a 200-response batch was marked synced regardless of
+        // its per-row status, so a row the server SKIPPED ('error', e.g. a transient constraint hit)
+        // was silently marked synced and never retried → a real sale (whose struk already reached the
+        // customer) could vanish from the dashboard. Now a non-acked row stays dirty and retries; the
+        // reconcile pass is the final backstop for anything still missing.
+        // null = legacy server without a `results` map → treat all sent rows as acked (old behaviour).
+        Set<String> acked = ackedUuids(resp);
         for (String[] row : sentRows) {
+            if (acked != null && !acked.contains(row[1])) continue;   // not confirmed → keep dirty, retry
             db.execSQL("UPDATE " + row[0] + " SET " + DatabaseHelper.COL_SYNCED + "=1"
                     + " WHERE " + DatabaseHelper.COL_SYNC_UUID + "=? AND "
                     + DatabaseHelper.COL_EDITED_AT + "=?", new Object[]{row[1], row[2]});
         }
         for (String[] tomb : sentTombs) {
+            if (acked != null && !acked.contains(tomb[1])) continue;   // delete not confirmed → keep tombstone
             db.delete(DatabaseHelper.TABLE_SYNC_TOMBSTONES,
                     DatabaseHelper.COL_TS_ENTITY + "=? AND " + DatabaseHelper.COL_SYNC_UUID + "=?",
                     new String[]{tomb[0], tomb[1]});
         }
         requeueMissingCustomers(db, resp);
     }
+
+    /** The ONLY per-row status that must keep a row dirty (unexpected, likely-transient failure — a
+     *  row the server tried to store but couldn't). Every OTHER status is a terminal server decision:
+     *  stored ("created"/"updated"), superseded ("kept_server"), tombstoned ("deleted"/"absent"), or
+     *  deliberately not stored ("pull_only"/"collection_disabled") — none should retry forever. Old
+     *  behaviour marked EVERY row synced regardless, so an "error" row was silently dropped. */
+    private static final String STATUS_RETRY = "error";
+
+    /** Uuids the server settled (any status EXCEPT "error") across every entity in the push response's
+     *  `results` map, or NULL when there is no `results` map (older server) → caller acks all sent
+     *  rows, preserving the previous HTTP-200-means-success behaviour. */
+    private static Set<String> ackedUuids(JSONObject resp) {
+        JSONObject results = resp != null ? resp.optJSONObject("results") : null;
+        if (results == null) return null;   // legacy server → caller acks all
+        Set<String> ok = new HashSet<>();
+        for (java.util.Iterator<String> it = results.keys(); it.hasNext(); ) {
+            JSONArray arr = results.optJSONArray(it.next());
+            if (arr == null) continue;
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject r = arr.optJSONObject(i);
+                if (r == null) continue;
+                String uuid = r.optString("uuid", null);
+                if (uuid != null && !STATUS_RETRY.equals(r.optString("status", ""))) ok.add(uuid);
+            }
+        }
+        return ok;
+    }
+
 
     /**
      * The server lists customers (referenced by transactions we just pushed) that the

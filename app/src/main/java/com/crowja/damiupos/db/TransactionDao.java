@@ -99,6 +99,18 @@ public class TransactionDao {
             }
         }
         long id = dbHelper.syncInsert(db, DatabaseHelper.TABLE_TRANSACTIONS, values);
+        // Gift pelanggan: JUAL untuk pelanggan tersimpan meng-klaim SEMUA gift pending-nya —
+        // redeemed_at terisi + struk ditautkan (redeemed_transaction_uuid = sync_uuid transaksi ini)
+        // → di-push balik ke server & tampil di struk. Non-JUAL / walk-in (customerId≤0) = no-op.
+        if (Transaction.TYPE_JUAL.equals(trx.getType()) && trx.getCustomerId() > 0) {
+            String trxUuid = null;
+            try (Cursor uc = db.query(DatabaseHelper.TABLE_TRANSACTIONS,
+                    new String[]{DatabaseHelper.COL_SYNC_UUID},
+                    DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(id)}, null, null, null)) {
+                if (uc.moveToFirst()) trxUuid = uc.getString(0);
+            }
+            new CustomerGiftDao(dbHelper).redeemForTransaction(db, trx.getCustomerId(), trxUuid, operator);
+        }
         // Jaring pengaman integritas: kalau pelanggan ini belum ada di web dashboard
         // (synced=0 → belum terkonfirmasi terkirim), dorong SELURUH riwayat transaksi
         // miliknya ikut naik bersama datanya — supaya tidak ada transaksi "yatim"
@@ -129,9 +141,35 @@ public class TransactionDao {
                 DatabaseHelper.COL_CUSTOMER_ID + "=?", new String[]{String.valueOf(customerId)});
     }
 
+    /** sync_uuid transaksi (untuk menautkan struk ke gift yang di-klaim); null bila tak ada. */
+    public String getSyncUuidById(long id) {
+        if (id <= 0) return null;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        try (Cursor c = db.query(DatabaseHelper.TABLE_TRANSACTIONS,
+                new String[]{DatabaseHelper.COL_SYNC_UUID},
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(id)}, null, null, null)) {
+            return c.moveToFirst() ? c.getString(0) : null;
+        }
+    }
+
     // ----------------------------------------------------------- Antrian Delivery
 
     /** Jumlah order yang masih di antrian (PENDING) — untuk badge dashboard. */
+    /** Transaksi yang BELUM terkonfirmasi tersinkron ke server (synced=0) dan lebih tua dari
+     *  {@code minAgeMinutes} menit — dipakai untuk peringatan "N transaksi belum tersinkron" di
+     *  layar utama. Ambang usia menghindari alarm palsu untuk transaksi yang baru dibuat dan wajar
+     *  masih antre sync. Hanya transaksi (bukan tombstone) — yang penting muncul di dashboard. */
+    public int countUnsynced(int minAgeMinutes) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        try (Cursor c = db.rawQuery(
+                "SELECT COUNT(*) FROM " + DatabaseHelper.TABLE_TRANSACTIONS
+                        + " WHERE " + DatabaseHelper.COL_SYNCED + "=0"
+                        + " AND " + DatabaseHelper.COL_EDITED_AT + " <= datetime('now','-" + minAgeMinutes + " minutes')",
+                null)) {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        }
+    }
+
     public int countDeliveryQueue() {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         try (Cursor c = db.rawQuery(
@@ -296,6 +334,18 @@ public class TransactionDao {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_PAYMENT_METHOD, method);
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
+    }
+
+    /** Edit terbatas (staf operator): PINDAHKAN transaksi ke pelanggan lain (ubah "kolom nama
+     *  pelanggan"). Cukup ganti customer_id lokal — SyncEngine punya Ref(customer_id → customer_uuid)
+     *  yang otomatis me-resolve uuid pelanggan baru saat push, jadi dashboard & perangkat lain ikut
+     *  ter-update. syncUpdate bump edited_at + synced=0 → LWW. Nominal/total tidak berubah. */
+    public int updateCustomerId(long trxId, long newCustomerId) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_CUSTOMER_ID, newCustomerId);
         return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
                 DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
     }

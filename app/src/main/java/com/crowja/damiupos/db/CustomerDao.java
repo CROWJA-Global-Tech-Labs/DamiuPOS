@@ -80,6 +80,13 @@ public class CustomerDao {
         if (customer.getResellerSince() != null) {
             values.put(DatabaseHelper.COL_RESELLER_SINCE, customer.getResellerSince());
         }
+        // "Didaftarkan oleh": atribusi pencatat = operator yang sedang clock-in di perangkat ini
+        // (didenormalisasi namanya, cermin transactions.created_by_name). Disinkron agar dashboard
+        // menampilkan pencatatnya walau pelanggan belum bertransaksi. HANYA saat insert (buat).
+        String operator = new SettingsDao(dbHelper).getCurrentUserName();
+        if (operator != null && !operator.isEmpty()) {
+            values.put(DatabaseHelper.COL_CUST_CREATED_BY, operator);
+        }
         // Tanggal daftar custom (default DB = now kalau tidak di-set).
         if (customer.getCreatedAt() != null && !customer.getCreatedAt().isEmpty()) {
             values.put(DatabaseHelper.COL_CREATED_AT, customer.getCreatedAt());

@@ -104,15 +104,21 @@ public class OrderInboxActivity extends AppCompatActivity {
 
     private void reload() {
         data.clear();
-        if (showArchive) {
-            // View arsip
-            data.addAll(dao.getArchived());
-        } else {
-            // Inbox aktif: PENDING dulu, lalu APPROVED/REJECTED yang belum
-            // diarsipkan
-            data.addAll(dao.getPending());
-            for (OrderInbox o : dao.getActive()) {
-                if (!OrderInbox.STATUS_PENDING.equals(o.getStatus())) data.add(o);
+        // Karyawan marketing TIDAK menangani Pesanan Terjadwal → inbox dikosongkan saat mereka login
+        // (pengingat tetap tersimpan/tersinkron di perangkat, hanya tidak ditampilkan). Konsisten
+        // dgn banner/alarm yang sudah dilewati untuk marketing di MainActivity.refreshOrderInboxBanner.
+        boolean marketing = com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(this);
+        if (!marketing) {
+            if (showArchive) {
+                // View arsip
+                data.addAll(dao.getArchived());
+            } else {
+                // Inbox aktif: PENDING dulu, lalu APPROVED/REJECTED yang belum
+                // diarsipkan
+                data.addAll(dao.getPending());
+                for (OrderInbox o : dao.getActive()) {
+                    if (!OrderInbox.STATUS_PENDING.equals(o.getStatus())) data.add(o);
+                }
             }
         }
         adapter.notifyDataSetChanged();

@@ -66,6 +66,20 @@
             </intent-filter>
         </activity>
 
+        <!-- Deep link dari halaman publik pelanggan: damiupos://transaksi?customer=<uuid> → Transaksi Baru. -->
+        <activity
+            android:name=".DeepLinkActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="damiupos" android:host="transaksi" />
+            </intent-filter>
+        </activity>
+
         <activity android:name=".CustomerListActivity" />
         <activity android:name=".CustomerFormActivity" />
         <activity android:name=".CustomerDetailActivity" />

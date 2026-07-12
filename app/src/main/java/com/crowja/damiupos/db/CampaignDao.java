@@ -17,11 +17,13 @@ import java.util.UUID;
  * with a customer (alongside the struk + tracking link) and then synced up.
  *
  * The campaign keeps being RE-ATTACHED to the same customer's struk on every sale until it is
- * "fulfilled" — i.e. UNTIL EITHER the customer clicked its link at least once (clicked_at, set on the
- * web and synced down) OR the campaign is removed on the web (deactivate → is_active=0 on pull;
- * delete → tombstone removes the local row, so it drops out of {@link #activeForCustomer}). Each
- * re-attach reuses the SAME (campaign, customer) delivery token, so it's one delivery per customer —
- * even across the branch's devices (deliveries are branch-wide, pulled & respected here).
+ * "fulfilled" — i.e. UNTIL EITHER the customer ENGAGED with it: FILLED the questionnaire
+ * (responded_at) OR gave a 👍👎 reaction (reacted_at) — both web-set and synced down — OR the
+ * campaign is removed on the web (deactivate → is_active=0 on pull; delete → tombstone removes the
+ * local row, so it drops out of {@link #activeForCustomer}). Merely CLICKING the link (clicked_at)
+ * does NOT stop it — we keep sending until they actually respond/react. Each re-attach reuses the
+ * SAME (campaign, customer) delivery token, so it's one delivery per customer — even across the
+ * branch's devices (deliveries are branch-wide, pulled & respected here).
  */
 public class CampaignDao {
 
@@ -50,9 +52,9 @@ public class CampaignDao {
 
     /**
      * Active campaigns that target {@code deviceUuid} and are NOT yet fulfilled for this customer —
-     * i.e. the customer hasn't clicked the link yet — so they should be (re)appended to this sale's
-     * struk. A deactivated or web-deleted campaign drops out (deactivate → is_active=0 on pull;
-     * delete → tombstone removes the local row), so it stops being shared too.
+     * i.e. the customer hasn't RESPONDED/REACTED yet (a mere click doesn't count) — so they should be
+     * (re)appended to this sale's struk. A deactivated or web-deleted campaign drops out (deactivate →
+     * is_active=0 on pull; delete → tombstone removes the local row), so it stops being shared too.
      */
     public List<Pending> activeForCustomer(String deviceUuid, long customerLocalId) {
         List<Pending> out = new ArrayList<>();
@@ -67,7 +69,7 @@ public class CampaignDao {
                 long id = c.getLong(0);
                 String targets = c.getString(3);
                 if (!targetsInclude(targets, deviceUuid)) continue;
-                if (hasClickedDelivery(db, id, customerLocalId)) continue;   // sudah diklik → terpenuhi, stop
+                if (isDeliveryFulfilled(db, id, customerLocalId)) continue;   // sudah mengisi/bereaksi → stop
                 out.add(new Pending(id, c.getString(1), c.getString(2)));
             }
         } finally {
@@ -89,12 +91,17 @@ public class CampaignDao {
         return false;
     }
 
-    /** Has this customer CLICKED this campaign's link at least once? (clicked_at is web-set, synced down.) */
-    private static boolean hasClickedDelivery(SQLiteDatabase db, long campaignLocalId, long customerLocalId) {
+    /**
+     * Is this campaign FULFILLED for this customer — i.e. did they ENGAGE: FILL the questionnaire
+     * ({@code responded_at}) OR give a 👍👎 reaction ({@code reacted_at})? Both are web-set and synced
+     * down. A mere CLICK ({@code clicked_at}) is NOT enough — keep re-attaching until they respond/react.
+     */
+    private static boolean isDeliveryFulfilled(SQLiteDatabase db, long campaignLocalId, long customerLocalId) {
         Cursor c = db.query(DatabaseHelper.TABLE_CAMPAIGN_DELIVERIES,
                 new String[]{DatabaseHelper.COL_ID},
-                DatabaseHelper.COL_CD_CAMPAIGN_ID + "=? AND " + DatabaseHelper.COL_CD_CUSTOMER_ID + "=? AND "
-                        + DatabaseHelper.COL_CD_CLICKED_AT + " IS NOT NULL AND " + DatabaseHelper.COL_CD_CLICKED_AT + " != ''",
+                DatabaseHelper.COL_CD_CAMPAIGN_ID + "=? AND " + DatabaseHelper.COL_CD_CUSTOMER_ID + "=? AND ("
+                        + "(" + DatabaseHelper.COL_CD_RESPONDED_AT + " IS NOT NULL AND " + DatabaseHelper.COL_CD_RESPONDED_AT + " != '') OR "
+                        + "(" + DatabaseHelper.COL_CD_REACTED_AT + " IS NOT NULL AND " + DatabaseHelper.COL_CD_REACTED_AT + " != ''))",
                 new String[]{String.valueOf(campaignLocalId), String.valueOf(customerLocalId)},
                 null, null, null, "1");
         try {
@@ -104,7 +111,7 @@ public class CampaignDao {
         }
     }
 
-    /** Token of an existing (not-yet-clicked) delivery for this pair, or null — to re-attach the SAME link. */
+    /** Token of an existing (not-yet-fulfilled) delivery for this pair, or null — to re-attach the SAME link. */
     private static String existingToken(SQLiteDatabase db, long campaignLocalId, long customerLocalId) {
         Cursor c = db.query(DatabaseHelper.TABLE_CAMPAIGN_DELIVERIES,
                 new String[]{DatabaseHelper.COL_CD_TOKEN},
@@ -120,17 +127,18 @@ public class CampaignDao {
 
     /**
      * Get-or-create the sharable delivery for (campaign, customer) and return its public token to
-     * attach to the struk. Keeps re-attaching the SAME link on every sale until the customer clicks:
-     *   • already CLICKED → returns {@code null} (fulfilled, stop sharing);
-     *   • an unclicked delivery exists → returns its existing token (re-attach the same {@code /c/{token}});
+     * attach to the struk. Keeps re-attaching the SAME link on every sale until the customer
+     * RESPONDS or REACTS (a click alone doesn't count):
+     *   • already RESPONDED/REACTED → returns {@code null} (fulfilled, stop sharing);
+     *   • an unfulfilled delivery exists → returns its existing token (re-attach the same {@code /c/{token}});
      *   • none yet → mints a new token + a dirty "sent" delivery (pushed next sync so the link resolves).
      * Reusing the token means one delivery per customer (no duplicates), and a delivery another phone
-     * created/whose click synced down is respected here too.
+     * created/whose response synced down is respected here too.
      */
     public String ensureDelivery(long campaignLocalId, long customerLocalId) {
         if (campaignLocalId <= 0 || customerLocalId <= 0) return null;
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        if (hasClickedDelivery(db, campaignLocalId, customerLocalId)) return null;   // sudah diklik → terpenuhi
+        if (isDeliveryFulfilled(db, campaignLocalId, customerLocalId)) return null;   // sudah mengisi/bereaksi
         String existing = existingToken(db, campaignLocalId, customerLocalId);
         if (existing != null) return existing;                                       // lampirkan ulang link sama
         String token = newToken();

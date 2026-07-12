@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 50;
+    private static final int DATABASE_VERSION = 52;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -102,6 +102,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
      *  ditandainya sendiri (uuid == sync_device_uuid miliknya) dari semua daftar — "terhapus"
      *  di perangkat marketing, tetap tampil di perangkat lain. Disinkron. */
     public static final String COL_HANDED_OVER_BY = "handed_over_by_device";
+    /** "Didaftarkan oleh": nama operator (staf clock-in) yang menginput pelanggan ini, direkam
+     *  saat DIBUAT — cermin transactions.created_by_name. Disinkron agar dashboard menampilkan
+     *  pencatatnya walau pelanggan belum bertransaksi. NULL untuk baris lama. */
+    public static final String COL_CUST_CREATED_BY = "created_by_name";
 
     // Table products
     public static final String TABLE_PRODUCTS = "products";
@@ -334,6 +338,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_LOCATIONS + " TEXT, " +
                     COL_HANDED_OVER_AT + " TEXT, " +
                     COL_HANDED_OVER_BY + " TEXT, " +
+                    COL_CUST_CREATED_BY + " TEXT, " +
                     COL_CREATED_AT + " TEXT DEFAULT (datetime('now','localtime'))" +
                     ");";
 
@@ -579,6 +584,41 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_SYNCED + " INTEGER DEFAULT 0" +
                     ");";
 
+    // Gift pelanggan — hadiah (produk/item custom) yang di-assign dari web/dashboard, ditarik ke
+    // tiap perangkat cabang (branch-wide). Pending sampai sebuah transaksi JUAL pelanggan itu
+    // meng-klaim-nya (redeemed_at terisi + redeemed_transaction_uuid menunjuk struk-nya). Dua-arah:
+    // pull assignment dari web, push redemption dari HP. item_name adalah snapshot (produk bisa
+    // ganti nama); product_uuid & redeemed_transaction_uuid disimpan sebagai string mentah (tak
+    // di-resolve lokal) — transaksi device-isolated jadi struk-nya cuma ada di HP yang menjual.
+    public static final String TABLE_CUSTOMER_GIFTS = "customer_gifts";
+    public static final String COL_GIFT_CUSTOMER_ID = "customer_id";   // local ref → customers._id (→ customer_uuid)
+    public static final String COL_GIFT_ITEM_TYPE = "item_type";        // product | custom
+    public static final String COL_GIFT_PRODUCT_UUID = "product_uuid";  // raw (tak di-resolve lokal)
+    public static final String COL_GIFT_ITEM_NAME = "item_name";        // snapshot nama item
+    public static final String COL_GIFT_QTY = "qty";
+    public static final String COL_GIFT_REASON = "reason";
+    public static final String COL_GIFT_REDEEMED_AT = "redeemed_at";    // NULL = belum diberikan
+    public static final String COL_GIFT_REDEEMED_TRX_UUID = "redeemed_transaction_uuid"; // raw uuid struk
+    public static final String COL_GIFT_REDEEMED_BY = "redeemed_by_name";
+
+    private static final String CREATE_TABLE_CUSTOMER_GIFTS =
+            "CREATE TABLE " + TABLE_CUSTOMER_GIFTS + " (" +
+                    COL_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    COL_GIFT_CUSTOMER_ID + " INTEGER DEFAULT -1, " +
+                    COL_GIFT_ITEM_TYPE + " TEXT, " +
+                    COL_GIFT_PRODUCT_UUID + " TEXT, " +
+                    COL_GIFT_ITEM_NAME + " TEXT, " +
+                    COL_GIFT_QTY + " INTEGER DEFAULT 1, " +
+                    COL_GIFT_REASON + " TEXT, " +
+                    COL_GIFT_REDEEMED_AT + " TEXT, " +
+                    COL_GIFT_REDEEMED_TRX_UUID + " TEXT, " +
+                    COL_GIFT_REDEEMED_BY + " TEXT, " +
+                    COL_CREATED_AT + " TEXT, " +
+                    COL_SYNC_UUID + " TEXT, " +
+                    COL_EDITED_AT + " TEXT, " +
+                    COL_SYNCED + " INTEGER DEFAULT 0" +
+                    ");";
+
     private static DatabaseHelper instance;
 
     public static synchronized DatabaseHelper getInstance(Context context) {
@@ -628,6 +668,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         db.execSQL(CREATE_TABLE_PENDING_TRX);
         db.execSQL(CREATE_TABLE_CAMPAIGNS);
         db.execSQL(CREATE_TABLE_CAMPAIGN_DELIVERIES);
+        db.execSQL(CREATE_TABLE_CUSTOMER_GIFTS);
         installSyncInfra(db, false);
         createIndexes(db);
     }
@@ -963,6 +1004,20 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_DEST_LAT + " REAL DEFAULT 0");
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_DEST_LNG + " REAL DEFAULT 0");
         }
+        if (oldVersion < 51) {
+            // "Didaftarkan oleh": rekam operator pencatat saat pelanggan dibuat (cermin
+            // transactions.created_by_name) → dashboard tak lagi kosong untuk lead marketing.
+            // Additif; baris lama NULL (dashboard jatuh ke staf transaksi pertama / perangkat asal).
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_CUST_CREATED_BY + " TEXT");
+        }
+        if (oldVersion < 52) {
+            // Gift pelanggan (hadiah produk/custom di-assign dari web, branch-wide). Tabel baru,
+            // additif & aman untuk perangkat live. Sync columns sudah inline di CREATE; indeks
+            // uuid ditambah di createIndexes (dipanggil idempoten di bawah bila belum ada).
+            tryExec(db, CREATE_TABLE_CUSTOMER_GIFTS);
+            tryExec(db, "CREATE INDEX IF NOT EXISTS idx_gifts_uuid ON " + TABLE_CUSTOMER_GIFTS + "(" + COL_SYNC_UUID + ")");
+            tryExec(db, "CREATE INDEX IF NOT EXISTS idx_gifts_customer ON " + TABLE_CUSTOMER_GIFTS + "(" + COL_GIFT_CUSTOMER_ID + ")");
+        }
     }
 
     /**
@@ -980,6 +1035,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
         tryExec(db, "CREATE INDEX IF NOT EXISTS idx_campaigns_uuid ON campaigns(" + COL_SYNC_UUID + ")");
         tryExec(db, "CREATE INDEX IF NOT EXISTS idx_campdeliv_uuid ON campaign_deliveries(" + COL_SYNC_UUID + ")");
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_gifts_uuid ON " + TABLE_CUSTOMER_GIFTS + "(" + COL_SYNC_UUID + ")");
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_gifts_customer ON " + TABLE_CUSTOMER_GIFTS + "(" + COL_GIFT_CUSTOMER_ID + ")");
 
         // transactions.customer_id / reseller_id — tulang punggung agregat pelanggan + cascade delete.
         tryExec(db, "CREATE INDEX IF NOT EXISTS idx_trx_customer ON " + TABLE_TRANSACTIONS + "(" + COL_CUSTOMER_ID + ")");

@@ -35,6 +35,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
 
     /** Menu: tandai "Sudah Order Ulang" (serah-terima pelanggan marketing → perangkat lain). */
     private static final int MENU_HANDOFF = 10;
+    /** Menu: buat & bagikan link publik 7 hari (kartu info pelanggan). */
+    private static final int MENU_SHARE_LINK = 11;
 
     private long customerId;
     private DatabaseHelper dbHelper;
@@ -140,6 +142,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
     public boolean onCreateOptionsMenu(android.view.Menu menu) {
         menu.add(0, MENU_HANDOFF, 0, "✔ Sudah Order Ulang")
                 .setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_NEVER);
+        menu.add(0, MENU_SHARE_LINK, 1, "🔗 Bagikan Link Publik (7 hari)")
+                .setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_NEVER);
         return true;
     }
 
@@ -148,6 +152,10 @@ public class CustomerDetailActivity extends AppCompatActivity {
         android.view.MenuItem item = menu.findItem(MENU_HANDOFF);
         if (item != null) {
             item.setVisible(canShowHandoff());
+        }
+        android.view.MenuItem share = menu.findItem(MENU_SHARE_LINK);
+        if (share != null) {
+            share.setVisible(canShowShareLink());
         }
         return super.onPrepareOptionsMenu(menu);
     }
@@ -158,7 +166,61 @@ public class CustomerDetailActivity extends AppCompatActivity {
             confirmHandoff();
             return true;
         }
+        if (item.getItemId() == MENU_SHARE_LINK) {
+            sharePublicLink();
+            return true;
+        }
         return super.onOptionsItemSelected(item);
+    }
+
+    /** Link publik butuh server → hanya tampil saat sinkronisasi online aktif & pelanggan bukan "Umum". */
+    private boolean canShowShareLink() {
+        if (currentCustomer == null || CustomerDao.UMUM_NAME.equalsIgnoreCase(
+                currentCustomer.getName() != null ? currentCustomer.getName().trim() : "")) {
+            return false;
+        }
+        com.crowja.damiupos.sync.SyncSettings sync =
+                new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+        return sync.isEnabled() && !sync.getDeviceUuid().isEmpty() && !sync.getToken().isEmpty();
+    }
+
+    /**
+     * Minta server membuat link publik 7 hari untuk pelanggan ini (butuh online), lalu buka pemilih
+     * "Bagikan" (WhatsApp, dsb.) dengan URL-nya. Kartu di link menampilkan nama, telp→wa.me, harga
+     * produk, wajib ongkir, foto + koordinat.
+     */
+    private void sharePublicLink() {
+        String syncUuid = customerDao.getSyncUuidById(customerId);
+        if (syncUuid == null || syncUuid.isEmpty()) {
+            Toast.makeText(this, "Pelanggan belum tersinkron — coba lagi setelah sinkronisasi.",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        Toast.makeText(this, "Membuat link…", Toast.LENGTH_SHORT).show();
+        final com.crowja.damiupos.sync.SyncSettings cfg =
+                new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+        final String name = currentCustomer != null && currentCustomer.getName() != null
+                ? currentCustomer.getName() : "Pelanggan";
+        new Thread(() -> {
+            String url = null;
+            try {
+                org.json.JSONObject r = new com.crowja.damiupos.sync.SyncApi(cfg).createCustomerShareLink(syncUuid);
+                url = r.optString("url", "");
+            } catch (Exception ignored) { /* offline / server error → tampilkan pesan gagal */ }
+            final String finalUrl = url;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (finalUrl == null || finalUrl.isEmpty()) {
+                    Toast.makeText(this, "Gagal membuat link. Pastikan perangkat online lalu coba lagi.",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
+                Intent share = new Intent(Intent.ACTION_SEND);
+                share.setType("text/plain");
+                share.putExtra(Intent.EXTRA_TEXT, "Info pelanggan " + name + " (berlaku 7 hari):\n" + finalUrl);
+                startActivity(Intent.createChooser(share, "Bagikan Link Pelanggan"));
+            });
+        }).start();
     }
 
     /**
@@ -452,6 +514,10 @@ public class CustomerDetailActivity extends AppCompatActivity {
             Intent intent = new Intent(Intent.ACTION_VIEW);
             intent.setData(Uri.parse("https://wa.me/" + phone));
             startActivity(intent);
+            // Tercatat sebagai follow-up (sama seperti tombol "Follow Up WA" di daftar/peta Follow
+            // Up) — supaya "kapan terakhir di-follow-up" di web ikut ter-update walau staf chat
+            // langsung dari sini, bukan dari menu Follow Up. Lihat WhatsAppFollowUp.
+            customerDao.markFollowedUp(customerId);
         } catch (Exception e) {
             Toast.makeText(this, R.string.wa_tidak_tersedia, Toast.LENGTH_SHORT).show();
         }

@@ -43,7 +43,6 @@ public class SettingsDao {
     public static final String KEY_PRO_TEMP_UNTIL = "pro_temp_until";
     /** Last rewarded ad watched — untuk enforce cooldown (REWARD_COOLDOWN_MS). */
     public static final String KEY_LAST_REWARD_AT = "last_reward_at";
-    public static final String KEY_WA_AUTO_DETECT = "wa_auto_detect";
     public static final String KEY_WA_RINGTONE_URI = "wa_ringtone_uri";
     public static final String KEY_WA_REPLY_TEMPLATE = "wa_reply_template";
     public static final String DEFAULT_WA_REPLY_TEMPLATE = "Baik, siap kak";
@@ -107,7 +106,7 @@ public class SettingsDao {
      * (app_settings). ALLOWLIST — apa pun di luar daftar ini TIDAK PERNAH dikirim
      * ke server. Sengaja EXCLUDE: rahasia (sync_*, pro_*), state
      * sesi/perangkat (current_user_*, wizard, cursor, last_*), dan toggle
-     * device-spesifik (wa_auto_detect, ringtone).
+     * device-spesifik (ringtone).
      */
     public static final Set<String> SHAREABLE_KEYS = new HashSet<>(Arrays.asList(
             KEY_DEFAULT_ONGKIR,
@@ -470,15 +469,6 @@ public class SettingsDao {
         set(KEY_PRO_EXPIRY_AT, String.valueOf(millis));
     }
 
-    // ---------------- WhatsApp auto-detect orders ----------------
-
-    public boolean isWaAutoDetectEnabled() {
-        return "1".equals(get(KEY_WA_AUTO_DETECT, "0"));
-    }
-
-    public void setWaAutoDetectEnabled(boolean enabled) {
-        set(KEY_WA_AUTO_DETECT, enabled ? "1" : "0");
-    }
 
     /** URI nada dering yang dipilih user untuk notifikasi pesanan WA.
      *  Empty = pakai default sistem. */

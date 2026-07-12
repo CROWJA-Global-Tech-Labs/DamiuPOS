@@ -122,7 +122,7 @@ public class TransactionListActivity extends AppCompatActivity {
             startActivity(i);
         });
 
-        adapter.setOnItemLongClickListener(this::confirmDelete);
+        adapter.setOnItemLongClickListener(this::showTransactionActions);
 
         toggleTypeFilter.addOnButtonCheckedListener((g, checkedId, isChecked) -> {
             if (!isChecked) return;
@@ -251,6 +251,90 @@ public class TransactionListActivity extends AppCompatActivity {
     }
 
     private String safeStr(String s) { return s != null ? s : ""; }
+
+    /** Long-press sebuah transaksi → menu aksi. "Ubah Pelanggan" tersedia untuk SEMUA staf
+     *  (permintaan: staf bisa memindah transaksi ke pelanggan lain); "Hapus" tetap gated admin. */
+    private void showTransactionActions(Transaction trx) {
+        String custName = trx.getCustomerName() != null ? trx.getCustomerName() : "-";
+        String[] options = {"Ubah Pelanggan", "Hapus Transaksi"};
+        new AlertDialog.Builder(this)
+                .setTitle("Transaksi — " + custName)
+                .setItems(options, (d, which) -> {
+                    if (which == 0) showChangeCustomer(trx);
+                    else confirmDelete(trx);
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /** Pindahkan transaksi ke pelanggan lain — ubah "kolom nama pelanggan". Reuse dialog pemilih
+     *  pelanggan yang sama dengan Transaksi Baru (kartu dedup + agregat + tag). Konfirmasi dulu
+     *  supaya salah-tekan tidak diam-diam memindah transaksi. */
+    private void showChangeCustomer(Transaction trx) {
+        View dialogView = getLayoutInflater().inflate(R.layout.dialog_select_customer, null);
+        RecyclerView rvCustomers = dialogView.findViewById(R.id.rvCustomers);
+        android.widget.EditText etSearchCust = dialogView.findViewById(R.id.etSearchCustomer);
+        // Sembunyikan tombol cepat "Umum" / "Pelanggan Baru": memindah transaksi hanya ke
+        // pelanggan yang SUDAH ada (bukan bikin baru dari sini).
+        View quickPickRow = dialogView.findViewById(R.id.quickPickRow);
+        View quickPickDivider = dialogView.findViewById(R.id.quickPickDivider);
+        if (quickPickRow != null) quickPickRow.setVisibility(View.GONE);
+        if (quickPickDivider != null) quickPickDivider.setVisibility(View.GONE);
+
+        com.crowja.damiupos.db.CustomerDao customerDao =
+                new com.crowja.damiupos.db.CustomerDao(DatabaseHelper.getInstance(this));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Pindahkan ke Pelanggan")
+                .setView(dialogView)
+                .setNegativeButton(R.string.batal, null)
+                .create();
+
+        com.crowja.damiupos.adapter.CustomerAdapter adapter =
+                new com.crowja.damiupos.adapter.CustomerAdapter(picked -> {
+                    dialog.dismiss();
+                    confirmChangeCustomer(trx, picked);
+                });
+        rvCustomers.setLayoutManager(new LinearLayoutManager(this));
+        rvCustomers.setAdapter(adapter);
+        adapter.setData(com.crowja.damiupos.db.CustomerDao.dedupeForDisplay(customerDao.getAll()));
+
+        etSearchCust.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+            @Override public void onTextChanged(CharSequence s, int st, int b, int c) {}
+            @Override public void afterTextChanged(Editable s) {
+                String k = s.toString().trim();
+                adapter.setData(com.crowja.damiupos.db.CustomerDao.dedupeForDisplay(
+                        k.isEmpty() ? customerDao.getAll() : customerDao.search(k)));
+            }
+        });
+        dialog.show();
+    }
+
+    private void confirmChangeCustomer(Transaction trx, com.crowja.damiupos.model.Customer target) {
+        String from = trx.getCustomerName() != null ? trx.getCustomerName() : "-";
+        String to = target.getName() != null ? target.getName() : "-";
+        if (target.getId() == trx.getCustomerId()) {
+            Toast.makeText(this, "Transaksi sudah milik pelanggan itu", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Pindahkan Transaksi?")
+                .setMessage("Pindahkan transaksi ini:\n\nDari: " + from + "\nKe: " + to
+                        + "\n\nNominal & isi transaksi tidak berubah. Perubahan tersinkron ke dashboard.")
+                .setPositiveButton("YA, PINDAHKAN", (d, w) -> {
+                    int rows = transactionDao.updateCustomerId(trx.getId(), target.getId());
+                    if (rows > 0) {
+                        Toast.makeText(this, "Transaksi dipindahkan ke " + to, Toast.LENGTH_SHORT).show();
+                        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                        reload();
+                    } else {
+                        Toast.makeText(this, "Gagal memindahkan transaksi", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
 
     private void confirmDelete(Transaction trx) {
         // Marketing: akuisisi saja — tidak boleh menghapus riwayat penjualan

@@ -60,6 +60,12 @@ public class SyncApi {
         return post(cfg.getBaseUrl() + "/api/sync/pull", body, cfg.getToken());
     }
 
+    /** Reconcile: send {entities:{transactions:[uuid,...]}} → {missing:{transactions:[...]}}.
+     *  Safety-net so a locally-recorded sale the server never received gets re-pushed. */
+    public JSONObject reconcile(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/sync/reconcile", body, cfg.getToken());
+    }
+
     /** Full "Pull Data" upload — every customer/transaction/expense row (dashboard-triggered). */
     public JSONObject importDump(JSONObject body) throws Exception {
         return post(cfg.getBaseUrl() + "/api/sync/import", body, cfg.getToken());
@@ -90,6 +96,16 @@ public class SyncApi {
         JSONObject body = new JSONObject();
         body.put("phones", phones);
         return post(cfg.getBaseUrl() + "/api/customers/deleted-check", body, cfg.getToken());
+    }
+
+    /**
+     * Buat (atau pakai-ulang) link publik 7 hari untuk kartu info satu pelanggan. Server balas
+     * {@code {"url": "...", "expires_at": "..."}}. Branch-scoped by the token.
+     */
+    public JSONObject createCustomerShareLink(String customerUuid) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("customer_uuid", customerUuid);
+        return post(cfg.getBaseUrl() + "/api/customers/share-link", body, cfg.getToken());
     }
 
     public JSONObject version(String baseUrl) throws Exception {

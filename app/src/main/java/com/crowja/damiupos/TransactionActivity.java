@@ -344,6 +344,7 @@ public class TransactionActivity extends AppCompatActivity {
                 presetWajibOngkir = selectedWajibOngkir;
                 tvSelectedCustomer.setText(c.getName());
                 maybeWarnIncompleteCustomer(c);
+                maybeWarnPendingGift(c);
             }
         }
         // Kalau dari Inbox & user sudah correct nomor di Balas confirm-dialog,
@@ -487,6 +488,7 @@ public class TransactionActivity extends AppCompatActivity {
         tvSelectedCustomer.setText(c.getName()
                 + (c.getPhone() != null && !c.getPhone().isEmpty() ? " · " + c.getPhone() : ""));
         maybeWarnIncompleteCustomer(c);   // akuisisi baru: foto + koordinat wajib lengkap
+        maybeWarnPendingGift(c);
         cardCustomer.setOnClickListener(null);
         cardCustomer.setClickable(false);
 
@@ -1419,6 +1421,7 @@ public class TransactionActivity extends AppCompatActivity {
         updateOwnershipUI();
         refreshUseSaldoCard();   // pelanggan baru terpilih → cek apakah reseller
         maybeWarnIncompleteCustomer(c);
+        maybeWarnPendingGift(c);
     }
 
     /**
@@ -1509,6 +1512,39 @@ public class TransactionActivity extends AppCompatActivity {
     /** ID pelanggan terakhir yang sudah diperingatkan — supaya popup tidak spam
      *  saat pelanggan yang sama dipilih ulang dalam satu sesi transaksi. */
     private long lastIncompleteWarnCustomerId = -1;
+
+    /** ID pelanggan terakhir yang gift-nya sudah diberitahukan (anti-spam popup gift). */
+    private long lastGiftWarnCustomerId = -1;
+
+    /**
+     * Popup informasi (🎁) saat pelanggan terpilih punya GIFT pending: karyawan diingatkan
+     * untuk MEMBERIKAN hadiahnya saat transaksi ini. Gift ditarik dari web (branch-wide) dan
+     * di-klaim otomatis oleh transaksi JUAL saat disimpan (lihat TransactionDao.insert). Bukan
+     * alarm — ini kabar baik; cukup dialog informatif. Pelanggan Umum/walk-in dilewati.
+     */
+    private void maybeWarnPendingGift(Customer c) {
+        if (c == null || c.getId() <= 0 || isUmumCustomer()) return;
+        if (c.getId() == lastGiftWarnCustomerId) return;
+        java.util.List<com.crowja.damiupos.db.CustomerGiftDao.Gift> gifts =
+                new com.crowja.damiupos.db.CustomerGiftDao(DatabaseHelper.getInstance(this))
+                        .pendingForCustomer(c.getId());
+        if (gifts.isEmpty()) { lastGiftWarnCustomerId = -1; return; }
+        lastGiftWarnCustomerId = c.getId();
+
+        StringBuilder sb = new StringBuilder();
+        for (com.crowja.damiupos.db.CustomerGiftDao.Gift g : gifts) {
+            sb.append("• ").append(g.label());
+            if (g.reason != null && !g.reason.isEmpty()) sb.append(" — ").append(g.reason);
+            sb.append('\n');
+        }
+        new AlertDialog.Builder(this)
+                .setIcon(android.R.drawable.ic_dialog_info)
+                .setTitle("🎁 Pelanggan Dapat Gift!")
+                .setMessage("Berikan hadiah berikut kepada \"" + c.getName() + "\" saat transaksi ini:\n\n"
+                        + sb + "\nGift akan otomatis tercatat diberikan saat transaksi JUAL disimpan.")
+                .setPositiveButton("OK", null)
+                .show();
+    }
 
     /**
      * Popup perintah (⚠ + suara nyaring) saat pelanggan yang order BELUM punya foto
@@ -2004,6 +2040,19 @@ public class TransactionActivity extends AppCompatActivity {
             transactionDao.insert(kembali);
         }
 
+        // Promosi GRATIS = pemberian gratis di lokasi → SELALU Rp 0, apa pun status Wajib Ongkir
+        // pelanggan. Invarian ditegakkan di TITIK SIMPAN (bukan hanya lewat toggle ongkir di UI,
+        // yang bisa bocor karena urutan init) supaya tak ada ongkir yang menyusup ke riwayat
+        // ("Rp 1.000" palsu). Semua harga item sudah dipaksa 0 (applyPromosiPricing) → total = 0
+        // langsung (BUKAN total − ongkir: untuk ongkir Per Galon, `ongkir` adalah tarif/galon
+        // sedangkan total memuat tarif×jumlah, jadi pengurangan satu unit menyisakan sisa saat
+        // qty ≥ 2). Server juga menjaga ini lewat penanda [PROMOSI] (guardPromoOngkir).
+        if (isJual && promosiMode && isPromosiGratis()) {
+            totalHarga = 0;
+            ongkir = 0;
+            ongkirType = Transaction.ONGKIR_NONE;
+        }
+
         Transaction trx = new Transaction();
         trx.setCustomerId(selectedCustomerId);
         trx.setType(isJual ? Transaction.TYPE_JUAL : Transaction.TYPE_KEMBALI);
@@ -2078,6 +2127,8 @@ public class TransactionActivity extends AppCompatActivity {
             r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_NAME, selectedCustomerName);
             r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_PHONE, selectedCustomerPhone);
             r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_ID, selectedCustomerId);
+            // Gift yang baru di-klaim transaksi ini (TransactionDao.insert) → tampil di struk.
+            r.putExtra(ReceiptActivity.EXTRA_GIFT_TRX_UUID, transactionDao.getSyncUuidById(newTrxId));
             // Token link lacak → dibawa ke struk supaya tombol "Kirim Struk + Tracking" bisa
             // mengirim link pantau pengiriman ke pelanggan.
             com.crowja.damiupos.model.Transaction savedTrx = transactionDao.getById(newTrxId);

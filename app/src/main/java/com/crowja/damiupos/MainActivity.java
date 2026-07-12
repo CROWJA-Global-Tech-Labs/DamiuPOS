@@ -710,9 +710,12 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onPrepareOptionsMenu(Menu menu) {
-        // Ikon amplop (inbox pesanan WA) hanya tampil kalau auto-detect aktif.
+        // Ikon amplop (inbox Pesanan Terjadwal) tampil hanya untuk NON-marketing saat ada
+        // pengingat pending. Marketing tidak menangani Pesanan Terjadwal → ikon disembunyikan.
         MenuItem inbox = menu.findItem(R.id.action_inbox);
-        if (inbox != null) inbox.setVisible(settingsDao.isWaAutoDetectEnabled());
+        if (inbox != null) inbox.setVisible(
+                !com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(this)
+                        && orderInboxDao != null && orderInboxDao.countPending() > 0);
         return super.onPrepareOptionsMenu(menu);
     }
 
@@ -855,6 +858,29 @@ public class MainActivity extends AppCompatActivity {
         invalidateOptionsMenu();
         // Tampilkan pesan admin yang tertunda (mis. tiba saat app di background).
         showPendingAdminMessage();
+        // Alarm langka: transaksi yang SUDAH lama (>15 mnt) tapi belum terkonfirmasi tersinkron ke
+        // server — normalnya nihil karena sync + reconcile memulihkannya otomatis. Kalau tetap ada,
+        // operator perlu tahu (mis. HP lama offline / satu baris bermasalah) agar penjualan tak "hilang"
+        // dari dashboard. Query di thread background; Toast di main thread (guard activity masih hidup).
+        warnIfUnsyncedTransactions();
+    }
+
+    /** Peringatkan bila ada transaksi lama yang belum tersinkron (lihat TransactionDao.countUnsynced). */
+    private void warnIfUnsyncedTransactions() {
+        new Thread(() -> {
+            final int stuck;
+            try { stuck = transactionDao.countUnsynced(15); }
+            catch (Throwable ignored) { return; }
+            if (stuck <= 0) return;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(this,
+                        "⚠ " + stuck + " transaksi belum tersinkron ke server. Pastikan HP online; "
+                                + "sistem akan mencoba mengirim ulang otomatis.",
+                        Toast.LENGTH_LONG).show();
+                com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+            });
+        }).start();
     }
 
     @Override

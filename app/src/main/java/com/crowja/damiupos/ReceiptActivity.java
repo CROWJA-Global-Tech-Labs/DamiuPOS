@@ -63,6 +63,9 @@ public class ReceiptActivity extends AppCompatActivity {
     public static final String EXTRA_REWARD_UNLOCKED = "reward_unlocked";
     public static final String EXTRA_REWARDS_NEW_COUNT = "rewards_new_count";
     public static final String EXTRA_TRANSACTION_ID = "transaction_id";
+    /** sync_uuid transaksi ini — dipakai untuk menampilkan gift yang di-klaim (redeemed) oleh
+     *  transaksi ini di struk (gambar + teks WA). Diisi dari Transaksi Baru & saat re-share. */
+    public static final String EXTRA_GIFT_TRX_UUID = "gift_trx_uuid";
     /** True = jangan tawarkan kirim struk ke pelanggan di sini (struk dikirim saat
      *  order ditandai Selesai di Antrian Delivery). Dipakai oleh Transaksi Baru (JUAL). */
     public static final String EXTRA_DEFER_CUSTOMER_SEND = "defer_customer_send";
@@ -258,6 +261,8 @@ public class ReceiptActivity extends AppCompatActivity {
         Intent i = getIntent();
         i.putExtra(EXTRA_CUSTOMER_NAME, t.getCustomerName());
         i.putExtra(EXTRA_CUSTOMER_ID, t.getCustomerId());   // re-share dari struk tersimpan tetap bawa kampanye
+        // Gift yang di-klaim transaksi ini → struk yang dibuka ulang tetap menampilkan hadiahnya.
+        i.putExtra(EXTRA_GIFT_TRX_UUID, dao.getSyncUuidById(id));
         // Lookup phone
         com.crowja.damiupos.db.CustomerDao cDao = new com.crowja.damiupos.db.CustomerDao(DatabaseHelper.getInstance(this));
         com.crowja.damiupos.model.Customer c = cDao.getById(t.getCustomerId());
@@ -559,8 +564,48 @@ public class ReceiptActivity extends AppCompatActivity {
         }
 
         cardNotes(stripMarkers(in.getStringExtra(EXTRA_CATATAN)));
+        renderGiftBox();
         // Link tracking TIDAK ditanam di gambar — dikirim sebagai pesan teks terpisah di WA
         // (EXTRA_TEXT) supaya gambar struk tetap bersih dan link-nya bisa diklik.
+    }
+
+    /** Gift yang di-klaim transaksi ini → kotak amber "🎁 GIFT UNTUK ANDA" + alasan pada gambar struk. */
+    private void renderGiftBox() {
+        View box = receiptCard.findViewById(R.id.rcGiftBox);
+        LinearLayout items = receiptCard.findViewById(R.id.rcGiftItems);
+        if (box == null || items == null) return;
+        java.util.List<com.crowja.damiupos.db.CustomerGiftDao.Gift> gifts = redeemedGifts();
+        items.removeAllViews();
+        if (gifts.isEmpty()) { box.setVisibility(View.GONE); return; }
+        for (com.crowja.damiupos.db.CustomerGiftDao.Gift g : gifts) {
+            TextView label = new TextView(this);
+            label.setText(g.label());
+            label.setTextColor(0xFF78350F);
+            label.setTextSize(13);
+            label.setTypeface(label.getTypeface(), android.graphics.Typeface.BOLD);
+            label.setPadding(0, dp(3), 0, 0);
+            items.addView(label);
+            if (g.reason != null && !g.reason.isEmpty()) {
+                TextView reason = new TextView(this);
+                reason.setText("Alasan: " + g.reason);
+                reason.setTextColor(0xFF92400E);
+                reason.setTextSize(11);
+                items.addView(reason);
+            }
+        }
+        box.setVisibility(View.VISIBLE);
+    }
+
+    private int dp(int v) {
+        return Math.round(v * getResources().getDisplayMetrics().density);
+    }
+
+    /** Gift di-klaim (redeemed) oleh transaksi struk ini — kosong bila tak ada / uuid tak diketahui. */
+    private java.util.List<com.crowja.damiupos.db.CustomerGiftDao.Gift> redeemedGifts() {
+        String trxUuid = getIntent().getStringExtra(EXTRA_GIFT_TRX_UUID);
+        if (trxUuid == null || trxUuid.isEmpty()) return new java.util.ArrayList<>();
+        return new com.crowja.damiupos.db.CustomerGiftDao(DatabaseHelper.getInstance(this))
+                .redeemedForTransaction(trxUuid);
     }
 
     // ----- helper kartu modern -----
@@ -814,6 +859,21 @@ public class ReceiptActivity extends AppCompatActivity {
         // Notes
         if (catatan != null && !catatan.isEmpty()) {
             sb.append(wrapText("Catatan: " + catatan)).append("\n");
+            sb.append(line('-')).append("\n");
+        }
+
+        // Gift pelanggan — hadiah yang di-klaim transaksi ini (+ alasan + apresiasi).
+        java.util.List<com.crowja.damiupos.db.CustomerGiftDao.Gift> gifts = redeemedGifts();
+        if (!gifts.isEmpty()) {
+            sb.append(center("*** GIFT UNTUK ANDA ***")).append("\n");
+            for (com.crowja.damiupos.db.CustomerGiftDao.Gift g : gifts) {
+                sb.append(wrapText("  " + g.label())).append("\n");
+                if (g.reason != null && !g.reason.isEmpty()) {
+                    sb.append(wrapText("  Alasan: " + g.reason)).append("\n");
+                }
+            }
+            sb.append(center("Terima kasih telah menjadi")).append("\n");
+            sb.append(center("pelanggan setia kami")).append("\n");
             sb.append(line('-')).append("\n");
         }
 

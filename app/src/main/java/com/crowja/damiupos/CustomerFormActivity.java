@@ -74,7 +74,8 @@ public class CustomerFormActivity extends AppCompatActivity {
     private static final class PriceRow {
         final String uuid;
         final TextInputEditText et;
-        PriceRow(String uuid, TextInputEditText et) { this.uuid = uuid; this.et = et; }
+        final double def;   // harga standar produk — pembanding "override vs ikut standar" saat simpan
+        PriceRow(String uuid, TextInputEditText et, double def) { this.uuid = uuid; this.et = et; this.def = def; }
     }
     private CustomerDao customerDao;
     private long editId = -1;
@@ -856,13 +857,13 @@ public class CustomerFormActivity extends AppCompatActivity {
             ((TextView) row.findViewById(R.id.tvProdukNama)).setText(p.getName());
             TextInputEditText et = row.findViewById(R.id.etProdukHarga);
             Double ov = overrides != null ? overrides.get(p.getUuid()) : null;
-            if (ov != null) {
-                et.setText(fmtPrice(ov));
-            } else if (existing == null) {
-                et.setText(fmtPrice(p.getHargaJual()));   // pelanggan baru → default harga standar
-            }
+            // SELALU tampilkan harga EFEKTIF (override khusus pelanggan, atau harga standar) — baik
+            // saat tambah maupun EDIT — supaya field tidak terlihat kosong. Nilai yang sama dengan
+            // harga standar TIDAK disimpan sebagai override (lihat collectProductPrices), jadi
+            // pelanggan tanpa penyesuaian tetap ikut harga standar (tak "beku" saat form dibuka).
+            et.setText(fmtPrice(ov != null ? ov : p.getHargaJual()));
             llHargaProduk.addView(row);
-            priceRows.add(new PriceRow(p.getUuid(), et));
+            priceRows.add(new PriceRow(p.getUuid(), et, p.getHargaJual()));
         }
     }
 
@@ -871,9 +872,13 @@ public class CustomerFormActivity extends AppCompatActivity {
         java.util.Map<String, Double> map = new java.util.HashMap<>();
         for (PriceRow r : priceRows) {
             String s = r.et.getText() != null ? r.et.getText().toString().trim() : "";
-            if (s.isEmpty()) continue;
+            if (s.isEmpty()) continue;   // dikosongkan = ikut harga standar
             try {
-                map.put(r.uuid, Double.parseDouble(s.replace(",", ".")));
+                double v = Double.parseDouble(s.replace(",", "."));
+                // Hanya simpan sebagai override kalau BEDA dari harga standar. Nilai = standar
+                // (mis. field ter-prefill dan tidak diubah) dianggap "ikut standar" → tidak
+                // membekukan harga pelanggan pada nilai default saat form kebetulan dibuka+disimpan.
+                if (Math.abs(v - r.def) > 0.001) map.put(r.uuid, v);
             } catch (NumberFormatException ignored) {}
         }
         return map.isEmpty() ? null : map;
