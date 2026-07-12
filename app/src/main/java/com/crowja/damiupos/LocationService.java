@@ -10,6 +10,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
 import android.content.pm.ServiceInfo;
 import android.location.Location;
 import android.os.BatteryManager;
@@ -67,6 +69,12 @@ public class LocationService extends Service {
     private LocationCallback callback;
     private String staffUuid;
     private ScheduledExecutorService poller;
+    /** Fires an immediate sync the moment internet returns — flushes transactions created while the
+     *  phone was offline (mis. penjualan di lapangan) without waiting for the 60s poll or a WorkManager
+     *  constraint job (unreliable on OEM battery-optimized phones). */
+    private ConnectivityManager netMgr;
+    private ConnectivityManager.NetworkCallback netCallback;
+    private volatile long lastReconnectSyncMs = 0;
     /** True while a dedicated high-frequency GPS request is subscribed (delivery in progress). */
     private volatile boolean fastGpsOn = false;
 
@@ -168,6 +176,31 @@ public class LocationService extends Service {
     public void onCreate() {
         super.onCreate();
         fused = LocationServices.getFusedLocationProviderClient(this);
+        registerReconnectSync();
+    }
+
+    /** Kick a sync as soon as the device (re)gains internet, so a sale recorded offline uploads
+     *  immediately on reconnect instead of lingering until the next poll/app-open. Debounced to at
+     *  most once per 10s (network flaps fire onAvailable repeatedly); syncNow itself also coalesces. */
+    private void registerReconnectSync() {
+        try {
+            netMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (netMgr == null) return;
+            final Context app = getApplicationContext();
+            netCallback = new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(Network network) {
+                    long now = System.currentTimeMillis();
+                    if (now - lastReconnectSyncMs < 10_000L) return;   // debounce flapping
+                    lastReconnectSyncMs = now;
+                    try {
+                        if (new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(app))).isEnrolled()) {
+                            com.crowja.damiupos.sync.SyncScheduler.syncNow(app);
+                        }
+                    } catch (Throwable ignored) {}
+                }
+            };
+            netMgr.registerDefaultNetworkCallback(netCallback);
+        } catch (Throwable ignored) {}
     }
 
     @Override
@@ -321,6 +354,10 @@ public class LocationService extends Service {
         RUNNING = false;
         if (fused != null && callback != null) {
             try { fused.removeLocationUpdates(callback); } catch (Exception ignored) {}
+        }
+        if (netMgr != null && netCallback != null) {
+            try { netMgr.unregisterNetworkCallback(netCallback); } catch (Exception ignored) {}
+            netCallback = null;
         }
         if (poller != null) {
             try { poller.shutdownNow(); } catch (Exception ignored) {}
