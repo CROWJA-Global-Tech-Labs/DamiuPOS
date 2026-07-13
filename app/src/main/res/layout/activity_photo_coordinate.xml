@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <androidx.camera.view.PreviewView
+        android:id="@+id/previewView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Top bar: judul + tutup -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:background="#99000000"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="12dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Ambil Foto &amp; Koordinat"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/btnClose"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:gravity="center"
+            android:text="✕"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp" />
+    </LinearLayout>
+
+    <!-- Mini-map + koordinat + akurasi (pojok kiri bawah) -->
+    <LinearLayout
+        android:id="@+id/mapCard"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="14dp"
+        android:layout_marginBottom="170dp"
+        android:background="#CC000000"
+        android:orientation="vertical"
+        android:padding="6dp">
+
+        <FrameLayout
+            android:layout_width="120dp"
+            android:layout_height="120dp">
+
+            <ImageView
+                android:id="@+id/ivMiniMap"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="#222222"
+                android:scaleType="centerCrop"
+                android:contentDescription="Mini map lokasi" />
+
+            <ProgressBar
+                android:id="@+id/mapSpinner"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_gravity="center" />
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/tvCoord"
+            android:layout_width="120dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Mencari lokasi…"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp" />
+
+        <TextView
+            android:id="@+id/tvAccuracy"
+            android:layout_width="120dp"
+            android:layout_height="wrap_content"
+            android:text="Akurasi: —"
+            android:textColor="#FFD54F"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- Hint akurasi (di atas tombol shutter) -->
+    <TextView
+        android:id="@+id/tvGpsHint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginBottom="110dp"
+        android:background="#99000000"
+        android:gravity="center"
+        android:padding="10dp"
+        android:text="Menunggu akurasi GPS…"
+        android:textColor="#FFFFFF"
+        android:textSize="13sp" />
+
+    <!-- Tombol shutter (hanya muncul saat akurasi cukup) -->
+    <ImageView
+        android:id="@+id/btnShutter"
+        android:layout_width="76dp"
+        android:layout_height="76dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="24dp"
+        android:background="@drawable/bg_shutter"
+        android:contentDescription="Ambil foto"
+        android:padding="18dp"
+        android:src="@android:drawable/ic_menu_camera"
+        android:tint="#111111"
+        android:visibility="gone" />
+</FrameLayout>

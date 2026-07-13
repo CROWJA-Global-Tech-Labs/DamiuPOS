@@ -112,6 +112,11 @@
         <activity
             android:name=".CameraCaptureActivity"
             android:screenOrientation="portrait" />
+        <!-- Workflow "Ambil Foto & Koordinat" pelanggan: kamera live + koordinat/mini-map + shutter
+             ter-gate akurasi GPS. Portrait terkunci. -->
+        <activity
+            android:name=".PhotoCoordinateActivity"
+            android:screenOrientation="portrait" />
         <!-- Provisioning QR scan, locked to portrait. -->
         <activity
             android:name=".PortraitCaptureActivity"

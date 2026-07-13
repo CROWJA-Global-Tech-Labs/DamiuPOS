@@ -53,6 +53,8 @@ public class CustomerFormActivity extends AppCompatActivity {
     public static final String EXTRA_PROMOSI_FLOW = "promosi_flow";
 
     private static final int REQUEST_CAMERA = 100;
+    /** Workflow gabungan "Ambil Foto & Koordinat" (kamera live + GPS gate). */
+    private static final int REQUEST_PHOTO_COORD = 106;
     private static final int REQUEST_PERMISSION_CAMERA = 101;
     private static final int REQUEST_PERMISSION_LOCATION = 102;
     private static final int REQUEST_PICK_MAP = 103;
@@ -231,7 +233,10 @@ public class CustomerFormActivity extends AppCompatActivity {
             buildLocationRows(null);
         }
 
-        findViewById(R.id.btnFoto).setOnClickListener(v -> takePhoto());
+        // Alur gabungan: satu tombol menangkap foto rumah + koordinat lokasi utama sekaligus
+        // (kamera live, shutter aktif hanya saat akurasi GPS ≤ 10 m). "Galeri" tetap sebagai
+        // cadangan foto-saja; koordinat granular per-lokasi tetap lewat tombol di tiap baris.
+        findViewById(R.id.btnFoto).setOnClickListener(v -> takePhotoAndCoordinate());
         findViewById(R.id.btnPickGallery).setOnClickListener(v -> pickFromGallery());
         findViewById(R.id.btnSimpan).setOnClickListener(v -> save());
 
@@ -319,6 +324,11 @@ public class CustomerFormActivity extends AppCompatActivity {
         }
     }
 
+    /** Buka workflow "Ambil Foto & Koordinat": foto rumah + koordinat lokasi utama sekaligus. */
+    private void takePhotoAndCoordinate() {
+        startActivityForResult(new Intent(this, PhotoCoordinateActivity.class), REQUEST_PHOTO_COORD);
+    }
+
     private void takePhoto() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -395,6 +405,24 @@ public class CustomerFormActivity extends AppCompatActivity {
                 updateKoordinatDisplay(pendingMapRow);
             }
             pendingMapRow = null;
+        } else if (requestCode == REQUEST_PHOTO_COORD && resultCode == RESULT_OK && data != null) {
+            // Workflow gabungan: set foto rumah + koordinat lokasi UTAMA (baris pertama) sekaligus.
+            String path = data.getStringExtra(PhotoCoordinateActivity.EXTRA_PHOTO_PATH);
+            if (path != null && !path.isEmpty()) {
+                currentPhotoPath = path;
+                lastGoodPhotoPath = path;
+                ivFotoRumah.setImageBitmap(loadRotatedBitmap(currentPhotoPath));
+            }
+            double lat = data.getDoubleExtra(PhotoCoordinateActivity.EXTRA_LAT, 0);
+            double lng = data.getDoubleExtra(PhotoCoordinateActivity.EXTRA_LNG, 0);
+            if (lat != 0 || lng != 0) {
+                if (locationRows.isEmpty()) addLocationRow(null);   // pastikan ada baris utama
+                LocationRow primary = locationRows.get(0);
+                primary.lat = lat;
+                primary.lng = lng;
+                updateKoordinatDisplay(primary);
+            }
+            Toast.makeText(this, "Foto & koordinat lokasi utama tersimpan", Toast.LENGTH_SHORT).show();
         }
     }
 

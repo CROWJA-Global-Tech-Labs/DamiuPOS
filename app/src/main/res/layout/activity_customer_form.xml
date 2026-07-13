@@ -218,15 +218,14 @@
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/btnFoto"
-                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_marginEnd="4dp"
                             android:layout_weight="1"
-                            android:text="Ambil Foto"
+                            android:text="Ambil Foto &amp; Koordinat"
                             android:textAllCaps="false"
                             app:cornerRadius="8dp"
-                            app:icon="@android:drawable/ic_menu_camera"
+                            app:icon="@android:drawable/ic_menu_mylocation"
                             app:iconGravity="textStart" />
 
                         <com.google.android.material.button.MaterialButton
