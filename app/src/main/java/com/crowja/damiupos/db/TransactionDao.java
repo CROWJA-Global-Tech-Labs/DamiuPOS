@@ -154,6 +154,58 @@ public class TransactionDao {
 
     // ----------------------------------------------------------- Antrian Delivery
 
+    /**
+     * True bila pelanggan ini DULU diakuisisi lewat promosi galon GRATIS (ada JUAL Rp0 pada hari
+     * pendaftarannya) DAN transaksi sekarang adalah ORDER ULANG (hari lebih baru dari hari daftar).
+     * Dipakai untuk popup "pelanggan promosi kembali order" setelah transaksi dibuat — sinyal
+     * konversi promo (selaras kolom "Order Ulang" di web Promosi Marketing). Murni data lokal
+     * (offline-friendly); bila transaksi akuisisinya ada di perangkat lain, popup tidak muncul.
+     *
+     * @param currentTanggalIso tanggal transaksi yang baru dibuat (ISO/"yyyy-MM-dd…"); null = hari ini
+     */
+    public boolean isRepeatFromFreePromo(long customerId, String currentTanggalIso) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String regDay = null;
+        try (Cursor cc = db.query(DatabaseHelper.TABLE_CUSTOMERS,
+                new String[]{DatabaseHelper.COL_CREATED_AT},
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)},
+                null, null, null)) {
+            if (cc.moveToFirst()) {
+                String ca = cc.getString(0);
+                if (ca != null && ca.length() >= 10) regDay = ca.substring(0, 10);
+            }
+        }
+        if (regDay == null) return false;
+        String today = (currentTanggalIso != null && currentTanggalIso.length() >= 10)
+                ? currentTanggalIso.substring(0, 10)
+                : DatabaseHelper.nowIso().substring(0, 10);
+        if (today.compareTo(regDay) <= 0) return false;   // hari daftar / sebelumnya = bukan order ulang
+        // Akuisisi = ada JUAL GRATIS (total 0) pada hari daftar pelanggan.
+        boolean acquiredFree;
+        try (Cursor c = db.rawQuery(
+                "SELECT COUNT(*) FROM " + DatabaseHelper.TABLE_TRANSACTIONS
+                + " WHERE " + DatabaseHelper.COL_CUSTOMER_ID + "=?"
+                + " AND " + DatabaseHelper.COL_TYPE + "='" + Transaction.TYPE_JUAL + "'"
+                + " AND substr(" + DatabaseHelper.COL_TANGGAL + ",1,10)=?"
+                + " AND " + DatabaseHelper.COL_TOTAL_HARGA + "=0",
+                new String[]{String.valueOf(customerId), regDay})) {
+            acquiredFree = c.moveToFirst() && c.getInt(0) > 0;
+        }
+        if (!acquiredFree) return false;
+        // Tampilkan HANYA saat ORDER ULANG PERTAMA (hari repeat paling awal = hari ini) supaya popup
+        // tidak muncul berulang tiap kali pelanggan yang sudah dikonversi order lagi ke depannya.
+        try (Cursor c2 = db.rawQuery(
+                "SELECT MIN(substr(" + DatabaseHelper.COL_TANGGAL + ",1,10)) FROM "
+                + DatabaseHelper.TABLE_TRANSACTIONS
+                + " WHERE " + DatabaseHelper.COL_CUSTOMER_ID + "=?"
+                + " AND " + DatabaseHelper.COL_TYPE + "='" + Transaction.TYPE_JUAL + "'"
+                + " AND substr(" + DatabaseHelper.COL_TANGGAL + ",1,10) > ?",
+                new String[]{String.valueOf(customerId), regDay})) {
+            String minRepeat = c2.moveToFirst() ? c2.getString(0) : null;
+            return today.equals(minRepeat);
+        }
+    }
+
     /** Jumlah order yang masih di antrian (PENDING) — untuk badge dashboard. */
     /** Transaksi yang BELUM terkonfirmasi tersinkron ke server (synced=0) dan lebih tua dari
      *  {@code minAgeMinutes} menit — dipakai untuk peringatan "N transaksi belum tersinkron" di

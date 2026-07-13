@@ -1641,6 +1641,19 @@ public class TransactionActivity extends AppCompatActivity {
         PaywallDialogFragment.show(getSupportFragmentManager(), reason, this::save);
     }
 
+    /** Popup "pelanggan promosi kembali order" — dijalankan lalu meneruskan ke struk (onContinue). */
+    private void showRepeatPromoDialog(String custName, Runnable onContinue) {
+        String name = (custName != null && !custName.isEmpty()) ? custName : "Pelanggan";
+        new AlertDialog.Builder(this)
+                .setTitle("🎉 Pelanggan Promosi Kembali Order!")
+                .setMessage("\"" + name + "\" dulu diakuisisi lewat promosi galon GRATIS, dan sekarang "
+                        + "KEMBALI order. Promosi berhasil jadi pelanggan berulang — berikan pelayanan "
+                        + "terbaik agar terus setia! 🙌")
+                .setCancelable(false)
+                .setPositiveButton("Lanjut", (d, w) -> onContinue.run())
+                .show();
+    }
+
     private void save() {
         if (selectedCustomerId == -1) {
             Toast.makeText(this, "Pilih pelanggan terlebih dahulu", Toast.LENGTH_SHORT).show();
@@ -2179,8 +2192,17 @@ public class TransactionActivity extends AppCompatActivity {
             }
             // JUAL masuk Antrian Delivery → struk dikirim ke pelanggan saat order Selesai.
             r.putExtra(ReceiptActivity.EXTRA_DEFER_CUSTOMER_SEND, true);
-            startActivity(r);
-            finish();
+            // Popup konversi promosi: pelanggan yang DULU diakuisisi lewat galon GRATIS kini KEMBALI
+            // order (sinyal promo berhasil, selaras kolom "Order Ulang" di web Promosi Marketing).
+            // Tampilkan dulu, baru lanjut ke struk. Detektor pakai data lokal (offline-friendly).
+            final Intent receiptIntent = r;
+            String trxTanggal = savedTrx != null ? savedTrx.getTanggal() : null;
+            if (transactionDao.isRepeatFromFreePromo(selectedCustomerId, trxTanggal)) {
+                showRepeatPromoDialog(selectedCustomerName, () -> { startActivity(receiptIntent); finish(); });
+            } else {
+                startActivity(receiptIntent);
+                finish();
+            }
         } else {
             if (totalHarga > 0) {
                 Intent r = new Intent(this, ReceiptActivity.class);
