@@ -42,6 +42,16 @@ public final class WhatsAppFollowUp {
      */
     public static void open(Context ctx, Customer c,
                             SettingsDao settingsDao, CustomerDao customerDao) {
+        open(ctx, c, settingsDao, customerDao, true);
+    }
+
+    /**
+     * @param markFollowedUp false = jangan stempel last_followup_at (syncUpdate men-dirty seluruh
+     *        baris → push LWW bisa menimpa edit lebih baru milik perangkat lain). Dipakai Daftar
+     *        Kunjungan untuk salinan pelanggan yang BUKAN milik perangkat ini.
+     */
+    public static void open(Context ctx, Customer c, SettingsDao settingsDao,
+                            CustomerDao customerDao, boolean markFollowedUp) {
         String phone = c != null ? c.getPhone() : null;
         if (phone == null || phone.isEmpty()) {
             Toast.makeText(ctx, "Pelanggan belum memiliki nomor WhatsApp",
@@ -58,13 +68,20 @@ public final class WhatsAppFollowUp {
         long days = daysSince(lastTs);
 
         // Template configurable dari Pengaturan. Placeholder:
-        //   {nama} {hari} {tanggal} {hari_lalu}
+        //   {nama} {hari} {tanggal} {hari_lalu} {hari_kirim}
         String template = settingsDao.getFollowUpTemplate();
         String msg = template
                 .replace("{nama}", c.getName() != null ? c.getName() : "")
                 .replace("{hari}", hari)
                 .replace("{tanggal}", tanggal)
                 .replace("{hari_lalu}", String.valueOf(days));
+        // Kata hari pengiriman: "hari ini" selama masih di jam operasi cabang, "besok" begitu
+        // lewat jam tutup (ops_close_time, Konfigurasi web — tersinkron). Bila "besok", frasa
+        // literal "hari ini" pada template lama ikut diganti ({hari_lalu} sudah jadi angka, aman).
+        // CERMIN logika web (FollowUpWa::deliveryDayWord) — jaga selaras.
+        String word = deliveryDayWord(settingsDao.getOpsCloseTime());
+        msg = msg.replace("{hari_kirim}", word);
+        if ("besok".equals(word)) msg = msg.replace("hari ini", "besok");
 
         try {
             Intent i = new Intent(Intent.ACTION_VIEW,
@@ -81,9 +98,26 @@ public final class WhatsAppFollowUp {
             if (!(ctx instanceof Activity)) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             ctx.startActivity(i);
             // Catat: pelanggan ini di-follow-up hari ini (untuk laporan harian).
-            customerDao.markFollowedUp(c.getId());
+            if (markFollowedUp) customerDao.markFollowedUp(c.getId());
         } catch (Exception e) {
             Toast.makeText(ctx, "Tidak dapat membuka WhatsApp", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** "hari ini" bila sekarang masih sebelum jam tutup operasional (HH:mm), else "besok".
+     *  Jam tak terparse → "hari ini" (perilaku lama). Dini hari (sebelum buka) tetap "hari ini"
+     *  karena pengiriman masih mungkin terjadi hari itu. */
+    static String deliveryDayWord(String closeTime) {
+        try {
+            String[] p = closeTime.trim().split(":");
+            int h = Integer.parseInt(p[0]);
+            int m = Integer.parseInt(p[1]);
+            java.util.Calendar now = java.util.Calendar.getInstance();
+            int minutesNow = now.get(java.util.Calendar.HOUR_OF_DAY) * 60
+                    + now.get(java.util.Calendar.MINUTE);
+            return minutesNow >= h * 60 + m ? "besok" : "hari ini";
+        } catch (Exception e) {
+            return "hari ini";
         }
     }
 

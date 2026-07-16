@@ -354,16 +354,17 @@ public class TransactionActivity extends AppCompatActivity {
         if (inboxPhone != null && !inboxPhone.trim().isEmpty()) {
             selectedCustomerPhone = inboxPhone.trim();
         }
-        // Default untuk Umum: jumlah kembali = 0, ownership = Beli
-        // (override XML default "1" dan last-saved ownership)
+        // Default untuk Umum: jumlah kembali = 0, ownership = Botol Sendiri
+        // (override XML default "1" dan last-saved ownership; galon keluar/masuk
+        // tidak dicatat untuk Pelanggan Umum)
         if (isUmumCustomer()) {
             syncingKembali = true;
             etJumlahKembali.setText("0");
             syncingKembali = false;
-            toggleOwnership.check(R.id.btnOwnershipBeli);
+            toggleOwnership.check(R.id.btnOwnershipBawaSendiri);
         }
-        // Sinkronkan visibility tombol ownership dengan tipe pelanggan
-        // (Umum: Beli + Bawa Sendiri; Regular: Pinjam + Beli)
+        // Sinkronkan visibility opsi ownership + tipe dengan pelanggan terpilih
+        // (Umum: tanpa "Di Pinjam" & tanpa tipe "Galon Kembali")
         updateOwnershipButtonsForCustomer();
 
         toggleType.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
@@ -891,17 +892,38 @@ public class TransactionActivity extends AppCompatActivity {
         return toggleOwnership.getCheckedButtonId() == R.id.btnOwnershipPinjam;
     }
 
+    /** Pengaman Umum: "Di Pinjam" tidak pernah lolos untuk Pelanggan Umum (galon keluar/masuk
+     *  tidak dicatat) — dipetakan ke "Botol Sendiri". Pelanggan lain lewat apa adanya. */
+    private String umumSafeOwnership(String ownership) {
+        return isUmumCustomer() && Transaction.OWNERSHIP_PINJAM.equals(ownership)
+                ? Transaction.OWNERSHIP_BAWA_SENDIRI : ownership;
+    }
+
     /**
-     * Tampilkan SEMUA opsi ownership untuk semua tipe pelanggan:
-     * "Di Pinjam" / "Di Beli" / "Botol Sendiri". Default ownership untuk
-     * Umum tetap di-set ke "Di Beli" (di {@code applySelectedCustomer}),
-     * tapi user bebas pilih ketiganya kapan saja.
+     * Sinkronkan opsi ownership & tipe transaksi dengan pelanggan terpilih.
+     *
+     * <p>Pelanggan UMUM: galon keluar/masuk TIDAK dicatat — "Di Pinjam" disembunyikan
+     * (pindah paksa ke "Botol Sendiri" bila sedang terpilih) dan tipe "Galon Kembali"
+     * disembunyikan (pindah paksa ke "Jual Air" bila sedang terpilih). Tersisa
+     * "Di Beli"/"Botol Sendiri" + "Jual Botol" — penjualan murni tanpa pencatatan
+     * galon beredar. Pelanggan terdaftar: semua opsi tampil.
      */
     private void updateOwnershipButtonsForCustomer() {
         View btnPinjam = findViewById(R.id.btnOwnershipPinjam);
         View btnBawaSendiri = findViewById(R.id.btnOwnershipBawaSendiri);
-        btnPinjam.setVisibility(View.VISIBLE);
+        View btnKembaliType = findViewById(R.id.btnTypeKembali);
+        boolean umum = isUmumCustomer();
+        if (umum) {
+            if (isPinjamSelected()) toggleOwnership.check(R.id.btnOwnershipBawaSendiri);
+            if (toggleType.getCheckedButtonId() == R.id.btnTypeKembali) {
+                toggleType.check(R.id.btnTypeJual);
+            }
+        }
+        btnPinjam.setVisibility(umum ? View.GONE : View.VISIBLE);
         btnBawaSendiri.setVisibility(View.VISIBLE);
+        if (btnKembaliType != null) {
+            btnKembaliType.setVisibility(umum ? View.GONE : View.VISIBLE);
+        }
     }
 
     private boolean isJualSelected() {
@@ -1358,8 +1380,13 @@ public class TransactionActivity extends AppCompatActivity {
         }
 
         CustomerAdapter adapter = new CustomerAdapter(customer -> {
-            applySelectedCustomer(customer);
             dialog.dismiss();
+            // Baris "Umum" bisa juga muncul di daftar/hasil cari → tetap lewati gerbang konfirmasi.
+            if (CustomerDao.UMUM_NAME.equals(customer.getName())) {
+                confirmUmumSelection(customer);
+            } else {
+                applySelectedCustomer(customer);
+            }
         });
         rvCustomers.setLayoutManager(new LinearLayoutManager(this));
         rvCustomers.setAdapter(adapter);
@@ -1368,9 +1395,9 @@ public class TransactionActivity extends AppCompatActivity {
         adapter.setData(CustomerDao.dedupeForDisplay(customerDao.getAll()));
 
         btnPickUmum.setOnClickListener(v -> {
-            Customer umum = customerDao.getOrCreateUmum();
-            if (umum != null) applySelectedCustomer(umum);
             dialog.dismiss();
+            Customer umum = customerDao.getOrCreateUmum();
+            if (umum != null) confirmUmumSelection(umum);
         });
 
         btnPickNew.setOnClickListener(v -> {
@@ -1395,6 +1422,30 @@ public class TransactionActivity extends AppCompatActivity {
     }
 
     /**
+     * Gerbang TEGAS sebelum "Pelanggan Umum" benar-benar terpilih: staf harus MEMASTIKAN
+     * konsumen datang sendiri ke kios DAN memakai galon miliknya sendiri — karena untuk
+     * Pelanggan Umum galon keluar/masuk TIDAK dicatat (opsi "Di Pinjam" & Galon Kembali
+     * dinonaktifkan). Batal → kembali ke pemilih pelanggan.
+     */
+    private void confirmUmumSelection(Customer umum) {
+        playIncompleteAlertSound();   // penekanan: alarm nyaring, sama dengan warning data pelanggan
+        new AlertDialog.Builder(this)
+                .setIcon(android.R.drawable.ic_dialog_alert)
+                .setTitle("⚠️ PELANGGAN UMUM — PASTIKAN!")
+                .setCancelable(false)
+                .setMessage("Sebelum lanjut, PASTIKAN dua hal ini:\n\n"
+                        + "1️⃣  Konsumen DATANG SENDIRI ke kios/depot (bukan pesan-antar).\n\n"
+                        + "2️⃣  Konsumen memakai GALON MILIKNYA SENDIRI.\n\n"
+                        + "Untuk Pelanggan Umum, galon keluar/masuk TIDAK dicatat — opsi "
+                        + "\"Di Pinjam\" dan Galon Kembali dinonaktifkan.\n\n"
+                        + "Jika konsumen meminjam botol depot atau minta diantar, daftarkan "
+                        + "sebagai pelanggan lewat \"Pelanggan Baru\".")
+                .setPositiveButton("YA, SAYA PASTIKAN", (d, w) -> applySelectedCustomer(umum))
+                .setNegativeButton("BATAL", (d, w) -> showCustomerPicker())
+                .show();
+    }
+
+    /**
      * Sentralkan semua perubahan UI yang harus terjadi setelah user
      * memilih pelanggan (regular, Umum, atau pelanggan yang baru dibuat).
      */
@@ -1412,9 +1463,10 @@ public class TransactionActivity extends AppCompatActivity {
         if (isJualSelected() && selectedWajibOngkir) toggleOngkirMode.check(R.id.btnOngkirPerGalon);
         tvSelectedCustomer.setText(c.getName());
         userEditedKembali = false;
-        // Pelanggan Umum → ownership default = Beli (Umum tidak pinjam botol)
+        // Pelanggan Umum → ownership default = Botol Sendiri (konsumen memakai galon
+        // miliknya sendiri; galon keluar/masuk tidak dicatat untuk Umum)
         if (isUmumCustomer()) {
-            toggleOwnership.check(R.id.btnOwnershipBeli);
+            toggleOwnership.check(R.id.btnOwnershipBawaSendiri);
         }
         syncKembaliToTotalJumlah();
         updateOwnershipButtonsForCustomer();
@@ -1615,7 +1667,10 @@ public class TransactionActivity extends AppCompatActivity {
             long newId = data.getLongExtra(CustomerFormActivity.EXTRA_NEW_CUSTOMER_ID, -1);
             if (newId > 0) {
                 Customer c = customerDao.getById(newId);
-                if (c != null) applySelectedCustomer(c);
+                // Pelanggan baru yang dinamai persis "Umum" = bucket walk-in → tetap lewat
+                // gerbang konfirmasi TEGAS (jangan lolos lewat jalur Pelanggan Baru).
+                if (c != null && CustomerDao.UMUM_NAME.equals(c.getName())) confirmUmumSelection(c);
+                else if (c != null) applySelectedCustomer(c);
             }
         }
     }
@@ -1759,6 +1814,23 @@ public class TransactionActivity extends AppCompatActivity {
             }
         }
 
+        // Pengaman Pelanggan UMUM (UI sudah menyembunyikan opsinya — ini lapis kedua):
+        // galon keluar/masuk tidak dicatat → tipe "Galon Kembali" diblok dan jumlah
+        // galon kembali pada JUAL dipaksa 0.
+        if (isUmumCustomer()) {
+            if (!isJual) {
+                new AlertDialog.Builder(this)
+                        .setIcon(android.R.drawable.ic_dialog_alert)
+                        .setTitle("⚠️ Pelanggan Umum")
+                        .setMessage("Transaksi \"Galon Kembali\" tidak tersedia untuk Pelanggan "
+                                + "Umum — galon keluar/masuk tidak dicatat. Pilih pelanggan terdaftar.")
+                        .setPositiveButton("OK", null)
+                        .show();
+                return;
+            }
+            jumlahKembali = 0;
+        }
+
         // Confirmation dialog
         NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
         SpannableStringBuilder msg = new SpannableStringBuilder();
@@ -1830,7 +1902,7 @@ public class TransactionActivity extends AppCompatActivity {
         final boolean fIsJual = isJual;
         final String fOngkirType = ongkirType;
         final String fOwnership = isJual
-                ? getSelectedOwnership() : Transaction.OWNERSHIP_PINJAM;
+                ? umumSafeOwnership(getSelectedOwnership()) : Transaction.OWNERSHIP_PINJAM;
         final double fHargaBotol = (isJual && isBeliSelected())
                 ? parseDoubleOr(etHargaBotol, 0) : 0;
 
@@ -2039,8 +2111,10 @@ public class TransactionActivity extends AppCompatActivity {
     private void doSave(boolean isJual, int totalJumlah, double ongkir,
                         double totalHarga, int jumlahKembali, String ongkirType,
                         String ownership, double hargaBotol) {
-        // Persist last ownership selection for next transaction
-        if (isJual && ownership != null) {
+        // Persist last ownership selection for next transaction. Umum dilewati: ownership-nya
+        // DIPAKSA "Botol Sendiri" (bukan pilihan staf) dan restore di onCreate hanya mengenal
+        // BELI/PINJAM — mempersistnya akan menimpa preferensi asli staf dengan PINJAM.
+        if (isJual && ownership != null && !isUmumCustomer()) {
             settingsDao.setLastGalonOwnership(ownership);
         }
         if (isJual && jumlahKembali > 0) {

@@ -19,9 +19,12 @@ public class SyncApi {
 
     public static class SyncException extends Exception {
         public final int code;
+        /** Raw response body (often JSON like {"message":"..."}) — for surfacing server errors. */
+        public final String body;
         public SyncException(int code, String message) {
             super("HTTP " + code + ": " + message);
             this.code = code;
+            this.body = message;
         }
     }
 
@@ -108,6 +111,16 @@ public class SyncApi {
         return post(cfg.getBaseUrl() + "/api/customers/share-link", body, cfg.getToken());
     }
 
+    /**
+     * Usulkan alokasi galon per karyawan untuk sebuah transaksi (menu transaksi / delivery). Server
+     * membuat permintaan PENDING dan mengirim link persetujuan ke email laporan; alokasi baru berlaku
+     * setelah disetujui. Balas {@code {"ok":true,"message":"...","emailed":true}} atau 422 dengan
+     * {@code {"ok":false,"message":"..."}}. Branch-scoped by the token.
+     */
+    public JSONObject proposeAllocation(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/allocation-requests", body, cfg.getToken());
+    }
+
     public JSONObject version(String baseUrl) throws Exception {
         Request.Builder b = new Request.Builder()
                 .url(trim(baseUrl) + "/api/version")
@@ -120,9 +133,16 @@ public class SyncApi {
         return execute(b.build());
     }
 
-    /** Device identity + branch + live config (e.g. location_interval_seconds). */
+    /** Device identity + branch + live config (e.g. location_interval_seconds). Versi APK ikut
+     *  dilaporkan (?vc/&vn) di tiap heartbeat → kolom versi di dashboard selalu mutakhir, dan
+     *  server membalas {@code version_blocked} bila versi ini dinonaktifkan (Kontrol Versi). */
     public JSONObject me() throws Exception {
-        return get(cfg.getBaseUrl() + "/api/me", cfg.getToken());
+        okhttp3.HttpUrl built = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/me")
+                .newBuilder()
+                .addQueryParameter("vc", String.valueOf(com.crowja.damiupos.BuildConfig.VERSION_CODE))
+                .addQueryParameter("vn", com.crowja.damiupos.BuildConfig.VERSION_NAME)
+                .build();
+        return get(built.toString(), cfg.getToken());
     }
 
     /** Admin broadcasts for this branch newer than {@code sinceIso}. */

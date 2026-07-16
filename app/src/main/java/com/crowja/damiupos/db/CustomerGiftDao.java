@@ -60,17 +60,57 @@ public class CustomerGiftDao {
                 c.getInt(3), c.getString(4), c.getString(5));
     }
 
-    /** Gift yang masih pending (belum diberikan) untuk pelanggan ini, urut waktu dibuat. */
+    /** Predikat "belum diberikan" (redeemed_at NULL/kosong). */
+    private static final String PENDING =
+            "(" + DatabaseHelper.COL_GIFT_REDEEMED_AT + " IS NULL OR "
+                    + DatabaseHelper.COL_GIFT_REDEEMED_AT + " = '')";
+
+    /**
+     * _id SEMUA salinan pelanggan lokal dengan nomor sama (branch-wide) untuk {@code customerLocalId}
+     * — pelanggan yang sama bisa terdaftar di beberapa perangkat sebagai baris berbeda ("Salsa #1" &
+     * "Salsa #2"); gift menempel di satu salinan tapi transaksi bisa tercatat pada salinan lain.
+     * Cocokkan lewat {@link CustomerDao#phoneKey} (kunci dedup yang sama dengan daftar Pelanggan).
+     * Selalu memuat {@code customerLocalId} sendiri; nomor kosong → hanya dirinya.
+     */
+    private List<Long> personCustomerIds(SQLiteDatabase db, long customerLocalId) {
+        List<Long> ids = new ArrayList<>();
+        ids.add(customerLocalId);
+        String phone = null;
+        try (Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMERS, new String[]{DatabaseHelper.COL_PHONE},
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerLocalId)}, null, null, null)) {
+            if (c.moveToFirst()) phone = c.getString(0);
+        }
+        String key = CustomerDao.phoneKey(phone);
+        if (key == null) return ids;   // tanpa nomor → tak bisa disamakan lintas salinan
+        try (Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMERS,
+                new String[]{DatabaseHelper.COL_ID, DatabaseHelper.COL_PHONE}, null, null, null, null, null)) {
+            while (c.moveToNext()) {
+                long id = c.getLong(0);
+                if (id == customerLocalId) continue;
+                if (key.equals(CustomerDao.phoneKey(c.getString(1)))) ids.add(id);
+            }
+        }
+        return ids;
+    }
+
+    /** "customer_id IN (?,?,…)" untuk daftar id (aman: id numerik dari DB). */
+    private static String inClause(List<Long> ids) {
+        StringBuilder sb = new StringBuilder(DatabaseHelper.COL_GIFT_CUSTOMER_ID + " IN (");
+        for (int i = 0; i < ids.size(); i++) {
+            if (i > 0) sb.append(',');
+            sb.append(ids.get(i));
+        }
+        return sb.append(')').toString();
+    }
+
+    /** Gift yang masih pending (belum diberikan) untuk pelanggan ini (lintas salinan), urut waktu dibuat. */
     public List<Gift> pendingForCustomer(long customerLocalId) {
         List<Gift> out = new ArrayList<>();
         if (customerLocalId <= 0) return out;
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMER_GIFTS, COLS,
-                DatabaseHelper.COL_GIFT_CUSTOMER_ID + "=? AND ("
-                        + DatabaseHelper.COL_GIFT_REDEEMED_AT + " IS NULL OR "
-                        + DatabaseHelper.COL_GIFT_REDEEMED_AT + " = '')",
-                new String[]{String.valueOf(customerLocalId)},
-                null, null, DatabaseHelper.COL_CREATED_AT + " ASC");
+                inClause(personCustomerIds(db, customerLocalId)) + " AND " + PENDING,
+                null, null, null, DatabaseHelper.COL_CREATED_AT + " ASC");
         try {
             while (c.moveToNext()) out.add(fromCursor(c));
         } finally {
@@ -79,16 +119,14 @@ public class CustomerGiftDao {
         return out;
     }
 
-    /** Apakah pelanggan ini punya minimal satu gift pending — untuk peringatan saat transaksi. */
+    /** Apakah pelanggan ini (lintas salinan) punya minimal satu gift pending — untuk peringatan. */
     public boolean hasPendingForCustomer(long customerLocalId) {
         if (customerLocalId <= 0) return false;
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMER_GIFTS,
                 new String[]{DatabaseHelper.COL_ID},
-                DatabaseHelper.COL_GIFT_CUSTOMER_ID + "=? AND ("
-                        + DatabaseHelper.COL_GIFT_REDEEMED_AT + " IS NULL OR "
-                        + DatabaseHelper.COL_GIFT_REDEEMED_AT + " = '')",
-                new String[]{String.valueOf(customerLocalId)}, null, null, null, "1");
+                inClause(personCustomerIds(db, customerLocalId)) + " AND " + PENDING,
+                null, null, null, null, "1");
         try {
             return c.moveToFirst();
         } finally {
@@ -107,11 +145,8 @@ public class CustomerGiftDao {
         List<Gift> redeemed = new ArrayList<>();
         if (customerLocalId <= 0 || trxUuid == null || trxUuid.isEmpty()) return redeemed;
         Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMER_GIFTS, COLS,
-                DatabaseHelper.COL_GIFT_CUSTOMER_ID + "=? AND ("
-                        + DatabaseHelper.COL_GIFT_REDEEMED_AT + " IS NULL OR "
-                        + DatabaseHelper.COL_GIFT_REDEEMED_AT + " = '')",
-                new String[]{String.valueOf(customerLocalId)},
-                null, null, DatabaseHelper.COL_CREATED_AT + " ASC");
+                inClause(personCustomerIds(db, customerLocalId)) + " AND " + PENDING,
+                null, null, null, DatabaseHelper.COL_CREATED_AT + " ASC");
         try {
             while (c.moveToNext()) redeemed.add(fromCursor(c));
         } finally {

@@ -184,6 +184,15 @@ public class MainActivity extends AppCompatActivity {
         if (btnPromosi != null) btnPromosi.setOnClickListener(v ->
                 startActivity(new Intent(this, CustomerFormActivity.class)
                         .putExtra(CustomerFormActivity.EXTRA_PROMOSI_FLOW, true)));
+        // Pelanggan Promosi: daftar + statistik konversi hasil promo galon gratis perangkat ini.
+        View btnPromoCust = findViewById(R.id.btnPromoCustomers);
+        if (btnPromoCust != null) btnPromoCust.setOnClickListener(v ->
+                startActivity(new Intent(this, PromoCustomersActivity.class)));
+
+        // Daftar Kunjungan: pedoman kunjungan lapangan (pelanggan paling lama tidak order dulu).
+        View btnKunjungan = findViewById(R.id.btnKunjungan);
+        if (btnKunjungan != null) btnKunjungan.setOnClickListener(v ->
+                startActivity(new Intent(this, VisitListActivity.class)));
 
         btnFollowUp = findViewById(R.id.btnFollowUp);
         originalFollowUpTint = btnFollowUp.getBackgroundTintList();
@@ -396,6 +405,15 @@ public class MainActivity extends AppCompatActivity {
             boolean canPromosi = show
                     && new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).canPromosi(uid);
             btnPromosi.setVisibility(canPromosi ? View.VISIBLE : View.GONE);
+            // Pelanggan Promosi (daftar + statistik konversi) mengikuti gate yang sama.
+            View btnPromoCust = findViewById(R.id.btnPromoCustomers);
+            if (btnPromoCust != null) btnPromoCust.setVisibility(canPromosi ? View.VISIBLE : View.GONE);
+        }
+
+        // Daftar Kunjungan (pedoman kunjungan lapangan): Marketing & Admin.
+        View btnKunjungan = findViewById(R.id.btnKunjungan);
+        if (btnKunjungan != null) {
+            btnKunjungan.setVisibility(show && (isMarketing || isAdmin) ? View.VISIBLE : View.GONE);
         }
 
         if (!show) return;
@@ -828,6 +846,10 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         refreshDashboard();
+        // Kontrol Versi: bila versi APK ini DINONAKTIFKAN dari dashboard (flag dari heartbeat
+        // /api/me), tampilkan popup minta update. Dipanggil di onResume karena HP depot bisa
+        // terbuka berhari-hari — cek murah (baca flag lokal, hormati snooze 1 jam).
+        com.crowja.damiupos.sync.VersionUpdater.maybePromptBlocked(this);
         // Online (REST, no MQTT): kick a sync + online tick (config/version/
         // broadcasts) so opening the app pulls fresh data and admin messages.
         com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());

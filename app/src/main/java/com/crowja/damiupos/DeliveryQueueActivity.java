@@ -508,6 +508,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                     r.putExtra(ReceiptActivity.EXTRA_TRANSACTION_ID, t.getId());
                     startActivity(r);
                 })
+                // Usulkan pembagian galon order ini ke karyawan (butuh persetujuan email).
+                .setNegativeButton("Alokasi Galon", (d, w) -> AllocationDialog.show(this, t, "delivery"))
                 .show();
     }
 

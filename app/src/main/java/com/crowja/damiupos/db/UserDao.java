@@ -76,6 +76,57 @@ public class UserDao {
                 new String[]{String.valueOf(id)});
     }
 
+    /** sync_uuid staf (kunci server) untuk satu id lokal; null bila belum tersinkron. */
+    public String getSyncUuidById(long id) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.query(DatabaseHelper.TABLE_USERS,
+                new String[]{DatabaseHelper.COL_SYNC_UUID},
+                DatabaseHelper.COL_USER_ID + "=?", new String[]{String.valueOf(id)},
+                null, null, null, "1");
+        String uuid = null;
+        if (c.moveToFirst()) uuid = c.getString(0);
+        c.close();
+        return uuid;
+    }
+
+    /** Baris ringkas staf untuk pemilih Alokasi Galon (dipakai sebagai item Spinner). */
+    public static class StaffPick {
+        public final long id;
+        public final String name;
+        public final String uuid;
+
+        public StaffPick(long id, String name, String uuid) {
+            this.id = id;
+            this.name = name;
+            this.uuid = uuid;
+        }
+
+        @Override
+        public String toString() {
+            return name != null ? name : "-";
+        }
+    }
+
+    /**
+     * Staf AKTIF yang sudah punya sync_uuid (bisa dialokasikan galon; server mengenalinya lewat
+     * uuid). Diurut nama. Staf yang belum tersinkron sengaja dikecualikan agar usulan tak menunjuk
+     * karyawan yang tak dikenal server.
+     */
+    public List<StaffPick> getActiveForAllocation() {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.query(DatabaseHelper.TABLE_USERS,
+                new String[]{DatabaseHelper.COL_USER_ID, DatabaseHelper.COL_USER_NAME, DatabaseHelper.COL_SYNC_UUID},
+                DatabaseHelper.COL_USER_ACTIVE + "=1 AND " + DatabaseHelper.COL_SYNC_UUID
+                        + " IS NOT NULL AND " + DatabaseHelper.COL_SYNC_UUID + "<>''",
+                null, null, null, DatabaseHelper.COL_USER_NAME + " COLLATE NOCASE ASC");
+        List<StaffPick> out = new ArrayList<>();
+        while (c.moveToNext()) {
+            out.add(new StaffPick(c.getLong(0), c.getString(1), c.getString(2)));
+        }
+        c.close();
+        return out;
+    }
+
     public User getById(long id) {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         Cursor c = db.query(DatabaseHelper.TABLE_USERS, null,

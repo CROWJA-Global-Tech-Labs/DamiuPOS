@@ -35,3 +35,7 @@ device-backups/
 
 # Local device DB backups (contain real customer data — never commit; repo is public)
 backups/
+
+# Device migration dumps & stray capture artifacts (large / device-specific — never commit)
+*-migrate/
+s928_struk.png

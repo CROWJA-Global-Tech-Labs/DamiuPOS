@@ -195,6 +195,14 @@ public class CustomerFormActivity extends AppCompatActivity {
 
         // Check if editing existing customer
         editId = getIntent().getLongExtra("customer_id", -1);
+        // Pelanggan BARU: batasi input telp ke angka saja, maks 13 digit (tuntunan format 08…, 9–13).
+        // Mode edit dilewati — setText nomor lama berformat lain (mis. "+62…") jangan sampai terpotong.
+        if (editId == -1) {
+            etTelepon.setKeyListener(
+                    android.text.method.DigitsKeyListener.getInstance("0123456789"));
+            etTelepon.setFilters(new android.text.InputFilter[]{
+                    new android.text.InputFilter.LengthFilter(13)});
+        }
         if (editId != -1) {
             toolbar.setTitle(R.string.edit_pelanggan);
             Customer customer = customerDao.getById(editId);
@@ -214,6 +222,12 @@ public class CustomerFormActivity extends AppCompatActivity {
                 // Harga khusus per produk (override tersimpan; produk tanpa override → kosong = standar).
                 buildProductPriceRows(customer);
 
+                // Tampilkan foto rumah: utamakan FILE LOKAL; bila tak ada (pelanggan tersinkron dari
+                // perangkat lain — foto hanya ada sebagai photo_url di server), UNDUH & tampilkan dari
+                // URL supaya kotak foto tidak blank saat mengedit pelanggan lintas-perangkat. Ini murni
+                // untuk TAMPILAN — currentPhotoPath TIDAK diubah, jadi save() tak menganggapnya foto
+                // baru (tak meng-clear photo_url / tak re-upload).
+                boolean shownLocal = false;
                 if (customer.getPhotoPath() != null && !customer.getPhotoPath().isEmpty()) {
                     currentPhotoPath = customer.getPhotoPath();
                     originalPhotoPath = currentPhotoPath;
@@ -221,7 +235,11 @@ public class CustomerFormActivity extends AppCompatActivity {
                     File photoFile = new File(currentPhotoPath);
                     if (photoFile.exists()) {
                         ivFotoRumah.setImageBitmap(loadRotatedBitmap(currentPhotoPath));
+                        shownLocal = true;
                     }
+                }
+                if (!shownLocal && customer.getPhotoUrl() != null && !customer.getPhotoUrl().isEmpty()) {
+                    loadFotoRumahFromUrl(customer.getPhotoUrl());
                 }
 
                 // Multi-lokasi: DAO sudah lazy-synthesize "Kediaman" dari koordinat legacy.
@@ -429,6 +447,27 @@ public class CustomerFormActivity extends AppCompatActivity {
     /** Preview foto hemat memori (downsample + RGB_565 + EXIF). */
     private Bitmap loadRotatedBitmap(String photoPath) {
         return com.crowja.damiupos.util.BitmapUtils.decodeSampled(photoPath, 1024, 1024);
+    }
+
+    /** Unduh foto rumah dari server (pelanggan lintas-perangkat tanpa file lokal) lalu tampilkan.
+     *  Hanya untuk PRATINJAU di form Edit — tidak menyentuh currentPhotoPath, jadi save() tetap
+     *  menganggap foto TIDAK berubah (photo_url tak di-clear, tak ada re-upload). */
+    private void loadFotoRumahFromUrl(String url) {
+        final String name = "custform_" + editId + "_" + Integer.toHexString(url.hashCode()) + ".jpg";
+        new Thread(() -> {
+            final File f = com.crowja.damiupos.util.BitmapUtils.downloadToCache(
+                    getApplicationContext(), url, name);
+            final Bitmap b = f != null
+                    ? com.crowja.damiupos.util.BitmapUtils.decodeSampled(f.getAbsolutePath(), 1024, 1024)
+                    : null;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed() || b == null) return;
+                // Jangan timpa kalau user keburu ambil foto baru sambil menunggu unduhan.
+                if (currentPhotoPath == null || currentPhotoPath.equals(originalPhotoPath)) {
+                    ivFotoRumah.setImageBitmap(b);
+                }
+            });
+        }).start();
     }
 
     private void updateKoordinatDisplay(LocationRow row) {
@@ -723,6 +762,78 @@ public class CustomerFormActivity extends AppCompatActivity {
         btnLinkedReseller.setText(name != null ? "Reseller: " + name : "Tidak ditautkan — ketuk untuk pilih reseller");
     }
 
+    /** Nomor yang SUDAH lolos cek pelanggan-terhapus di server — supaya save() lanjutan
+     *  (dipanggil ulang setelah cek async) tidak berputar memeriksa nomor yang sama lagi. */
+    private String deletedCheckedPhone = null;
+
+    /**
+     * Popup ❗ pemblokir penambahan pelanggan duplikat. {@code deleted}=true → nomor milik
+     * pelanggan yang sudah DIHAPUS dari dashboard (tidak boleh didaftarkan ulang dari HP;
+     * pulihkan lewat menu Pelanggan Terhapus di web bila memang diperlukan).
+     */
+    private void showDuplicateBlockedDialog(String existingName, String phone, boolean deleted) {
+        String msg = deleted
+                ? "Nomor " + phone + " pernah terdaftar sebagai pelanggan yang sudah DIHAPUS " +
+                  "dari dashboard.\n\nPenambahan diblokir. Bila pelanggan ini memang harus " +
+                  "kembali, pulihkan dari menu \"Pelanggan Terhapus\" di dashboard web."
+                : "Nomor " + phone + " sudah terdaftar atas nama:\n\n• "
+                  + (existingName != null ? existingName : "(tanpa nama)")
+                  + "\n\nPenambahan diblokir — gunakan pelanggan yang sudah ada "
+                  + "(cari di daftar Pelanggan), atau perbaiki nomornya bila memang orang berbeda.";
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setIcon(android.R.drawable.ic_dialog_alert)
+                .setTitle("⚠️ Pelanggan Sudah Ada")
+                .setMessage(msg)
+                .setPositiveButton("MENGERTI", null)
+                .show();
+    }
+
+    /**
+     * Cek ke server apakah nomor ini milik pelanggan yang sudah DIHAPUS di dashboard
+     * (endpoint {@code /api/customers/deleted-check} — kanonik +62/62/0, branch-scoped),
+     * lalu lanjutkan save() bila lolos. Best-effort: belum provisioning / offline / server
+     * error → LANJUT simpan (input lapangan tak boleh terblokir jaringan); duplikat aktif
+     * sudah tertangkap oleh cek lokal di atasnya.
+     */
+    private void runDeletedCheckThenSave(String telepon) {
+        com.crowja.damiupos.db.SettingsDao sd =
+                new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this));
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(sd);
+        if (!cfg.isEnrolled()) {
+            deletedCheckedPhone = telepon;
+            save();
+            return;
+        }
+        androidx.appcompat.app.AlertDialog waiting = new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setMessage("Memeriksa nomor di server…")
+                .setCancelable(false)
+                .show();
+        new Thread(() -> {
+            boolean deleted = false;
+            try {
+                org.json.JSONArray phones = new org.json.JSONArray();
+                phones.put(telepon);
+                org.json.JSONObject r = new com.crowja.damiupos.sync.SyncApi(cfg)
+                        .customersDeletedCheck(phones);
+                org.json.JSONArray del = r.optJSONArray("deleted");
+                deleted = del != null && del.length() > 0;
+            } catch (Exception ignored) {
+                // Offline/timeout → tidak bisa cek; jangan blokir akuisisi di lapangan.
+            }
+            boolean fDeleted = deleted;
+            runOnUiThread(() -> {
+                try { waiting.dismiss(); } catch (Exception ignored) {}
+                if (isFinishing() || isDestroyed()) return;
+                if (fDeleted) {
+                    showDuplicateBlockedDialog(null, telepon, true);
+                } else {
+                    deletedCheckedPhone = telepon;
+                    save();   // lanjut alur simpan normal — gate nomor ini sudah lolos
+                }
+            });
+        }).start();
+    }
+
     private void save() {
         String nama = etNama.getText() != null ? etNama.getText().toString().trim() : "";
         String telepon = etTelepon.getText() != null ? etTelepon.getText().toString().trim() : "";
@@ -732,6 +843,33 @@ public class CustomerFormActivity extends AppCompatActivity {
             etNama.setError("Nama wajib diisi");
             etNama.requestFocus();
             return;
+        }
+
+        // Guard FORMAT nomor telp untuk pelanggan BARU: harus diawali 08, hanya angka, 9–13 digit.
+        // (Kosong tetap diperbolehkan = pelanggan tanpa nomor.) Edit tak dipagari agar nomor lama
+        // berformat lain — mis. "+62…" hasil sinkron — tak menghalangi simpan.
+        if (editId == -1 && !telepon.isEmpty()
+                && (!telepon.matches("\\d{9,13}") || !telepon.startsWith("08"))) {
+            etTelepon.setError("Nomor HP harus diawali 08, hanya angka, dan 9–13 digit");
+            etTelepon.requestFocus();
+            return;
+        }
+
+        // Guard anti-duplikat (hanya pelanggan BARU): nomor dibandingkan secara KANONIK —
+        // "0812…" ≡ "+62 812…" ≡ "62812…" dianggap nomor yang sama.
+        if (editId == -1 && !telepon.isEmpty()) {
+            // 1) Duplikat AKTIF di database lokal (pelanggan branch-wide, semua salinan perangkat).
+            Customer dup = customerDao.findByPhoneCanonical(telepon);
+            if (dup != null) {
+                showDuplicateBlockedDialog(dup.getName(), telepon, false);
+                return;
+            }
+            // 2) Pelanggan TERHAPUS di dashboard (tak ada di DB lokal — tombstone sudah
+            //    menghapusnya) → tanya server, lalu lanjut simpan bila lolos.
+            if (!telepon.equals(deletedCheckedPhone)) {
+                runDeletedCheckThenSave(telepon);
+                return;
+            }
         }
 
         // Lokasi (multi): baris tanpa koordinat dilewati; entri PERTAMA = lokasi utama.
@@ -774,7 +912,16 @@ public class CustomerFormActivity extends AppCompatActivity {
         customer.setLocations(locs);
         customer.setLatitude(primary != null ? primary.lat : 0);
         customer.setLongitude(primary != null ? primary.lng : 0);
-        customer.setWajibOngkir(primary != null && primary.wajibOngkir);
+        // Wajib Ongkir = aturan per-PELANGGAN, tak boleh hilang hanya karena belum ada koordinat:
+        // collectLocations membuang baris tanpa koordinat, jadi kalau pelanggan belum dipetakan,
+        // ambil centang wajib dari baris apa pun (form transaksi memakai scalar ini saat tanpa lokasi).
+        boolean wajib = primary != null && primary.wajibOngkir;
+        if (primary == null) {
+            for (LocationRow r : locationRows) {
+                if (r.cbWajib != null && r.cbWajib.isChecked()) { wajib = true; break; }
+            }
+        }
+        customer.setWajibOngkir(wajib);
 
         // Reseller: kalau dicentang & belum pernah jadi reseller → set since=now.
         // Kalau sudah pernah (edit), pertahankan tanggal lama supaya komisi

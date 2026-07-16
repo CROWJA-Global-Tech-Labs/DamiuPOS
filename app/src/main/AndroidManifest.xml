@@ -29,6 +29,10 @@
     <queries>
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
+        <!-- Pin berlabel Google Maps (Daftar Kunjungan / Follow Up peta): tanpa ini
+             resolveActivity() selalu null di Android 11+ (package visibility) dan
+             aplikasi selalu jatuh ke fallback browser. -->
+        <package android:name="com.google.android.apps.maps" />
         <intent>
             <action android:name="android.intent.action.SEND" />
             <data android:mimeType="image/*" />
@@ -95,6 +99,8 @@
         <activity android:name=".SettingsActivity" />
         <activity android:name=".WizardActivity" />
         <activity android:name=".FollowUpActivity" />
+        <activity android:name=".PromoCustomersActivity" />
+        <activity android:name=".VisitListActivity" />
         <activity android:name=".FollowUpMapActivity" />
         <activity android:name=".DeliveryQueueActivity" />
         <activity android:name=".ChangelogActivity" />

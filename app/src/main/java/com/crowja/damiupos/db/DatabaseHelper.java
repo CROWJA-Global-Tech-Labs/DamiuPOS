@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 52;
+    private static final int DATABASE_VERSION = 56;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -66,6 +66,28 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_SRV_BORROWED = "srv_borrowed";       // SUM galon JUAL PINJAM
     public static final String COL_SRV_KEMBALI = "srv_kembali";         // SUM galon KEMBALI
     public static final String COL_SRV_FIRST_JUAL = "srv_first_jual";   // MIN tanggal JUAL
+    /** Pembelian BERBAYAR pertama (MIN tanggal JUAL total>0) lintas perangkat, pull-only.
+     *  Dipakai layar "Pelanggan Promosi": konversi promo (order ulang pertama) biasanya terjadi
+     *  di perangkat depot — tak terlihat dari transaksi lokal HP marketing. Juga sumber notifikasi
+     *  "pelanggan promosi order pembelian pertama" (rising-edge saat pull). */
+    public static final String COL_SRV_FIRST_PAID = "srv_first_paid";
+    /** Order TERAKHIR (MAX tanggal JUAL non-tertunda) LINTAS PERANGKAT, pull-only — dasar
+     *  "berapa hari tanpa order" di Daftar Kunjungan marketing. Transaksi antar perangkat
+     *  terisolasi, jadi hitungan lokal saja buta terhadap order yang dicatat HP lain. */
+    public static final String COL_SRV_LAST_JUAL = "srv_last_jual";
+    /** Galon promosi GRATIS (SUM galon JUAL Rp 0 non-tertunda di HARI DAFTAR — kohort Pelanggan
+     *  Promosi, tanpa [PENCAIRAN KOMISI]) LINTAS PERANGKAT, pull-only. Fallback "Tarik Galon
+     *  Promosi": transaksi akuisisi tercatat di HP marketing, jadi salinan pelanggan hasil sync
+     *  di perangkat lain dihitung 0 oleh query lokal dan penarikan tertolak keliru. */
+    public static final String COL_SRV_PROMO_GALON = "srv_promo_galon";
+    /** Pasangan {@link #COL_SRV_PROMO_GALON}: galon promosi yang SUDAH DITARIK (SUM galon KEMBALI
+     *  bermarker [TARIK GALON PROMOSI]) LINTAS PERANGKAT, pull-only. Tanpa ini sisi "sudah
+     *  ditarik" hanya terlihat di perangkat penariknya (transaksi terisolasi per-device) padahal
+     *  sisi "diberikan" lintas perangkat → perangkat lain bisa menarik ULANG galon yang sama. */
+    public static final String COL_SRV_PROMO_PULLED = "srv_promo_pulled";
+    /** Timestamp "Sudah Dikunjungi" pada Daftar Kunjungan — LOKAL PERANGKAT INI SAJA (tidak
+     *  disinkron; pedoman pribadi staf di HP-nya). NULL = belum dikunjungi. */
+    public static final String COL_VISITED_AT = "visited_at";
     /** Label perangkat asal pelanggan (nama device, atau "Web") — untuk tag di daftar mobile. */
     public static final String COL_ORIGIN_LABEL = "origin_label";
     /** Saldo komisi reseller dari SERVER (ResellerSaldo — lintas semua perangkat), pull-only.
@@ -174,6 +196,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_DELIVERY_DEST_NAME = "delivery_dest_name";
     public static final String COL_DELIVERY_DEST_LAT = "delivery_dest_lat";
     public static final String COL_DELIVERY_DEST_LNG = "delivery_dest_lng";
+    /** "Perangkat yang ditugaskan" (marketing/SPV memilih perangkat penangan saat buat transaksi):
+     *  NIAT penugasan ke perangkat LAIN. Server menerjemahkannya pada insert → delivery_device_uuid
+     *  (rute antrian ke perangkat itu) + staff_uuid = staf yang clock-in di sana (kredit galon/komisi
+     *  ikut pindah); origin_device_uuid (omzet) tetap di pembuat. NULL/kosong = perangkat sendiri. */
+    public static final String COL_ASSIGNED_DEVICE_UUID = "assigned_device_uuid";
 
     // Table settings
     public static final String TABLE_SETTINGS = "settings";
@@ -327,6 +354,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_SRV_BORROWED + " INTEGER DEFAULT 0, " +
                     COL_SRV_KEMBALI + " INTEGER DEFAULT 0, " +
                     COL_SRV_FIRST_JUAL + " TEXT, " +
+                    COL_SRV_FIRST_PAID + " TEXT, " +
+                    COL_SRV_LAST_JUAL + " TEXT, " +
+                    COL_SRV_PROMO_GALON + " INTEGER DEFAULT 0, " +
+                    COL_SRV_PROMO_PULLED + " INTEGER DEFAULT 0, " +
+                    COL_VISITED_AT + " TEXT, " +
                     COL_ORIGIN_LABEL + " TEXT, " +
                     COL_SRV_SALDO + " REAL DEFAULT 0, " +
                     COL_FOLLOWUP_EXCLUDED_AT + " TEXT, " +
@@ -389,6 +421,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_DELIVERY_DEST_NAME + " TEXT, " +
                     COL_DELIVERY_DEST_LAT + " REAL DEFAULT 0, " +
                     COL_DELIVERY_DEST_LNG + " REAL DEFAULT 0, " +
+                    COL_ASSIGNED_DEVICE_UUID + " TEXT, " +
                     COL_TANGGAL + " TEXT DEFAULT (datetime('now','localtime')), " +
                     COL_CATATAN + " TEXT, " +
                     "FOREIGN KEY(" + COL_CUSTOMER_ID + ") REFERENCES " +
@@ -1017,6 +1050,30 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             tryExec(db, CREATE_TABLE_CUSTOMER_GIFTS);
             tryExec(db, "CREATE INDEX IF NOT EXISTS idx_gifts_uuid ON " + TABLE_CUSTOMER_GIFTS + "(" + COL_SYNC_UUID + ")");
             tryExec(db, "CREATE INDEX IF NOT EXISTS idx_gifts_customer ON " + TABLE_CUSTOMER_GIFTS + "(" + COL_GIFT_CUSTOMER_ID + ")");
+        }
+        if (oldVersion < 53) {
+            // Pembelian berbayar pertama lintas perangkat (agg server, pull-only) — layar
+            // "Pelanggan Promosi" + notifikasi konversi promo. Additif; baris lama NULL.
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_SRV_FIRST_PAID + " TEXT");
+        }
+        if (oldVersion < 54) {
+            // Daftar Kunjungan marketing: order terakhir lintas perangkat (agg server, pull-only)
+            // + tanda "Sudah Dikunjungi" (lokal perangkat, tidak disinkron). Additif; lama NULL.
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_SRV_LAST_JUAL + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_VISITED_AT + " TEXT");
+        }
+        if (oldVersion < 55) {
+            // Tarik Galon Promosi lintas perangkat: galon promo gratis (kohort hari-daftar) +
+            // yang sudah ditarik (KEMBALI bermarker) dari agg server, pull-only — fallback saat
+            // transaksi akuisisi/penarikannya tercatat di perangkat lain (grup dedup tanpa salinan
+            // lokal → hitungan 0 palsu / tawaran tarik-ulang). Additif; lama DEFAULT 0.
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_SRV_PROMO_GALON + " INTEGER DEFAULT 0");
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_SRV_PROMO_PULLED + " INTEGER DEFAULT 0");
+        }
+        if (oldVersion < 56) {
+            // "Perangkat yang ditugaskan" (marketing/SPV): NIAT penugasan transaksi ke perangkat lain.
+            // Server menerjemahkannya → delivery_device_uuid + staff_uuid perangkat tujuan. Additif; lama NULL.
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_ASSIGNED_DEVICE_UUID + " TEXT");
         }
     }
 

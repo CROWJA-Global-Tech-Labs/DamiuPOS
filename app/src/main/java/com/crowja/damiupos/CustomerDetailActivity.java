@@ -444,24 +444,57 @@ public class CustomerDetailActivity extends AppCompatActivity {
 
     @SuppressLint("SetJavaScriptEnabled")
     private void loadMap(Customer customer) {
-        double lat = customer.getLatitude();
-        double lng = customer.getLongitude();
-        if (lat == 0 && lng == 0) {
+        // Multi-koordinat: susun daftar lokasi bernama (fallback ke koordinat legacy bila belum ada),
+        // buang (0,0) = belum diisi. Tanpa koordinat sama sekali → sembunyikan kartu.
+        java.util.List<Customer.Location> locs = new java.util.ArrayList<>();
+        if (customer.getLocations() != null) {
+            for (Customer.Location l : customer.getLocations()) {
+                if (l != null && (l.lat != 0 || l.lng != 0)) locs.add(l);
+            }
+        }
+        if (locs.isEmpty() && (customer.getLatitude() != 0 || customer.getLongitude() != 0)) {
+            locs.add(new Customer.Location(Customer.DEFAULT_LOCATION_NAME,
+                    customer.getLatitude(), customer.getLongitude(), customer.isWajibOngkir()));
+        }
+        if (locs.isEmpty()) {
             cardMap.setVisibility(View.GONE);
             return;
         }
         cardMap.setVisibility(View.VISIBLE);
 
-        findViewById(R.id.btnNavigate).setOnClickListener(v -> {
-            try {
-                Uri geo = Uri.parse("geo:" + lat + "," + lng + "?q=" + lat + "," + lng
-                        + "(" + Uri.encode(customer.getName()) + ")");
-                Intent intent = new Intent(Intent.ACTION_VIEW, geo);
-                startActivity(intent);
-            } catch (Exception e) {
-                Toast.makeText(this, "Aplikasi peta tidak tersedia", Toast.LENGTH_SHORT).show();
+        // Judul "Lokasi Pelanggan (N)" bila lebih dari satu.
+        TextView title = findViewById(R.id.tvLocationTitle);
+        if (title != null) {
+            title.setText(locs.size() > 1 ? "Lokasi Pelanggan (" + locs.size() + ")" : "Lokasi Pelanggan");
+        }
+
+        // Tombol Navigasi di header → lokasi UTAMA (entri pertama).
+        Customer.Location primary = locs.get(0);
+        findViewById(R.id.btnNavigate).setOnClickListener(v ->
+                navigateTo(customer.getName(), primary.name, primary.lat, primary.lng));
+
+        // Daftar per-lokasi: nama + badge ★Utama / 🚚 Wajib Ongkir + tombol Navigasi ke titik itu.
+        android.widget.LinearLayout list = findViewById(R.id.locationsList);
+        list.removeAllViews();
+        // Sembunyikan daftar bila cuma satu lokasi tanpa Wajib Ongkir (peta + header sudah cukup).
+        boolean anyWajib = false;
+        for (Customer.Location l : locs) if (l.wajibOngkir) anyWajib = true;
+        if (locs.size() > 1 || anyWajib) {
+            android.view.LayoutInflater inf = getLayoutInflater();
+            for (int i = 0; i < locs.size(); i++) {
+                Customer.Location l = locs.get(i);
+                View row = inf.inflate(R.layout.item_customer_location_detail, list, false);
+                TextView nm = row.findViewById(R.id.tvLocName);
+                TextView utama = row.findViewById(R.id.tvLocUtama);
+                TextView wajib = row.findViewById(R.id.tvLocWajib);
+                nm.setText(l.name != null && !l.name.isEmpty() ? l.name : Customer.DEFAULT_LOCATION_NAME);
+                utama.setVisibility(i == 0 && locs.size() > 1 ? View.VISIBLE : View.GONE);
+                wajib.setVisibility(l.wajibOngkir ? View.VISIBLE : View.GONE);
+                row.findViewById(R.id.btnLocNav).setOnClickListener(v ->
+                        navigateTo(customer.getName(), l.name, l.lat, l.lng));
+                list.addView(row);
             }
-        });
+        }
 
         if (mapLoaded) return;
         mapLoaded = true;
@@ -473,6 +506,21 @@ public class CustomerDetailActivity extends AppCompatActivity {
         ws.setUserAgentString(MapTiles.userAgent());
         webMap.setOnClickListener(v -> findViewById(R.id.btnNavigate).performClick());
 
+        // Bangun marker semua lokasi + popup nama (+ Wajib Ongkir). fitBounds bila >1, else setView.
+        StringBuilder markers = new StringBuilder();
+        StringBuilder pts = new StringBuilder();
+        for (Customer.Location l : locs) {
+            String label = (l.name != null && !l.name.isEmpty() ? l.name : Customer.DEFAULT_LOCATION_NAME)
+                    + (l.wajibOngkir ? " 🚚 Wajib Ongkir" : "");
+            markers.append("L.marker([").append(l.lat).append(',').append(l.lng)
+                    .append("]).addTo(map).bindPopup('").append(jsEscape(label)).append("');");
+            if (pts.length() > 0) pts.append(',');
+            pts.append('[').append(l.lat).append(',').append(l.lng).append(']');
+        }
+        String view = locs.size() > 1
+                ? "map.fitBounds([" + pts + "], {padding:[30,30], maxZoom:17});"
+                : "map.setView([" + primary.lat + "," + primary.lng + "], 16);";
+
         String html = "<!DOCTYPE html><html><head>"
                 + "<meta charset='utf-8'>"
                 + "<meta name='viewport' content='width=device-width, initial-scale=1.0, user-scalable=no'>"
@@ -483,13 +531,31 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 + "</head><body><div id='map'></div>"
                 + "<script>"
                 + "var map = L.map('map', {zoomControl:false, dragging:false,"
-                + " scrollWheelZoom:false, doubleClickZoom:false, touchZoom:false, boxZoom:false, keyboard:false})"
-                + ".setView([" + lat + "," + lng + "], 16);"
+                + " scrollWheelZoom:false, doubleClickZoom:false, touchZoom:false, boxZoom:false, keyboard:false});"
                 + "L.tileLayer('" + MapTiles.LEAFLET_URL + "', {subdomains:'" + MapTiles.SUBDOMAINS
                 + "', maxZoom:19, attribution:'" + MapTiles.ATTRIBUTION + "'}).addTo(map);"
-                + "L.marker([" + lat + "," + lng + "]).addTo(map);"
+                + markers
+                + view
                 + "</script></body></html>";
         webMap.loadDataWithBaseURL("https://unpkg.com", html, "text/html", "utf-8", null);
+    }
+
+    /** Buka aplikasi peta untuk navigasi ke satu koordinat (label = nama pelanggan + nama lokasi). */
+    private void navigateTo(String custName, String locName, double lat, double lng) {
+        try {
+            String label = custName + (locName != null && !locName.isEmpty() ? " - " + locName : "");
+            Uri geo = Uri.parse("geo:" + lat + "," + lng + "?q=" + lat + "," + lng
+                    + "(" + Uri.encode(label) + ")");
+            startActivity(new Intent(Intent.ACTION_VIEW, geo));
+        } catch (Exception e) {
+            Toast.makeText(this, "Aplikasi peta tidak tersedia", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** Escape aman untuk string literal JavaScript (petik + backslash). */
+    private static String jsEscape(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("'", "\\'");
     }
 
     private void openWhatsApp() {

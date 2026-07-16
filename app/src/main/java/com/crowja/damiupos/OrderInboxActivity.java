@@ -702,6 +702,29 @@ public class OrderInboxActivity extends AppCompatActivity {
 
     private static String safe(String s) { return s != null ? s : "(tidak diketahui)"; }
 
+    /** Format waktu terima → "dd MMM yyyy HH:mm" (waktu lokal). Menerima ISO UTC
+     *  "…THH:mm:ss[.ffffff]Z" (yang dikirim server) atau "yyyy-MM-dd HH:mm:ss" lokal. */
+    private static String formatReceived(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return "-";
+        String s = raw.trim();
+        try {
+            boolean utc = s.endsWith("Z");
+            String core = utc ? s.substring(0, s.length() - 1) : s;
+            int dot = core.indexOf('.');
+            if (dot > 0) core = core.substring(0, dot);          // buang pecahan detik
+            core = core.replace('T', ' ').trim();
+            java.text.SimpleDateFormat in =
+                    new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US);
+            in.setTimeZone(utc ? java.util.TimeZone.getTimeZone("UTC") : java.util.TimeZone.getDefault());
+            java.util.Date d = in.parse(core);
+            if (d == null) return raw;
+            return new java.text.SimpleDateFormat("dd MMM yyyy HH:mm", new java.util.Locale("id", "ID"))
+                    .format(d);
+        } catch (Exception e) {
+            return raw;
+        }
+    }
+
     // ============================================================
     // Adapter
     // ============================================================
@@ -718,28 +741,28 @@ public class OrderInboxActivity extends AppCompatActivity {
         @Override
         public void onBindViewHolder(@NonNull VH h, int pos) {
             OrderInbox o = data.get(pos);
-            ParsedOrder parsed = ParsedOrder.fromJson(o.getParsedJson());
 
             h.tvSender.setText(safe(o.getSenderName()));
-            h.tvRaw.setText("\"" + safe(o.getRawMessage()) + "\"");
 
-            // Summary line: "JUAL — 3× Aqua + 2× Le Minerale [URGENT]"
-            StringBuilder sum = new StringBuilder();
-            if (parsed.isOrder) {
-                sum.append(parsed.type != null ? parsed.type : "?")
-                        .append(" — ").append(parsed.shortSummary());
-                if (parsed.urgent) sum.append("  ⚡");
-            } else {
-                sum.append("(bukan pesanan)");
+            // Kartu "Pesanan Terjadwal" — pengingat kunjungan/order berulang (mesin parsing WA sudah
+            // dihapus, jadi tak ada lagi "Parser / Confidence / (bukan pesanan)"). Header = jadwal,
+            // isi = instruksi pengingat, meta = tanggal (waktu lokal, bukan ISO UTC mentah).
+            int interval = o.getSchedIntervalDays();
+            h.tvSummary.setText(interval > 0
+                    ? "🗓️ Pesanan Terjadwal · tiap " + interval + " hari"
+                    : "🗓️ Pesanan Terjadwal");
+
+            // Isi pengingat apa adanya (buang prefil "PESANAN TERJADWAL — " yang sudah diwakili header,
+            // dan tanda kutip lama). Tampilkan lebih lega (maks 5 baris).
+            String body = safe(o.getRawMessage());
+            String stripPrefix = "PESANAN TERJADWAL";
+            int dash = body.indexOf("—");
+            if (body.toUpperCase(java.util.Locale.ROOT).contains(stripPrefix) && dash >= 0 && dash + 1 < body.length()) {
+                body = body.substring(dash + 1).trim();
             }
-            h.tvSummary.setText(sum.toString());
+            h.tvRaw.setText(body);
 
-            // Meta: parser badge + waktu
-            String parserLabel = OrderInbox.PARSER_CLAUDE.equals(o.getParserUsed())
-                    ? "AI" : "regex";
-            h.tvMeta.setText("Parser: " + parserLabel
-                    + "  •  Confidence: " + String.format(java.util.Locale.US, "%.0f%%", parsed.confidence * 100)
-                    + "  •  " + safe(o.getReceivedAt()));
+            h.tvMeta.setText("🕒 " + formatReceived(o.getReceivedAt()));
 
             // Status badge + tombol aksi yang tampil bergantung status
             String status = o.getStatus();

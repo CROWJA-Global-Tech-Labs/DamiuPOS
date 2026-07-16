@@ -277,6 +277,152 @@ public class CustomerDao {
         return online ? srv : (earned - net);
     }
 
+    /**
+     * Galon promosi GRATIS efektif seorang pelanggan LINTAS PERANGKAT = Σ per salinan dedup-nya
+     * max(hitungan lokal, srv_promo_galon). Transaksi akuisisi promo tercatat di HP MARKETING —
+     * grup dedup tanpa salinan lokal pemilik transaksi itu dihitung 0 oleh
+     * {@link TransactionDao#getFreePromoGalon} dan "Tarik Galon Promosi" salah menolak.
+     * srv_promo_galon (agg server, pull-only) menutupnya; max PER SALINAN — bukan lokal+srv —
+     * karena angka server sudah mencakup transaksi lokal yang terpush; lokal hanya menang saat
+     * ada akuisisi baru yang belum tersinkron.
+     */
+    public int mergedPromoGalon(long customerId) {
+        Customer base = getById(customerId);
+        if (base == null) return 0;
+        String key = dedupKey(base);
+        TransactionDao tdao = new TransactionDao(dbHelper);
+        int total = 0;
+        boolean hasBase = false;
+        for (Customer c : groupCandidates(base)) {
+            if (!dedupKey(c).equals(key)) continue;
+            total += Math.max(tdao.getFreePromoGalon(c.getId()), c.getSrvPromoGalon());
+            if (c.getId() == base.getId()) hasBase = true;
+        }
+        // Base sendiri harus terhitung walau tersaring NOT_HANDED_OVER_HERE (pola getByIdMerged).
+        if (!hasBase) total += Math.max(tdao.getFreePromoGalon(base.getId()), base.getSrvPromoGalon());
+        return total;
+    }
+
+    /**
+     * Pasangan {@link #mergedPromoGalon}: galon promosi yang SUDAH DITARIK lintas perangkat =
+     * Σ per salinan dedup max(KEMBALI bermarker LOKAL, srv_promo_pulled). Kedua sisi "remaining"
+     * (diberikan − sudah ditarik) WAJIB se-altitude: promo lintas perangkat + pulled lokal-saja
+     * membuat perangkat lain — atau perangkat ini sendiri saat wakil grupnya berganti salinan —
+     * menawarkan tarik-ulang galon yang sudah ditarik (double-pull, stok Galon Kembali menggelembung
+     * fiktif). Penarikan offline serentak di dua perangkat sebelum sync tetap mungkin (batas
+     * inheren offline-first), tapi begitu KEMBALI-nya terpush semua perangkat melihat angkanya.
+     */
+    public int mergedPromoPulledGalon(long customerId) {
+        Customer base = getById(customerId);
+        if (base == null) return 0;
+        String key = dedupKey(base);
+        TransactionDao tdao = new TransactionDao(dbHelper);
+        int total = 0;
+        boolean hasBase = false;
+        for (Customer c : groupCandidates(base)) {
+            if (!dedupKey(c).equals(key)) continue;
+            total += Math.max(tdao.getPromoPulledGalon(c.getId()), c.getSrvPromoPulled());
+            if (c.getId() == base.getId()) hasBase = true;
+        }
+        if (!hasBase) total += Math.max(tdao.getPromoPulledGalon(base.getId()), base.getSrvPromoPulled());
+        return total;
+    }
+
+    /**
+     * Kandidat Daftar Kunjungan (marketing): SEMUA pelanggan cabang kecuali "Umum" & yang
+     * diserahterimakan perangkat ini. Tiap baris membawa agregat lokal + {@code local_last_jual}
+     * (MAX tanggal JUAL transaksi LOKAL) — pemanggil menggabungkannya dengan srv_last_jual
+     * (lintas perangkat) + handed_over_at per grup dedup, lalu memfilter/mengurut di Java
+     * (lihat VisitListActivity). Tidak dibatasi is_mine: kunjungan menyasar pelanggan cabang.
+     */
+    public List<Customer> getVisitCandidates() {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String query = "SELECT c.*, " +
+                "COALESCE(SUM(CASE WHEN t.type='JUAL' AND COALESCE(t.galon_ownership,'PINJAM')='PINJAM' THEN t.jumlah_galon ELSE 0 END),0) AS galon_keluar, " +
+                "COALESCE(SUM(CASE WHEN t.type='KEMBALI' THEN t.jumlah_galon ELSE 0 END),0) AS galon_kembali, " +
+                "COALESCE(SUM(CASE WHEN t.type='JUAL' THEN t.jumlah_galon ELSE 0 END),0) AS galon_total_ordered, " +
+                "COUNT(t._id) AS total_trx, " +
+                // Order terakhir LOKAL: pesanan TERTUNDA dikecualikan (cermin agregat server &
+                // web lastJualSubquery); tanggal ISO-UTC ("…Z") dinormalkan ke waktu lokal dulu
+                // supaya MAX string tak salah pilih antar format campuran (bug mixed-tz).
+                "MAX(CASE WHEN t.type='JUAL' AND COALESCE(t.delivery_status,'')<>'TERTUNDA' " +
+                "    THEN (CASE WHEN t.tanggal LIKE '%Z' " +
+                "          THEN COALESCE(datetime(t.tanggal,'localtime'), t.tanggal) " +
+                "          ELSE t.tanggal END) END) AS local_last_jual " +
+                "FROM " + DatabaseHelper.TABLE_CUSTOMERS + " c " +
+                "LEFT JOIN " + DatabaseHelper.TABLE_TRANSACTIONS + " t ON c._id = t.customer_id " +
+                "WHERE c.name <> ? AND " + NOT_HANDED_OVER_HERE + " " +
+                "GROUP BY c._id";
+        Cursor cursor = db.rawQuery(query, new String[]{UMUM_NAME});
+        List<Customer> out = new ArrayList<>();
+        while (cursor.moveToNext()) out.add(cursorToCustomer(cursor));
+        cursor.close();
+        return out;
+    }
+
+    /** Tandai/batalkan "Sudah Dikunjungi" (Daftar Kunjungan). LOKAL perangkat ini saja —
+     *  update polos TANPA syncUpdate (tidak menyentuh edited_at/synced → tak pernah di-push). */
+    public int setVisited(long id, boolean visited) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        if (visited) {
+            v.put(DatabaseHelper.COL_VISITED_AT, new java.text.SimpleDateFormat(
+                    "yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(new java.util.Date()));
+        } else {
+            v.putNull(DatabaseHelper.COL_VISITED_AT);
+        }
+        return db.update(DatabaseHelper.TABLE_CUSTOMERS, v,
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(id)});
+    }
+
+    /** Hapus SEMUA tanda "Sudah Dikunjungi" (mulai putaran kunjungan baru). Lokal saja. */
+    public int clearAllVisited() {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.putNull(DatabaseHelper.COL_VISITED_AT);
+        return db.update(DatabaseHelper.TABLE_CUSTOMERS, v,
+                DatabaseHelper.COL_VISITED_AT + " IS NOT NULL", null);
+    }
+
+    /** {@link #parseMillis} untuk mencari MAX (order TERAKHIR): kosong/gagal parse → Long.MIN_VALUE
+     *  (parseMillis memakai MAX_VALUE karena didesain untuk MIN first-order). */
+    public static long parseMillisOrMin(String s) {
+        long v = parseMillis(s);
+        return v == Long.MAX_VALUE ? Long.MIN_VALUE : v;
+    }
+
+    /** Nomor kanonik untuk banding duplikat — PEKA kode negara: digit saja, lalu
+     *  "08xx" ≡ "+62 8xx" ≡ "62 8xx" ≡ "8xx" semuanya → "628xx". Kosong bila tanpa digit. */
+    public static String canonicalPhone(String phone) {
+        String d = phone == null ? "" : phone.replaceAll("\\D+", "");
+        if (d.isEmpty()) return "";
+        if (d.startsWith("0")) return "62" + d.substring(1);
+        if (d.startsWith("8")) return "62" + d;
+        return d;
+    }
+
+    /**
+     * Pelanggan pertama yang nomornya SAMA secara kanonik ({@link #canonicalPhone} — peka
+     * +62/62/0). Memindai SEMUA salinan lokal (termasuk milik perangkat lain & yang sudah
+     * di-handover) — dipakai guard anti-duplikat saat menambah pelanggan baru. Null bila tak ada.
+     */
+    public Customer findByPhoneCanonical(String phone) {
+        String canon = canonicalPhone(phone);
+        if (canon.isEmpty()) return null;
+        String tail = canon.length() > 7 ? canon.substring(canon.length() - 7) : canon;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMERS, null,
+                DatabaseHelper.COL_PHONE + " LIKE ?", new String[]{"%" + tail + "%"},
+                null, null, null);
+        Customer hit = null;
+        while (c.moveToNext()) {
+            Customer cand = cursorToCustomer(c);
+            if (canonicalPhone(cand.getPhone()).equals(canon)) { hit = cand; break; }
+        }
+        c.close();
+        return hit;
+    }
+
     /** Kunci dedup identik server & daftar: nomor (digit, 08→62) → "ph:"; kosong → nama
      *  ternormalisasi "nm:"; dua-duanya kosong → "id:" (tak pernah digabung). */
     public static String dedupKey(Customer c) {
@@ -660,6 +806,69 @@ public class CustomerDao {
      * seperti daftar Pelanggan yang branch-wide. Pelanggan dari perangkat/web lain tidak muncul di
      * sini walau tersinkron ke HP ini.
      */
+    /** Kelonggaran setelah galon terakhir diperkirakan habis (prediksi order kembali). */
+    public static final int FOLLOWUP_ALLOWANCE_DAYS = 1;
+    /** Pagar atas prediksi — data aneh tak boleh menyembunyikan pelanggan berbulan-bulan. */
+    public static final int FOLLOWUP_MAX_PREDICTED_DAYS = 90;
+
+    /**
+     * Ambang follow-up DINAMIS per pelanggan: masa PALING LAMA antara pengaturan fixed dan
+     * prediksi order kembali dari rate konsumsinya + 1 hari kelonggaran:
+     *   rate = total galon JUAL ÷ hari(first_jual → last_jual)  (rentang beli AKTIF — bukan
+     *          first→sekarang, yang makin mengecil saat pelanggan absen → ambang memanjang terus),
+     *   prediksi = galon HARI beli terakhir ÷ rate + 1 (dibulatkan ke atas, dipagari 90 hari).
+     * Sekali beli (rentang 0) → belum ada rate → fixed. CERMIN App\Support\FollowUpDue di web —
+     * jaga keduanya selaras.
+     */
+    public static int followUpThresholdDays(int fixedDays, double galonTotal,
+                                            String firstJual, String lastJual, double lastQty) {
+        if (galonTotal <= 0 || lastQty <= 0 || firstJual == null || lastJual == null) return fixedDays;
+        long span = daysBetweenDates(firstJual, lastJual);
+        if (span < 1) return fixedDays;
+        double rate = galonTotal / span;
+        if (rate <= 0) return fixedDays;
+        int predicted = (int) Math.ceil(lastQty / rate) + FOLLOWUP_ALLOWANCE_DAYS;
+        return Math.max(fixedDays, Math.min(predicted, FOLLOWUP_MAX_PREDICTED_DAYS));
+    }
+
+    /** Rate konsumsi galon/hari (total galon JUAL ÷ rentang beli aktif), 0 bila tak terukur. */
+    public static double followUpDailyRate(double galonTotal, String firstJual, String lastJual) {
+        if (galonTotal <= 0 || firstJual == null || lastJual == null) return 0;
+        long span = daysBetweenDates(firstJual, lastJual);
+        if (span < 1) return 0;
+        return galonTotal / span;
+    }
+
+    /** Perkiraan tanggal ("yyyy-MM-dd") pelanggan seharusnya order lagi = hari beli terakhir +
+     *  ⌈galon terakhir ÷ rate konsumsi⌉, atau null bila rate tak terukur. Cermin web (FollowUpDue). */
+    public static String followUpReorderDay(double galonTotal, String firstJual, String lastJual, double lastQty) {
+        double rate = followUpDailyRate(galonTotal, firstJual, lastJual);
+        if (rate <= 0 || lastQty <= 0 || lastJual == null || lastJual.length() < 10) return null;
+        int daysToEmpty = (int) Math.ceil(lastQty / rate);
+        try {
+            SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+            java.util.Calendar cal = java.util.Calendar.getInstance();
+            cal.setTime(f.parse(lastJual.substring(0, 10)));
+            cal.add(java.util.Calendar.DAY_OF_MONTH, daysToEmpty);
+            return f.format(cal.getTime());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Selisih hari (level tanggal) antara dua timestamp "yyyy-MM-dd…". 0 bila tak terparse. */
+    private static long daysBetweenDates(String a, String b) {
+        try {
+            SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+            java.util.Date da = f.parse(a.substring(0, 10));
+            java.util.Date dz = f.parse(b.substring(0, 10));
+            if (da == null || dz == null) return 0;
+            return Math.abs(dz.getTime() - da.getTime()) / 86400000L;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
     public List<Customer> getFollowUpCandidates(int days) {
         List<Customer> list = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
@@ -673,7 +882,14 @@ public class CustomerDao {
                 "COALESCE(SUM(CASE WHEN t.type='JUAL' AND COALESCE(t.galon_ownership,'PINJAM')='PINJAM' THEN t.jumlah_galon ELSE 0 END),0) AS galon_keluar, " +
                 "COALESCE(SUM(CASE WHEN t.type='KEMBALI' THEN t.jumlah_galon ELSE 0 END),0) AS galon_kembali, " +
                 "COUNT(t._id) AS total_trx, " +
-                "MAX(CASE WHEN t.type='JUAL' THEN t.tanggal END) AS last_jual " +
+                "MAX(CASE WHEN t.type='JUAL' THEN t.tanggal END) AS last_jual, " +
+                // Bahan ambang DINAMIS (prediksi konsumsi — lihat followUpThresholdDays):
+                "COALESCE(SUM(CASE WHEN t.type='JUAL' THEN t.jumlah_galon ELSE 0 END),0) AS fu_galon_jual, " +
+                "MIN(CASE WHEN t.type='JUAL' THEN t.tanggal END) AS fu_first_jual, " +
+                "(SELECT COALESCE(SUM(t2.jumlah_galon),0) FROM transactions t2 " +
+                "  WHERE t2.customer_id=c._id AND t2.type='JUAL' AND date(t2.tanggal) = " +
+                "   (SELECT date(MAX(t3.tanggal)) FROM transactions t3 " +
+                "     WHERE t3.customer_id=c._id AND t3.type='JUAL')) AS fu_last_qty " +
                 "FROM customers c " +
                 "LEFT JOIN transactions t ON c._id = t.customer_id " +
                 "WHERE c.name <> ? AND c." + DatabaseHelper.COL_IS_MINE + " = 1 AND " + NOT_HANDED_OVER_HERE + " " +
@@ -689,11 +905,30 @@ public class CustomerDao {
                 "         c." + DatabaseHelper.COL_FOLLOWUP_MANUAL_AT + " DESC, last_jual ASC";
         Cursor cursor = db.rawQuery(query, new String[]{UMUM_NAME, cutoff});
         while (cursor.moveToNext()) {
-            Customer c = cursorToCustomer(cursor);
-            int idx = cursor.getColumnIndex("last_jual");
-            if (idx >= 0) {
-                c.setCreatedAt(cursor.getString(idx)); // overloaded: last purchase ts
+            // Ambang DINAMIS: HAVING di atas (aturan fixed) adalah SUPERSET-nya — pelanggan masuk
+            // daftar hanya setelah melewati masa PALING LAMA antara fixed dan prediksi konsumsi.
+            // Entri MANUAL tak terpengaruh (selalu tampil). Cermin filter web (FollowUpDue).
+            int idxManual = cursor.getColumnIndex(DatabaseHelper.COL_FOLLOWUP_MANUAL_AT);
+            boolean manual = idxManual >= 0 && !cursor.isNull(idxManual);
+            int idxLast = cursor.getColumnIndex("last_jual");
+            String lastJual = idxLast >= 0 ? cursor.getString(idxLast) : null;
+            double galonTotal = cursor.getDouble(cursor.getColumnIndexOrThrow("fu_galon_jual"));
+            String firstJual = cursor.getString(cursor.getColumnIndexOrThrow("fu_first_jual"));
+            double lastQty = cursor.getDouble(cursor.getColumnIndexOrThrow("fu_last_qty"));
+            if (!manual && lastJual != null && lastJual.length() >= 10) {
+                int threshold = followUpThresholdDays(days, galonTotal, firstJual, lastJual, lastQty);
+                if (threshold > days
+                        && lastJual.substring(0, 10).compareTo(cutoffTimestamp(threshold)) >= 0) {
+                    continue;   // galon terakhirnya diprediksi belum habis → belum waktunya follow-up
+                }
             }
+            Customer c = cursorToCustomer(cursor);
+            if (idxLast >= 0) {
+                c.setCreatedAt(lastJual); // overloaded: last purchase ts
+            }
+            // Info prediksi order kembali (dari konsumsi galon/hari) untuk ditampilkan di kartu.
+            c.setFollowUpReorderDay(followUpReorderDay(galonTotal, firstJual, lastJual, lastQty));
+            c.setFollowUpRate(followUpDailyRate(galonTotal, firstJual, lastJual));
             list.add(c);
         }
         cursor.close();
@@ -767,29 +1002,11 @@ public class CustomerDao {
         return list;
     }
 
-    /** Count of customers needing follow-up (last JUAL > days ago). Isolated to
-     *  is_mine=1 (originally registered on this device) — must match getFollowUpCandidates. */
+    /** Count of customers needing follow-up. Delegates to {@link #getFollowUpCandidates} so the
+     *  badge SELALU sama dengan isi daftar — termasuk ambang DINAMIS prediksi konsumsi yang
+     *  disaring di Java (SQL COUNT terpisah akan drift begitu ada filter pasca-query). */
     public int countFollowUpCandidates(int days) {
-        SQLiteDatabase db = dbHelper.getReadableDatabase();
-        String cutoff = cutoffTimestamp(days);
-        // Exclude the "Umum" walk-in customer — they have no phone.
-        // Harus konsisten dengan getFollowUpCandidates: masuk hitungan bila ditandai
-        // MANUAL dari dashboard (followup_manual_at, terlepas riwayat beli) ATAU belum
-        // beli ≥ N hari (kecuali sudah di-"Remove", kecuali beli lagi setelahnya).
-        String query = "SELECT COUNT(*) FROM (" +
-                "SELECT c._id, MAX(CASE WHEN t.type='JUAL' THEN t.tanggal END) AS last_jual " +
-                "FROM customers c LEFT JOIN transactions t ON c._id = t.customer_id " +
-                "WHERE c.name <> ? AND c." + DatabaseHelper.COL_IS_MINE + " = 1 AND " + NOT_HANDED_OVER_HERE + " " +
-                "GROUP BY c._id " +
-                "HAVING c." + DatabaseHelper.COL_FOLLOWUP_MANUAL_AT + " IS NOT NULL " +
-                "   OR (last_jual IS NOT NULL AND date(last_jual) < date(?) " +
-                "       AND (c." + DatabaseHelper.COL_FOLLOWUP_EXCLUDED_AT + " IS NULL " +
-                "            OR last_jual > c." + DatabaseHelper.COL_FOLLOWUP_EXCLUDED_AT + ")))";
-        Cursor cursor = db.rawQuery(query, new String[]{UMUM_NAME, cutoff});
-        int count = 0;
-        if (cursor.moveToFirst()) count = cursor.getInt(0);
-        cursor.close();
-        return count;
+        return getFollowUpCandidates(days).size();
     }
 
     /**
@@ -898,8 +1115,9 @@ public class CustomerDao {
     }
 
     /** Kunci grup dari nomor HP: 9 digit terakhir (samakan variasi awalan 0/62/+62).
-     *  null = nomor kosong/terlalu pendek (tidak bisa di-dedupe). */
-    private static String phoneKey(String phone) {
+     *  null = nomor kosong/terlalu pendek (tidak bisa di-dedupe). Package-visible: dipakai juga
+     *  {@link CustomerGiftDao} untuk mencocokkan gift lintas salinan pelanggan (Salsa #1/#2). */
+    static String phoneKey(String phone) {
         if (phone == null) return null;
         String d = phone.replaceAll("[^0-9]", "");
         if (d.length() < 7) return null;
@@ -1222,6 +1440,10 @@ public class CustomerDao {
         if (idxOrigin >= 0 && !cursor.isNull(idxOrigin)) c.setOriginLabel(cursor.getString(idxOrigin));
         int idxSrvSaldo = cursor.getColumnIndex(DatabaseHelper.COL_SRV_SALDO);
         if (idxSrvSaldo >= 0) c.setSrvSaldo(cursor.getDouble(idxSrvSaldo));
+        int idxSrvPromo = cursor.getColumnIndex(DatabaseHelper.COL_SRV_PROMO_GALON);
+        if (idxSrvPromo >= 0) c.setSrvPromoGalon(cursor.getInt(idxSrvPromo));
+        int idxSrvPromoPulled = cursor.getColumnIndex(DatabaseHelper.COL_SRV_PROMO_PULLED);
+        if (idxSrvPromoPulled >= 0) c.setSrvPromoPulled(cursor.getInt(idxSrvPromoPulled));
         int idxReseller = cursor.getColumnIndex(DatabaseHelper.COL_IS_RESELLER);
         if (idxReseller >= 0) c.setReseller(cursor.getInt(idxReseller) == 1);
         int idxWajibOngkir = cursor.getColumnIndex(DatabaseHelper.COL_WAJIB_ONGKIR);
@@ -1246,8 +1468,22 @@ public class CustomerDao {
         if (idxKomisi >= 0) c.setKomisiGalon(cursor.getInt(idxKomisi));
         int idxNote = cursor.getColumnIndex(DatabaseHelper.COL_FOLLOWUP_NOTE);
         if (idxNote >= 0 && !cursor.isNull(idxNote)) c.setFollowupNote(cursor.getString(idxNote));
+        int idxLastFu = cursor.getColumnIndex(DatabaseHelper.COL_LAST_FOLLOWUP_AT);
+        if (idxLastFu >= 0 && !cursor.isNull(idxLastFu)) c.setLastFollowupAt(cursor.getString(idxLastFu));
+        int idxManualFu = cursor.getColumnIndex(DatabaseHelper.COL_FOLLOWUP_MANUAL_AT);
+        if (idxManualFu >= 0 && !cursor.isNull(idxManualFu)) c.setFollowupManualAt(cursor.getString(idxManualFu));
         int idxHanded = cursor.getColumnIndex(DatabaseHelper.COL_HANDED_OVER_AT);
         if (idxHanded >= 0 && !cursor.isNull(idxHanded)) c.setHandedOverAt(cursor.getString(idxHanded));
+        // Daftar Kunjungan: order terakhir lintas perangkat (server) + lokal + tanda dikunjungi
+        // + pencatat. Semua dibaca dengan guard — hanya query tertentu yang memuatnya.
+        int idxSrvLj = cursor.getColumnIndex(DatabaseHelper.COL_SRV_LAST_JUAL);
+        if (idxSrvLj >= 0 && !cursor.isNull(idxSrvLj)) c.setSrvLastJual(cursor.getString(idxSrvLj));
+        int idxLocalLj = cursor.getColumnIndex("local_last_jual");
+        if (idxLocalLj >= 0 && !cursor.isNull(idxLocalLj)) c.setLocalLastJual(cursor.getString(idxLocalLj));
+        int idxVisited = cursor.getColumnIndex(DatabaseHelper.COL_VISITED_AT);
+        if (idxVisited >= 0 && !cursor.isNull(idxVisited)) c.setVisitedAt(cursor.getString(idxVisited));
+        int idxCreatedBy = cursor.getColumnIndex(DatabaseHelper.COL_CUST_CREATED_BY);
+        if (idxCreatedBy >= 0 && !cursor.isNull(idxCreatedBy)) c.setCreatedByName(cursor.getString(idxCreatedBy));
         // Multi-lokasi + lazy synthesis (hanya di MODEL, tidak dipersist pembaca): baris legacy
         // tanpa kolom locations tapi punya koordinat → satu entri "Kediaman" membawa flag
         // wajib ongkir legacy, supaya semua pemakai cukup melihat getLocations().
@@ -1341,5 +1577,99 @@ public class CustomerDao {
         }
         cursor.close();
         return list;
+    }
+
+    // ----------------------------------------------------------- Pelanggan Promosi
+
+    /** Satu baris layar "Pelanggan Promosi": pelanggan baru yang diberi galon GRATIS pada hari
+     *  daftarnya (akuisisi tercatat DI PERANGKAT INI), plus tanggal PEMBELIAN pertamanya. */
+    public static class PromoRow {
+        public long id;
+        public String name;
+        public String phone;
+        public String promoDay;    // "yyyy-MM-dd" — kapan promosi diberikan
+        public int galon;          // galon gratis yang diberikan
+        public String repeatDay;   // "yyyy-MM-dd" pembelian pertama, null = belum order ulang
+        public int days;           // jeda hari promo → pembelian (hanya valid bila repeatDay != null)
+    }
+
+    /**
+     * Kohort promo galon gratis perangkat ini: pelanggan dengan JUAL Rp 0 pada hari daftarnya
+     * (transaksi akuisisi ada di DB lokal — otomatis hanya pelanggan yang diakuisisi di sini),
+     * promo dalam [startDay..endDay] ("yyyy-MM-dd"; null = tanpa batas). Konversi = pembelian
+     * berbayar pertama di hari lebih baru: pakai agg server ({@code srv_first_paid}, lintas
+     * perangkat — pembelian biasanya terjadi di HP depot) DAN fallback transaksi berbayar lokal,
+     * diambil yang paling awal. Pelanggan yang sudah diserahterimakan ("Sudah Order Ulang")
+     * TETAP tampil — layar ini justru memantau keberhasilan konversinya. Pencairan komisi
+     * ([PENCAIRAN KOMISI], JUAL Rp 0 sistem) dikecualikan dari akuisisi.
+     */
+    public java.util.List<PromoRow> getPromoCustomers(String startDay, String endDay, String search) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String sql = "SELECT c." + DatabaseHelper.COL_ID + ", c." + DatabaseHelper.COL_NAME
+                + ", c." + DatabaseHelper.COL_PHONE
+                + ", substr(c." + DatabaseHelper.COL_CREATED_AT + ",1,10) AS reg_day"
+                + ", substr(MIN(CASE WHEN t." + DatabaseHelper.COL_TOTAL_HARGA + "=0"
+                + "   AND substr(t." + DatabaseHelper.COL_TANGGAL + ",1,10)=substr(c." + DatabaseHelper.COL_CREATED_AT + ",1,10)"
+                + "   THEN t." + DatabaseHelper.COL_TANGGAL + " END),1,10) AS promo_day"
+                + ", COALESCE(SUM(CASE WHEN t." + DatabaseHelper.COL_TOTAL_HARGA + "=0"
+                + "   AND substr(t." + DatabaseHelper.COL_TANGGAL + ",1,10)=substr(c." + DatabaseHelper.COL_CREATED_AT + ",1,10)"
+                + "   THEN t." + DatabaseHelper.COL_JUMLAH_GALON + " ELSE 0 END),0) AS galon"
+                + ", MIN(CASE WHEN t." + DatabaseHelper.COL_TOTAL_HARGA + ">0"
+                + "   AND substr(t." + DatabaseHelper.COL_TANGGAL + ",1,10)>substr(c." + DatabaseHelper.COL_CREATED_AT + ",1,10)"
+                // Order TERTUNDA (dijeda dari web) bukan konversi — selaras agg server & halaman web.
+                + "   AND COALESCE(t." + DatabaseHelper.COL_DELIVERY_STATUS + ",'')<>'TERTUNDA'"
+                + "   THEN substr(t." + DatabaseHelper.COL_TANGGAL + ",1,10) END) AS local_repeat"
+                + ", c." + DatabaseHelper.COL_SRV_FIRST_PAID
+                + " FROM " + DatabaseHelper.TABLE_CUSTOMERS + " c"
+                + " JOIN " + DatabaseHelper.TABLE_TRANSACTIONS + " t ON t." + DatabaseHelper.COL_CUSTOMER_ID + "=c." + DatabaseHelper.COL_ID
+                + "   AND t." + DatabaseHelper.COL_TYPE + "='JUAL'"
+                + "   AND COALESCE(t." + DatabaseHelper.COL_CATATAN + ",'') NOT LIKE '%[PENCAIRAN KOMISI]%'"
+                + (search != null && !search.trim().isEmpty()
+                    ? " WHERE (c." + DatabaseHelper.COL_NAME + " LIKE ? OR c." + DatabaseHelper.COL_PHONE + " LIKE ?)" : "")
+                + " GROUP BY c." + DatabaseHelper.COL_ID
+                + " HAVING promo_day IS NOT NULL"
+                + (startDay != null ? " AND promo_day >= ?" : "")
+                + (endDay != null ? " AND promo_day <= ?" : "")
+                + " ORDER BY promo_day DESC, c." + DatabaseHelper.COL_NAME + " ASC";
+        java.util.List<String> argList = new java.util.ArrayList<>();
+        if (search != null && !search.trim().isEmpty()) {
+            String like = "%" + search.trim() + "%";
+            argList.add(like);
+            argList.add(like);
+        }
+        if (startDay != null) argList.add(startDay);
+        if (endDay != null) argList.add(endDay);
+        String[] args = argList.isEmpty() ? null : argList.toArray(new String[0]);
+        java.util.List<PromoRow> out = new java.util.ArrayList<>();
+        try (Cursor c = db.rawQuery(sql, args)) {
+            java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US);
+            while (c.moveToNext()) {
+                PromoRow r = new PromoRow();
+                r.id = c.getLong(0);
+                r.name = c.getString(1);
+                r.phone = c.getString(2);
+                String regDay = c.getString(3);
+                r.promoDay = c.getString(4);
+                r.galon = c.getInt(5);
+                String localRepeat = c.isNull(6) ? null : c.getString(6);
+                String srvPaid = c.isNull(7) ? null : c.getString(7);
+                // Konversi = yang PALING AWAL antara agg server & transaksi lokal; agg server
+                // hanya dihitung bila jatuh di hari LEBIH BARU dari hari daftar (pembelian
+                // berbayar di hari akuisisi = bagian akuisisi, bukan order ulang).
+                String srvDay = (srvPaid != null && srvPaid.length() >= 10) ? srvPaid.substring(0, 10) : null;
+                if (srvDay != null && regDay != null && srvDay.compareTo(regDay) <= 0) srvDay = null;
+                String repeat = localRepeat;
+                if (srvDay != null && (repeat == null || srvDay.compareTo(repeat) < 0)) repeat = srvDay;
+                r.repeatDay = repeat;
+                if (repeat != null && r.promoDay != null) {
+                    try {
+                        long ms = fmt.parse(repeat).getTime() - fmt.parse(r.promoDay).getTime();
+                        r.days = (int) (ms / (24L * 60 * 60 * 1000));
+                    } catch (Exception ignored) { r.days = 0; }
+                }
+                out.add(r);
+            }
+        }
+        return out;
     }
 }

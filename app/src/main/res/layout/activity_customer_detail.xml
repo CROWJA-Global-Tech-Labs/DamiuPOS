@@ -345,6 +345,7 @@
                             android:contentDescription="Lokasi" />
 
                         <TextView
+                            android:id="@+id/tvLocationTitle"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
@@ -374,6 +375,13 @@
                         android:id="@+id/webMap"
                         android:layout_width="match_parent"
                         android:layout_height="200dp" />
+
+                    <!-- Daftar lokasi bernama (multi-koordinat) + badge Wajib Ongkir; diisi di kode. -->
+                    <LinearLayout
+                        android:id="@+id/locationsList"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 

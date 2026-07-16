@@ -50,8 +50,19 @@ public final class VersionUpdater {
                 JSONObject r = new SyncApi(cfg).version(cfg.getBaseUrl());
                 OnlineNotifier.handleUpdate(app, cfg, r);   // stores latest + maybe notifies
             } catch (Throwable ignored) {}
+            // Kontrol Versi: heartbeat segar saat aplikasi dibuka — sekaligus melaporkan versi
+            // (me() membawa ?vc/&vn) dan mengambil status blokir versi ini dari dashboard.
+            try {
+                JSONObject me = new SyncApi(cfg).me();
+                cfg.setVersionBlocked(me.optBoolean("version_blocked", false),
+                        com.crowja.damiupos.BuildConfig.VERSION_CODE,
+                        me.optString("blocked_note", ""));
+            } catch (Throwable ignored) {}
             autoDownloadIfNeeded(app);   // blocking on this bg thread; ready before we prompt
-            activity.runOnUiThread(() -> maybePrompt(activity));
+            activity.runOnUiThread(() -> {
+                maybePrompt(activity);
+                maybePromptBlocked(activity);   // mengalah bila dialog Pembaruan Wajib tampil
+            });
         }).start();
     }
 
@@ -92,10 +103,48 @@ public final class VersionUpdater {
                 .setTitle("Pembaruan Wajib")
                 .setMessage(msg)
                 .setCancelable(false)
-                .setPositiveButton("Update Sekarang", (d, w) -> {
-                    if (ready) installApk(activity, apk);
-                    else startUpdate(activity, cfg.getUpdateUrl());
-                })
+                .setPositiveButton("Update Sekarang", (d, w) -> updateNow(activity))
+                .setNegativeButton("Tunda 1 jam", (d, w) -> snooze(app))
+                .show();
+    }
+
+    /** Aksi "Update Sekarang" yang bisa dipakai dialog mana pun: pasang APK yang sudah
+     *  terunduh & cocok hash, else unduh dulu dari apk_url terbit. */
+    public static void updateNow(Activity activity) {
+        Context app = activity.getApplicationContext();
+        SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(app)));
+        File apk = apkFile(app);
+        String have = sha256(apk);
+        boolean ready = apk.exists() && have != null && have.equalsIgnoreCase(cfg.getUpdateSha());
+        if (ready) installApk(activity, apk);
+        else startUpdate(activity, cfg.getUpdateUrl());
+    }
+
+    /**
+     * Popup "Versi Dinonaktifkan" (Kontrol Versi dashboard): versi APK yang SEDANG berjalan
+     * ditandai tidak boleh dipakai → karyawan diminta meng-update. Dialog Pembaruan Wajib
+     * (hash-based, {@link #maybePrompt}) lebih kuat dan sudah meminta update — bila ia berlaku,
+     * popup ini mengalah supaya tidak dobel. "Tunda 1 jam" berbagi snooze dengan pembaruan wajib.
+     */
+    public static void maybePromptBlocked(Activity activity) {
+        if (activity.isFinishing() || activity.isDestroyed()) return;
+        Context app = activity.getApplicationContext();
+        SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(app)));
+        if (!cfg.isEnrolled()) return;
+        if (!cfg.isVersionBlocked(com.crowja.damiupos.BuildConfig.VERSION_CODE)) return;
+        if (updateNeeded(app, cfg)) return;   // dialog Pembaruan Wajib sudah menangani update
+        if (System.currentTimeMillis() < cfg.getSnoozeUntil()) return;
+
+        String note = cfg.getVersionBlockedNote();
+        String msg = "Versi aplikasi ini (" + com.crowja.damiupos.BuildConfig.VERSION_NAME
+                + ") telah DINONAKTIFKAN dari dashboard."
+                + (note != null && !note.isEmpty() ? "\n\nCatatan admin: " + note : "")
+                + "\n\nSilakan update aplikasi untuk melanjutkan bekerja.";
+        new AlertDialog.Builder(activity)
+                .setTitle("⚠️ Versi Dinonaktifkan")
+                .setMessage(msg)
+                .setCancelable(false)
+                .setPositiveButton("Update Sekarang", (d, w) -> updateNow(activity))
                 .setNegativeButton("Tunda 1 jam", (d, w) -> snooze(app))
                 .show();
     }

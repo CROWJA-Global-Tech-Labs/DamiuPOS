@@ -158,7 +158,7 @@ public class SyncEngine {
                     DatabaseHelper.COL_CREATED_BY_NAME, DatabaseHelper.COL_CREATED_VIA,
                     DatabaseHelper.COL_COMPLETED_BY_NAME, DatabaseHelper.COL_DELIVERY_DEVICE_UUID,
                     DatabaseHelper.COL_DELIVERY_DEST_NAME, DatabaseHelper.COL_DELIVERY_DEST_LAT,
-                    DatabaseHelper.COL_DELIVERY_DEST_LNG,
+                    DatabaseHelper.COL_DELIVERY_DEST_LNG, DatabaseHelper.COL_ASSIGNED_DEVICE_UUID,
                     DatabaseHelper.COL_TANGGAL, DatabaseHelper.COL_CATATAN,
             }, new Ref[]{
                     new Ref(DatabaseHelper.COL_CUSTOMER_ID, "customer_uuid", DatabaseHelper.TABLE_CUSTOMERS),
@@ -243,6 +243,11 @@ public class SyncEngine {
     // Diisi di applyRows, dibaca di sync() untuk memunculkan notifikasi + popup + suara.
     private final java.util.List<String[]> pulledManualFollowups = new java.util.ArrayList<>();
 
+    // Konversi promo yang baru terdeteksi lewat pull: pelanggan promosi MILIK PERANGKAT INI
+    // (diakuisisi gratis di sini) yang agg pembelian-berbayar-pertamanya BARU terisi dari server —
+    // {nama, tanggal pembelian}. Dibaca di sync() → notifikasi "order pembelian pertama".
+    private final java.util.List<String[]> pulledPromoConversions = new java.util.ArrayList<>();
+
     // Set by push() when the server reports customers it doesn't have (referenced by pushed
     // transactions): they + their history were re-queued, so sync() pushes a second pass.
     private boolean backfillPending = false;
@@ -305,7 +310,16 @@ public class SyncEngine {
             try { if (reconcile()) res.pushed += push(); }
             catch (Throwable ignored) {}
             pulledManualFollowups.clear();
-            res.pulled = pull();
+            pulledPromoConversions.clear();
+            try {
+                res.pulled = pull();
+            } finally {
+                // Kirim notifikasi konversi yang SUDAH terkumpul walau pull gagal di tengah
+                // (halaman berikut error jaringan): srv_first_paid + kursor per-halaman sudah
+                // terlanjur tersimpan, jadi rising edge-nya sudah terkonsumsi — tanpa finally
+                // ini notifikasinya hilang permanen.
+                deliverPromoConversions();
+            }
             // Cek berkala tiap sync: redam pengingat "Pesanan Terjadwal (tiap N hari)" yang sudah tak
             // berlaku — pelanggannya ternyata sudah order dalam N hari terakhir menurut data lokal
             // (lebih mutakhir dari server saat generate 04:30). Tidak fatal bila gagal.
@@ -1032,6 +1046,7 @@ public class SyncEngine {
                 // server-authoritative (agregat lintas-perangkat + is_mine + origin_label) tetap
                 // disegarkan — tak pernah di-push dari device, jadi tak ada risiko clobber.
                 if ("customers".equals(s.entity)) {
+                    collectPromoConversion(db, s.table, uuid, localId, obj);
                     ContentValues sv = new ContentValues();
                     sv.put(DatabaseHelper.COL_IS_MINE, obj.optBoolean("is_mine", true) ? 1 : 0);
                     sv.put(DatabaseHelper.COL_SRV_TRX, obj.optInt("agg_trx", 0));
@@ -1040,6 +1055,12 @@ public class SyncEngine {
                     sv.put(DatabaseHelper.COL_SRV_KEMBALI, obj.optInt("agg_kembali", 0));
                     sv.put(DatabaseHelper.COL_SRV_FIRST_JUAL,
                             obj.isNull("agg_first_jual") ? null : obj.optString("agg_first_jual", null));
+                    sv.put(DatabaseHelper.COL_SRV_FIRST_PAID,
+                            obj.isNull("agg_first_paid_jual") ? null : obj.optString("agg_first_paid_jual", null));
+                    sv.put(DatabaseHelper.COL_SRV_LAST_JUAL,
+                            obj.isNull("agg_last_jual") ? null : obj.optString("agg_last_jual", null));
+                    sv.put(DatabaseHelper.COL_SRV_PROMO_GALON, obj.optInt("agg_promo_galon", 0));
+                    sv.put(DatabaseHelper.COL_SRV_PROMO_PULLED, obj.optInt("agg_promo_pulled", 0));
                     sv.put(DatabaseHelper.COL_ORIGIN_LABEL, obj.optString("origin_label", ""));
                     sv.put(DatabaseHelper.COL_SRV_SALDO, obj.optDouble("agg_saldo", 0));
                     db.update(s.table, sv, DatabaseHelper.COL_SYNC_UUID + "=?", new String[]{uuid});
@@ -1071,6 +1092,7 @@ public class SyncEngine {
             // Follow-up MANUAL baru dari dashboard: customer yang BARU ditandai
             // (followup_manual_at terisi sekarang, sebelumnya kosong) → kumpulkan untuk notif.
             if ("customers".equals(s.entity)) {
+                collectPromoConversion(db, s.table, uuid, localId, obj);
                 // "Hanya Pelanggan Saya": is_mine dari server (origin == perangkat ini). Field khusus
                 // pull — TIDAK ada di spec dataCols, jadi tak ikut di-push balik (bukan kolom server).
                 v.put(DatabaseHelper.COL_IS_MINE, obj.optBoolean("is_mine", true) ? 1 : 0);
@@ -1081,6 +1103,12 @@ public class SyncEngine {
                 v.put(DatabaseHelper.COL_SRV_KEMBALI, obj.optInt("agg_kembali", 0));
                 v.put(DatabaseHelper.COL_SRV_FIRST_JUAL,
                         obj.isNull("agg_first_jual") ? null : obj.optString("agg_first_jual", null));
+                v.put(DatabaseHelper.COL_SRV_FIRST_PAID,
+                        obj.isNull("agg_first_paid_jual") ? null : obj.optString("agg_first_paid_jual", null));
+                v.put(DatabaseHelper.COL_SRV_LAST_JUAL,
+                        obj.isNull("agg_last_jual") ? null : obj.optString("agg_last_jual", null));
+                v.put(DatabaseHelper.COL_SRV_PROMO_GALON, obj.optInt("agg_promo_galon", 0));
+                v.put(DatabaseHelper.COL_SRV_PROMO_PULLED, obj.optInt("agg_promo_pulled", 0));
                 v.put(DatabaseHelper.COL_ORIGIN_LABEL, obj.optString("origin_label", ""));
                 v.put(DatabaseHelper.COL_SRV_SALDO, obj.optDouble("agg_saldo", 0));
 
@@ -1126,6 +1154,103 @@ public class SyncEngine {
         c.close();
         cache.put(localId, uuid);
         return uuid;
+    }
+
+    /**
+     * Kirim notifikasi konversi promo yang terkumpul selama pull, lalu kosongkan daftarnya.
+     * Sengaja TIDAK digate role: target utamanya justru perangkat marketing pengakuisisi
+     * (deliverAdminMessage = kanal "Pesan & Pembaruan" yang memang diterima marketing). Lebih
+     * dari satu sekaligus → SATU notifikasi agregat: deliverAdminMessage menyimpan popup in-app
+     * di SATU slot pending, jadi beberapa pesan individual saling menimpa. ID notifikasi per
+     * pelanggan diturunkan dari hash nama — konversi pelanggan BERBEDA di sync berbeda tidak
+     * saling menimpa notifikasi yang belum dibaca.
+     */
+    private void deliverPromoConversions() {
+        try {
+            if (pulledPromoConversions.isEmpty()) return;
+            if (pulledPromoConversions.size() > 1) {
+                OnlineNotifier.deliverAdminMessage(appCtx, "🎉 Konversi Promosi",
+                        pulledPromoConversions.size() + " pelanggan promosi Anda sudah melakukan "
+                                + "pembelian pertama. Lihat di menu Pelanggan Promosi.", 7930);
+            } else {
+                String[] pc = pulledPromoConversions.get(0);
+                int id = 7931 + Math.abs((pc[0] != null ? pc[0].hashCode() : 0) % 60);
+                OnlineNotifier.deliverAdminMessage(appCtx, "🎉 Konversi Promosi",
+                        pc[0] + " (pelanggan promosi Anda) melakukan pembelian pertama pada "
+                                + pc[1] + ".", id);
+            }
+            pulledPromoConversions.clear();
+        } catch (Throwable ignored) {
+            // Notifikasi tak boleh menggagalkan sync.
+        }
+    }
+
+    /**
+     * Deteksi rising-edge KONVERSI PROMO saat pull customers: pelanggan MILIK PERANGKAT INI yang
+     * dulu diakuisisi lewat promo galon GRATIS (ada JUAL Rp 0 lokal pada hari daftarnya — transaksi
+     * akuisisi memang tercatat di perangkat ini) dan agg pembelian-berbayar-pertamanya BARU terisi
+     * dari server (sebelumnya kosong secara lokal). Pembelian itu biasanya terjadi di perangkat
+     * depot, tak terlihat dari transaksi lokal HP marketing — hanya agg server yang tahu.
+     * Hanya konversi BARU (≤ 3 hari) yang dinotifikasi: pull pertama setelah upgrade APK membawa
+     * semua konversi historis sekaligus — tanpa jendela ini HP dibanjiri notifikasi lama.
+     */
+    private void collectPromoConversion(SQLiteDatabase db, String table, String uuid,
+                                        long localId, JSONObject obj) {
+        try {
+            // Bukan gate is_mine: serah-terima "Sudah Order Ulang" memindahkan origin ke 'web'
+            // (is_mine jadi false) padahal perangkat INILAH pengakuisisinya — probe transaksi
+            // akuisisi lokal di bawah sudah membatasi ke perangkat yang benar.
+            if (localId == -1) return;
+            String paid = obj.isNull("agg_first_paid_jual")
+                    ? null : obj.optString("agg_first_paid_jual", null);
+            if (paid == null || paid.length() < 10) return;
+            String paidDay = paid.substring(0, 10);
+            // Jendela kebaruan: konversi lebih tua dari 3 hari masuk diam-diam (tanpa notifikasi).
+            java.util.Calendar cal = java.util.Calendar.getInstance();
+            cal.add(java.util.Calendar.DAY_OF_YEAR, -3);
+            String cutoff = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                    .format(cal.getTime());
+            if (paidDay.compareTo(cutoff) < 0) return;
+
+            String name = null, createdAt = null, prevPaid = null;
+            try (Cursor c = db.query(table, new String[]{DatabaseHelper.COL_NAME,
+                            DatabaseHelper.COL_CREATED_AT, DatabaseHelper.COL_SRV_FIRST_PAID},
+                    DatabaseHelper.COL_SYNC_UUID + "=?", new String[]{uuid}, null, null, null)) {
+                if (c.moveToFirst()) { name = c.getString(0); createdAt = c.getString(1); prevPaid = c.getString(2); }
+            }
+            if (prevPaid != null && !prevPaid.isEmpty()) return;   // bukan rising edge — sudah tahu
+            if (createdAt == null || createdAt.length() < 10) return;
+            String regDay = createdAt.substring(0, 10);
+            if (paidDay.compareTo(regDay) <= 0) return;   // pembelian di hari daftar = bagian akuisisi
+            // Akuisisi promo gratis DI PERANGKAT INI: JUAL total 0 pada hari daftar pelanggan.
+            // [PENCAIRAN KOMISI] = JUAL Rp 0 sistem (payout reseller), bukan akuisisi promo —
+            // dikecualikan, selaras CustomerDao.getPromoCustomers & Reports::promoCustomers.
+            try (Cursor c2 = db.rawQuery(
+                    "SELECT COUNT(*) FROM " + DatabaseHelper.TABLE_TRANSACTIONS
+                            + " WHERE " + DatabaseHelper.COL_CUSTOMER_ID + "=?"
+                            + " AND " + DatabaseHelper.COL_TYPE + "='JUAL'"
+                            + " AND substr(" + DatabaseHelper.COL_TANGGAL + ",1,10)=?"
+                            + " AND " + DatabaseHelper.COL_TOTAL_HARGA + "=0"
+                            + " AND COALESCE(" + DatabaseHelper.COL_CATATAN + ",'') NOT LIKE '%[PENCAIRAN KOMISI]%'",
+                    new String[]{String.valueOf(localId), regDay})) {
+                if (!(c2.moveToFirst() && c2.getInt(0) > 0)) return;
+            }
+            // Perangkat yang MENJUAL konversinya sendiri (depot satu-HP) sudah melihat popup
+            // perayaan saat transaksi disimpan (isRepeatFromFreePromo) — jangan dinotifikasi dua
+            // kali. Pembelian yang tercatat lokal di hari itu = perangkat ini penjualnya.
+            try (Cursor c3 = db.rawQuery(
+                    "SELECT COUNT(*) FROM " + DatabaseHelper.TABLE_TRANSACTIONS
+                            + " WHERE " + DatabaseHelper.COL_CUSTOMER_ID + "=?"
+                            + " AND " + DatabaseHelper.COL_TYPE + "='JUAL'"
+                            + " AND " + DatabaseHelper.COL_TOTAL_HARGA + ">0"
+                            + " AND substr(" + DatabaseHelper.COL_TANGGAL + ",1,10)=?",
+                    new String[]{String.valueOf(localId), paidDay})) {
+                if (c3.moveToFirst() && c3.getInt(0) > 0) return;
+            }
+            pulledPromoConversions.add(new String[]{name != null ? name : "Pelanggan", paidDay});
+        } catch (Throwable ignored) {
+            // Deteksi notifikasi tak boleh menggagalkan pull.
+        }
     }
 
     private long localIdForUuid(SQLiteDatabase db, String table, String uuid) {

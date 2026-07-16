@@ -60,6 +60,9 @@ public class Transaction {
     private String deliveryDestName;
     private double deliveryDestLat;
     private double deliveryDestLng;
+    // "Perangkat yang ditugaskan" (marketing/SPV): uuid perangkat lain yang ditugaskan menangani
+    // transaksi ini. null/kosong = perangkat sendiri (tanpa penugasan). Server yang menerjemahkannya.
+    private String assignedDeviceUuid;
     private List<TransactionItem> items = new ArrayList<>();
 
     public Transaction() {}
@@ -161,6 +164,9 @@ public class Transaction {
 
     public String getDeliveryDestName() { return deliveryDestName; }
     public void setDeliveryDestName(String v) { this.deliveryDestName = v; }
+
+    public String getAssignedDeviceUuid() { return assignedDeviceUuid; }
+    public void setAssignedDeviceUuid(String v) { this.assignedDeviceUuid = v; }
 
     public double getDeliveryDestLat() { return deliveryDestLat; }
     public void setDeliveryDestLat(double v) { this.deliveryDestLat = v; }

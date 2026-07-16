@@ -39,6 +39,10 @@ public class Customer {
     private int totalTransaksi;
     private int galonTotalOrdered; // total galon dari SEMUA transaksi JUAL (semua ownership)
     private String firstOrderDate; // tanggal transaksi JUAL pertama (untuk hitung gl/hr)
+    // Follow Up: perkiraan pelanggan seharusnya order lagi (yyyy-MM-dd) + rate konsumsi galon/hari,
+    // diisi CustomerDao.getFollowUpCandidates dari data konsumsi. null / 0 = tak terukur.
+    private String followUpReorderDay;
+    private double followUpRate;
 
     // Reseller
     private boolean isReseller;
@@ -53,6 +57,12 @@ public class Customer {
 
     /** Follow Up: catatan opsional (di-set saat ditambahkan manual dari web). Disinkron. */
     private String followupNote;
+
+    /** Follow Up: kapan terakhir di-follow-up (WA) — untuk urutan "Follow-up terakhir". Disinkron. */
+    private String lastFollowupAt;
+
+    /** Follow Up: timestamp penandaan MANUAL dari dashboard (NULL = otomatis). Disinkron. */
+    private String followupManualAt;
 
     /** "Sudah Order Ulang": timestamp serah-terima marketing (NULL = belum). Disinkron. */
     private String handedOverAt;
@@ -102,8 +112,19 @@ public class Customer {
     public String getCreatedAt() { return createdAt; }
     public void setCreatedAt(String createdAt) { this.createdAt = createdAt; }
 
+    public String getFollowUpReorderDay() { return followUpReorderDay; }
+    public void setFollowUpReorderDay(String v) { this.followUpReorderDay = v; }
+    public double getFollowUpRate() { return followUpRate; }
+    public void setFollowUpRate(double v) { this.followUpRate = v; }
+
     public String getFollowupNote() { return followupNote; }
     public void setFollowupNote(String followupNote) { this.followupNote = followupNote; }
+
+    public String getLastFollowupAt() { return lastFollowupAt; }
+    public void setLastFollowupAt(String v) { this.lastFollowupAt = v; }
+
+    public String getFollowupManualAt() { return followupManualAt; }
+    public void setFollowupManualAt(String v) { this.followupManualAt = v; }
 
     /** Timestamp "Sudah Order Ulang" (serah-terima marketing), atau null. */
     public String getHandedOverAt() { return handedOverAt; }
@@ -153,10 +174,42 @@ public class Customer {
     public String getOriginLabel() { return originLabel; }
     public void setOriginLabel(String v) { this.originLabel = v; }
 
+    // ---- Daftar Kunjungan (marketing) ----
+    /** Order TERAKHIR lintas perangkat (agg server, pull-only); null = belum ada / belum pull. */
+    private String srvLastJual;
+    /** Order terakhir menurut transaksi LOKAL perangkat ini (kolom query local_last_jual). */
+    private String localLastJual;
+    /** "Sudah Dikunjungi" — LOKAL perangkat ini (tidak disinkron). Null = belum. */
+    private String visitedAt;
+    /** "Didaftarkan oleh" (created_by_name, v51) — nama operator pencatat. */
+    private String createdByName;
+
+    public String getSrvLastJual() { return srvLastJual; }
+    public void setSrvLastJual(String v) { this.srvLastJual = v; }
+    public String getLocalLastJual() { return localLastJual; }
+    public void setLocalLastJual(String v) { this.localLastJual = v; }
+    public String getVisitedAt() { return visitedAt; }
+    public void setVisitedAt(String v) { this.visitedAt = v; }
+    public boolean isVisited() { return visitedAt != null && !visitedAt.isEmpty(); }
+    public String getCreatedByName() { return createdByName; }
+    public void setCreatedByName(String v) { this.createdByName = v; }
+
     /** Saldo komisi reseller menurut SERVER (lintas semua perangkat) — pull-only. */
     private double srvSaldo;
     public double getSrvSaldo() { return srvSaldo; }
     public void setSrvSaldo(double v) { this.srvSaldo = v; }
+
+    /** Galon promosi gratis (JUAL Rp 0 di hari daftar) menurut SERVER, lintas perangkat —
+     *  pull-only. Fallback "Tarik Galon Promosi" bila akuisisinya tercatat di perangkat lain. */
+    private int srvPromoGalon;
+    public int getSrvPromoGalon() { return srvPromoGalon; }
+    public void setSrvPromoGalon(int v) { this.srvPromoGalon = v; }
+
+    /** Galon promosi yang SUDAH DITARIK (KEMBALI bermarker) menurut SERVER, lintas perangkat —
+     *  pull-only. Pasangan srvPromoGalon supaya perangkat lain tak menarik ulang galon yang sama. */
+    private int srvPromoPulled;
+    public int getSrvPromoPulled() { return srvPromoPulled; }
+    public void setSrvPromoPulled(int v) { this.srvPromoPulled = v; }
     public java.util.List<String> getOriginLabels() { return originLabels; }
     public void setOriginLabels(java.util.List<String> v) { this.originLabels = v; }
 

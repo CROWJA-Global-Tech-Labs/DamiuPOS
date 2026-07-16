@@ -55,7 +55,11 @@ public class SettingsDao {
     public static final String DEFAULT_FOLLOWUP_TEMPLATE =
             "Bismillah, menginformasikan kakak terakhir membeli air minum di "
             + "{hari}, {tanggal} (sudah {hari_lalu} hari). "
-            + "Mau saya kirim lagi hari ini kak? Terima kasih";
+            + "Mau saya kirim lagi {hari_kirim} kak? Terima kasih";
+    /** Jam tutup operasional cabang (HH:mm; Konfigurasi web, tersinkron). Lewat jam ini,
+     *  {hari_kirim} / frasa "hari ini" pada pesan follow-up WA otomatis jadi "besok". */
+    public static final String KEY_OPS_CLOSE_TIME = "ops_close_time";
+    public static final String DEFAULT_OPS_CLOSE_TIME = "17:00";
     /** Template pesan WA yang dikirim bersama gambar struk. Placeholder: {nama} {depot}.
      *  Diatur di dashboard (Konfigurasi → Pesan WA Struk), tersinkron ke semua perangkat;
      *  link tracking & kampanye tetap ditambahkan otomatis setelah pesan ini. */
@@ -112,7 +116,7 @@ public class SettingsDao {
             KEY_DEFAULT_ONGKIR,
             KEY_POINTS_ENABLED, KEY_POINTS_PER_AMOUNT, KEY_POINTS_REWARD_THRESHOLD,
             KEY_DEPOT_NAME, KEY_DEPOT_ADDRESS, KEY_DEPOT_PHONE, KEY_DEPOT_LOGO_URL,
-            KEY_FOLLOWUP_DAYS, KEY_FOLLOWUP_TEMPLATE, KEY_WA_STRUK_TEMPLATE,
+            KEY_FOLLOWUP_DAYS, KEY_FOLLOWUP_TEMPLATE, KEY_OPS_CLOSE_TIME, KEY_WA_STRUK_TEMPLATE,
             KEY_STOCK_ALERT, KEY_HARGA_BOTOL_GALON, KEY_RESELLER_KOMISI,
             KEY_MULTIUSER_ENABLED,
             KEY_DAILY_NORMAL_HOURS, KEY_WORK_DAYS_PER_WEEK, KEY_LITERS_PER_GALON,
@@ -648,6 +652,12 @@ public class SettingsDao {
     }
     public void setFollowUpTemplate(String s) {
         set(KEY_FOLLOWUP_TEMPLATE, s != null ? s.trim() : "");
+    }
+
+    /** Jam tutup operasional (HH:mm) — lihat {@link #KEY_OPS_CLOSE_TIME}. */
+    public String getOpsCloseTime() {
+        String v = get(KEY_OPS_CLOSE_TIME, DEFAULT_OPS_CLOSE_TIME);
+        return v != null && !v.trim().isEmpty() ? v.trim() : DEFAULT_OPS_CLOSE_TIME;
     }
 
     /** Template pesan WA struk. Lihat {@link #KEY_WA_STRUK_TEMPLATE} untuk placeholder. */

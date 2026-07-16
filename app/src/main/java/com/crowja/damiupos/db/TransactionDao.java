@@ -206,6 +206,51 @@ public class TransactionDao {
         }
     }
 
+    /**
+     * Total galon promosi GRATIS yang pernah diberikan ke pelanggan ini: SUM galon JUAL Rp 0
+     * pada HARI DAFTAR-nya — bentuk kohort yang sama dengan layar Pelanggan Promosi
+     * ({@code CustomerDao.getPromoCustomers}); [PENCAIRAN KOMISI] (JUAL Rp0 sistem) dikecualikan.
+     * MURNI DATA LOKAL per satu baris pelanggan — buta terhadap akuisisi yang tercatat di
+     * perangkat lain. Untuk angka lintas perangkat (Tarik Galon Promosi) pakai
+     * {@code CustomerDao.mergedPromoGalon}, yang menggabungkan ini dengan srv_promo_galon
+     * (agg server) se-grup dedup.
+     */
+    public int getFreePromoGalon(long customerId) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        try (Cursor c = db.rawQuery(
+                "SELECT COALESCE(SUM(t." + DatabaseHelper.COL_JUMLAH_GALON + "),0)"
+                + " FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t"
+                + " JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c ON c." + DatabaseHelper.COL_ID
+                + "=t." + DatabaseHelper.COL_CUSTOMER_ID
+                + " WHERE t." + DatabaseHelper.COL_CUSTOMER_ID + "=?"
+                + " AND t." + DatabaseHelper.COL_TYPE + "='" + Transaction.TYPE_JUAL + "'"
+                + " AND t." + DatabaseHelper.COL_TOTAL_HARGA + "=0"
+                + " AND substr(t." + DatabaseHelper.COL_TANGGAL + ",1,10)=substr(c." + DatabaseHelper.COL_CREATED_AT + ",1,10)"
+                + " AND COALESCE(t." + DatabaseHelper.COL_CATATAN + ",'') NOT LIKE '%[PENCAIRAN KOMISI]%'",
+                new String[]{String.valueOf(customerId)})) {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        }
+    }
+
+    /** Marker catatan KEMBALI hasil penarikan galon promosi (ditulis TarikPromosi). Aman untuk
+     *  SQLite LIKE: '[' bukan wildcard (hanya % dan _), dan marker tak mengandung keduanya. */
+    public static final String PROMO_PULL_MARKER = "[TARIK GALON PROMOSI]";
+
+    /** Total galon promosi yang SUDAH DITARIK kembali dari pelanggan ini
+     *  (KEMBALI bermarker {@link #PROMO_PULL_MARKER}). */
+    public int getPromoPulledGalon(long customerId) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        try (Cursor c = db.rawQuery(
+                "SELECT COALESCE(SUM(" + DatabaseHelper.COL_JUMLAH_GALON + "),0)"
+                + " FROM " + DatabaseHelper.TABLE_TRANSACTIONS
+                + " WHERE " + DatabaseHelper.COL_CUSTOMER_ID + "=?"
+                + " AND " + DatabaseHelper.COL_TYPE + "='" + Transaction.TYPE_KEMBALI + "'"
+                + " AND COALESCE(" + DatabaseHelper.COL_CATATAN + ",'') LIKE '%" + PROMO_PULL_MARKER + "%'",
+                new String[]{String.valueOf(customerId)})) {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        }
+    }
+
     /** Jumlah order yang masih di antrian (PENDING) — untuk badge dashboard. */
     /** Transaksi yang BELUM terkonfirmasi tersinkron ke server (synced=0) dan lebih tua dari
      *  {@code minAgeMinutes} menit — dipakai untuk peringatan "N transaksi belum tersinkron" di

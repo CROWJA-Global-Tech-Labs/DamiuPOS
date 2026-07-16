@@ -45,7 +45,7 @@ public final class OnlineTasks {
         fetchCommands(ctx, cfg, api);
     }
 
-    /** /api/me → apply live config (location reporting interval). */
+    /** /api/me → apply live config (location reporting interval) + status Kontrol Versi. */
     private static void refreshConfig(Context ctx, SyncSettings cfg, SyncApi api) {
         try {
             JSONObject r = api.me();
@@ -55,6 +55,17 @@ public final class OnlineTasks {
                     cfg.setLocationIntervalSeconds(sec);
                     LocationService.reconfigure(ctx);   // apply now if a shift is tracking
                 }
+            }
+            // Kontrol Versi: versi APK ini dinonaktifkan dari dashboard → simpan flag; popup
+            // ditampilkan VersionUpdater.maybePromptBlocked saat aplikasi dibuka/di-resume.
+            boolean blocked = r.optBoolean("version_blocked", false);
+            cfg.setVersionBlocked(blocked, com.crowja.damiupos.BuildConfig.VERSION_CODE,
+                    r.optString("blocked_note", ""));
+            if (blocked && System.currentTimeMillis() >= cfg.getSnoozeUntil()
+                    && !VersionUpdater.updateNeeded(ctx, cfg)) {
+                // Pembaruan-hash punya notifnya sendiri (7842) — ini hanya untuk kasus blokir murni.
+                OnlineNotifier.postNotif(ctx, "Versi Aplikasi Dinonaktifkan",
+                        "Versi aplikasi ini dinonaktifkan admin. Buka aplikasi lalu lakukan update.", 7845);
             }
         } catch (Throwable ignored) {}
     }

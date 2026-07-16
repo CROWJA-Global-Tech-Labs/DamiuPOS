@@ -57,6 +57,11 @@ public class FollowUpActivity extends AppCompatActivity {
     /** Daftar follow-up terkini (di-refresh tiap onResume) — dipakai tombol Peta. */
     private List<Customer> currentList = new ArrayList<>();
 
+    /** Urutan daftar: kunci (false = pembelian terakhir, true = follow-up terakhir) × arah
+     *  (false = asc: terlama/belum-pernah dulu — default; true = desc: terbaru dulu). */
+    private boolean sortByFollowUp = false;
+    private boolean sortDesc = false;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -92,9 +97,15 @@ public class FollowUpActivity extends AppCompatActivity {
     private void loadData() {
         thresholdDays = settingsDao.getFollowupDays();
         List<Customer> list = customerDao.getFollowUpCandidates(thresholdDays);
+        // Default (beli + asc) = urutan DAO; kombinasi lain di-sort ulang di sini.
+        if (sortByFollowUp) sortByLastFollowUp(list, sortDesc);
+        else if (sortDesc) sortByLastPurchase(list, true);
         currentList = list;
         adapter.setData(list);
-        tvSummary.setText(list.size() + " pelanggan belum bertransaksi lebih dari " + thresholdDays + " hari");
+        // Kemunculan pakai mana yang LEBIH LAMA: N hari fixed ATAU perkiraan galon habis (rate
+        // konsumsi galon/hari tiap pelanggan) — jadi hindari wording "lebih dari N hari" yang keliru.
+        tvSummary.setText(list.size() + " pelanggan sudah waktunya di-follow up"
+                + " (lewat " + thresholdDays + " hari atau perkiraan galonnya habis)");
         tvEmpty.setVisibility(list.isEmpty() ? View.VISIBLE : View.GONE);
         rv.setVisibility(list.isEmpty() ? View.GONE : View.VISIBLE);
         invalidateOptionsMenu(); // enable/disable tombol Peta sesuai ketersediaan koordinat
@@ -195,6 +206,9 @@ public class FollowUpActivity extends AppCompatActivity {
         menu.add(0, 1, 0, "Peta")
                 .setIcon(android.R.drawable.ic_dialog_map)
                 .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        menu.add(0, 2, 1, "Urutkan")
+                .setIcon(android.R.drawable.ic_menu_sort_by_size)
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
         return true;
     }
 
@@ -206,7 +220,71 @@ public class FollowUpActivity extends AppCompatActivity {
             startActivity(new Intent(this, FollowUpMapActivity.class));
             return true;
         }
+        if (item.getItemId() == 2) {
+            showSortDialog();
+            return true;
+        }
         return super.onOptionsItemSelected(item);
+    }
+
+    /** Pilih urutan daftar: kunci (pembelian / follow-up terakhir) × arah (asc / desc). */
+    private void showSortDialog() {
+        String[] options = {
+                "Pembelian terakhir — terlama dulu",
+                "Pembelian terakhir — terbaru dulu",
+                "Follow-up terakhir — belum pernah / terlama dulu",
+                "Follow-up terakhir — terbaru dulu",
+        };
+        int checked = (sortByFollowUp ? 2 : 0) + (sortDesc ? 1 : 0);
+        new AlertDialog.Builder(this)
+                .setTitle("Urutkan berdasarkan")
+                .setSingleChoiceItems(options, checked, (d, which) -> {
+                    sortByFollowUp = which >= 2;
+                    sortDesc = (which % 2) == 1;
+                    d.dismiss();
+                    loadData();
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /**
+     * Urut "Follow-up terakhir": entri MANUAL tetap terpin teratas (terbaru dulu — sama seperti
+     * default), lalu asc = BELUM PERNAH di-follow-up dulu lalu follow-up paling lama (urutan kerja
+     * "siapa yang paling perlu dihubungi"); desc = kebalikannya (terbaru dulu, belum-pernah paling
+     * bawah). Cermin sort ?sort=fu&dir=... di web.
+     */
+    private static void sortByLastFollowUp(List<Customer> list, boolean desc) {
+        final int mul = desc ? -1 : 1;
+        java.util.Collections.sort(list, (a, b) -> {
+            boolean am = a.getFollowupManualAt() != null;
+            boolean bm = b.getFollowupManualAt() != null;
+            if (am != bm) return am ? -1 : 1;
+            if (am) return compareNullable(b.getFollowupManualAt(), a.getFollowupManualAt());
+            String af = a.getLastFollowupAt(), bf = b.getLastFollowupAt();
+            if ((af == null) != (bf == null)) return (af == null ? -1 : 1) * mul;
+            return compareNullable(af, bf) * mul;   // timestamp ISO → perbandingan string = kronologis
+        });
+    }
+
+    /** Urut "Pembelian terakhir" arah desc (terbaru dulu); manual tetap terpin. Asc = urutan DAO. */
+    private static void sortByLastPurchase(List<Customer> list, boolean desc) {
+        final int mul = desc ? -1 : 1;
+        java.util.Collections.sort(list, (a, b) -> {
+            boolean am = a.getFollowupManualAt() != null;
+            boolean bm = b.getFollowupManualAt() != null;
+            if (am != bm) return am ? -1 : 1;
+            if (am) return compareNullable(b.getFollowupManualAt(), a.getFollowupManualAt());
+            // getCreatedAt di kandidat follow-up = timestamp pembelian terakhir (overloaded, lihat DAO).
+            return compareNullable(a.getCreatedAt(), b.getCreatedAt()) * mul;
+        });
+    }
+
+    private static int compareNullable(String a, String b) {
+        if (a == null && b == null) return 0;
+        if (a == null) return -1;
+        if (b == null) return 1;
+        return a.compareTo(b);
     }
 
     /** Buka Google Maps dengan pin pada koordinat pelanggan, label = nama. */
@@ -277,15 +355,23 @@ public class FollowUpActivity extends AppCompatActivity {
 
             long days = daysSince(c.getCreatedAt()); // overloaded: last purchase
             h.tvDays.setText(String.valueOf(days));
-            // Catatan follow-up (mis. ditambahkan manual dari web) tampil di baris kedua bila ada.
-            String lastPurchase = "Terakhir beli: " + formatDate(c.getCreatedAt());
+            // Baris info: "Terakhir beli", perkiraan order lagi (dari konsumsi galon/hari), + catatan.
+            StringBuilder info = new StringBuilder("Terakhir beli: " + formatDate(c.getCreatedAt()));
+            String reorder = c.getFollowUpReorderDay();
+            if (reorder != null && !reorder.isEmpty()) {
+                info.append("\n🔮 Perkiraan order lagi: ").append(formatDate(reorder));
+                if (c.getFollowUpRate() > 0) {
+                    info.append(" (±").append(fmtRate(c.getFollowUpRate())).append(" gln/hari)");
+                }
+                long over = daysSince(reorder);   // sudah lewat berapa hari dari perkiraan
+                if (over > 0) info.append(" · lewat ").append(over).append(" hari");
+            }
             String note = c.getFollowupNote();
             if (note != null && !note.trim().isEmpty()) {
-                h.tvLastPurchase.setMaxLines(3);
-                h.tvLastPurchase.setText(lastPurchase + "\n📝 " + note.trim());
-            } else {
-                h.tvLastPurchase.setText(lastPurchase);
+                info.append("\n📝 ").append(note.trim());
             }
+            h.tvLastPurchase.setMaxLines(4);
+            h.tvLastPurchase.setText(info.toString());
             int saldo = c.getSaldoGalon();
             h.tvGalon.setText(saldo + " galon");
             h.tvGalon.setVisibility(saldo > 0 ? View.VISIBLE : View.GONE);
@@ -389,8 +475,20 @@ public class FollowUpActivity extends AppCompatActivity {
             Date d = SDF_PARSE_FULL.parse(ts);
             return d != null ? SDF_OUT_DATE.format(d) : ts;
         } catch (Exception e) {
-            return ts.length() >= 10 ? ts.substring(0, 10) : ts;
+            try {   // ts bisa "yyyy-MM-dd" saja (mis. perkiraan order lagi) → parse tanggal.
+                Date d2 = SDF_PARSE_DATE.parse(ts.substring(0, Math.min(10, ts.length())));
+                return d2 != null ? SDF_OUT_DATE.format(d2) : ts;
+            } catch (Exception ignored) {
+                return ts.length() >= 10 ? ts.substring(0, 10) : ts;
+            }
         }
+    }
+
+    /** Rate galon/hari: 1 desimal, buang ".0" (mis. "3", "2.5"). */
+    private static String fmtRate(double rate) {
+        return rate == Math.floor(rate)
+                ? String.valueOf((long) rate)
+                : String.format(Locale.US, "%.1f", rate);
     }
 
     private void openWhatsAppForFollowUp(Customer c) {

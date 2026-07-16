@@ -256,11 +256,18 @@ public class TransactionListActivity extends AppCompatActivity {
      *  (permintaan: staf bisa memindah transaksi ke pelanggan lain); "Hapus" tetap gated admin. */
     private void showTransactionActions(Transaction trx) {
         String custName = trx.getCustomerName() != null ? trx.getCustomerName() : "-";
-        String[] options = {"Ubah Pelanggan", "Hapus Transaksi"};
+        // "Alokasi Galon" (usulan pembagian galon → butuh persetujuan email) hanya untuk JUAL.
+        java.util.List<String> opts = new java.util.ArrayList<>();
+        opts.add("Ubah Pelanggan");
+        if (Transaction.TYPE_JUAL.equals(trx.getType())) opts.add("Alokasi Galon");
+        opts.add("Hapus Transaksi");
+        final String[] options = opts.toArray(new String[0]);
         new AlertDialog.Builder(this)
                 .setTitle("Transaksi — " + custName)
                 .setItems(options, (d, which) -> {
-                    if (which == 0) showChangeCustomer(trx);
+                    String sel = options[which];
+                    if ("Ubah Pelanggan".equals(sel)) showChangeCustomer(trx);
+                    else if ("Alokasi Galon".equals(sel)) AllocationDialog.show(this, trx, "trx");
                     else confirmDelete(trx);
                 })
                 .setNegativeButton("Batal", null)

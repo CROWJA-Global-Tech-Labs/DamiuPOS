@@ -38,6 +38,13 @@ public class SyncSettings {
     private static final String K_UPD_MYSHA = "sync_upd_my_sha";          // cached own-APK sha
     private static final String K_UPD_MYSHA_AT = "sync_upd_my_sha_at";    // PackageInfo.lastUpdateTime
 
+    // Kontrol Versi (dashboard): versi APK yang SEDANG berjalan ditandai DINONAKTIFKAN oleh
+    // server (/api/me → version_blocked) → popup "Versi Dinonaktifkan — silakan update".
+    // Kode versi ikut disimpan agar flag basi dari versi lama otomatis tak berlaku setelah update.
+    private static final String K_VER_BLOCKED      = "sync_ver_blocked";
+    private static final String K_VER_BLOCKED_CODE = "sync_ver_blocked_code";
+    private static final String K_VER_BLOCKED_NOTE = "sync_ver_blocked_note";
+
     // Last admin broadcast we've shown (created_at) — REST poll cursor.
     private static final String K_BROADCAST_AT = "sync_broadcast_at";
     // Last device command we've run (created_at) — REST poll cursor.
@@ -146,8 +153,15 @@ public class SyncSettings {
      *  missing rows. v2 forces one more epoch re-pull now that pull() drains all pages and the
      *  server cursor is tie-safe (updated_at,uuid) — recovering every branch customer.
      *  <p>Bumped to v3: this build adds pull-only branch aggregate columns (srv_trx/ordered/…) +
-     *  origin_label; a fresh epoch re-pull populates them on every existing customer row. */
-    private static final String K_REPULL_CUSTOMERS = "sync_repull_customers_v4";
+     *  origin_label; a fresh epoch re-pull populates them on every existing customer row.
+     *  <p>Bumped to v5: build v1.4.1 adds srv_last_jual (order terakhir lintas perangkat — dasar
+     *  Daftar Kunjungan); tanpa re-pull kolomnya NULL di semua baris lama dan daftar kunjungan
+     *  menilai semua pelanggan "belum pernah order" sampai barisnya kebetulan berubah di server.
+     *  <p>Bumped to v6: build v1.4.3 adds srv_promo_galon + srv_promo_pulled (galon promo gratis
+     *  & yang sudah ditarik, lintas perangkat — Tarik Galon Promosi); tanpa re-pull kolomnya 0 di
+     *  semua baris lama: penarikan pelanggan hasil sync tertolak keliru DAN penarikan perangkat
+     *  lain tak terlihat (tawaran tarik-ulang) sampai barisnya kebetulan berubah di server. */
+    private static final String K_REPULL_CUSTOMERS = "sync_repull_customers_v6";
     public boolean needsCustomerRepull() { return ! "1".equals(settings.get(K_REPULL_CUSTOMERS, "0")); }
     public void markCustomerRepulled()   { settings.set(K_REPULL_CUSTOMERS, "1"); }
 
@@ -178,6 +192,22 @@ public class SyncSettings {
         settings.set(K_UPD_MYSHA, sha != null ? sha : "");
         settings.set(K_UPD_MYSHA_AT, String.valueOf(lastUpdateTime));
     }
+
+    // ---- Kontrol Versi (versi APK dinonaktifkan dari dashboard) ----
+    /** Simpan status blokir versi dari /api/me, diikat ke versionCode yang dinilai. */
+    public void setVersionBlocked(boolean blocked, int versionCode, String note) {
+        settings.set(K_VER_BLOCKED, blocked ? "1" : "0");
+        settings.set(K_VER_BLOCKED_CODE, String.valueOf(versionCode));
+        settings.set(K_VER_BLOCKED_NOTE, note != null ? note : "");
+    }
+
+    /** True bila versi yang SEDANG berjalan yang diblok (flag milik versi lain diabaikan). */
+    public boolean isVersionBlocked(int currentVersionCode) {
+        return "1".equals(settings.get(K_VER_BLOCKED, "0"))
+                && parseIntOr(settings.get(K_VER_BLOCKED_CODE, "0")) == currentVersionCode;
+    }
+
+    public String getVersionBlockedNote() { return settings.get(K_VER_BLOCKED_NOTE, ""); }
 
     /** Cursor for the broadcasts REST poll (last shown created_at). */
     public String getBroadcastCursor()       { return settings.get(K_BROADCAST_AT, ""); }
