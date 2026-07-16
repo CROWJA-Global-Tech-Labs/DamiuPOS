@@ -72,6 +72,9 @@ public class SyncEngine {
                     DatabaseHelper.COL_PRODUCT_PRICES, DatabaseHelper.COL_LOCATIONS,
                     DatabaseHelper.COL_HANDED_OVER_AT, DatabaseHelper.COL_HANDED_OVER_BY,
                     DatabaseHelper.COL_CUST_CREATED_BY,
+                    DatabaseHelper.COL_ISSUE_FLAGS, DatabaseHelper.COL_ISSUE_NOTE,
+                    DatabaseHelper.COL_ISSUE_REPORTED_AT, DatabaseHelper.COL_ISSUE_REPORTED_BY,
+                    DatabaseHelper.COL_ISSUE_RESOLVED_AT,
                     DatabaseHelper.COL_PHOTO_URL, DatabaseHelper.COL_CREATED_AT,
             }, NO_REFS),
 

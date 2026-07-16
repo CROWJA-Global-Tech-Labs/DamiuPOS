@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 56;
+    private static final int DATABASE_VERSION = 57;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -128,6 +128,20 @@ public class DatabaseHelper extends SQLiteOpenHelper {
      *  saat DIBUAT — cermin transactions.created_by_name. Disinkron agar dashboard menampilkan
      *  pencatatnya walau pelanggan belum bertransaksi. NULL untuk baris lama. */
     public static final String COL_CUST_CREATED_BY = "created_by_name";
+    /** "Tandai Bermasalah": detail pelanggan keliru (nomor/koordinat/foto/alamat/dll) — dilaporkan
+     *  staf agar owner/admin memperbaiki. Semua kolom issue_* disinkron dua-arah (cermin web).
+     *  Daftar kategori dipisah koma: phone,coordinate,photo,address,other. */
+    public static final String COL_ISSUE_FLAGS = "issue_flags";
+    /** Catatan bebas pelapor masalah. Disinkron. */
+    public static final String COL_ISSUE_NOTE = "issue_note";
+    /** Kapan ditandai bermasalah (ISO). NULL / diungguli issue_resolved_at = tidak ada masalah aktif. */
+    public static final String COL_ISSUE_REPORTED_AT = "issue_reported_at";
+    /** Nama staf/pengguna pelapor. Disinkron. */
+    public static final String COL_ISSUE_REPORTED_BY = "issue_reported_by";
+    /** Kapan ditandai "sudah diperbaiki" (ISO). Kita TAK pernah meng-null-kan laporan (push HP
+     *  menghapus kolom null → pemberesan takkan tersinkron); resolve menyetel kolom ini. Masalah
+     *  aktif = issue_reported_at ada DAN (issue_resolved_at kosong ATAU lebih lama dari reported). */
+    public static final String COL_ISSUE_RESOLVED_AT = "issue_resolved_at";
 
     // Table products
     public static final String TABLE_PRODUCTS = "products";
@@ -371,6 +385,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_HANDED_OVER_AT + " TEXT, " +
                     COL_HANDED_OVER_BY + " TEXT, " +
                     COL_CUST_CREATED_BY + " TEXT, " +
+                    COL_ISSUE_FLAGS + " TEXT, " +
+                    COL_ISSUE_NOTE + " TEXT, " +
+                    COL_ISSUE_REPORTED_AT + " TEXT, " +
+                    COL_ISSUE_REPORTED_BY + " TEXT, " +
+                    COL_ISSUE_RESOLVED_AT + " TEXT, " +
                     COL_CREATED_AT + " TEXT DEFAULT (datetime('now','localtime'))" +
                     ");";
 
@@ -1074,6 +1093,15 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             // "Perangkat yang ditugaskan" (marketing/SPV): NIAT penugasan transaksi ke perangkat lain.
             // Server menerjemahkannya → delivery_device_uuid + staff_uuid perangkat tujuan. Additif; lama NULL.
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_ASSIGNED_DEVICE_UUID + " TEXT");
+        }
+        if (oldVersion < 57) {
+            // "Tandai Bermasalah": detail pelanggan keliru (nomor/koordinat/dll) dilaporkan staf agar
+            // owner/admin memperbaiki. Semua kolom issue_* disinkron dua-arah (cermin web). Additif; lama NULL.
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_ISSUE_FLAGS + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_ISSUE_NOTE + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_ISSUE_REPORTED_AT + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_ISSUE_REPORTED_BY + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_ISSUE_RESOLVED_AT + " TEXT");
         }
     }
 

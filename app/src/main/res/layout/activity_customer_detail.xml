@@ -114,6 +114,21 @@
                                 android:textSize="13sp"
                                 android:textStyle="bold"
                                 android:visibility="gone" />
+
+                            <!-- ⚠️ Detail bermasalah (issue_*): dilaporkan staf agar diperbaiki.
+                                 Tap membuka dialog Tandai/Ubah Laporan Masalah. -->
+                            <TextView
+                                android:id="@+id/tvIssueBanner"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="8dp"
+                                android:background="#FEF2F2"
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:padding="8dp"
+                                android:textColor="#B91C1C"
+                                android:textSize="13sp"
+                                android:visibility="gone" />
                         </LinearLayout>
                     </LinearLayout>
 

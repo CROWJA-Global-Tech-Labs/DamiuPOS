@@ -61,6 +61,40 @@ public class CustomerDao {
                 DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
     }
 
+    /**
+     * "Tandai Bermasalah": detail pelanggan keliru dilaporkan agar owner/admin memperbaiki.
+     * Menyetel kolom issue_* + membuka kembali masalah (issue_resolved_at = null). Offline-first:
+     * bump edited_at + synced=0 lewat {@link DatabaseHelper#syncUpdate} → terdorong ke server saat
+     * sync berikutnya, tersinkron ke web & semua perangkat.
+     *
+     * @param flags    kategori dipisah koma (phone,coordinate,photo,address,other)
+     * @param note     catatan bebas (boleh null/kosong)
+     * @param reporter nama pelapor (staf clock-in / perangkat)
+     */
+    public void markProblematic(long customerId, String flags, String note, String reporter) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        String now = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new java.util.Date());
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_ISSUE_FLAGS, flags);
+        v.put(DatabaseHelper.COL_ISSUE_NOTE, note != null && !note.trim().isEmpty() ? note.trim() : null);
+        v.put(DatabaseHelper.COL_ISSUE_REPORTED_AT, now);
+        v.put(DatabaseHelper.COL_ISSUE_REPORTED_BY, reporter);
+        v.putNull(DatabaseHelper.COL_ISSUE_RESOLVED_AT);   // laporan baru membuka kembali masalah
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_CUSTOMERS, v,
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
+    }
+
+    /** Tandai masalah pelanggan SUDAH DIPERBAIKI: setel issue_resolved_at (tidak meng-null-kan
+     *  laporan — push HP menghapus kolom null → pemberesan takkan tersinkron). Tersinkron. */
+    public void markProblemResolved(long customerId) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        String now = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new java.util.Date());
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_ISSUE_RESOLVED_AT, now);
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_CUSTOMERS, v,
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
+    }
+
     public long insert(Customer customer) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues values = new ContentValues();
@@ -1484,6 +1518,17 @@ public class CustomerDao {
         if (idxVisited >= 0 && !cursor.isNull(idxVisited)) c.setVisitedAt(cursor.getString(idxVisited));
         int idxCreatedBy = cursor.getColumnIndex(DatabaseHelper.COL_CUST_CREATED_BY);
         if (idxCreatedBy >= 0 && !cursor.isNull(idxCreatedBy)) c.setCreatedByName(cursor.getString(idxCreatedBy));
+        // "Tandai Bermasalah": kolom issue_* (guard — hanya query SELECT c.* yang memuatnya).
+        int idxIsFlags = cursor.getColumnIndex(DatabaseHelper.COL_ISSUE_FLAGS);
+        if (idxIsFlags >= 0 && !cursor.isNull(idxIsFlags)) c.setIssueFlags(cursor.getString(idxIsFlags));
+        int idxIsNote = cursor.getColumnIndex(DatabaseHelper.COL_ISSUE_NOTE);
+        if (idxIsNote >= 0 && !cursor.isNull(idxIsNote)) c.setIssueNote(cursor.getString(idxIsNote));
+        int idxIsRepAt = cursor.getColumnIndex(DatabaseHelper.COL_ISSUE_REPORTED_AT);
+        if (idxIsRepAt >= 0 && !cursor.isNull(idxIsRepAt)) c.setIssueReportedAt(cursor.getString(idxIsRepAt));
+        int idxIsRepBy = cursor.getColumnIndex(DatabaseHelper.COL_ISSUE_REPORTED_BY);
+        if (idxIsRepBy >= 0 && !cursor.isNull(idxIsRepBy)) c.setIssueReportedBy(cursor.getString(idxIsRepBy));
+        int idxIsResAt = cursor.getColumnIndex(DatabaseHelper.COL_ISSUE_RESOLVED_AT);
+        if (idxIsResAt >= 0 && !cursor.isNull(idxIsResAt)) c.setIssueResolvedAt(cursor.getString(idxIsResAt));
         // Multi-lokasi + lazy synthesis (hanya di MODEL, tidak dipersist pembaca): baris legacy
         // tanpa kolom locations tapi punya koordinat → satu entri "Kediaman" membawa flag
         // wajib ongkir legacy, supaya semua pemakai cukup melihat getLocations().

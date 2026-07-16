@@ -67,6 +67,17 @@ public class Customer {
     /** "Sudah Order Ulang": timestamp serah-terima marketing (NULL = belum). Disinkron. */
     private String handedOverAt;
 
+    /** "Tandai Bermasalah": kategori masalah detail dipisah koma (phone,coordinate,photo,address,other). Disinkron. */
+    private String issueFlags;
+    /** Catatan bebas pelapor masalah. Disinkron. */
+    private String issueNote;
+    /** Kapan ditandai bermasalah (ISO), atau null. Disinkron. */
+    private String issueReportedAt;
+    /** Nama pelapor masalah. Disinkron. */
+    private String issueReportedBy;
+    /** Kapan ditandai "sudah diperbaiki" (ISO). Menyetel ini (bukan meng-null-kan laporan) yang menutup masalah. Disinkron. */
+    private String issueResolvedAt;
+
     public Customer() {}
 
     public Customer(String name, String phone, String address) {
@@ -130,6 +141,47 @@ public class Customer {
     public String getHandedOverAt() { return handedOverAt; }
     public void setHandedOverAt(String v) { this.handedOverAt = v; }
     public boolean isHandedOver() { return handedOverAt != null && !handedOverAt.isEmpty(); }
+
+    public String getIssueFlags() { return issueFlags; }
+    public void setIssueFlags(String v) { this.issueFlags = v; }
+    public String getIssueNote() { return issueNote; }
+    public void setIssueNote(String v) { this.issueNote = v; }
+    public String getIssueReportedAt() { return issueReportedAt; }
+    public void setIssueReportedAt(String v) { this.issueReportedAt = v; }
+    public String getIssueReportedBy() { return issueReportedBy; }
+    public void setIssueReportedBy(String v) { this.issueReportedBy = v; }
+    public String getIssueResolvedAt() { return issueResolvedAt; }
+    public void setIssueResolvedAt(String v) { this.issueResolvedAt = v; }
+
+    /**
+     * Ada masalah AKTIF? Ditandai (issueReportedAt) dan belum diberesi — resolve menang hanya bila
+     * issueResolvedAt TIDAK lebih lama dari laporan. Penandaan ulang (issueReportedAt lebih baru)
+     * kembali membuka masalah. Cermin Customer::hasOpenIssue di web (bandingkan string ISO aman
+     * karena keduanya format yang sama; salah satu kosong ditangani eksplisit). */
+    public boolean hasOpenIssue() {
+        if (issueReportedAt == null || issueReportedAt.isEmpty()) {
+            return false;
+        }
+        if (issueResolvedAt == null || issueResolvedAt.isEmpty()) {
+            return true;
+        }
+        return issueResolvedAt.compareTo(issueReportedAt) < 0;
+    }
+
+    /** Kategori masalah aktif sebagai daftar kunci bersih (["phone","coordinate",...]). */
+    public java.util.List<String> issueFlagList() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (!hasOpenIssue() || issueFlags == null || issueFlags.trim().isEmpty()) {
+            return out;
+        }
+        for (String k : issueFlags.split(",")) {
+            String key = k.trim();
+            if (!key.isEmpty() && !out.contains(key)) {
+                out.add(key);
+            }
+        }
+        return out;
+    }
 
     public int getGalonKeluar() { return galonKeluar; }
     public void setGalonKeluar(int galonKeluar) { this.galonKeluar = galonKeluar; }

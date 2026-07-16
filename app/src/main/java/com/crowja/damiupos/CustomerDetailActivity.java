@@ -37,6 +37,14 @@ public class CustomerDetailActivity extends AppCompatActivity {
     private static final int MENU_HANDOFF = 10;
     /** Menu: buat & bagikan link publik 7 hari (kartu info pelanggan). */
     private static final int MENU_SHARE_LINK = 11;
+    /** Menu: tandai detail pelanggan bermasalah (nomor/koordinat/dll keliru) agar diperbaiki. */
+    private static final int MENU_FLAG_PROBLEM = 12;
+
+    /** Kategori masalah: kunci tersinkron (cermin web) → label Indonesia. Urutan dijaga. */
+    private static final String[] ISSUE_KEYS = {"phone", "coordinate", "photo", "address", "other"};
+    private static final String[] ISSUE_LABELS = {
+            "Nomor HP tidak sesuai", "Koordinat/lokasi tidak sesuai",
+            "Foto tidak sesuai", "Alamat tidak lengkap/keliru", "Lainnya"};
 
     private long customerId;
     private DatabaseHelper dbHelper;
@@ -45,7 +53,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
     private com.crowja.damiupos.db.SettingsDao settingsDao;
     private Customer currentCustomer;
 
-    private TextView tvNama, tvTelepon, tvAlamat, tvOrigin, tvAfiliasi;
+    private TextView tvNama, tvTelepon, tvAlamat, tvOrigin, tvAfiliasi, tvIssueBanner;
     private TextView tvGalonKeluar, tvGalonKembali, tvSaldoGalon;
     private TextView tvEmptyHistory, tvHistoryHeader, tvHistoryNote;
     private RecyclerView rvTransactions;
@@ -80,6 +88,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
         tvAlamat = findViewById(R.id.tvAlamat);
         tvOrigin = findViewById(R.id.tvOrigin);
         tvAfiliasi = findViewById(R.id.tvAfiliasi);
+        tvIssueBanner = findViewById(R.id.tvIssueBanner);
+        tvIssueBanner.setOnClickListener(v -> showFlagProblemDialog());
         tvHistoryHeader = findViewById(R.id.tvHistoryHeader);
         tvHistoryNote = findViewById(R.id.tvHistoryNote);
         ivFoto = findViewById(R.id.ivFoto);
@@ -144,6 +154,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 .setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_NEVER);
         menu.add(0, MENU_SHARE_LINK, 1, "🔗 Bagikan Link Publik (7 hari)")
                 .setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_NEVER);
+        menu.add(0, MENU_FLAG_PROBLEM, 2, "⚠️ Tandai Bermasalah")
+                .setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_NEVER);
         return true;
     }
 
@@ -157,6 +169,11 @@ public class CustomerDetailActivity extends AppCompatActivity {
         if (share != null) {
             share.setVisible(canShowShareLink());
         }
+        android.view.MenuItem flag = menu.findItem(MENU_FLAG_PROBLEM);
+        if (flag != null) {
+            boolean open = currentCustomer != null && currentCustomer.hasOpenIssue();
+            flag.setTitle(open ? "⚠️ Ubah Laporan Masalah" : "⚠️ Tandai Bermasalah");
+        }
         return super.onPrepareOptionsMenu(menu);
     }
 
@@ -168,6 +185,10 @@ public class CustomerDetailActivity extends AppCompatActivity {
         }
         if (item.getItemId() == MENU_SHARE_LINK) {
             sharePublicLink();
+            return true;
+        }
+        if (item.getItemId() == MENU_FLAG_PROBLEM) {
+            showFlagProblemDialog();
             return true;
         }
         return super.onOptionsItemSelected(item);
@@ -295,6 +316,93 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 .show();
     }
 
+    /**
+     * "Tandai Bermasalah": laporkan detail pelanggan yang keliru (nomor/koordinat/foto/alamat/lainnya)
+     * agar owner/admin memperbaiki. Checkbox kategori + catatan opsional; bila sudah ada masalah aktif,
+     * kategori/catatan sebelumnya di-pra-isi dan tersedia tombol netral "Sudah diperbaiki". Tersinkron
+     * dua-arah lewat kolom issue_* (cermin web).
+     */
+    /** Label Indonesia untuk kunci kategori masalah; kunci tak dikenal → kunci apa adanya. */
+    private String issueLabelFor(String key) {
+        for (int i = 0; i < ISSUE_KEYS.length; i++) {
+            if (ISSUE_KEYS[i].equals(key)) {
+                return ISSUE_LABELS[i];
+            }
+        }
+        return key;
+    }
+
+    private void showFlagProblemDialog() {
+        if (currentCustomer == null) {
+            return;
+        }
+        final String name = currentCustomer.getName() != null ? currentCustomer.getName() : "Pelanggan";
+        final java.util.List<String> active = currentCustomer.issueFlagList();
+
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        box.setPadding(pad, pad / 2, pad, 0);
+
+        final android.widget.CheckBox[] boxes = new android.widget.CheckBox[ISSUE_KEYS.length];
+        for (int i = 0; i < ISSUE_KEYS.length; i++) {
+            android.widget.CheckBox cb = new android.widget.CheckBox(this);
+            cb.setText(ISSUE_LABELS[i]);
+            cb.setChecked(active.contains(ISSUE_KEYS[i]));
+            boxes[i] = cb;
+            box.addView(cb);
+        }
+        final android.widget.EditText note = new android.widget.EditText(this);
+        note.setHint("Catatan (opsional): jelaskan masalahnya…");
+        note.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        note.setMaxLines(3);
+        if (currentCustomer.hasOpenIssue() && currentCustomer.getIssueNote() != null) {
+            note.setText(currentCustomer.getIssueNote());
+        }
+        box.addView(note);
+
+        AlertDialog.Builder b = new AlertDialog.Builder(this)
+                .setTitle(currentCustomer.hasOpenIssue() ? "Ubah Laporan Masalah" : "Tandai Bermasalah")
+                .setView(box)
+                .setNegativeButton("Batal", null)
+                .setPositiveButton("Simpan Laporan", null);   // override nanti agar validasi tak menutup dialog
+        if (currentCustomer.hasOpenIssue()) {
+            b.setNeutralButton("✓ Sudah diperbaiki", (d, w) -> {
+                customerDao.markProblemResolved(customerId);
+                com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                Toast.makeText(this, "Masalah " + name + " ditandai sudah diperbaiki", Toast.LENGTH_LONG).show();
+                loadData();
+            });
+        }
+        final AlertDialog dlg = b.create();
+        dlg.setOnShowListener(di -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            java.util.List<String> picked = new java.util.ArrayList<>();
+            for (int i = 0; i < boxes.length; i++) {
+                if (boxes[i].isChecked()) {
+                    picked.add(ISSUE_KEYS[i]);
+                }
+            }
+            if (picked.isEmpty()) {
+                Toast.makeText(this, "Pilih minimal satu jenis masalah", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            String reporter = settingsDao.getCurrentUserName();
+            if (reporter == null || reporter.isEmpty()) {
+                reporter = "(perangkat)";
+            }
+            customerDao.markProblematic(customerId, android.text.TextUtils.join(",", picked),
+                    note.getText().toString(), reporter);
+            com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+            Toast.makeText(this, name + " ditandai bermasalah — dikirim ke dashboard & perangkat lain",
+                    Toast.LENGTH_LONG).show();
+            dlg.dismiss();
+            loadData();
+        }));
+        dlg.show();
+    }
+
     private void loadData() {
         // Agregat GABUNGAN lintas-perangkat (jumlah transaksi/galon/konsumsi dijumlah dari semua
         // salinan orang ini) → angka SAMA seperti dashboard web & antar perangkat.
@@ -336,6 +444,23 @@ public class CustomerDetailActivity extends AppCompatActivity {
             tvAfiliasi.setVisibility(View.VISIBLE);
         } else {
             tvAfiliasi.setVisibility(View.GONE);
+        }
+
+        // ⚠️ Banner detail bermasalah — kategori aktif + catatan; tap membuka dialog laporan.
+        if (customer.hasOpenIssue()) {
+            StringBuilder sb = new StringBuilder("⚠️ Detail bermasalah — perlu diperbaiki");
+            java.util.List<String> keys = customer.issueFlagList();
+            for (String k : keys) {
+                sb.append("\n• ").append(issueLabelFor(k));
+            }
+            if (customer.getIssueNote() != null && !customer.getIssueNote().trim().isEmpty()) {
+                sb.append("\nCatatan: ").append(customer.getIssueNote().trim());
+            }
+            sb.append("\n(ketuk untuk ubah / tandai sudah diperbaiki)");
+            tvIssueBanner.setText(sb.toString());
+            tvIssueBanner.setVisibility(View.VISIBLE);
+        } else {
+            tvIssueBanner.setVisibility(View.GONE);
         }
 
         loadPhoto(customer.getPhotoPath(), customer.getPhotoUrl());
