@@ -102,6 +102,7 @@
         <activity android:name=".PromoCustomersActivity" />
         <activity android:name=".VisitListActivity" />
         <activity android:name=".FollowUpMapActivity" />
+        <activity android:name=".CustomerMapActivity" />
         <activity android:name=".DeliveryQueueActivity" />
         <activity android:name=".ChangelogActivity" />
         <activity android:name=".SyncSettingsActivity" />
