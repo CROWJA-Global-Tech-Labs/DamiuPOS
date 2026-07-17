@@ -277,12 +277,32 @@ public class Customer {
     public int getMergedNameCount() { return mergedNameCount; }
     public void setMergedNameCount(int v) { this.mergedNameCount = v; }
 
-    /** Agregat efektif per baris: salinan sendiri pakai lokal (segar), lainnya pakai server. */
-    public int effectiveTrx()      { return isMine ? totalTransaksi : srvTrx; }
-    public int effectiveOrdered()  { return isMine ? galonTotalOrdered : srvOrdered; }
-    public int effectiveBorrowed() { return isMine ? galonKeluar : srvBorrowed; }
-    public int effectiveKembali()  { return isMine ? galonKembali : srvKembali; }
-    public String effectiveFirstJual() { return isMine ? firstOrderDate : srvFirstJual; }
+    /**
+     * Agregat efektif per baris = MAX(lokal, server). Server (srv_*) adalah total lintas-SEMUA
+     * perangkat untuk uuid ini (dihitung ulang tiap pull); lokal hanya lebih segar untuk transaksi
+     * yang dibuat DI perangkat ini di antara dua pull.
+     *
+     * <p>Dulu memakai {@code isMine ? lokal : server}. Itu keliru untuk pola marketing→depot:
+     * pelanggan DIDAFTARKAN di HP marketing (is_mine=true) tetapi ORDER-nya dilayani/di-input di
+     * perangkat DEPOT (transaksi terisolasi per-perangkat, tak ikut sinkron). Akibatnya HP marketing
+     * memakai hitungan LOKAL (0/kurang) dan mengabaikan agregat server yang berisi penjualan depot →
+     * "Total Galon 0" padahal sudah pernah order. MAX memperbaiki keduanya: penjualan lokal yang baru
+     * (server belum ke-pull) → lokal menang; penjualan di perangkat lain → server menang. Cermin pola
+     * "merged max(local,srv)" pada galon promosi. */
+    public int effectiveTrx()      { return Math.max(totalTransaksi, srvTrx); }
+    public int effectiveOrdered()  { return Math.max(galonTotalOrdered, srvOrdered); }
+    public int effectiveBorrowed() { return Math.max(galonKeluar, srvBorrowed); }
+    public int effectiveKembali()  { return Math.max(galonKembali, srvKembali); }
+
+    /** Tanggal JUAL pertama efektif = yang PALING AWAL antara lokal & server (abaikan null/kosong). */
+    public String effectiveFirstJual() {
+        String local = firstOrderDate, srv = srvFirstJual;
+        boolean lb = local == null || local.isEmpty();
+        boolean sb = srv == null || srv.isEmpty();
+        if (lb) return sb ? null : srv;
+        if (sb) return local;
+        return local.compareTo(srv) <= 0 ? local : srv;   // ISO → string compare = kronologis
+    }
 
     public int getGalonTotalOrdered() { return galonTotalOrdered; }
     public void setGalonTotalOrdered(int v) { this.galonTotalOrdered = v; }
