@@ -54,7 +54,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
     private Customer currentCustomer;
 
     private TextView tvNama, tvTelepon, tvAlamat, tvOrigin, tvAfiliasi, tvIssueBanner;
-    private TextView tvGalonKeluar, tvGalonKembali, tvSaldoGalon;
+    private TextView tvSaldoGalon;
     private TextView tvEmptyHistory, tvHistoryHeader, tvHistoryNote;
     private RecyclerView rvTransactions;
     private TransactionAdapter adapter;
@@ -95,8 +95,6 @@ public class CustomerDetailActivity extends AppCompatActivity {
         ivFoto = findViewById(R.id.ivFoto);
         cardMap = findViewById(R.id.cardMap);
         webMap = findViewById(R.id.webMap);
-        tvGalonKeluar = findViewById(R.id.tvGalonKeluar);
-        tvGalonKembali = findViewById(R.id.tvGalonKembali);
         tvSaldoGalon = findViewById(R.id.tvSaldoGalon);
         tvEmptyHistory = findViewById(R.id.tvEmptyHistory);
         rvTransactions = findViewById(R.id.rvTransactions);
@@ -466,10 +464,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
         loadPhoto(customer.getPhotoPath(), customer.getPhotoUrl());
         loadMap(customer);
 
-        // "Total Galon" = semua galon JUAL yang diambil pelanggan (akuisisi/beli/pinjam) — supaya
-        // jumlah galon selalu terlihat walau galon dibeli (bukan dipinjam). "Sisa Pinjam" = saldo.
-        tvGalonKeluar.setText(String.valueOf(customer.getGalonTotalOrdered()));
-        tvGalonKembali.setText(String.valueOf(customer.getGalonKembali()));
+        // Satu angka jelas: "Galon Dipinjam" = galon yang masih dipinjam pelanggan (belum kembali).
         tvSaldoGalon.setText(String.valueOf(customer.getSaldoGalon()));
 
         // Jumlah transaksi GABUNGAN (lintas perangkat) di header histori.
