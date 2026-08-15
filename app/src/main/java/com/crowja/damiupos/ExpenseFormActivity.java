@@ -116,6 +116,8 @@ public class ExpenseFormActivity extends AppCompatActivity {
                 } else if (e.isTutup()) {
                     toggleKategori.check(R.id.btnKatTutup);
                     if (e.getPcs() > 0) etPcs.setText(String.valueOf(e.getPcs()));
+                } else if (e.isKendaraan()) {
+                    toggleKategori.check(R.id.btnKatKendaraan);
                 } else {
                     toggleKategori.check(R.id.btnKatUmum);
                 }
@@ -248,8 +250,8 @@ public class ExpenseFormActivity extends AppCompatActivity {
     private void applyCategoryUi(int checkedId) {
         boolean airBaku = checkedId == R.id.btnKatAirBaku;
         boolean pcsCat = checkedId == R.id.btnKatSegel || checkedId == R.id.btnKatTutup;
-        boolean umum = checkedId == R.id.btnKatUmum;
-        tilName.setVisibility(umum ? View.VISIBLE : View.GONE);
+        boolean needsName = checkedId == R.id.btnKatUmum || checkedId == R.id.btnKatKendaraan;
+        tilName.setVisibility(needsName ? View.VISIBLE : View.GONE);
         tilLiter.setVisibility(airBaku ? View.VISIBLE : View.GONE);
         tilPcs.setVisibility(pcsCat ? View.VISIBLE : View.GONE);
     }
@@ -259,6 +261,7 @@ public class ExpenseFormActivity extends AppCompatActivity {
         if (id == R.id.btnKatAirBaku) return Expense.CAT_AIR_BAKU;
         if (id == R.id.btnKatSegel) return Expense.CAT_SEGEL;
         if (id == R.id.btnKatTutup) return Expense.CAT_TUTUP;
+        if (id == R.id.btnKatKendaraan) return Expense.CAT_KENDARAAN;
         return Expense.CAT_UMUM;
     }
 
@@ -272,12 +275,13 @@ public class ExpenseFormActivity extends AppCompatActivity {
     private void save() {
         String category = categoryFromToggle();
         boolean isUmum = Expense.CAT_UMUM.equals(category);
+        boolean isKendaraan = Expense.CAT_KENDARAAN.equals(category);
         boolean isAirBaku = Expense.CAT_AIR_BAKU.equals(category);
         boolean isPcsCat = Expense.CAT_SEGEL.equals(category) || Expense.CAT_TUTUP.equals(category);
 
-        // Nama: manual hanya untuk Umum; kategori lain pakai label kategori.
+        // Nama: manual untuk Umum & Kendaraan (bensin/service/oli beda-beda); kategori lain pakai label kategori.
         String name;
-        if (isUmum) {
+        if (isUmum || isKendaraan) {
             name = etName.getText().toString().trim();
             if (TextUtils.isEmpty(name)) {
                 Toast.makeText(this, "Nama pengeluaran wajib diisi", Toast.LENGTH_SHORT).show();

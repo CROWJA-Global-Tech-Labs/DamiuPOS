@@ -18,6 +18,7 @@ public class Expense {
     public static final String CAT_SEGEL = "SEGEL";
     public static final String CAT_TUTUP = "TUTUP";
     public static final String CAT_UMUM = "UMUM";
+    public static final String CAT_KENDARAAN = "KENDARAAN";
 
     private long id;
     private String name;        // mis. "Bayar listrik", "Beli botol galon kosong"
@@ -62,10 +63,11 @@ public class Expense {
     public boolean isAirBaku() { return CAT_AIR_BAKU.equals(category); }
     public boolean isSegel() { return CAT_SEGEL.equals(category); }
     public boolean isTutup() { return CAT_TUTUP.equals(category); }
+    public boolean isKendaraan() { return CAT_KENDARAAN.equals(category); }
     /** True kalau kategori memakai input pcs (Segel / Tutup). */
     public boolean usesPcs() { return isSegel() || isTutup(); }
-    /** True kalau kategori butuh input nama manual (hanya Umum). */
-    public boolean needsName() { return CAT_UMUM.equals(getCategory()); }
+    /** True kalau kategori butuh input nama manual (Umum & Kendaraan — rincian bensin/service/oli beda-beda). */
+    public boolean needsName() { return CAT_UMUM.equals(getCategory()) || CAT_KENDARAAN.equals(getCategory()); }
 
     public double getLiters() { return liters; }
     public void setLiters(double liters) { this.liters = liters; }
@@ -78,6 +80,7 @@ public class Expense {
         if (CAT_AIR_BAKU.equals(category)) return "Belanja Air Baku";
         if (CAT_SEGEL.equals(category)) return "Segel Galon";
         if (CAT_TUTUP.equals(category)) return "Tutup Galon";
+        if (CAT_KENDARAAN.equals(category)) return "Kendaraan";
         return "Umum";
     }
 

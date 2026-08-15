@@ -64,7 +64,7 @@
                     android:paddingEnd="2dp"
                     android:text="Air Baku"
                     android:textAllCaps="false"
-                    android:textSize="11sp" />
+                    android:textSize="10sp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnKatSegel"
@@ -81,7 +81,7 @@
                     android:paddingEnd="2dp"
                     android:text="Segel"
                     android:textAllCaps="false"
-                    android:textSize="11sp" />
+                    android:textSize="10sp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnKatTutup"
@@ -98,7 +98,7 @@
                     android:paddingEnd="2dp"
                     android:text="Tutup"
                     android:textAllCaps="false"
-                    android:textSize="11sp" />
+                    android:textSize="10sp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnKatUmum"
@@ -115,7 +115,24 @@
                     android:paddingEnd="2dp"
                     android:text="Umum"
                     android:textAllCaps="false"
-                    android:textSize="11sp" />
+                    android:textSize="10sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnKatKendaraan"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:insetLeft="0dp"
+                    android:insetRight="0dp"
+                    android:minWidth="0dp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:paddingStart="2dp"
+                    android:paddingEnd="2dp"
+                    android:text="Kendaraan"
+                    android:textAllCaps="false"
+                    android:textSize="10sp" />
             </com.google.android.material.button.MaterialButtonToggleGroup>
 
             <!-- Jumlah liter air baku (hanya untuk kategori Belanja Air Baku) -->
