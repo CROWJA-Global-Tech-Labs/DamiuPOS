@@ -109,6 +109,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import com.crowja.damiupos.util.CameraIntents;
 
 public class DeliveryQueueActivity extends AppCompatActivity {
    private static final SimpleDateFormat SDF_PARSE;
@@ -2216,7 +2217,36 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       boolean bon = t.getCatatan() != null && t.getCatatan().contains("[CASH BON]");
       sb.append("Pembayaran: ").append(bon ? "Cash Bon (hutang)" : (pay.isEmpty() ? "—" : pay)).append("\n");
       sb.append("Total: ").append(this.rp(t.getTotalHarga()));
+      sb.append(this.debtSummaryText(t));
       return sb.toString();
+   }
+
+   /**
+    * Baris HUTANG untuk popup "Tandai Selesai" & "Detail Order": piutang lama pelanggan ini plus
+    * TAGIHAN DI PINTU (penjualan ini + piutang lama) — angka yang sebenarnya harus diterima kurir.
+    *
+    * <p>Tanpa ini kurir hanya melihat "Total: Rp 9.000" lalu menerima uang segitu, padahal
+    * pelanggannya masih menunggak: piutangnya tak pernah tertagih justru pada satu-satunya momen
+    * kurir berhadapan langsung dengan orangnya. Angkanya memakai perhitungan yang SAMA dengan
+    * popup Ubah & penyelesaian order ({@code balanceExcludingTransaction}), jadi ketiganya tak
+    * mungkin menyebut jumlah berbeda.</p>
+    *
+    * <p>Piutang milik transaksi INI SENDIRI dikecualikan — order yang memang dibuat berstatus
+    * HUTANG akan terhitung dua kali kalau ikut dijumlahkan. Tak ada tunggakan → '' (dialognya tetap
+    * ringkas untuk mayoritas order yang lunas).</p>
+    */
+   private String debtSummaryText(Transaction t) {
+      if (t == null || t.getCustomerId() <= 0L) {
+         return "";
+      } else {
+         String trxUuid = (new TransactionDao(DatabaseHelper.getInstance(this))).getSyncUuidById(t.getId());
+         double prior = (new CustomerDebtDao(DatabaseHelper.getInstance(this)))
+               .balanceExcludingTransaction(t.getCustomerId(), trxUuid);
+         return prior <= (double)0.0F
+               ? ""
+               : "\nHutang sebelumnya: " + this.rp(prior)
+                     + "\nTotal harus diterima: " + this.rp(t.getTotalHarga() + prior);
+      }
    }
 
    private void showAdjustDialog(Transaction t, boolean revokeCredit) {
@@ -2347,11 +2377,19 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          double liveTotal = itemTotal + ongkirNow;
          double due = liveTotal + priorDebt;
 
+         // KOSONG = tak ada uang diterima → tampilkan peringatan hutangnya, JANGAN diam-diam
+         // dianggap lunas. Teks yang tak terbaca TAPI tidak kosong (mis. baru mengetik ".")
+         // tetap jatuh ke `due` supaya peringatannya tak berkedip di tengah pengetikan.
+         String paidRaw = paidIn.getText().toString().trim();
          double paid;
-         try {
-            paid = Double.parseDouble(paidIn.getText().toString().trim());
-         } catch (Exception var21) {
-            paid = due;
+         if (paidRaw.isEmpty()) {
+            paid = (double)0.0F;
+         } else {
+            try {
+               paid = Double.parseDouble(paidRaw);
+            } catch (Exception var21) {
+               paid = due;
+            }
          }
 
          double owed = Math.max((double)0.0F, due - paid);
@@ -2428,7 +2466,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                && TransactionDao.CASH_BON_REASON_OTHER.equals(String.valueOf(bonReason.getSelectedItem()))
                ? View.VISIBLE : View.GONE);
          if (checked) {
-            if (!"0".equals(paidIn.getText().toString().trim())) {
+            // Simpan nominal sebelumnya untuk dipulihkan bila Cash Bon dilepas lagi — KECUALI "0"
+            // dan KOSONG: memulihkan salah satunya hanya akan memicu Cash Bon menyala lagi.
+            String before = paidIn.getText().toString().trim();
+            if (!"0".equals(before) && !before.isEmpty()) {
                paidIn.setTag(paidIn.getText().toString());
             }
 
@@ -2457,7 +2498,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                try {
                   val = Double.parseDouble(e.toString().trim());
                } catch (Exception var4) {
-                  return;
+                  return;   // kosong/tak terbaca ditangani saat fokus lepas, lihat di bawah
                }
 
                if (val <= (double)0.0F && !bon.isChecked()) {
@@ -2465,6 +2506,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                }
             }
          }
+      });
+      // KOSONG juga berarti tak ada uang diterima → Cash Bon. Sengaja dinilai saat FOKUS LEPAS,
+      // bukan di setiap ketikan: menghapus isian untuk mengetik ulang nominal (pilih-semua lalu
+      // hapus) melewati keadaan kosong sesaat, dan mencentang Cash Bon di detik itu akan MENGUNCI
+      // kolomnya (Cash Bon menyetel 0 + disable) sehingga kurir tak bisa melanjutkan mengetik.
+      paidIn.setOnFocusChangeListener((v, hasFocus) -> {
+         if (!hasFocus && paidIn.isEnabled() && paidIn.getText().toString().trim().isEmpty()
+               && !bon.isChecked()) {
+            bon.setChecked(true);
+         }
+
       });
       box.addView(lblRet);
       box.addView(retIn);
@@ -2526,6 +2578,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                ret = 0;
             }
 
+            // Jaring terakhir: menekan Simpan tanpa melepas fokus dari kolom kosong tak pernah
+            // memicu listener fokus di atas, jadi keadaan "kosong = tak ada uang diterima"
+            // ditegakkan sekali lagi di sini. setChecked berjalan sinkron, jadi isBon & isi kolom
+            // di bawah sudah mencerminkan Cash Bon.
+            if (paidIn.isEnabled() && paidIn.getText().toString().trim().isEmpty() && !bon.isChecked()) {
+               bon.setChecked(true);
+            }
+
             boolean isBon = bon.isChecked();
 
             Double paidAmount;
@@ -2569,14 +2629,70 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       // klaim "sudah diantar tapi belum dibayar" tak bisa dipertanggungjawabkan.
       boolean required = sd.isDeliveryProofRequired() || this.isCashBon(t);
       if (!required) {
-         if (sd.isDeliveryProofOptional()) {
-            (new AlertDialog.Builder(this)).setTitle("Foto Bukti Pengiriman?").setMessage("Ambil foto galon yang sudah diantar sebagai bukti. Boleh dilewati.").setPositiveButton("\ud83d\udcf7 Ambil Foto", (d, w) -> this.requestProofPhoto(t, revokeCredit)).setNegativeButton("Lewati", (d, w) -> this.finishComplete(t, revokeCredit)).setOnCancelListener((d) -> this.finishComplete(t, revokeCredit)).show();
-         } else {
-            this.finishComplete(t, revokeCredit);
-         }
+         this.askOptionalProof(t, revokeCredit);
+      } else if (this.isCashBon(t)) {
+         // CASH BON: jelaskan DULU kenapa fotonya wajib, baru buka kamera. Tanpa pengantar ini
+         // kamera muncul tiba-tiba tepat setelah menekan Simpan — kurir tak tahu apa yang harus
+         // difoto, lalu memotret asal atau menekan batal (yang membatalkan penyelesaian order).
+         (new AlertDialog.Builder(this))
+               .setCancelable(false)
+               .setTitle("📷 WAJIB: Foto Bukti Pengiriman")
+               .setMessage("Uang tidak diterima pada order ini, jadi fotonya WAJIB.\n\n"
+                     + "Foto galon yang sudah diserahkan (atau rumah pelanggan) sebagai bukti "
+                     + "barangnya benar-benar sampai. Foto ini tersimpan di server dan menjadi "
+                     + "bukti bila tagihannya dipertanyakan nanti.")
+               .setPositiveButton("AMBIL FOTO", (d, w) -> this.requestProofPhoto(t, revokeCredit))
+               .setNegativeButton("Batal", (d, w) ->
+                     Toast.makeText(this, "Order belum ditandai Selesai — foto bukti wajib untuk Cash Bon.", 1).show())
+               .show();
       } else {
          this.requestProofPhoto(t, revokeCredit);
       }
+   }
+
+   /**
+    * Order BIASA (bukan Cash Bon, cabang tak mewajibkan): TAWARKAN foto bukti, jangan memaksa.
+    *
+    * <p>Tombol default "TIDAK" berhitung mundur 10 detik lalu menekan dirinya sendiri. Alasannya
+    * praktis: pertanyaannya muncul tepat di tengah alur menyelesaikan order, dan kurir yang sedang
+    * mengemudi/mengangkat galon tak boleh terhalang dialog yang menunggu selamanya. Diam = tidak
+    * memotret, yaitu pilihan yang AMAN — order tetap selesai, tak ada data yang hilang.</p>
+    *
+    * <p>Hitungannya ditampilkan pada label tombol ("TIDAK (7)") supaya kurir tahu ada tenggat dan
+    * bisa menekan "Ambil Foto" sebelum waktunya habis. Timer dibatalkan pada dismiss apa pun —
+    * ditekan tombolnya, di-back, atau ditutup dari luar — jadi tak ada callback yang menembak
+    * setelah dialognya hilang.</p>
+    */
+   private void askOptionalProof(Transaction t, boolean revokeCredit) {
+      AlertDialog dlg = (new AlertDialog.Builder(this))
+            .setTitle("Foto Bukti Pengiriman?")
+            .setMessage("Ambil foto galon yang sudah diantar sebagai bukti?\n\n"
+                  + "Boleh dilewati — bila didiamkan, otomatis TIDAK setelah 10 detik.")
+            .setPositiveButton("📷 Ambil Foto", (d, w) -> this.requestProofPhoto(t, revokeCredit))
+            .setNegativeButton("TIDAK", (d, w) -> this.finishComplete(t, revokeCredit))
+            .setOnCancelListener((d) -> this.finishComplete(t, revokeCredit))
+            .create();
+      dlg.show();
+
+      android.widget.Button no = dlg.getButton(-2);
+      android.os.CountDownTimer timer = new android.os.CountDownTimer(10000L, 250L) {
+         public void onTick(long msLeft) {
+            if (no != null) {
+               no.setText("TIDAK (" + (msLeft / 1000L + 1L) + ")");
+            }
+         }
+
+         public void onFinish() {
+            // dismiss() TIDAK memicu OnCancelListener, jadi penyelesaiannya dipanggil di sini —
+            // tepat sekali, tak ada jalur yang menghitungnya dua kali.
+            if (dlg.isShowing()) {
+               dlg.dismiss();
+               DeliveryQueueActivity.this.finishComplete(t, revokeCredit);
+            }
+         }
+      };
+      dlg.setOnDismissListener((d) -> timer.cancel());
+      timer.start();
    }
 
    private void requestProofPhoto(Transaction t, boolean revokeCredit) {
@@ -2590,7 +2706,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private void launchProofCamera(long trxId, boolean revokeCredit) {
-      Intent intent = new Intent("android.media.action.IMAGE_CAPTURE");
+      Intent intent = CameraIntents.preferBackCamera(new Intent("android.media.action.IMAGE_CAPTURE"));
       if (intent.resolveActivity(this.getPackageManager()) == null) {
          Toast.makeText(this, "Tidak ada aplikasi kamera — order diselesaikan tanpa foto bukti.", 1).show();
          Transaction t = this.findQueueTrx(trxId);
@@ -2676,6 +2792,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     *                   dilampirkan ke WA konfirmasi pengiriman saat Cash Bon. */
    private void finishComplete(Transaction t, boolean revokeCredit, String proofPath) {
       long ms = elapsedMillis(t.getDeliveryQueuedAt());
+      // Baca ULANG dari DB sebelum menilai Cash Bon. `t` sering datang dari findQueueTrx(), yaitu
+      // objek DALAM MEMORI hasil loadData() — catatannya berumur SEBELUM applyDeliveryAdjustment
+      // menuliskan penanda [CASH BON] beberapa detik lalu. Memakainya apa adanya membuat
+      // isCashBon() selalu false pada jalur kamera, sehingga foto sudah terambil & terunggah tapi
+      // WA konfirmasinya tak pernah muncul — persis bug yang dilaporkan.
+      Transaction fresh = this.dao.getById(t.getId());
+      if (fresh != null) {
+         t = fresh;
+      }
+
       boolean notifyUnpaid = this.isCashBon(t);
       this.dao.markDelivered(t.getId(), revokeCredit);
       if (this.runningIds.remove(t.getId())) {
@@ -2686,7 +2812,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.loadData();
       Toast.makeText(this, "Order selesai • " + formatDuration(ms), 0).show();
       if (notifyUnpaid) {
-         this.requireUnpaidNoticeWa(t, proofPath);
+         this.sendCashBonNoticeWa(t, proofPath);
       }
 
    }
@@ -2696,33 +2822,25 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * belum dibayar. Pelanggan yang tak menyaksikan pengiriman tidak tahu galonnya sudah datang;
     * tanpa pemberitahuan, tagihan yang muncul di pengiriman berikutnya terasa datang entah dari mana.
     *
-    * <p>Tombol POSITIF sengaja TIDAK menutup dialog — kurir harus kembali dan menekan "SUDAH SAYA
-    * KIRIM" supaya langkahnya tercatat (pola {@link #requireSelfOrderStrukThen}). Yang tercatat
-    * adalah KONFIRMASI kurir, bukan bukti terkirim: memaksakan bukti nyata menuntut layanan
-    * Aksesibilitas hidup di setiap HP, dan bila mati kurir jadi tak bisa menyelesaikan order.</p>
+    * <p>Dipanggil dari {@link #finishComplete} TEPAT setelah foto bukti tersimpan, dan langsung
+    * membuka WhatsApp tanpa dialog perantara — alur "foto lalu kirim" jadi satu tarikan napas.
+    * Foto yang barusan diambil ikut sebagai lampiran; bila jalur penyelesaian ini tak memotret
+    * (mis. perangkat tanpa aplikasi kamera), {@link WaShare} otomatis jatuh ke pesan teks saja.</p>
     */
-   private void requireUnpaidNoticeWa(Transaction t, String proofPath) {
+   private void sendCashBonNoticeWa(Transaction t, String proofPath) {
       if (t != null) {
          String phone = t.getCustomerPhone();
          if (WaShare.hasUsablePhone(phone)) {
-            String msg = this.composeUnpaidNotice(t);
-            String name = safe(t.getCustomerName());
-            AlertDialog dlg = (new AlertDialog.Builder(this))
-                  .setIcon(17301545)
-                  .setCancelable(false)
-                  .setTitle("📤 WAJIB: Konfirmasi ke Pelanggan")
-                  .setMessage("Galon untuk \"" + name + "\" sudah diantar tapi uangnya belum diterima.\n\n"
-                        + "Kirim konfirmasi WhatsApp beserta FOTO buktinya supaya pelanggan tahu "
-                        + "pesanannya sudah sampai dan masih ada tagihan yang belum dibayar.")
-                  .setPositiveButton("BUKA WHATSAPP", (DialogInterface.OnClickListener)null)
-                  .setNeutralButton("SUDAH SAYA KIRIM", (DialogInterface.OnClickListener)null)
-                  .create();
-            dlg.setOnShowListener((d) -> {
-               dlg.getButton(-1).setOnClickListener((v) ->
-                     WaShare.sendPhotoWithCaption(this, name, phone, proofPath, msg));
-               dlg.getButton(-3).setOnClickListener((v) -> dlg.dismiss());
-            });
-            dlg.show();
+            // LANGSUNG buka WhatsApp dengan foto + caption sudah terisi — tanpa dialog antara.
+            // Kurir baru saja memotret bukti untuk order yang uangnya tak diterima; menyisipkan
+            // layar "mau kirim?" di situ hanya menambah satu ketukan pada langkah yang memang
+            // wajib, dan setiap ketukan tambahan di pintu pelanggan adalah langkah yang mudah
+            // terlewat. Pengirimannya sendiri tetap ditekan kurir di dalam WhatsApp: klik-otomatis
+            // pada layar pratinjau media tidak bisa diverifikasi tujuannya ({@see WaShare}), jadi
+            // memaksakannya berisiko mengirim foto ke chat orang lain.
+            Toast.makeText(this, "Membuka WhatsApp — kirim konfirmasi + foto ke pelanggan.", 1).show();
+            WaShare.sendPhotoWithCaption(this, safe(t.getCustomerName()), phone, proofPath,
+                  this.composeUnpaidNotice(t));
          } else {
             Toast.makeText(this, "Pelanggan belum punya nomor WA — konfirmasi pengiriman tak bisa dikirim.", 1).show();
          }
@@ -2947,6 +3065,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       String pay = t.getPaymentMethodLabel();
       if (pay != null && !pay.isEmpty()) {
          sb.append("Pembayaran: ").append(pay).append('\n');
+      }
+
+      // Hutang lama + tagihan di pintu — sama persis dengan yang tampil di popup Tandai Selesai.
+      String debtLines = this.debtSummaryText(t);
+      if (!debtLines.isEmpty()) {
+         sb.append(debtLines.startsWith("\n") ? debtLines.substring(1) : debtLines).append('\n');
       }
 
       String detailNote = displayNote(t.getCatatan());

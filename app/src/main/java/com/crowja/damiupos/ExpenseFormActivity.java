@@ -36,6 +36,7 @@ import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import com.crowja.damiupos.util.CameraIntents;
 
 /**
  * Form tambah/edit pengeluaran:
@@ -143,7 +144,7 @@ public class ExpenseFormActivity extends AppCompatActivity {
                     new String[]{Manifest.permission.CAMERA}, REQUEST_PERMISSION_CAMERA);
             return;
         }
-        Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        Intent intent = CameraIntents.preferBackCamera(new Intent(MediaStore.ACTION_IMAGE_CAPTURE));
         if (intent.resolveActivity(getPackageManager()) == null) {
             Toast.makeText(this, "Tidak ada app kamera", Toast.LENGTH_SHORT).show();
             return;

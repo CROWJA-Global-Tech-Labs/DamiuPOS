@@ -39,6 +39,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import com.crowja.damiupos.util.CameraIntents;
 
 /**
  * "Laporan Kendala Pengiriman" — kurir melaporkan kendala yang menghambat SATU RIT (motor rusak,
@@ -176,7 +177,7 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
                     new String[]{Manifest.permission.CAMERA}, REQ_PERM_CAMERA);
             return;
         }
-        Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        Intent intent = CameraIntents.preferBackCamera(new Intent(MediaStore.ACTION_IMAGE_CAPTURE));
         if (intent.resolveActivity(getPackageManager()) == null) {
             Toast.makeText(this, "Tidak ada app kamera", Toast.LENGTH_SHORT).show();
             return;

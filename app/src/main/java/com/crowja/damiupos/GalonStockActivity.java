@@ -45,6 +45,7 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import com.crowja.damiupos.util.CameraIntents;
 
 public class GalonStockActivity extends AppCompatActivity {
 
@@ -191,7 +192,7 @@ public class GalonStockActivity extends AppCompatActivity {
                     new String[]{Manifest.permission.CAMERA}, REQUEST_PERMISSION_CAMERA);
             return;
         }
-        Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        Intent intent = CameraIntents.preferBackCamera(new Intent(MediaStore.ACTION_IMAGE_CAPTURE));
         if (intent.resolveActivity(getPackageManager()) == null) {
             Toast.makeText(this, "Tidak ada aplikasi kamera", Toast.LENGTH_SHORT).show();
             return;

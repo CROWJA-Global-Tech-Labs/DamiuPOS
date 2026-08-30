@@ -1562,7 +1562,7 @@ public class ReceiptActivity extends AppCompatActivity {
             // baris ini sudah punya receipt_no (baris lama sebelum fitur ini: judul polos).
             String receiptNo = in.getStringExtra(EXTRA_RECEIPT_NO);
             StringBuilder sb = new StringBuilder("🧾 *Rincian Pembelian"
-                    + (receiptNo != null && !receiptNo.isEmpty() ? " - " + receiptNo : "") + "*");
+                    + (receiptNo != null && !receiptNo.isEmpty() ? " #" + receiptNo : "") + "*");
             int totalGalon = 0;
             double itemsSum = 0;   // untuk rekonsiliasi ongkir dari total yang dibayar
             String itemsJson = in.getStringExtra(EXTRA_ITEMS_JSON);

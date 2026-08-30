@@ -40,6 +40,7 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.Locale;
+import com.crowja.damiupos.util.CameraIntents;
 
 public class CustomerFormActivity extends AppCompatActivity {
 
@@ -580,7 +581,7 @@ public class CustomerFormActivity extends AppCompatActivity {
     }
 
     private void takeLocationPhoto(LocationRow row) {
-        Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        Intent takePictureIntent = CameraIntents.preferBackCamera(new Intent(MediaStore.ACTION_IMAGE_CAPTURE));
         if (takePictureIntent.resolveActivity(getPackageManager()) == null) return;
         File photoFile;
         try {
@@ -774,7 +775,7 @@ public class CustomerFormActivity extends AppCompatActivity {
             return;
         }
 
-        Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        Intent takePictureIntent = CameraIntents.preferBackCamera(new Intent(MediaStore.ACTION_IMAGE_CAPTURE));
         if (takePictureIntent.resolveActivity(getPackageManager()) != null) {
             File photoFile = null;
             try {

@@ -162,6 +162,21 @@ public class PhotoCoordinateActivity extends AppCompatActivity {
             controller.setCameraSelector(CameraSelector.DEFAULT_BACK_CAMERA);   // foto rumah/lokasi
             controller.bindToLifecycle(this);
             previewView.setController(controller);
+            // ZOOM PALING JAUH (linear 0 = minZoomRatio kamera yang terikat, termasuk lensa
+            // ultra-wide bila perangkatnya punya). Foto ini dipakai kurir untuk MENGENALI rumah dari
+            // jalan: makin lebar bidangnya, makin banyak patokan (pagar, warna rumah, tetangga) yang
+            // ikut terekam. CameraX mengingat zoom terakhir selama sesi controller, jadi tanpa
+            // penyetelan eksplisit petugas berikutnya bisa mewarisi zoom-in orang sebelumnya.
+            //
+            // Dipasang lewat observer, bukan dipanggil langsung: ZoomState baru terisi SETELAH
+            // kamera benar-benar terikat, dan setLinearZoom sebelum itu diam-diam tak berefek.
+            controller.getZoomState().observe(this, new androidx.lifecycle.Observer<androidx.camera.core.ZoomState>() {
+                @Override public void onChanged(androidx.camera.core.ZoomState state) {
+                    if (state == null) return;
+                    controller.getZoomState().removeObserver(this);   // sekali saja; jangan lawan zoom manual petugas
+                    try { controller.setLinearZoom(0f); } catch (Throwable ignored) {}
+                }
+            });
         } catch (Throwable t) {
             android.util.Log.e("PhotoCoord", "startCamera failed", t);
             Toast.makeText(this, "Kamera tidak tersedia", Toast.LENGTH_SHORT).show();
