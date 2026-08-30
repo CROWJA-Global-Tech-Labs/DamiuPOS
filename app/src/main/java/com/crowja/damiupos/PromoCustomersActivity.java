@@ -2,6 +2,7 @@ package com.crowja.damiupos;
 
 import android.app.DatePickerDialog;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -11,6 +12,7 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -20,6 +22,11 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
+import com.crowja.damiupos.db.SettingsDao;
+import com.crowja.damiupos.db.UserDao;
+import com.crowja.damiupos.model.User;
+import com.crowja.damiupos.sync.SyncApi;
+import com.crowja.damiupos.sync.SyncSettings;
 import com.google.android.material.button.MaterialButtonToggleGroup;
 import com.google.android.material.textfield.TextInputEditText;
 
@@ -31,6 +38,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
+import org.json.JSONObject;
+
 /**
  * "Pelanggan Promosi" — daftar pelanggan baru yang didaftarkan + diberi galon GRATIS di perangkat
  * ini (akuisisi promo): kapan promosinya, dan kapan PEMBELIAN pertamanya (konversi — biasanya
@@ -41,6 +50,7 @@ import java.util.Locale;
 public class PromoCustomersActivity extends AppCompatActivity {
 
     private CustomerDao customerDao;
+    private SettingsDao settingsDao;
     private final List<CustomerDao.PromoRow> cohort = new ArrayList<>();   // hasil query rentang tanggal
     private final List<CustomerDao.PromoRow> shown = new ArrayList<>();    // setelah cari+filter+sort
     private PromoAdapter adapter;
@@ -69,6 +79,7 @@ public class PromoCustomersActivity extends AppCompatActivity {
         toolbar.setNavigationOnClickListener(v -> finish());
 
         customerDao = new CustomerDao(DatabaseHelper.getInstance(this));
+        settingsDao = new SettingsDao(DatabaseHelper.getInstance(this));
 
         tvStatTotal = findViewById(R.id.tvStatTotal);
         tvStatConverted = findViewById(R.id.tvStatConverted);
@@ -113,21 +124,147 @@ public class PromoCustomersActivity extends AppCompatActivity {
         reloadCohort();   // data bisa berubah (sync/transaksi baru) saat activity di background
     }
 
-    /** Aksi per pelanggan promosi: tarik galon promosinya (yang tak konversi) atau buka detail. */
+    /** Aksi per pelanggan promosi: tarik galon promosinya (yang tak konversi), kirim WA
+     *  perkenalan (staf non-Marketing), atau buka detail. */
     private void showRowActions(CustomerDao.PromoRow r) {
-        String[] items = {
-                "📥 Tarik Galon Promosi",
-                "👤 Lihat Detail Pelanggan",
-        };
+        List<String> items = new ArrayList<>();
+        items.add(TarikGalon.menuLabel(this));
+        boolean showIntroWa = currentUserCanSendIntroWa();
+        if (showIntroWa) {
+            items.add(r.introWaSent ? "💬 Kirim Ulang WA Perkenalan" : "💬 Kirim WA Perkenalan");
+        }
+        items.add("👤 Lihat Detail Pelanggan");
+
         new androidx.appcompat.app.AlertDialog.Builder(this)
                 .setTitle(r.name != null ? r.name : "Pelanggan")
-                .setItems(items, (d, which) -> {
-                    if (which == 0) TarikPromosi.show(this, r.id, this::reloadCohort);
-                    else startActivity(new Intent(this, CustomerDetailActivity.class)
-                            .putExtra("customer_id", r.id));
+                .setItems(items.toArray(new String[0]), (d, which) -> {
+                    String chosen = items.get(which);
+                    if (chosen.startsWith("📥")) {
+                        TarikGalon.show(this, r.id, this::reloadCohort);
+                    } else if (chosen.startsWith("💬")) {
+                        sendIntroWa(r);
+                    } else {
+                        startActivity(new Intent(this, CustomerDetailActivity.class)
+                                .putExtra("customer_id", r.id));
+                    }
                 })
                 .setNegativeButton("Tutup", null)
                 .show();
+    }
+
+    /** Baris yang kirim-WA-nya tertunda menunggu jawaban izin kontak (sekali jalan). */
+    private CustomerDao.PromoRow pendingIntroRow;
+    /** Izin kontak SUDAH ditanya untuk percobaan kirim ini — jangan tanya lagi saat dilanjutkan.
+     *  Tanpa ini, penolakan permanen ("jangan tanya lagi", callback DENIED seketika) membuat
+     *  request → callback → request berulang tanpa henti. */
+    private boolean introContactsAsked = false;
+    private static final int REQ_INTRO_CONTACTS = 61;
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @androidx.annotation.NonNull String[] permissions,
+                                           @androidx.annotation.NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_INTRO_CONTACTS && pendingIntroRow != null) {
+            CustomerDao.PromoRow r = pendingIntroRow;   // lanjut apa pun jawabannya (best-effort);
+            pendingIntroRow = null;                     // izin diberi → ensure() di sendIntroWa jalan
+            introContactsAsked = true;
+            sendIntroWa(r);
+            introContactsAsked = false;
+        }
+    }
+
+    /** "Kirim WA Perkenalan" khusus staf NON-Marketing (Marketing sudah punya alur perkenalan
+     *  sendiri saat akuisisi promo di lapangan) — cermin gerbang currentUserCanRequestTrxChange
+     *  di DeliveryQueueActivity: perangkat single-user (tanpa PIN) selalu diizinkan. */
+    private boolean currentUserCanSendIntroWa() {
+        long uid = settingsDao.getCurrentUserId();
+        if (uid <= 0) return true;
+        User u = new UserDao(DatabaseHelper.getInstance(this)).getById(uid);
+        return u == null || !u.isMarketing();
+    }
+
+    /** Minta server menyusun teks WA Perkenalan (template + harga efektif pelanggan) untuk
+     *  {@code r}, lalu buka WhatsApp dengan pesan itu ter-prefill. Branch-wide by design (sama
+     *  seperti fetchOrderInsightsAsync) — pelanggan promosi bisa diakuisisi di perangkat lain,
+     *  jadi endpoint server yang menyusun pesannya, bukan data lokal. Server juga menyetel stempel
+     *  promo_intro_wa_sent_at (pull-only di HP) → reloadCohort() setelah sukses memutakhirkan status. */
+    private void sendIntroWa(CustomerDao.PromoRow r) {
+        if (r.uuid == null || r.uuid.isEmpty()) {
+            Toast.makeText(this, "Pelanggan belum tersinkron, coba lagi nanti", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        SyncSettings cfg = new SyncSettings(settingsDao);
+        if (!cfg.isEnrolled()) {
+            Toast.makeText(this, "Perangkat belum terhubung ke server", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        // SIMPAN NOMOR KE KONTAK dulu (sekali, dedup di WaContactEnsure): WhatsApp hanya
+        // memperlakukan chat sepenuhnya (nama tampil, bebas balas) untuk nomor yang TERSIMPAN —
+        // lihat rasional di WaContactEnsure. Belum ada izin → minta sekali; hasilnya ditangani
+        // onRequestPermissionsResult yang MELANJUTKAN kirim (simpan kontak best-effort, WA tetap
+        // terbuka walau izin ditolak — menyapa pelanggan tak boleh terganjal izin kontak).
+        if (r.phone != null && !r.phone.trim().isEmpty()) {
+            if (com.crowja.damiupos.wa.WaContactEnsure.canWrite(this)) {
+                try { com.crowja.damiupos.wa.WaContactEnsure.ensure(this, r.name, r.phone); }
+                catch (Throwable ignored) {}
+            } else if (!introContactsAsked && pendingIntroRow == null) {
+                pendingIntroRow = r;
+                androidx.core.app.ActivityCompat.requestPermissions(this,
+                        new String[]{android.Manifest.permission.WRITE_CONTACTS,
+                                android.Manifest.permission.READ_CONTACTS},
+                        REQ_INTRO_CONTACTS);
+                return;   // dilanjutkan dari onRequestPermissionsResult
+            }
+        }
+        new Thread(() -> {
+            JSONObject res;
+            try {
+                res = new SyncApi(cfg).introWa(r.uuid, r.promoDay);
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(this,
+                        "Gagal menyiapkan pesan WA Perkenalan", Toast.LENGTH_SHORT).show());
+                return;
+            }
+            String text = res.optString("text", "");
+            String link = res.isNull("link") ? null : res.optString("link", null);
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                openWa(r.phone, text, link);
+                reloadCohort();
+            });
+        }).start();
+    }
+
+    /** Buka WhatsApp dengan pesan {@code text} — pakai {@code link} dari server bila ada
+     *  (sudah berisi nomor+teks ter-encode), else susun wa.me sendiri dari {@code phone}. */
+    private void openWa(String phone, String text, String link) {
+        Uri uri;
+        if (link != null && !link.isEmpty()) {
+            uri = Uri.parse(link);
+        } else if (phone != null && !phone.isEmpty()) {
+            String normalized = phone.trim().replaceAll("[^0-9]", "");
+            if (normalized.startsWith("0")) normalized = "62" + normalized.substring(1);
+            else if (!normalized.startsWith("62")) normalized = "62" + normalized;
+            uri = Uri.parse("https://wa.me/" + normalized + "?text=" + Uri.encode(text));
+        } else {
+            Toast.makeText(this, "Pelanggan belum memiliki nomor WhatsApp", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            Intent i = new Intent(Intent.ACTION_VIEW, uri);
+            try {
+                getPackageManager().getPackageInfo("com.whatsapp", 0);
+                i.setPackage("com.whatsapp");
+            } catch (Exception ignored) {
+                try {
+                    getPackageManager().getPackageInfo("com.whatsapp.w4b", 0);
+                    i.setPackage("com.whatsapp.w4b");
+                } catch (Exception ignored2) { }
+            }
+            startActivity(i);
+        } catch (Exception e) {
+            Toast.makeText(this, "Tidak dapat membuka WhatsApp", Toast.LENGTH_SHORT).show();
+        }
     }
 
     @Override
@@ -280,7 +417,7 @@ public class PromoCustomersActivity extends AppCompatActivity {
     private class PromoAdapter extends RecyclerView.Adapter<PromoAdapter.VH> {
 
         class VH extends RecyclerView.ViewHolder {
-            final TextView tvName, tvPhone, tvPromo, tvRepeat, tvStatusChip;
+            final TextView tvName, tvPhone, tvPromo, tvRepeat, tvStatusChip, tvIntroWaSent;
 
             VH(View v) {
                 super(v);
@@ -289,6 +426,7 @@ public class PromoCustomersActivity extends AppCompatActivity {
                 tvPromo = v.findViewById(R.id.tvPromo);
                 tvRepeat = v.findViewById(R.id.tvRepeat);
                 tvStatusChip = v.findViewById(R.id.tvStatusChip);
+                tvIntroWaSent = v.findViewById(R.id.tvIntroWaSent);
                 v.setOnClickListener(view -> {
                     int pos = getBindingAdapterPosition();
                     if (pos == RecyclerView.NO_POSITION) return;
@@ -309,15 +447,21 @@ public class PromoCustomersActivity extends AppCompatActivity {
             h.tvName.setText(r.name != null ? r.name : "—");
             h.tvPhone.setText(r.phone != null && !r.phone.isEmpty() ? r.phone : "");
             h.tvPhone.setVisibility(r.phone != null && !r.phone.isEmpty() ? View.VISIBLE : View.GONE);
-            h.tvPromo.setText("🎁 Diberi promosi: " + displayDay(r.promoDay)
-                    + " · " + r.galon + " galon gratis");
+            h.tvPromo.setText("🎁 Akuisisi: " + displayDay(r.promoDay)
+                    + " · " + r.galon + " galon");
             if (r.repeatDay != null) {
-                h.tvRepeat.setText("🔁 Pembelian pertama: " + displayDay(r.repeatDay)
-                        + " (" + r.days + " hari setelah promo)");
+                h.tvRepeat.setText("🔁 Order kembali: " + displayDay(r.repeatDay)
+                        + " (" + r.days + " hari setelah akuisisi)");
                 h.tvRepeat.setTextColor(0xFF2E7D32);   // hijau
                 h.tvStatusChip.setText("🔁 Order Ulang");
                 h.tvStatusChip.setTextColor(0xFF2E7D32);
                 h.tvStatusChip.setBackgroundColor(0x1A2E7D32);
+            } else if (r.paidAtAcq) {
+                h.tvRepeat.setText("💰 Langsung beli saat akuisisi");
+                h.tvRepeat.setTextColor(0xFF1565C0);   // biru
+                h.tvStatusChip.setText("💰 Beli");
+                h.tvStatusChip.setTextColor(0xFF1565C0);
+                h.tvStatusChip.setBackgroundColor(0x1A1565C0);
             } else {
                 h.tvRepeat.setText("⏳ Belum order ulang");
                 h.tvRepeat.setTextColor(0xFFB26A00);   // amber
@@ -325,6 +469,7 @@ public class PromoCustomersActivity extends AppCompatActivity {
                 h.tvStatusChip.setTextColor(0xFFB26A00);
                 h.tvStatusChip.setBackgroundColor(0x1AB26A00);
             }
+            h.tvIntroWaSent.setVisibility(r.introWaSent ? View.VISIBLE : View.GONE);
         }
 
         @Override

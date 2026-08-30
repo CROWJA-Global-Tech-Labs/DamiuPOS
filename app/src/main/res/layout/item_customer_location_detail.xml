@@ -68,6 +68,23 @@
     </LinearLayout>
 
     <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnLocPhotos"
+        style="@style/Widget.MaterialComponents.Button.TextButton.Icon"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:minWidth="0dp"
+        android:minHeight="0dp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:text="Foto"
+        android:textAllCaps="false"
+        android:textSize="12sp"
+        android:visibility="gone"
+        app:icon="@android:drawable/ic_menu_gallery"
+        app:iconSize="16dp"
+        tools:visibility="visible" />
+
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/btnLocNav"
         style="@style/Widget.MaterialComponents.Button.TextButton.Icon"
         android:layout_width="wrap_content"

@@ -140,7 +140,7 @@ public class SettingsActivity extends AppCompatActivity {
                 updateAccessibilityStatus();
                 if (!com.crowja.damiupos.wa.WaAutoSendService.isAccessibilityGranted(this)) {
                     Toast.makeText(this,
-                            "Aktifkan layanan Aksesibilitas \"DAMIU POS — Auto-Kirim Struk WA\" agar auto-kirim bekerja.",
+                            "Aktifkan layanan Aksesibilitas DAMIU POS agar auto-kirim bekerja.",
                             Toast.LENGTH_LONG).show();
                 }
             }
@@ -154,6 +154,23 @@ public class SettingsActivity extends AppCompatActivity {
             }
         });
         if (autoSendOn) updateAccessibilityStatus();
+
+        // --- Tombol Melayang "+ Trx" (menumpang layanan Aksesibilitas yang sama) ---
+        com.google.android.material.switchmaterial.SwitchMaterial switchTrxBubble =
+                findViewById(R.id.switchTrxBubble);
+        switchTrxBubble.setChecked(com.crowja.damiupos.wa.TrxBubble.isEnabled(this));
+        switchTrxBubble.setOnCheckedChangeListener((b, checked) -> {
+            com.crowja.damiupos.wa.TrxBubble.setEnabled(this, checked);
+            com.crowja.damiupos.wa.WaAutoSendService.refreshBubble();
+            if (checked && !com.crowja.damiupos.wa.WaAutoSendService.isAccessibilityGranted(this)) {
+                Toast.makeText(this,
+                        "Aktifkan layanan Aksesibilitas DAMIU POS dulu agar tombol \"+ Trx\" muncul.",
+                        Toast.LENGTH_LONG).show();
+                try {
+                    startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                } catch (android.content.ActivityNotFoundException ignored) { }
+            }
+        });
 
         // Ringtone picker
         tvRingtoneName = findViewById(R.id.tvRingtoneName);

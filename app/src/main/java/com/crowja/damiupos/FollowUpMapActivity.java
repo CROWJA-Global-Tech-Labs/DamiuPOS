@@ -1,5 +1,7 @@
 package com.crowja.damiupos;
 
+import com.crowja.damiupos.map.LiveDeviceOverlay;
+
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.Intent;
@@ -63,6 +65,9 @@ public class FollowUpMapActivity extends AppCompatActivity {
     private Location pendingLocation;    // fix yang datang sebelum page siap
 
     @SuppressLint("SetJavaScriptEnabled")
+    /** Pin posisi LIVE perangkat lain — dipasang di semua peta aplikasi. */
+    private LiveDeviceOverlay liveDev;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -106,6 +111,11 @@ public class FollowUpMapActivity extends AppCompatActivity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 pageReady = true;
+                // Pin perangkat lain disuntikkan SETELAH halaman siap (variabel global `map` sudah ada).
+                if (liveDev == null) {
+                    liveDev = new LiveDeviceOverlay(FollowUpMapActivity.this, webView);
+                }
+                liveDev.start();
                 if (pendingLocation != null) {
                     pushLocationToMap(pendingLocation);
                     pendingLocation = null;
@@ -235,6 +245,7 @@ public class FollowUpMapActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (liveDev != null) liveDev.stop();
         stopLocationUpdates();
         super.onDestroy();
     }

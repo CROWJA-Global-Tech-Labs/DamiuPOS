@@ -41,6 +41,15 @@ public class CustomerGiftDao {
         public String label() {
             return qty + " pcs " + (itemName != null ? itemName : "");
         }
+
+        /**
+         * Gift berwujud PRODUK — bisa diwujudkan jadi baris item Rp 0 pada transaksi. Gift produk
+         * TIDAK diklaim otomatis saat transaksi dibuat: staf memutuskan lewat popup konfirmasi
+         * (tambah baris gratis / gratiskan item yang dibeli). Cermin aturan yang sama di server.
+         */
+        public boolean isProduct() {
+            return "product".equals(itemType);
+        }
     }
 
     private final DatabaseHelper dbHelper;
@@ -119,6 +128,15 @@ public class CustomerGiftDao {
         return out;
     }
 
+    /** Gift pending berjenis PRODUK — yang ditawarkan lewat popup setelah transaksi JUAL dibuat. */
+    public List<Gift> pendingProductForCustomer(long customerLocalId) {
+        List<Gift> out = new ArrayList<>();
+        for (Gift g : pendingForCustomer(customerLocalId)) {
+            if (g.isProduct()) out.add(g);
+        }
+        return out;
+    }
+
     /** Apakah pelanggan ini (lintas salinan) punya minimal satu gift pending — untuk peringatan. */
     public boolean hasPendingForCustomer(long customerLocalId) {
         if (customerLocalId <= 0) return false;
@@ -148,7 +166,13 @@ public class CustomerGiftDao {
                 inClause(personCustomerIds(db, customerLocalId)) + " AND " + PENDING,
                 null, null, null, DatabaseHelper.COL_CREATED_AT + " ASC");
         try {
-            while (c.moveToNext()) redeemed.add(fromCursor(c));
+            // Gift PRODUK dilewati: wujudnya baris item, jadi butuh keputusan staf lewat popup
+            // (lihat TransactionActivity#maybeOfferProductGift). Kalau ikut diklaim di sini,
+            // gift-nya hilang dari daftar pending sebelum sempat ditawarkan.
+            while (c.moveToNext()) {
+                Gift g = fromCursor(c);
+                if (!g.isProduct()) redeemed.add(g);
+            }
         } finally {
             c.close();
         }
@@ -167,6 +191,25 @@ public class CustomerGiftDao {
                     DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(g.localId)});
         }
         return redeemed;
+    }
+
+    /**
+     * Klaim SATU gift (dipakai popup gift produk setelah staf memilih wujudnya). Sama seperti
+     * {@link #redeemForTransaction} tapi untuk satu baris, di database milik dbHelper.
+     */
+    public void redeemOne(long giftLocalId, String trxUuid, String byName) {
+        if (giftLocalId <= 0 || trxUuid == null || trxUuid.isEmpty()) return;
+        String now = DatabaseHelper.nowIso();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_GIFT_REDEEMED_AT, now);
+        v.put(DatabaseHelper.COL_GIFT_REDEEMED_TRX_UUID, trxUuid);
+        if (byName != null && !byName.isEmpty()) {
+            v.put(DatabaseHelper.COL_GIFT_REDEEMED_BY, byName);
+        }
+        v.put(DatabaseHelper.COL_EDITED_AT, now);
+        v.put(DatabaseHelper.COL_SYNCED, 0);
+        dbHelper.getWritableDatabase().update(DatabaseHelper.TABLE_CUSTOMER_GIFTS, v,
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(giftLocalId)});
     }
 
     /**

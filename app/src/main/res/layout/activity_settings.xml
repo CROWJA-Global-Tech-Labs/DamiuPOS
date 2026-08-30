@@ -843,6 +843,51 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- Tombol Melayang "+ Trx" (menumpang layanan Aksesibilitas Auto-Kirim) -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Tombol Melayang &quot;+ Trx&quot;"
+                            android:textColor="@color/text_primary"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/switchTrxBubble"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="Tombol &quot;+ Trx&quot; selalu tampil melayang di atas layar (bisa digeser). Di layar chat WhatsApp: langsung membuka Transaksi Baru untuk pelanggan chat itu (dicocokkan dari nomor/nama di judul chat; belum terdaftar → form Tambah Pelanggan terisi otomatis). Di layar lain: membuka Transaksi Baru biasa. Memakai layanan Aksesibilitas yang sama dengan Auto-Kirim Struk."
+                        android:textColor="@color/text_secondary"
+                        android:textSize="13sp" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
             <!-- Backup & Restore -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"

@@ -199,6 +199,9 @@ public final class ShiftReporter {
             if (!Transaction.TYPE_JUAL.equals(t.getType())) continue;
             // Lewati transaksi jual botol kosong (bukan air minum).
             if (t.getCatatan() != null && t.getCatatan().contains("[JUAL BOTOL KOSONG]")) continue;
+            // Belum diantar (PENDING) atau ditunda (TERTUNDA) → belum "terjual" — cocok dgn sum[] di atas.
+            String ds = t.getDeliveryStatus();
+            if (ds != null && !Transaction.DELIVERY_DONE.equals(ds)) continue;
 
             List<TransactionItem> items = t.getItems();
             if (items != null && !items.isEmpty()) {
@@ -235,20 +238,33 @@ public final class ShiftReporter {
     /** Rincian pendapatan JUAL per metode pembayaran. */
     private static void appendPaymentMethods(StringBuilder sb, List<Transaction> transactions,
                                              NumberFormat nf) {
-        double tunai = 0, qris = 0, transfer = 0, lainnya = 0;
+        double tunai = 0, qris = 0, transfer = 0, hutang = 0, lainnya = 0;
         for (Transaction t : transactions) {
             if (!Transaction.TYPE_JUAL.equals(t.getType())) continue;
+            // Belum diantar (PENDING) atau ditunda (TERTUNDA) → belum "terjual" — cocok dgn sum[] di atas.
+            String ds = t.getDeliveryStatus();
+            if (ds != null && !Transaction.DELIVERY_DONE.equals(ds)) continue;
             double amt = t.getTotalHarga();
             String pm = t.getPaymentMethod();
             if (Transaction.PAY_TUNAI.equals(pm)) tunai += amt;
             else if (Transaction.PAY_QRIS.equals(pm)) qris += amt;
             else if (Transaction.PAY_TRANSFER.equals(pm)) transfer += amt;
+            // HUTANG punya embernya SENDIRI, bukan ikut Tunai/Lainnya: nilainya sudah dihitung
+            // sebagai omzet (galonnya keluar) tapi UANGNYA belum diterima — mencampurnya ke Tunai
+            // membuat setoran kurir seolah kurang sebesar itu.
+            else if (Transaction.PAY_HUTANG.equals(pm)) hutang += amt;
             else lainnya += amt; // transaksi lama tanpa metode tercatat
         }
         sb.append("\n*Pembayaran (JUAL)*\n");
         sb.append("Tunai: Rp ").append(nf.format(tunai)).append("\n");
         sb.append("QRIS: Rp ").append(nf.format(qris)).append("\n");
         sb.append("Transfer: Rp ").append(nf.format(transfer)).append("\n");
+        // Hutang dipisah + setoran tunai ditegaskan ulang: kurir menyetor UANG, dan hutang
+        // bukan uang yang ia pegang.
+        if (hutang > 0) {
+            sb.append("Hutang (belum diterima): Rp ").append(nf.format(hutang)).append("\n");
+            sb.append("Setoran tunai: Rp ").append(nf.format(tunai)).append("\n");
+        }
         if (lainnya > 0) {
             sb.append("Tidak dicatat: Rp ").append(nf.format(lainnya)).append("\n");
         }

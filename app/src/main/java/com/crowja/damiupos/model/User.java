@@ -22,10 +22,25 @@ public class User {
 
     private long id;
     private String name;
-    private String pin;
+    private String pin;        // PIN LOKAL (fallback), disimpan SHA-256
+    private String pinHash;    // PIN dari WEB (di-pull, SHA-256) — otoritatif bila terisi
     private String role = ROLE_STAF;
     private boolean active = true;
     private String createdAt;
+
+    /** SHA-256 hex dari sebuah PIN (huruf kecil). Dipakai auth (bandingkan hash) + set PIN lokal. */
+    public static String sha256Hex(String pin) {
+        if (pin == null) return "";
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] d = md.digest(pin.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(64);
+            for (byte b : d) sb.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
+            return sb.toString();
+        } catch (Exception e) {
+            return pin;   // fallback tak mungkin (SHA-256 selalu ada) — jangan sampai auth crash
+        }
+    }
 
     public long getId() { return id; }
     public void setId(long id) { this.id = id; }
@@ -35,6 +50,9 @@ public class User {
 
     public String getPin() { return pin; }
     public void setPin(String pin) { this.pin = pin; }
+
+    public String getPinHash() { return pinHash; }
+    public void setPinHash(String pinHash) { this.pinHash = pinHash; }
 
     public String getRole() { return role; }
     public void setRole(String role) { this.role = role; }
@@ -67,10 +85,20 @@ public class User {
      *  Mode single-user (belum/tanpa login, uid<=0) tetap boleh — itu owner (di-handle pemanggil). */
     public boolean canDeleteTransaction() { return isAdmin(); }
 
+    /** Hapus PELANGGAN: HANYA Admin. Karyawan non-admin (Staf/SPV/Marketing/Viewer) tidak boleh
+     *  menghapus pelanggan dari HP — mencegah kehilangan data pelanggan tak sengaja/disengaja.
+     *  Mode single-user (uid<=0) tetap boleh — itu owner (di-handle pemanggil). */
+    public boolean canDeleteCustomer() { return isAdmin(); }
+
     /** Edit TERBATAS transaksi (staf operator di konter): hanya metode pembayaran (JUAL) & jumlah
      *  galon pada transaksi KEMBALI — memperbaiki salah input tanpa bisa mengubah nominal/omzet.
      *  Staf, SPV, Admin (operasional konter); BUKAN Marketing (tak menangani transaksi) / Viewer. */
     public boolean canEditTransactionLimited() { return isStaf() || isSpv() || isAdmin(); }
+
+    /** Layar "Pencapaian Penjualan" (rekap penjualan SE-CABANG, hidup dari server): Admin &
+     *  Marketing — peran yang memang bertugas memantau capaian tim. Staf/SPV/Viewer tidak: mereka
+     *  hanya perlu antrian & transaksinya sendiri, dan layar ini memuat omzet seluruh cabang. */
+    public boolean canViewSalesAchievement() { return isAdmin() || isMarketing(); }
 
     /** @deprecated pakai {@link #canGiveFree()} — dipertahankan untuk pemanggil lama. */
     public boolean canPromote() { return canGiveFree(); }

@@ -294,7 +294,8 @@ public class ContactPickerActivity extends AppCompatActivity {
                 } else if (customerDao.existsByPhone(e.phone)) {
                     skipped++;
                 } else {
-                    customerDao.insert(new Customer(e.name, e.phone, ""));
+                    // Normalisasi nomor kontak ke format lokal 08XXXX sebelum simpan (cek dedup tetap kanonik).
+                    customerDao.insert(new Customer(e.name, com.crowja.damiupos.util.PhoneUtils.toLocal08(e.phone), ""));
                     imported++;
                 }
                 final int done = i + 1;

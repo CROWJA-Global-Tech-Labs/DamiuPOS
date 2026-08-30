@@ -10,11 +10,9 @@ import android.graphics.Matrix;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
-import android.content.ContentProviderOperation;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
-import android.provider.ContactsContract;
 import android.provider.MediaStore;
 import android.view.View;
 import android.widget.ImageView;
@@ -60,14 +58,27 @@ public class CustomerFormActivity extends AppCompatActivity {
     private static final int REQUEST_PICK_MAP = 103;
     private static final int REQUEST_PERMISSION_CONTACTS = 104;
     private static final int REQUEST_PICK_GALLERY = 105;
+    /** Kamera untuk foto KOLEKSI per-lokasi (beda dari REQUEST_CAMERA = foto rumah tunggal). */
+    private static final int REQUEST_CAMERA_LOCATION = 107;
+    private static final int REQUEST_PERMISSION_CAMERA_LOCATION = 108;
+
+    /** Prefill mode buat-baru (caller: bubble "+ Trx" saat pelanggan chat WA belum terdaftar). */
+    public static final String EXTRA_PREFILL_NAME = "prefill_name";
+    public static final String EXTRA_PREFILL_PHONE = "prefill_phone";
 
     /** Id pelanggan yang baru di-insert, dipakai untuk setResult */
     private long lastInsertedId = -1;
 
     private String pendingContactName;
     private String pendingContactPhone;
+    /** Nomol WA yang di-prefill bubble "+ Trx" apa adanya (bisa non-08). Bila field telp masih
+     *  persis nilai ini saat simpan, guard format 08 dikecualikan (nomor WA asli tak boleh hilang). */
+    private String waPrefillPhone;
 
-    private TextInputEditText etNama, etTelepon, etAlamat;
+    private TextInputEditText etNama, etTelepon, etAlamat, etCatatanOrder;
+    /** Nomor HP TAMBAHAN (opsional) — satu orang bisa punya beberapa nomor. etTelepon = nomor utama. */
+    private android.widget.LinearLayout llPhonesExtra;
+    private final java.util.List<android.widget.EditText> extraPhoneRows = new java.util.ArrayList<>();
     private android.widget.LinearLayout llHargaProduk;
     private final java.util.List<PriceRow> priceRows = new ArrayList<>();
     private ImageView ivFotoRumah;
@@ -96,10 +107,15 @@ public class CustomerFormActivity extends AppCompatActivity {
         final View view;
         final TextInputEditText etName;
         final TextView tvCoord;
-        final com.google.android.material.button.MaterialButton btnGps, btnPeta, btnMaps;
+        final com.google.android.material.button.MaterialButton btnGps, btnPeta, btnMaps, btnGmapsLink;
         final com.google.android.material.checkbox.MaterialCheckBox cbWajib;
         final android.widget.ProgressBar pb;
+        final android.widget.LinearLayout llFoto;
         double lat, lng;
+        /** Id stabil lokasi — kunci nama berkas koleksi foto (lihat Customer.Location#id). */
+        String id;
+        /** Koleksi foto lokasi (URL server, maks 5) — bisa diedit langsung di form ini. */
+        final java.util.List<String> photos = new java.util.ArrayList<>();
 
         LocationRow(View v) {
             view = v;
@@ -108,8 +124,10 @@ public class CustomerFormActivity extends AppCompatActivity {
             btnGps = v.findViewById(R.id.btnLokasiSaatIni);
             btnPeta = v.findViewById(R.id.btnPilihPetaRow);
             btnMaps = v.findViewById(R.id.btnBukaMapsRow);
+            btnGmapsLink = v.findViewById(R.id.btnPakaiGmapsRow);
             cbWajib = v.findViewById(R.id.cbWajibOngkirRow);
             pb = v.findViewById(R.id.pbLokasiAkurasiRow);
+            llFoto = v.findViewById(R.id.llLokasiFoto);
         }
     }
 
@@ -120,6 +138,12 @@ public class CustomerFormActivity extends AppCompatActivity {
     /** Baris yang meluncurkan pencarian GPS "Lokasi Saat Ini" (juga baris tertunda
      *  saat menunggu izin lokasi) — update pencarian & commit diarahkan ke sini. */
     private LocationRow searchRow;
+    /** Baris yang meluncurkan kamera foto koleksi lokasi (juga baris tertunda saat menunggu
+     *  izin kamera) — hasil onActivityResult diunggah ke baris ini. */
+    private LocationRow pendingPhotoRow;
+    /** Path file sementara foto koleksi lokasi yang sedang diambil (beda dari currentPhotoPath
+     *  = foto rumah tunggal). */
+    private String pendingLocationPhotoPath;
 
     // --- Pencarian koordinat GPS akurat (Lokasi Saat Ini) ---
     /** Akurasi maksimal (meter) yang diterima sebelum koordinat dianggap valid. */
@@ -143,6 +167,9 @@ public class CustomerFormActivity extends AppCompatActivity {
     /** Tautan reseller: sync_uuid reseller rujukan (Transaksi Baru auto-pilih afiliasi). Null = tak ditautkan. */
     private com.google.android.material.button.MaterialButton btnLinkedReseller;
     private String linkedResellerUuid;
+    /** Muncul saat pelanggan dijadikan/ditautkan reseller — checked (default) melewati kewajiban
+     *  foto+koordinat pelanggan baru (requirePhotoCoord) untuk pelanggan reseller/terafiliasi. */
+    private com.google.android.material.checkbox.MaterialCheckBox cbSkipPhotoCoordReseller;
 
     private String selectedCreatedAt; // tanggal daftar terpilih (yyyy-MM-dd HH:mm:ss)
     private final SimpleDateFormat dbDateFmt =
@@ -173,10 +200,13 @@ public class CustomerFormActivity extends AppCompatActivity {
         etNama = findViewById(R.id.etNama);
         etTelepon = findViewById(R.id.etTelepon);
         etAlamat = findViewById(R.id.etAlamat);
+        etCatatanOrder = findViewById(R.id.etCatatanOrder);
         llHargaProduk = findViewById(R.id.llHargaProduk);
         ivFotoRumah = findViewById(R.id.ivFotoRumah);
         llLokasi = findViewById(R.id.llLokasi);
         findViewById(R.id.btnTambahLokasi).setOnClickListener(v -> addLocationRow(null));
+        llPhonesExtra = findViewById(R.id.llPhonesExtra);
+        findViewById(R.id.btnAddPhone).setOnClickListener(v -> addPhoneRow(""));
 
         // Reseller + sub-opsi "Tambahkan Komisi ke Harga Air Minum"
         // (hanya tampil saat "Jadikan Reseller" dicentang).
@@ -187,29 +217,51 @@ public class CustomerFormActivity extends AppCompatActivity {
             cbKomisiAddToPrice.setVisibility(checked ? View.VISIBLE : View.GONE);
             // Default ON: saat pelanggan dijadikan reseller, komisi-ke-harga ikut aktif.
             cbKomisiAddToPrice.setChecked(checked);
+            updateSkipPhotoCoordVisibility();
         });
 
         // Tautan Reseller: reseller rujukan pelanggan → Transaksi Baru auto-pilih afiliasi ke reseller ini.
         btnLinkedReseller = findViewById(R.id.btnLinkedReseller);
         btnLinkedReseller.setOnClickListener(v -> showLinkedResellerPicker());
+        cbSkipPhotoCoordReseller = findViewById(R.id.cbSkipPhotoCoordReseller);
 
         // Check if editing existing customer
         editId = getIntent().getLongExtra("customer_id", -1);
         // Pelanggan BARU: batasi input telp ke angka saja, maks 13 digit (tuntunan format 08…, 9–13).
         // Mode edit dilewati — setText nomor lama berformat lain (mis. "+62…") jangan sampai terpotong.
         if (editId == -1) {
-            etTelepon.setKeyListener(
-                    android.text.method.DigitsKeyListener.getInstance("0123456789"));
-            etTelepon.setFilters(new android.text.InputFilter[]{
-                    new android.text.InputFilter.LengthFilter(13)});
+            // Prefill dari bubble "+ Trx": pelanggan chat WA belum terdaftar → nomor/nama terisi.
+            String preName = getIntent().getStringExtra(EXTRA_PREFILL_NAME);
+            String prePhone = getIntent().getStringExtra(EXTRA_PREFILL_PHONE);
+            prePhone = prePhone != null ? prePhone.trim() : null;
+            // Nomor WA bisa non-08 (landline / luar negeri, mis. "02150938888" / "6591234567").
+            // Untuk prefill non-08 JANGAN pasang filter angka/13-digit — kalau tidak, nomornya
+            // terpotong/terblokir; simpan apa adanya seperti mode edit (guard save juga dikecualikan).
+            boolean prefillNon08 = prePhone != null && !prePhone.isEmpty()
+                    && !(prePhone.matches("\\d{9,13}") && prePhone.startsWith("08"));
+            if (!prefillNon08) {
+                etTelepon.setKeyListener(
+                        android.text.method.DigitsKeyListener.getInstance("0123456789"));
+                etTelepon.setFilters(new android.text.InputFilter[]{
+                        new android.text.InputFilter.LengthFilter(13)});
+            }
+            if (preName != null && !preName.trim().isEmpty()) etNama.setText(preName.trim());
+            if (prePhone != null && !prePhone.isEmpty()) {
+                etTelepon.setText(prePhone);
+                waPrefillPhone = prePhone;
+            }
         }
         if (editId != -1) {
             toolbar.setTitle(R.string.edit_pelanggan);
             Customer customer = customerDao.getById(editId);
             if (customer != null) {
                 etNama.setText(customer.getName());
-                etTelepon.setText(customer.getPhone());
+                // Nomor utama = phones[0]; nomor tambahan → baris repeater.
+                java.util.List<String> ph = customer.getPhonesOrDefault();
+                etTelepon.setText(ph.isEmpty() ? "" : ph.get(0));
+                for (int i = 1; i < ph.size(); i++) addPhoneRow(ph.get(i));
                 etAlamat.setText(customer.getAddress());
+                etCatatanOrder.setText(customer.getOrderNote());
                 if (customer.getCreatedAt() != null && !customer.getCreatedAt().isEmpty()) {
                     selectedCreatedAt = customer.getCreatedAt();
                 }
@@ -267,6 +319,101 @@ public class CustomerFormActivity extends AppCompatActivity {
         btnTanggalDaftar.setOnClickListener(v -> showDatePicker());
 
         if (cbReseller == null) cbReseller = findViewById(R.id.cbReseller);
+
+        // Pelanggan BARU: wajib input & validasi NOMOR HP dulu — form baru terbuka setelah lolos.
+        // Kalau nomor sudah terdaftar, tawarkan langsung ke pelanggan itu (buat transaksi / batal)
+        // alih-alih melanjutkan input duplikat.
+        if (editId == -1) {
+            showPhoneGateDialog(getIntent().getStringExtra(EXTRA_PREFILL_PHONE));
+        }
+    }
+
+    /**
+     * Gerbang wajib sebelum form pelanggan baru bisa diisi: minta nomor HP, validasi, lalu cek
+     * duplikat (kanonik, peka +62/62/0 — {@link com.crowja.damiupos.db.CustomerDao#canonicalPhone}).
+     * Non-cancelable — staf tidak bisa melewati form kosong tanpa nomor valid; tombol "Batal"
+     * eksplisit menutup activity ini.
+     */
+    private void showPhoneGateDialog(String prefill) {
+        View wrap = android.view.LayoutInflater.from(this).inflate(R.layout.dialog_phone_gate, null);
+        com.google.android.material.textfield.TextInputLayout til = wrap.findViewById(R.id.tilPhoneGate);
+        com.google.android.material.textfield.TextInputEditText et = wrap.findViewById(R.id.etPhoneGate);
+        if (prefill != null && !prefill.trim().isEmpty()) et.setText(prefill.trim());
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Nomor HP Pelanggan")
+                .setView(wrap)
+                .setCancelable(false)
+                .setPositiveButton("Lanjut", null)   // override di bawah — cegah auto-dismiss saat invalid
+                .setNegativeButton("Batal", (d, w) -> finish())
+                .create();
+        dialog.setOnShowListener(dlg -> {
+            android.widget.Button btn = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            btn.setOnClickListener(v -> {
+                String raw = et.getText() != null ? et.getText().toString().trim() : "";
+                if (raw.isEmpty()) {
+                    til.setError("Nomor HP wajib diisi");
+                    return;
+                }
+                if (!isValidPhoneNumber(raw)) {
+                    til.setError("Nomor HP tidak valid");
+                    return;
+                }
+                til.setError(null);
+                Customer dup = customerDao.findByPhoneCanonical(raw);
+                if (dup != null) {
+                    dialog.dismiss();
+                    showExistingCustomerDialog(dup, raw);
+                    return;
+                }
+                // Lolos — isi nomor ke form & buka form pelanggan baru.
+                etTelepon.setText(raw);
+                dialog.dismiss();
+            });
+        });
+        dialog.show();
+    }
+
+    /** Validasi ringan nomor HP Indonesia: digit saja (setelah dibersihkan), panjang wajar. */
+    private static boolean isValidPhoneNumber(String raw) {
+        String digits = raw.replaceAll("\\D+", "");
+        if (digits.length() < 9) return false;
+        String canon = com.crowja.damiupos.db.CustomerDao.canonicalPhone(raw);
+        return canon.length() >= 10 && canon.length() <= 15;
+    }
+
+    /**
+     * Nomor sudah terdaftar — tampilkan siapa pemiliknya. "Buat Transaksi" mengembalikan pelanggan
+     * ini ke pemanggil (bila dibuka dari pemilih pelanggan Transaksi Baru → auto-terpilih di sana)
+     * atau langsung membuka Transaksi Baru untuknya; "Ganti Nomor" kembali ke gerbang; "Batal"
+     * menutup form ini tanpa menambah apa pun.
+     */
+    private void showExistingCustomerDialog(Customer existing, String triedPhone) {
+        String msg = "Nomor " + triedPhone + " sudah terdaftar atas nama:\n\n• "
+                + (existing.getName() != null ? existing.getName() : "(tanpa nama)")
+                + "\n\nBuat transaksi untuk pelanggan ini, atau periksa kembali nomornya.";
+        new AlertDialog.Builder(this)
+                .setIcon(android.R.drawable.ic_dialog_alert)
+                .setTitle("⚠️ Pelanggan Sudah Ada")
+                .setCancelable(false)
+                .setMessage(msg)
+                .setPositiveButton("Buat Transaksi", (d, w) -> {
+                    android.content.ComponentName caller = getCallingActivity();
+                    if (caller != null && TransactionActivity.class.getName().equals(caller.getClassName())) {
+                        // Dibuka dari pemilih pelanggan Transaksi Baru → kembalikan sebagai hasil
+                        // "pelanggan baru" supaya TransactionActivity auto-memilihnya (lihat
+                        // TransactionActivity.onActivityResult REQUEST_NEW_CUSTOMER).
+                        setResult(RESULT_OK, new Intent()
+                                .putExtra(EXTRA_NEW_CUSTOMER_ID, existing.getId()));
+                    } else {
+                        startActivity(new Intent(this, TransactionActivity.class)
+                                .putExtra("customer_id", existing.getId()));
+                    }
+                    finish();
+                })
+                .setNeutralButton("Ganti Nomor", (d, w) -> showPhoneGateDialog(null))
+                .setNegativeButton("Batal", (d, w) -> finish())
+                .show();
     }
 
     /** Bangun ulang baris lokasi dari model (DAO sudah lazy-synthesize "Kediaman" dari
@@ -279,6 +426,14 @@ public class CustomerFormActivity extends AppCompatActivity {
             for (Customer.Location l : locs) addLocationRow(l);
         } else {
             addLocationRow(null);
+            // Pelanggan LAMA tanpa baris lokasi (koordinat belum diisi — lokasi tanpa koordinat
+            // memang dibuang saat simpan) TETAP punya preferensi ongkir di kolom skalar. Ikuti nilai
+            // tersimpan itu, jangan pakai default "baru" — kalau tidak, form MENAMPILKAN Wajib Ongkir
+            // yang tak ada di database, sementara Transaksi Baru membaca nilai aslinya → terlihat
+            // seperti "wajib ongkir tidak berfungsi", padahal formnya yang keliru.
+            if (existing != null && !locationRows.isEmpty()) {
+                locationRows.get(0).cbWajib.setChecked(existing.isWajibOngkir());
+            }
         }
     }
 
@@ -291,17 +446,206 @@ public class CustomerFormActivity extends AppCompatActivity {
             row.etName.setText(loc.name);
             row.lat = loc.lat;
             row.lng = loc.lng;
+            row.id = loc.id;
+            if (loc.photos != null) row.photos.addAll(loc.photos);
+            // Lokasi TERSIMPAN: hormati nilai aslinya (jangan paksa ke default — pelanggan yang
+            // sengaja bebas ongkir tak boleh diam-diam berubah saat formnya dibuka/diedit).
             row.cbWajib.setChecked(loc.wajibOngkir);
-        } else if (locationRows.isEmpty()) {
-            row.etName.setText(Customer.DEFAULT_LOCATION_NAME);
+        } else {
+            // Lokasi BARU (pelanggan baru / tambah lokasi): default Wajib Ongkir = AKTIF.
+            row.cbWajib.setChecked(true);
+            if (locationRows.isEmpty()) row.etName.setText(Customer.DEFAULT_LOCATION_NAME);
+        }
+        // Id stabil selalu ada (bahkan baris baru) — foto yang diunggah SEBELUM baris pernah
+        // tersimpan tetap perlu nama berkas yang tak bentrok dengan baris lain.
+        if (row.id == null || row.id.trim().isEmpty()) {
+            row.id = java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 10);
         }
         row.btnGps.setOnClickListener(x -> getLocation(row));
         row.btnPeta.setOnClickListener(x -> pickFromMap(row));
         row.btnMaps.setOnClickListener(x -> openInGoogleMaps(row));
+        row.btnGmapsLink.setOnClickListener(x -> showMapsLinkDialog(row));
         v.findViewById(R.id.btnHapusLokasi).setOnClickListener(x -> removeLocationRow(row));
         llLokasi.addView(v);
         locationRows.add(row);
         updateKoordinatDisplay(row);
+        renderLocationPhotos(row);
+    }
+
+    /** Batas koleksi foto per lokasi (cermin Customer::MAX_LOCATION_PHOTOS di web). */
+    private static final int MAX_LOCATION_PHOTOS = 5;
+
+    /** Render ulang strip thumbnail + tombol "+ Foto" satu baris lokasi dari row.photos. */
+    private void renderLocationPhotos(LocationRow row) {
+        row.llFoto.removeAllViews();
+        int thumb = dpToPx(56);
+        int margin = dpToPx(4);
+        for (int i = 0; i < row.photos.size(); i++) {
+            final int idx = i;
+            final String url = row.photos.get(i);
+            android.widget.FrameLayout wrap = new android.widget.FrameLayout(this);
+            android.widget.LinearLayout.LayoutParams wlp =
+                    new android.widget.LinearLayout.LayoutParams(thumb, thumb);
+            wlp.setMargins(0, 0, margin, 0);
+            wrap.setLayoutParams(wlp);
+
+            ImageView iv = new ImageView(this);
+            iv.setLayoutParams(new android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
+            iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            iv.setImageResource(android.R.drawable.ic_menu_gallery);
+            iv.setBackgroundColor(0xFFECECEC);
+            wrap.addView(iv);
+            loadLocationThumb(iv, url);
+
+            TextView rm = new TextView(this);
+            rm.setText("✕");
+            rm.setTextColor(0xFFFFFFFF);
+            rm.setTextSize(11f);
+            rm.setGravity(android.view.Gravity.CENTER);
+            rm.setBackgroundResource(R.drawable.bg_circle);
+            rm.getBackground().setTint(0xFFC62828);
+            int rmSize = dpToPx(18);
+            android.widget.FrameLayout.LayoutParams rlp = new android.widget.FrameLayout.LayoutParams(rmSize, rmSize);
+            rlp.gravity = android.view.Gravity.TOP | android.view.Gravity.END;
+            rm.setLayoutParams(rlp);
+            rm.setOnClickListener(x -> {
+                row.photos.remove(idx);
+                renderLocationPhotos(row);
+            });
+            wrap.addView(rm);
+
+            row.llFoto.addView(wrap);
+        }
+        if (row.photos.size() < MAX_LOCATION_PHOTOS) {
+            com.google.android.material.button.MaterialButton add =
+                    new com.google.android.material.button.MaterialButton(this,
+                            null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+            add.setText("+ Foto");
+            add.setTextSize(11f);
+            add.setAllCaps(false);
+            android.widget.LinearLayout.LayoutParams alp = new android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, thumb);
+            add.setLayoutParams(alp);
+            add.setMinWidth(0);
+            add.setMinimumWidth(0);
+            add.setOnClickListener(x -> addLocationPhotoClicked(row));
+            row.llFoto.addView(add);
+        }
+    }
+
+    /** Unduh (cache lokal) + tampilkan satu thumbnail koleksi lokasi. */
+    private void loadLocationThumb(ImageView iv, String url) {
+        final String name = "custloc_" + editId + "_" + Integer.toHexString(url.hashCode()) + ".jpg";
+        new Thread(() -> {
+            final File f = com.crowja.damiupos.util.BitmapUtils.downloadToCache(
+                    getApplicationContext(), url, name);
+            final Bitmap b = f != null
+                    ? com.crowja.damiupos.util.BitmapUtils.decodeSampled(f.getAbsolutePath(), 300, 300)
+                    : null;
+            if (f != null && b == null) f.delete();
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed() || b == null) return;
+                iv.setImageBitmap(b);
+            });
+        }).start();
+    }
+
+    private int dpToPx(int dp) {
+        return Math.round(dp * getResources().getDisplayMetrics().density);
+    }
+
+    /** Tombol "+ Foto" satu baris lokasi: perlu pelanggan TERSIMPAN (uuid sudah ada) dan
+     *  kuota belum penuh, lalu minta izin kamera (bila belum) dan ambil foto. */
+    private void addLocationPhotoClicked(LocationRow row) {
+        if (editId == -1) {
+            Toast.makeText(this, "Simpan pelanggan dulu, baru bisa menambah foto lokasi",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (row.photos.size() >= MAX_LOCATION_PHOTOS) {
+            Toast.makeText(this, "Maksimal " + MAX_LOCATION_PHOTOS + " foto per lokasi",
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
+        pendingPhotoRow = row;
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.CAMERA}, REQUEST_PERMISSION_CAMERA_LOCATION);
+            return;
+        }
+        takeLocationPhoto(row);
+    }
+
+    private void takeLocationPhoto(LocationRow row) {
+        Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        if (takePictureIntent.resolveActivity(getPackageManager()) == null) return;
+        File photoFile;
+        try {
+            photoFile = createLocationImageFile();
+        } catch (IOException e) {
+            Toast.makeText(this, "Gagal membuat file foto", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Uri photoURI = FileProvider.getUriForFile(this,
+                getApplicationContext().getPackageName() + ".fileprovider", photoFile);
+        takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoURI);
+        pendingPhotoRow = row;
+        startActivityForResult(takePictureIntent, REQUEST_CAMERA_LOCATION);
+    }
+
+    private File createLocationImageFile() throws IOException {
+        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+        File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
+        File image = File.createTempFile("LOKASI_" + timeStamp, ".jpg", storageDir);
+        pendingLocationPhotoPath = image.getAbsolutePath();
+        return image;
+    }
+
+    /** Kompres (720p) + unggah foto lokasi yang baru diambil, lalu tempel URL-nya ke row.photos
+     *  dan render ulang strip. Sinkron terhadap koneksi saat itu — beda dari foto rumah yang
+     *  diunggah belakangan via MediaUploader, koleksi lokasi TIDAK punya jalur pending offline. */
+    private void uploadLocationPhoto(LocationRow row, String localPath) {
+        if (!locationRows.contains(row)) {
+            new File(localPath).delete();
+            return;
+        }
+        Toast.makeText(this, "Mengunggah foto…", Toast.LENGTH_SHORT).show();
+        final String customerUuid = customerDao.getSyncUuidById(editId);
+        new Thread(() -> {
+            String url = null, err = null;
+            try {
+                File tmp = new File(new File(localPath).getParentFile(),
+                        "loc_upl_" + System.nanoTime() + ".jpg");
+                File toUpload = com.crowja.damiupos.util.BitmapUtils
+                        .compressForUpload(localPath, tmp, 1280, 85) ? tmp : new File(localPath);
+                com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                        new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this)));
+                org.json.JSONObject r = new com.crowja.damiupos.sync.SyncApi(cfg)
+                        .uploadLocationPhoto(customerUuid, row.id, toUpload);
+                url = r.optString("url", "");
+                if (tmp.exists()) tmp.delete();
+            } catch (Exception e) {
+                err = "Gagal mengunggah foto — periksa koneksi internet.";
+            } finally {
+                new File(localPath).delete();
+            }
+            final String fUrl = url, fErr = err;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (fUrl != null && !fUrl.isEmpty()) {
+                    if (locationRows.contains(row)) {
+                        row.photos.add(fUrl);
+                        renderLocationPhotos(row);
+                    }
+                } else {
+                    Toast.makeText(this, fErr != null ? fErr : "Gagal mengunggah foto",
+                            Toast.LENGTH_LONG).show();
+                }
+            });
+        }).start();
     }
 
     /** Hapus baris lokasi. Menghapus SEMUA baris = menghapus semua lokasi pelanggan
@@ -316,6 +660,77 @@ public class CustomerFormActivity extends AppCompatActivity {
         locationRows.remove(row);
     }
 
+    /** Satu baris "Nomor HP lain": EditText telp + tombol ✕. Nomor tambahan opsional (etTelepon =
+     *  nomor utama). Dibangun programatik supaya tak perlu layout baru. */
+    private void addPhoneRow(String value) {
+        android.widget.LinearLayout row = new android.widget.LinearLayout(this);
+        row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        int dp8 = Math.round(8 * getResources().getDisplayMetrics().density);
+        row.setPadding(0, dp8, 0, 0);
+        android.widget.EditText et = new android.widget.EditText(this);
+        et.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        et.setHint("Nomor lain");
+        if (value != null) et.setText(value);
+        row.addView(et, new android.widget.LinearLayout.LayoutParams(
+                0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        android.widget.ImageButton rm = new android.widget.ImageButton(this);
+        rm.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
+        rm.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+        rm.setContentDescription("Hapus nomor ini");
+        rm.setOnClickListener(v -> {
+            llPhonesExtra.removeView(row);
+            extraPhoneRows.remove(et);
+        });
+        row.addView(rm);
+        llPhonesExtra.addView(row);
+        extraPhoneRows.add(et);
+    }
+
+    /** Nomor HP untuk disimpan: nomor UTAMA (etTelepon) + nomor tambahan non-kosong. Urutan dijaga
+     *  (utama dulu); dedup dilakukan DAO (putPhones). Kosong semua → daftar kosong. */
+    private java.util.List<String> collectPhones(String primary) {
+        // Normalisasi tiap nomor ke format lokal 08XXXX sebelum disimpan (primer + tambahan).
+        java.util.List<String> out = new java.util.ArrayList<>();
+        String p0 = com.crowja.damiupos.util.PhoneUtils.toLocal08(primary == null ? "" : primary.trim());
+        if (!p0.isEmpty()) out.add(p0);
+        for (android.widget.EditText et : extraPhoneRows) {
+            String v = et.getText() != null ? et.getText().toString().trim() : "";
+            String pv = com.crowja.damiupos.util.PhoneUtils.toLocal08(v);
+            if (!pv.isEmpty()) out.add(pv);
+        }
+        return out;
+    }
+
+    /**
+     * Nomor yang BELUM pernah ada pada pelanggan ini (dibandingkan kanonik, jadi "0812…" ≡
+     * "+62 812…"). Hanya nomor baru yang perlu dicek ulang ke WhatsApp — mengecek ulang nomor lama
+     * tiap kali staf mengedit alamat/foto akan memunculkan WhatsApp tanpa alasan.
+     */
+    private java.util.List<String> newPhonesSince(Customer before, java.util.List<String> after) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (after == null) return out;
+        java.util.Set<String> old = new java.util.HashSet<>();
+        if (before != null && before.getPhones() != null) {
+            for (String p : before.getPhones()) {
+                String c = com.crowja.damiupos.util.PhoneUtils.canonical(p);
+                if (!c.isEmpty()) old.add(c);
+            }
+        }
+        for (String p : after) {
+            String c = com.crowja.damiupos.util.PhoneUtils.canonical(p);
+            if (!c.isEmpty() && !old.contains(c)) out.add(p);
+        }
+        return out;
+    }
+
+    /** Jalankan cek WhatsApp untuk nomor-nomor ini (no-op bila kosong). Tak pernah memblokir simpan
+     *  — lihat {@link com.crowja.damiupos.wa.WaNumberCheck}. */
+    private void scheduleWaCheck(long customerId, java.util.List<String> phones) {
+        if (phones == null || phones.isEmpty()) return;
+        com.crowja.damiupos.wa.WaNumberCheck.checkAndFlag(this, customerId, phones);
+    }
+
     /** Kumpulkan lokasi dari baris form (urutan tampilan = urutan simpan; baris pertama
      *  ber-koordinat = lokasi utama). Baris tanpa koordinat (0,0) dilewati; nama kosong
      *  → "Kediaman". Bisa kosong = user menghapus semua lokasi. */
@@ -325,7 +740,11 @@ public class CustomerFormActivity extends AppCompatActivity {
             if (r.lat == 0 && r.lng == 0) continue;
             String name = r.etName.getText() != null ? r.etName.getText().toString().trim() : "";
             if (name.isEmpty()) name = Customer.DEFAULT_LOCATION_NAME;
-            out.add(new Customer.Location(name, r.lat, r.lng, r.cbWajib.isChecked()));
+            Customer.Location loc = new Customer.Location(name, r.lat, r.lng, r.cbWajib.isChecked());
+            loc.id = r.id;
+            loc.photos.addAll(r.photos);
+            loc.photo = r.photos.isEmpty() ? null : r.photos.get(0);
+            out.add(loc);
         }
         return out;
     }
@@ -400,6 +819,16 @@ public class CustomerFormActivity extends AppCompatActivity {
                 try { new File(currentPhotoPath).delete(); } catch (Exception ignored) {}
             }
             currentPhotoPath = lastGoodPhotoPath;
+        } else if (requestCode == REQUEST_CAMERA_LOCATION) {
+            LocationRow row = pendingPhotoRow;
+            pendingPhotoRow = null;
+            if (resultCode == RESULT_OK && row != null && pendingLocationPhotoPath != null) {
+                uploadLocationPhoto(row, pendingLocationPhotoPath);
+            } else if (pendingLocationPhotoPath != null) {
+                // Kamera dibatalkan / gagal — buang file temp 0-byte, tak ada yang diunggah.
+                try { new File(pendingLocationPhotoPath).delete(); } catch (Exception ignored) {}
+            }
+            pendingLocationPhotoPath = null;
         } else if (requestCode == REQUEST_PICK_GALLERY && resultCode == RESULT_OK && data != null
                 && data.getData() != null) {
             try {
@@ -538,6 +967,84 @@ public class CustomerFormActivity extends AppCompatActivity {
             intent.putExtra(MapPickerActivity.EXTRA_LONGITUDE, row.lng);
         }
         startActivityForResult(intent, REQUEST_PICK_MAP);
+    }
+
+    /** "Pakai Link Google Maps": dialog tempel link (panjang/pendek) atau teks "lat, lng" →
+     *  koordinat baris ini. Cermin popup web (App\Support\MapsLink via /api/maps-link/resolve). */
+    private void showMapsLinkDialog(LocationRow row) {
+        int pad = dpToPx(20);
+        final com.google.android.material.textfield.TextInputEditText input =
+                new com.google.android.material.textfield.TextInputEditText(this);
+        input.setHint("Tempel link Google Maps atau \"lat, lng\"");
+        input.setSingleLine(false);
+        input.setMinLines(2);
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        box.setPadding(pad, pad, pad, 0);
+        box.addView(input);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Pakai Link Google Maps")
+                .setView(box)
+                .setPositiveButton("Proses", null)
+                .setNegativeButton("Batal", null)
+                .create();
+        dialog.setOnShowListener(d -> {
+            android.widget.Button pos = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            pos.setOnClickListener(v -> {
+                String text = input.getText() != null ? input.getText().toString().trim() : "";
+                if (text.isEmpty()) {
+                    Toast.makeText(this, "Tempel link atau koordinat dulu", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                resolveMapsLinkForRow(dialog, pos, row, text);
+            });
+        });
+        dialog.show();
+    }
+
+    private void resolveMapsLinkForRow(AlertDialog dialog, android.widget.Button pos,
+                                        LocationRow row, String text) {
+        pos.setEnabled(false);
+        pos.setText("Memproses…");
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this)));
+        if (!cfg.isEnrolled()) {
+            Toast.makeText(this, "Perangkat belum terhubung ke server.", Toast.LENGTH_LONG).show();
+            dialog.dismiss();
+            return;
+        }
+        new Thread(() -> {
+            Double lat = null, lng = null;
+            String err = null;
+            try {
+                org.json.JSONObject r = new com.crowja.damiupos.sync.SyncApi(cfg).resolveMapsLink(text);
+                lat = r.optDouble("lat", Double.NaN);
+                lng = r.optDouble("lng", Double.NaN);
+                if (lat.isNaN() || lng.isNaN()) { lat = null; lng = null; err = "Respons server tak berisi koordinat."; }
+            } catch (com.crowja.damiupos.sync.SyncApi.SyncException se) {
+                try { err = new org.json.JSONObject(se.body).optString("message", null); } catch (Exception ignored) {}
+                if (err == null) err = "Gagal memproses link (kode " + se.code + ").";
+            } catch (Exception e) {
+                err = "Gagal memproses — periksa koneksi internet.";
+            }
+            final Double fLat = lat, fLng = lng;
+            final String fErr = err;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (fLat != null && fLng != null) {
+                    row.lat = fLat;
+                    row.lng = fLng;
+                    updateKoordinatDisplay(row);
+                    Toast.makeText(this, "Koordinat terisi dari link Maps", Toast.LENGTH_SHORT).show();
+                    dialog.dismiss();
+                } else {
+                    Toast.makeText(this, fErr, Toast.LENGTH_LONG).show();
+                    pos.setEnabled(true);
+                    pos.setText("Proses");
+                }
+            });
+        }).start();
     }
 
     /**
@@ -706,6 +1213,10 @@ public class CustomerFormActivity extends AppCompatActivity {
                     pendingContactName = null;
                     pendingContactPhone = null;
                 }
+            } else if (requestCode == REQUEST_PERMISSION_CAMERA_LOCATION) {
+                if (pendingPhotoRow != null && locationRows.contains(pendingPhotoRow)) {
+                    takeLocationPhoto(pendingPhotoRow);
+                }
             }
         } else {
             if (requestCode == REQUEST_PERMISSION_CONTACTS) {
@@ -760,6 +1271,17 @@ public class CustomerFormActivity extends AppCompatActivity {
             }
         }
         btnLinkedReseller.setText(name != null ? "Reseller: " + name : "Tidak ditautkan — ketuk untuk pilih reseller");
+        updateSkipPhotoCoordVisibility();
+    }
+
+    /** Tampilkan opsi "Lewati wajib foto & koordinat" saat pelanggan ini dijadikan reseller ATAU
+     *  ditautkan ke reseller lain; sembunyikan (+reset checked) selain itu. */
+    private void updateSkipPhotoCoordVisibility() {
+        if (cbSkipPhotoCoordReseller == null) return;
+        boolean relevant = (cbReseller != null && cbReseller.isChecked())
+                || (linkedResellerUuid != null && !linkedResellerUuid.isEmpty());
+        cbSkipPhotoCoordReseller.setVisibility(relevant ? View.VISIBLE : View.GONE);
+        if (!relevant) cbSkipPhotoCoordReseller.setChecked(true);   // reset default utk lain kali muncul
     }
 
     /** Nomor yang SUDAH lolos cek pelanggan-terhapus di server — supaya save() lanjutan
@@ -795,12 +1317,15 @@ public class CustomerFormActivity extends AppCompatActivity {
      * error → LANJUT simpan (input lapangan tak boleh terblokir jaringan); duplikat aktif
      * sudah tertangkap oleh cek lokal di atasnya.
      */
-    private void runDeletedCheckThenSave(String telepon) {
+    /** Cek server apakah SALAH SATU nomor pelanggan cocok tombstone pelanggan terhapus (semua nomor
+     *  dikirim; server mencocokkan phones[]). Key gabungan → re-entry save() tak loop. */
+    private void runDeletedCheckThenSave(java.util.List<String> phones) {
+        String key = android.text.TextUtils.join(",", phones);
         com.crowja.damiupos.db.SettingsDao sd =
                 new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this));
         com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(sd);
         if (!cfg.isEnrolled()) {
-            deletedCheckedPhone = telepon;
+            deletedCheckedPhone = key;
             save();
             return;
         }
@@ -811,10 +1336,10 @@ public class CustomerFormActivity extends AppCompatActivity {
         new Thread(() -> {
             boolean deleted = false;
             try {
-                org.json.JSONArray phones = new org.json.JSONArray();
-                phones.put(telepon);
+                org.json.JSONArray arr = new org.json.JSONArray();
+                for (String p : phones) arr.put(p);
                 org.json.JSONObject r = new com.crowja.damiupos.sync.SyncApi(cfg)
-                        .customersDeletedCheck(phones);
+                        .customersDeletedCheck(arr);
                 org.json.JSONArray del = r.optJSONArray("deleted");
                 deleted = del != null && del.length() > 0;
             } catch (Exception ignored) {
@@ -825,10 +1350,10 @@ public class CustomerFormActivity extends AppCompatActivity {
                 try { waiting.dismiss(); } catch (Exception ignored) {}
                 if (isFinishing() || isDestroyed()) return;
                 if (fDeleted) {
-                    showDuplicateBlockedDialog(null, telepon, true);
+                    showDuplicateBlockedDialog(null, phones.isEmpty() ? "" : phones.get(0), true);
                 } else {
-                    deletedCheckedPhone = telepon;
-                    save();   // lanjut alur simpan normal — gate nomor ini sudah lolos
+                    deletedCheckedPhone = key;
+                    save();   // lanjut alur simpan normal — semua nomor sudah lolos
                 }
             });
         }).start();
@@ -837,6 +1362,9 @@ public class CustomerFormActivity extends AppCompatActivity {
     private void save() {
         String nama = etNama.getText() != null ? etNama.getText().toString().trim() : "";
         String telepon = etTelepon.getText() != null ? etTelepon.getText().toString().trim() : "";
+        // Normalisasi nomor utama ke format lokal 08XXXX SEBELUM validasi & simpan (mis. "+62 812…",
+        // "812…", "62812…" → "0812…"). Nomor kosong tetap dibiarkan kosong. Sinkron dgn PhoneUtils web.
+        telepon = com.crowja.damiupos.util.PhoneUtils.toLocal08(telepon);
         String alamat = etAlamat.getText() != null ? etAlamat.getText().toString().trim() : "";
 
         if (nama.isEmpty()) {
@@ -849,25 +1377,31 @@ public class CustomerFormActivity extends AppCompatActivity {
         // (Kosong tetap diperbolehkan = pelanggan tanpa nomor.) Edit tak dipagari agar nomor lama
         // berformat lain — mis. "+62…" hasil sinkron — tak menghalangi simpan.
         if (editId == -1 && !telepon.isEmpty()
+                && !telepon.equals(waPrefillPhone)   // nomor WA asli (mis. non-08) dikecualikan
                 && (!telepon.matches("\\d{9,13}") || !telepon.startsWith("08"))) {
             etTelepon.setError("Nomor HP harus diawali 08, hanya angka, dan 9–13 digit");
             etTelepon.requestFocus();
             return;
         }
 
-        // Guard anti-duplikat (hanya pelanggan BARU): nomor dibandingkan secara KANONIK —
-        // "0812…" ≡ "+62 812…" ≡ "62812…" dianggap nomor yang sama.
-        if (editId == -1 && !telepon.isEmpty()) {
+        // Guard anti-duplikat (hanya pelanggan BARU): dibandingkan secara KANONIK, mencakup SEMUA
+        // nomor (utama + tambahan) — nomor kedua pun tak boleh bentrok dengan pelanggan lain (kalau
+        // bentrok, satu nomor akan me-resolve ke DUA pelanggan → ambiguitas identitas yang dicegah
+        // fitur ini). "0812…" ≡ "+62 812…" ≡ "62812…" dianggap sama.
+        java.util.List<String> allPhones = collectPhones(telepon);
+        if (editId == -1 && !allPhones.isEmpty()) {
             // 1) Duplikat AKTIF di database lokal (pelanggan branch-wide, semua salinan perangkat).
-            Customer dup = customerDao.findByPhoneCanonical(telepon);
-            if (dup != null) {
-                showDuplicateBlockedDialog(dup.getName(), telepon, false);
-                return;
+            for (String p : allPhones) {
+                Customer dup = customerDao.findByPhoneCanonical(p);
+                if (dup != null) {
+                    showDuplicateBlockedDialog(dup.getName(), p, false);
+                    return;
+                }
             }
-            // 2) Pelanggan TERHAPUS di dashboard (tak ada di DB lokal — tombstone sudah
-            //    menghapusnya) → tanya server, lalu lanjut simpan bila lolos.
-            if (!telepon.equals(deletedCheckedPhone)) {
-                runDeletedCheckThenSave(telepon);
+            // 2) Pelanggan TERHAPUS di dashboard (tombstone) → tanya server (semua nomor), lalu lanjut.
+            String phonesKey = android.text.TextUtils.join(",", allPhones);
+            if (!phonesKey.equals(deletedCheckedPhone)) {
+                runDeletedCheckThenSave(allPhones);
                 return;
             }
         }
@@ -879,7 +1413,13 @@ public class CustomerFormActivity extends AppCompatActivity {
         // Marketing & operator (staf/SPV) wajib melengkapi FOTO RUMAH + KOORDINAT saat input pelanggan
         // BARU (akuisisi harus terverifikasi lokasi & foto). Pelanggan lama (edit) tidak diblokir agar
         // tak menyulitkan koreksi. Koordinat yang dicek = lokasi UTAMA (baris pertama ber-koordinat).
-        if (requirePhotoCoord && editId == -1) {
+        // Pelanggan reseller/terafiliasi: opsi "Lewati wajib foto & koordinat" (tampil hanya saat
+        // relevan — lihat updateSkipPhotoCoordVisibility) membebaskan dari kewajiban ini, mengikuti
+        // permintaan user bahwa pelanggan terafiliasi reseller tak perlu diverifikasi lokasi fisik.
+        boolean skipForReseller = cbSkipPhotoCoordReseller != null
+                && cbSkipPhotoCoordReseller.getVisibility() == View.VISIBLE
+                && cbSkipPhotoCoordReseller.isChecked();
+        if (requirePhotoCoord && editId == -1 && !skipForReseller) {
             boolean hasPhoto = currentPhotoPath != null && !currentPhotoPath.isEmpty()
                     && new File(currentPhotoPath).exists();
             boolean hasCoord = primary != null;
@@ -905,6 +1445,11 @@ public class CustomerFormActivity extends AppCompatActivity {
         }
 
         Customer customer = new Customer(nama, telepon, alamat);
+        String catatanOrder = etCatatanOrder.getText() != null ? etCatatanOrder.getText().toString().trim() : "";
+        customer.setOrderNote(catatanOrder.isEmpty() ? null : catatanOrder);
+        // Multi-nomor: nomor utama (etTelepon) + nomor tambahan. DAO (putPhones) mencerminkan
+        // phone = phones[0]. Daftar disimpan supaya nomor kedua ikut tersinkron ke web & HP lain.
+        customer.setPhones(collectPhones(telepon));
         customer.setPhotoPath(currentPhotoPath);
         customer.setCreatedAt(selectedCreatedAt);
         // Multi-lokasi + mirror kompatibilitas: entri pertama → latitude/longitude/wajib_ongkir
@@ -946,7 +1491,16 @@ public class CustomerFormActivity extends AppCompatActivity {
 
         if (editId != -1) {
             customer.setId(editId);
+            // Penugasan perangkat (override) diatur dari web (web-authoritative, di-skip saat push).
+            // Form HP tak menyuntingnya, jadi salin nilai lama supaya update tak mengosongkannya
+            // secara lokal (jadi transaksi memakai default yang benar sampai pull berikutnya).
+            Customer existingC = customerDao.getById(editId);
+            if (existingC != null) {
+                customer.setAssignedDeviceUuid(existingC.getAssignedDeviceUuid());
+            }
             customerDao.update(customer);
+            // Nomor BARU/BERUBAH → cek ke WhatsApp di latar belakang; tandai bermasalah bila mati.
+            scheduleWaCheck(editId, newPhonesSince(existingC, allPhones));
             // Photo changed → clear the stale server URL so the new file re-uploads
             // (MediaUploader runs before push, so the dashboard URL stays current).
             if (currentPhotoPath != null && !currentPhotoPath.equals(originalPhotoPath)) {
@@ -963,6 +1517,8 @@ public class CustomerFormActivity extends AppCompatActivity {
             finish();
         } else {
             lastInsertedId = customerDao.insert(customer);
+            // Pelanggan baru → semua nomornya dicek ke WhatsApp di latar belakang.
+            scheduleWaCheck(lastInsertedId, allPhones);
             // Kirim segera ke web (unggah foto + push baris) tanpa menunggu worker 15-menit.
             com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
             // Caller (mis. TransactionActivity) bisa langsung auto-pick
@@ -1078,36 +1634,16 @@ public class CustomerFormActivity extends AppCompatActivity {
         writeContact(name, phone);
     }
 
+    /**
+     * Simpan ke kontak HP lewat {@link com.crowja.damiupos.wa.WaContactEnsure} — SATU implementasi
+     * yang sama dipakai penyimpanan otomatis saat transaksi dibuat, jadi keduanya tak bisa
+     * menyimpang. Bonusnya: helper itu memakai PhoneLookup, sehingga nomor yang SUDAH ada tidak
+     * lagi digandakan (versi lama di sini selalu menyisipkan baris baru).
+     */
     private void writeContact(String name, String phone) {
-        try {
-            ArrayList<ContentProviderOperation> ops = new ArrayList<>();
-            ops.add(ContentProviderOperation
-                    .newInsert(ContactsContract.RawContacts.CONTENT_URI)
-                    .withValue(ContactsContract.RawContacts.ACCOUNT_TYPE, null)
-                    .withValue(ContactsContract.RawContacts.ACCOUNT_NAME, null)
-                    .build());
-            ops.add(ContentProviderOperation
-                    .newInsert(ContactsContract.Data.CONTENT_URI)
-                    .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
-                    .withValue(ContactsContract.Data.MIMETYPE,
-                            ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
-                    .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name)
-                    .build());
-            ops.add(ContentProviderOperation
-                    .newInsert(ContactsContract.Data.CONTENT_URI)
-                    .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, 0)
-                    .withValue(ContactsContract.Data.MIMETYPE,
-                            ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)
-                    .withValue(ContactsContract.CommonDataKinds.Phone.NUMBER, phone)
-                    .withValue(ContactsContract.CommonDataKinds.Phone.TYPE,
-                            ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE)
-                    .build());
-            getContentResolver().applyBatch(ContactsContract.AUTHORITY, ops);
-            Toast.makeText(this, "Disimpan ke kontak HP", Toast.LENGTH_SHORT).show();
-        } catch (Exception e) {
-            Toast.makeText(this, "Gagal simpan ke kontak: " + e.getMessage(),
-                    Toast.LENGTH_LONG).show();
-        }
+        boolean ok = com.crowja.damiupos.wa.WaContactEnsure.ensure(this, name, phone);
+        Toast.makeText(this, ok ? "Disimpan ke kontak HP" : "Gagal simpan ke kontak",
+                ok ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG).show();
         finish();
     }
 }

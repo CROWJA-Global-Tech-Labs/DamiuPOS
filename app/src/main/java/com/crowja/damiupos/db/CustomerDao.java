@@ -5,6 +5,7 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 
 import com.crowja.damiupos.model.Customer;
+import com.crowja.damiupos.util.Ts;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -95,12 +96,129 @@ public class CustomerDao {
                 DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
     }
 
+    /** Tandai pelanggan PRIORITAS (utamakan → naik ke atas antrian delivery & follow up). Membuka
+     *  kembali bila sebelumnya dibatalkan. Tersinkron dua-arah (syncUpdate bump edited_at). */
+    public void markPriority(long customerId, String reason, String by) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        String now = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new java.util.Date());
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_PRIORITY_AT, now);
+        v.put(DatabaseHelper.COL_PRIORITY_REASON, reason != null && !reason.trim().isEmpty() ? reason.trim() : null);
+        v.put(DatabaseHelper.COL_PRIORITY_BY, by);
+        v.putNull(DatabaseHelper.COL_PRIORITY_CLEARED_AT);   // penandaan baru mengaktifkan kembali
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_CUSTOMERS, v,
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
+    }
+
+    /** Batalkan status prioritas: setel priority_cleared_at (tidak meng-null-kan penandaan — push HP
+     *  menghapus kolom null → pembatalan takkan tersinkron). Tersinkron. */
+    public void clearPriority(long customerId) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        String now = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new java.util.Date());
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_PRIORITY_CLEARED_AT, now);
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_CUSTOMERS, v,
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
+    }
+
+    // ---------------------------------------------------------------- Kunjungi Urgent
+
+    /**
+     * SQL "masih menunggu kunjungan urgent". Dipakai daftar DAN badge supaya keduanya tak bisa
+     * berbeda. Cermin Customer::scopeNeedsUrgentVisit di web.
+     */
+    // Kedua sisi dinormalkan ke waktu lokal dulu ({@link Ts#localExpr}): visit_urgent_at biasanya
+    // datang dari server dalam bentuk ISO-UTC ("...T07:40:12.766088Z") sedangkan visit_urgent_done_at
+    // ditulis HP dalam waktu lokal ("... 14:40:12"). Dibandingkan mentah, penyelesaian dari HP selalu
+    // terbaca lebih TUA daripada penandaan server di tanggal yang sama (spasi < 'T'), sehingga
+    // kunjungan yang sudah beres muncul lagi di daftar.
+    private static final String WHERE_VISIT_URGENT =
+            DatabaseHelper.COL_VISIT_URGENT_AT + " IS NOT NULL AND ("
+                    + DatabaseHelper.COL_VISIT_URGENT_DONE_AT + " IS NULL OR "
+                    + Ts.localExpr(DatabaseHelper.COL_VISIT_URGENT_DONE_AT) + " < "
+                    + Ts.localExpr(DatabaseHelper.COL_VISIT_URGENT_AT) + ")";
+
+    /** Tandai "Kunjungi Urgent" dari HP (admin lewat Follow Up). Tersinkron dua-arah. */
+    public void markVisitUrgent(long customerId, String by) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        String now = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new java.util.Date());
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_VISIT_URGENT_AT, now);
+        v.put(DatabaseHelper.COL_VISIT_URGENT_BY, by);
+        // Penandaan BARU otomatis mengungguli penyelesaian lama (done_at jadi lebih tua), jadi
+        // kolom done sengaja TIDAK disentuh — meng-null-kannya justru takkan tersinkron.
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_CUSTOMERS, v,
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
+    }
+
+    /** Tandai kunjungan urgent SUDAH dilakukan: setel done_at (bukan meng-null-kan penandaan —
+     *  push HP menghapus kolom null → penyelesaian takkan tersinkron). Tersinkron. */
+    public void markVisitUrgentDone(long customerId, String reason) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        String now = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new java.util.Date());
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_VISIT_URGENT_DONE_AT, now);
+        // Alasan ikut tersinkron: jurnal "Riwayat Perubahan" web-only, jadi server yang mengubah
+        // kolom ini jadi entri riwayat + notifikasi lonceng. Tanpa ini alasan lapangan hilang.
+        v.put(DatabaseHelper.COL_VISIT_URGENT_DONE_REASON,
+                reason != null && !reason.trim().isEmpty() ? reason.trim() : null);
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_CUSTOMERS, v,
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
+    }
+
+    /**
+     * Berapa pelanggan yang masih menunggu kunjungan urgent — angka badge.
+     *
+     * Dihitung per ORANG (grup dedup nomor HP), bukan per baris: pelanggan yang sama bisa punya
+     * beberapa salinan lintas perangkat, dan menghitung baris akan melipatgandakan badge-nya.
+     * Yang tanpa nomor dihitung per baris (tak ada kunci untuk menyatukan).
+     */
+    public int countVisitUrgent() {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String sql = "SELECT COUNT(*) FROM (SELECT 1 FROM " + DatabaseHelper.TABLE_CUSTOMERS
+                + " WHERE " + WHERE_VISIT_URGENT
+                + " GROUP BY CASE WHEN " + DatabaseHelper.COL_PHONE + " IS NULL OR "
+                + DatabaseHelper.COL_PHONE + "='' THEN " + DatabaseHelper.COL_ID
+                + " ELSE " + DatabaseHelper.COL_PHONE + " END)";
+        try (android.database.Cursor c = db.rawQuery(sql, null)) {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /** Semua pelanggan yang masih menunggu kunjungan urgent, yang terbaru ditandai lebih dulu. */
+    public java.util.List<Customer> getVisitUrgent() {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        java.util.List<Customer> out = new java.util.ArrayList<>();
+        // Satu tabel saja, jadi nama kolom tak perlu di-alias — WHERE_VISIT_URGENT dipakai apa
+        // adanya supaya daftar dan badge benar-benar memakai definisi yang sama.
+        String sql = "SELECT * FROM " + DatabaseHelper.TABLE_CUSTOMERS
+                + " WHERE " + WHERE_VISIT_URGENT
+                + " ORDER BY " + DatabaseHelper.COL_VISIT_URGENT_AT + " DESC";
+        try (android.database.Cursor cur = db.rawQuery(sql, null)) {
+            while (cur.moveToNext()) out.add(cursorToCustomer(cur));
+        } catch (Exception ignored) {}
+        return out;
+    }
+
+    /** Ubah Catatan Order (instruksi pengiriman tetap) dari popup Detail Pelanggan. Tersinkron
+     *  dua-arah — cermin CustomerFormActivity.save() (kosong → null, bukan string kosong). */
+    public void updateOrderNote(long customerId, String note) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_ORDER_NOTE, note != null && !note.trim().isEmpty() ? note.trim() : null);
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_CUSTOMERS, v,
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
+    }
+
     public long insert(Customer customer) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues values = new ContentValues();
         values.put(DatabaseHelper.COL_NAME, customer.getName());
         values.put(DatabaseHelper.COL_PHONE, customer.getPhone());
         values.put(DatabaseHelper.COL_ADDRESS, customer.getAddress());
+        values.put(DatabaseHelper.COL_ORDER_NOTE, customer.getOrderNote());
         values.put(DatabaseHelper.COL_PHOTO_PATH, customer.getPhotoPath());
         values.put(DatabaseHelper.COL_LATITUDE, customer.getLatitude());
         values.put(DatabaseHelper.COL_LONGITUDE, customer.getLongitude());
@@ -108,9 +226,11 @@ public class CustomerDao {
         values.put(DatabaseHelper.COL_WAJIB_ONGKIR, customer.isWajibOngkir() ? 1 : 0);
         values.put(DatabaseHelper.COL_KOMISI_ADD_TO_PRICE, customer.isKomisiAddToPrice() ? 1 : 0);
         values.put(DatabaseHelper.COL_LINKED_RESELLER_UUID, customer.getLinkedResellerUuid());
+        values.put(DatabaseHelper.COL_CUST_ASSIGN_DEVICE, customer.getAssignedDeviceUuid());
         values.put(DatabaseHelper.COL_GALON_PINJAM_ADJUST, customer.getGalonPinjamAdjust());
         putProductPrices(values, customer);
         putLocations(values, customer);
+        putPhones(values, customer);
         if (customer.getResellerSince() != null) {
             values.put(DatabaseHelper.COL_RESELLER_SINCE, customer.getResellerSince());
         }
@@ -134,6 +254,7 @@ public class CustomerDao {
         values.put(DatabaseHelper.COL_NAME, customer.getName());
         values.put(DatabaseHelper.COL_PHONE, customer.getPhone());
         values.put(DatabaseHelper.COL_ADDRESS, customer.getAddress());
+        values.put(DatabaseHelper.COL_ORDER_NOTE, customer.getOrderNote());
         values.put(DatabaseHelper.COL_PHOTO_PATH, customer.getPhotoPath());
         values.put(DatabaseHelper.COL_LATITUDE, customer.getLatitude());
         values.put(DatabaseHelper.COL_LONGITUDE, customer.getLongitude());
@@ -141,9 +262,11 @@ public class CustomerDao {
         values.put(DatabaseHelper.COL_WAJIB_ONGKIR, customer.isWajibOngkir() ? 1 : 0);
         values.put(DatabaseHelper.COL_KOMISI_ADD_TO_PRICE, customer.isKomisiAddToPrice() ? 1 : 0);
         values.put(DatabaseHelper.COL_LINKED_RESELLER_UUID, customer.getLinkedResellerUuid());
+        values.put(DatabaseHelper.COL_CUST_ASSIGN_DEVICE, customer.getAssignedDeviceUuid());
         values.put(DatabaseHelper.COL_GALON_PINJAM_ADJUST, customer.getGalonPinjamAdjust());
         putProductPrices(values, customer);
         putLocations(values, customer);
+        putPhones(values, customer);
         if (customer.getResellerSince() != null) {
             values.put(DatabaseHelper.COL_RESELLER_SINCE, customer.getResellerSince());
         }
@@ -159,7 +282,17 @@ public class CustomerDao {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         return dbHelper.syncDelete(db, DatabaseHelper.TABLE_CUSTOMERS, "customers",
                 DatabaseHelper.COL_ID + "=?",
-                new String[]{String.valueOf(id)});
+                new String[]{String.valueOf(id)}, deleterName(), deleterDevice());
+    }
+
+    /** Nama operator yang sedang login (atribusi penghapusan); kosong utk mode single-user. */
+    private String deleterName() {
+        return new SettingsDao(dbHelper).getCurrentUserName();
+    }
+
+    /** Uuid perangkat ini (atribusi penghapusan) — server memetakannya ke nama perangkat. */
+    private String deleterDevice() {
+        return new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(dbHelper)).getDeviceUuid();
     }
 
     /**
@@ -182,7 +315,22 @@ public class CustomerDao {
         }
         return dbHelper.syncDelete(db, DatabaseHelper.TABLE_CUSTOMERS, "customers",
                 DatabaseHelper.COL_ID + " IN (" + placeholders + ")",
-                args);
+                args, deleterName(), deleterDevice());
+    }
+
+    /** Cari pelanggan LOKAL dari sync_uuid server — dipakai baris "Antrian Perangkat Lain" (Tab 2
+     *  Antrian Delivery), yang datang sebagai JSON server tanpa customer_id lokal. Pelanggan
+     *  disinkron branch-wide (lihat project_damiupos_customers_branch_wide) jadi salinannya SUDAH
+     *  ADA di perangkat ini pun order-nya milik perangkat lain. null bila belum tersinkron. */
+    public Customer getBySyncUuid(String uuid) {
+        if (uuid == null || uuid.isEmpty()) return null;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT " + DatabaseHelper.COL_ID + " FROM " + DatabaseHelper.TABLE_CUSTOMERS
+                + " WHERE " + DatabaseHelper.COL_SYNC_UUID + "=? LIMIT 1", new String[]{uuid});
+        long id = -1;
+        if (c.moveToFirst()) id = c.getLong(0);
+        c.close();
+        return id > 0 ? getById(id) : null;
     }
 
     public Customer getById(long id) {
@@ -309,6 +457,32 @@ public class CustomerDao {
             }
         }
         return online ? srv : (earned - net);
+    }
+
+    /**
+     * {@code _id} SELURUH salinan lokal orang yang sama (grup dedup {@link #dedupKey}), base selalu
+     * ikut. Dipakai buku besar HUTANG & REFUND supaya angkanya di HP identik dengan dashboard.
+     *
+     * <p>Web menjumlah hutang lintas SELURUH grup dedup
+     * ({@code CustomerController::mergedUuidsFor} → {@code DebtBalance::for}); tanpa ini HP hanya
+     * menjumlah SATU salinan, sehingga orang yang punya beberapa salinan (hasil pendaftaran di
+     * lebih dari satu perangkat) DIJAMIN tampil beda antara HP dan web.
+     */
+    public java.util.List<Long> mergedGroupIds(long customerId) {
+        java.util.List<Long> ids = new ArrayList<>();
+        if (customerId <= 0) return ids;
+        Customer base = getById(customerId);
+        if (base == null) { ids.add(customerId); return ids; }
+        String key = dedupKey(base);
+        boolean hasBase = false;
+        for (Customer c : groupCandidates(base)) {
+            if (!dedupKey(c).equals(key)) continue;
+            ids.add(c.getId());
+            if (c.getId() == base.getId()) hasBase = true;
+        }
+        // Base sendiri harus terhitung walau tersaring NOT_HANDED_OVER_HERE (pola getByIdMerged).
+        if (!hasBase) ids.add(base.getId());
+        return ids;
     }
 
     /**
@@ -445,16 +619,64 @@ public class CustomerDao {
         if (canon.isEmpty()) return null;
         String tail = canon.length() > 7 ? canon.substring(canon.length() - 7) : canon;
         SQLiteDatabase db = dbHelper.getReadableDatabase();
+        // Prefilter LIKE pada `phone` UTAMA maupun daftar `phones` (JSON) → nomor KEDUA pun ketemu,
+        // jadi order/dedup dengan nomor lain nyantol ke orang yang sama.
         Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMERS, null,
-                DatabaseHelper.COL_PHONE + " LIKE ?", new String[]{"%" + tail + "%"},
+                DatabaseHelper.COL_PHONE + " LIKE ? OR " + DatabaseHelper.COL_PHONES + " LIKE ?",
+                new String[]{"%" + tail + "%", "%" + tail + "%"},
                 null, null, null);
         Customer hit = null;
         while (c.moveToNext()) {
             Customer cand = cursorToCustomer(c);
-            if (canonicalPhone(cand.getPhone()).equals(canon)) { hit = cand; break; }
+            if (!matchesCanonical(cand, canon)) continue;   // cocok SALAH SATU nomor pelanggan
+            // Utamakan salinan MILIK perangkat ini (transaksi lokal menempel di situ — selaras
+            // dedupeForDisplay); salinan perangkat lain hanya fallback bila tak ada yang lokal.
+            if (hit == null || (cand.isMine() && !hit.isMine())) hit = cand;
+            if (cand.isMine()) break;
         }
         c.close();
         return hit;
+    }
+
+    /** True bila SALAH SATU nomor pelanggan == $canon (sudah dikanonikkan). */
+    public static boolean matchesCanonical(Customer c, String canon) {
+        if (canon == null || canon.isEmpty()) return false;
+        for (String p : c.getPhonesOrDefault()) {
+            if (canonicalPhone(p).equals(canon)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * SEMUA pelanggan yang NAMANYA sama (case-insensitive, spasi dinormalisasi) — dipakai bubble
+     * "+ Trx" mencocokkan judul chat WA (kontak TERSIMPAN menampilkan nama, dan kontak yang disimpan
+     * aplikasi ini memakai nama DB apa adanya → cocok persis). Mengembalikan LIST karena DB branch-wide
+     * bisa memuat beberapa ORANG BERBEDA bernama sama (nomor beda) — pemanggil yang memutuskan wakil /
+     * ambiguitas. Kosong bila tak ada.
+     */
+    public java.util.List<Customer> findAllByNameNormalized(String name) {
+        java.util.List<Customer> out = new java.util.ArrayList<>();
+        String needle = normalizeName(name);
+        if (needle.isEmpty()) return out;
+        String firstWord = needle.split(" ")[0];
+        // LIKE SQLite hanya case-fold ASCII → prefilter (scan kecil) hanya untuk kata ASCII; nama
+        // non-ASCII (mis. "Émile") full-scan supaya tak salah "tak ditemukan". equals Java jaga presisi.
+        boolean ascii = firstWord.matches("\\p{ASCII}+");
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMERS, null,
+                ascii ? DatabaseHelper.COL_NAME + " LIKE ?" : null,
+                ascii ? new String[]{"%" + firstWord + "%"} : null,
+                null, null, null);
+        while (c.moveToNext()) {
+            Customer cand = cursorToCustomer(c);
+            if (normalizeName(cand.getName()).equals(needle)) out.add(cand);
+        }
+        c.close();
+        return out;
+    }
+
+    private static String normalizeName(String s) {
+        return s == null ? "" : s.trim().toLowerCase().replaceAll("\\s+", " ");
     }
 
     /** Kunci dedup identik server & daftar: nomor (digit, 08→62) → "ph:"; kosong → nama
@@ -500,22 +722,7 @@ public class CustomerDao {
     private static final java.util.TimeZone UTC_TZ = java.util.TimeZone.getTimeZone("UTC");
 
     private static long parseMillis(String s) {
-        if (s == null || s.isEmpty()) return Long.MAX_VALUE;
-        try {
-            String x = s.trim();
-            boolean utc = x.endsWith("Z");
-            String core = (utc ? x.substring(0, x.length() - 1) : x).replace('T', ' ');
-            int dot = core.indexOf('.');
-            if (dot > 0) core = core.substring(0, dot);
-            if (core.length() > 19) core = core.substring(0, 19);
-            core = core.trim();
-            java.text.SimpleDateFormat sdf = DT_FMT.get();
-            sdf.setTimeZone(utc ? UTC_TZ : java.util.TimeZone.getDefault());
-            java.util.Date d = sdf.parse(core);
-            return d == null ? Long.MAX_VALUE : d.getTime();
-        } catch (Exception e) {
-            return Long.MAX_VALUE;
-        }
+        return Ts.millis(s);
     }
 
     /**
@@ -524,7 +731,7 @@ public class CustomerDao {
      * web ({@code collapseDuplicates}) yang menjumlah lintas salinan satu orang.
      */
     public static void applyMergedAggregates(Customer rep, java.util.List<Customer> group) {
-        int ordered = 0, borrowed = 0, kembali = 0, trx = 0, adjust = 0;
+        int ordered = 0, borrowed = 0, kembali = 0, held = 0, trx = 0, adjust = 0, srvTrxSum = 0;
         String firstJual = null;
         long firstMs = Long.MAX_VALUE;
         java.util.LinkedHashSet<String> labels = new java.util.LinkedHashSet<>();
@@ -532,8 +739,10 @@ public class CustomerDao {
             ordered  += m.effectiveOrdered();
             borrowed += m.effectiveBorrowed();
             kembali  += m.effectiveKembali();
+            held     += m.heldBeforeAdjust();   // server, atau floor-0 lokal bila server srvTrx==0 (belum sinkron)
             trx      += m.effectiveTrx();
             adjust   += m.getGalonPinjamAdjust();
+            srvTrxSum += m.getSrvTrx();   // gerbang heldBeforeAdjust() di rep: >0 kalau SALAH SATU salinan sudah dikenal server
             String fj = m.effectiveFirstJual();
             long ms = parseMillis(fj);
             if (ms < firstMs) { firstMs = ms; firstJual = fj; }
@@ -542,6 +751,13 @@ public class CustomerDao {
         rep.setGalonTotalOrdered(ordered);
         rep.setGalonKeluar(borrowed);
         rep.setGalonKembali(kembali);
+        rep.setSrvHeld(held);             // getSaldoGalon() = srvHeld + adjust → "Galon Dipinjam" merged
+        rep.setSrvTrx(srvTrxSum);
+        // `held` di atas SUDAH floor-then-sum yang benar (per anggota, lokal-atau-server); galonKeluar/
+        // galonKembali/srvTrx BARU SAJA ditimpa jadi total grup demi field lain (stat "galon keluar"
+        // dll.), bukan bahan floor-0 lagi — tandai supaya heldBeforeAdjust() TIDAK menghitung ulang
+        // Math.max(0, galonKeluar-galonKembali) dari nilai yang sudah bukan itu maknanya lagi.
+        rep.setHeldFinalized(true);
         rep.setTotalTransaksi(trx);
         rep.setGalonPinjamAdjust(adjust);
         rep.setFirstOrderDate(firstJual);   // getKonsumsiPerHari() memakai ordered + firstJual gabungan
@@ -559,6 +775,28 @@ public class CustomerDao {
             }
         }
 
+        // Override penugasan perangkat (di-set web) juga bisa menempel di SALINAN mana pun orang ini
+        // (per-uuid saat pull). Angkat ke wakil supaya filter "Wilayah Saya" & default perangkat
+        // transaksi menghormati override walau salinan yang tampil bukan yang memegangnya.
+        if (rep.getAssignedDeviceUuid() == null || rep.getAssignedDeviceUuid().isEmpty()) {
+            for (Customer m : group) {
+                if (m.getAssignedDeviceUuid() != null && !m.getAssignedDeviceUuid().isEmpty()) {
+                    rep.setAssignedDeviceUuid(m.getAssignedDeviceUuid());
+                    break;
+                }
+            }
+        }
+
+        // Lokasi WAJIB ONGKIR bisa tercatat di salinan mana pun (mis. lokasi "Kantor" ditambahkan
+        // dari HP lain). Angkat sebagai flag DISPLAY-ONLY — sengaja TIDAK menyalin daftar lokasi
+        // milik salinan lain ke wakil: daftar itu ikut ter-push saat pelanggan diedit dan akan
+        // menimpa lokasi asli. Badge cukup butuh "ada atau tidak".
+        if (!rep.hasWajibOngkirLocation()) {
+            for (Customer m : group) {
+                if (m.hasWajibOngkirLocation()) { rep.setWajibOngkirMerged(true); break; }
+            }
+        }
+
         // Nama gabungan lintas-perangkat: orang yang sama bisa bernama beda di tiap perangkat
         // (mis. "Hanny Taman Sentosa" vs "Bp Okky"). Tampilkan SEMUA nama unik "NAMA1 / NAMA2" —
         // nama wakil dulu, sisanya menyusul; pembandingan case-insensitive (beda huruf besar/kecil
@@ -568,6 +806,13 @@ public class CustomerDao {
         for (Customer m : group) addDistinctName(uniqNames, m.getName());
         rep.setMergedNameCount(uniqNames.size());
         rep.setDisplayName(android.text.TextUtils.join(" / ", uniqNames.values()));
+
+        // Nomor HP juga digabung lintas salinan (nomor wakil dulu → phones[0] tetap utama), supaya
+        // Detail tak kehilangan nomor kedua yang tersimpan di salinan lain dari orang yang sama.
+        java.util.LinkedHashMap<String, String> uniqPhones = new java.util.LinkedHashMap<>();
+        for (String p : rep.getPhonesOrDefault()) addDistinctPhone(uniqPhones, p);
+        for (Customer m : group) for (String p : m.getPhonesOrDefault()) addDistinctPhone(uniqPhones, p);
+        if (!uniqPhones.isEmpty()) rep.setPhones(new java.util.ArrayList<>(uniqPhones.values()));
     }
 
     /** Tambahkan nama ke peta nama-unik (kunci = ternormalisasi lowercase+rapikan spasi), pertahankan
@@ -577,6 +822,17 @@ public class CustomerDao {
         String t = nm.trim();
         if (t.isEmpty()) return;
         String key = t.toLowerCase().replaceAll("\\s+", " ");
+        if (!map.containsKey(key)) map.put(key, t);
+    }
+
+    /** Tambahkan nomor ke peta nomor-unik (kunci = kanonik +62/62/0); pertahankan format asli &
+     *  urutan kemunculan pertama; abaikan null/kosong. */
+    private static void addDistinctPhone(java.util.LinkedHashMap<String, String> map, String p) {
+        if (p == null) return;
+        String t = p.trim();
+        if (t.isEmpty()) return;
+        String key = canonicalPhone(t);
+        if (key.isEmpty()) key = t;   // tanpa digit → apa adanya
         if (!map.containsKey(key)) map.put(key, t);
     }
 
@@ -593,7 +849,9 @@ public class CustomerDao {
             case SORT_TOTAL_ORDERED:
                 return "ORDER BY galon_total_ordered DESC, c.name ASC";
             case SORT_PINJAM:
-                return "ORDER BY (galon_keluar - galon_kembali) DESC, c.name ASC";
+                // "Galon Dipinjam" = srv_held (saldo berjalan floor-0 server) + koreksi manual — sama
+                // dengan getSaldoGalon(); bukan lagi keluar−kembali (keliru 0 untuk pelanggan tukar).
+                return "ORDER BY (c." + DatabaseHelper.COL_SRV_HELD + " + c." + DatabaseHelper.COL_GALON_PINJAM_ADJUST + ") DESC, c.name ASC";
             case SORT_GALON_DESC:
                 return "ORDER BY galon_keluar DESC, c.name ASC";
             case SORT_KONSUMSI:
@@ -773,13 +1031,29 @@ public class CustomerDao {
     }
 
     /** Total galon yang masih beredar di semua pelanggan */
+    /**
+     * "Galon Beredar" DEPOT (galon fisik yang sedang dipegang konsumen) — Σ saldo per pelanggan.
+     *
+     * <p>Memakai {@code srv_held + galon_pinjam_adjust}: saldo berjalan yang DIPAGARI DI 0 per
+     * pelanggan, dihitung server lintas SEMUA perangkat (sama dengan "Galon Dipinjam" di detail
+     * pelanggan, kartu web, dan {@code App\Support\GalonHeld}). JANGAN kembali ke
+     * {@code Σ(JUAL) − Σ(KEMBALI)} atas tabel transaksi lokal — itu salah DUA kali:
+     * <ol>
+     *   <li>transaksi TIDAK branch-wide (tiap HP hanya menyimpan transaksinya sendiri + web), jadi
+     *       angkanya beda-beda tiap perangkat padahal ini besaran depot;</li>
+     *   <li>selisih mentah menyerap saldo NEGATIF pelanggan yang mengembalikan lebih banyak dari
+     *       yang dipinjam, sehingga total depot ikut terpotong (di produksi: 521 vs 896 yang benar).</li>
+     * </ol>
+     * Baris pelanggan sendiri branch-wide, jadi hasilnya sama di semua perangkat — sama seperti
+     * badge "Stok" di kartu ini yang memang sudah memakai angka server.
+     */
     public int getTotalGalonBeredar() {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
-        String query = "SELECT " +
-                "COALESCE(SUM(CASE WHEN type='JUAL' THEN jumlah_galon ELSE 0 END),0) - " +
-                "COALESCE(SUM(CASE WHEN type='KEMBALI' THEN jumlah_galon ELSE 0 END),0) " +
-                "FROM transactions";
-        Cursor cursor = db.rawQuery(query, null);
+        // Pelanggan yang diserahterimakan perangkat ini tetap dihitung: galonnya masih beredar di depot.
+        Cursor cursor = db.rawQuery(
+                "SELECT COALESCE(SUM(MAX(COALESCE(" + DatabaseHelper.COL_SRV_HELD + ",0) + "
+                        + "COALESCE(" + DatabaseHelper.COL_GALON_PINJAM_ADJUST + ",0), 0)),0) "
+                        + "FROM customers", null);
         int total = 0;
         if (cursor.moveToFirst()) {
             total = cursor.getInt(0);
@@ -904,9 +1178,48 @@ public class CustomerDao {
     }
 
     public List<Customer> getFollowUpCandidates(int days) {
+        return getFollowUpCandidates(days, null);
+    }
+
+    /** "?,?,?" sebanyak {@code n} — dipakai klausa SQL IN(...) dgn jumlah argumen dinamis. */
+    private static String placeholders(int n) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < n; i++) sb.append(i > 0 ? ",?" : "?");
+        return sb.toString();
+    }
+
+    /** Semua nilai Kecamatan (hasil reverse-geocode server) yang punya minimal satu pelanggan —
+     *  dipakai mengisi dialog filter "Wilayah Administratif" di CustomerListActivity. */
+    public List<String> getDistinctKecamatan() { return distinctColumn(DatabaseHelper.COL_KECAMATAN); }
+
+    /** Semua nilai Desa (hasil reverse-geocode server) yang punya minimal satu pelanggan. */
+    public List<String> getDistinctDesa() { return distinctColumn(DatabaseHelper.COL_DESA); }
+
+    private List<String> distinctColumn(String col) {
+        List<String> out = new ArrayList<>();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor cursor = db.rawQuery("SELECT DISTINCT " + col
+                + " FROM " + DatabaseHelper.TABLE_CUSTOMERS
+                + " WHERE " + col + " IS NOT NULL AND " + col + " <> '' AND " + NOT_HANDED_OVER_HERE
+                + " ORDER BY " + col + " COLLATE NOCASE ASC", null);
+        while (cursor.moveToNext()) out.add(cursor.getString(0));
+        cursor.close();
+        return out;
+    }
+
+    /** Semua label perangkat asal ({@code origin_label}) yang punya minimal satu pelanggan —
+     *  dipakai mengisi dialog filter "Perangkat" di FollowUpActivity. Terurut alfabet. */
+    public List<String> getDistinctCustomerOrigins() { return distinctColumn(DatabaseHelper.COL_ORIGIN_LABEL); }
+
+    /** @param originLabels null/kosong = SEMUA asal perangkat (default); selain itu hanya
+     *  pelanggan ber-{@code origin_label} salah satu dari set ini yang masuk daftar — dipakai
+     *  filter checkbox "Perangkat" di FollowUpActivity (default semua tercentang = perilaku sama
+     *  dengan tanpa filter). */
+    public List<Customer> getFollowUpCandidates(int days, java.util.Set<String> originLabels) {
         List<Customer> list = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String cutoff = cutoffTimestamp(days);
+        boolean filterOrigin = originLabels != null && !originLabels.isEmpty();
         // Filter by last_jual < cutoff (string compare works because tanggal is
         // stored in ISO "yyyy-MM-dd HH:mm:ss" format which is lexicographically
         // sortable). Avoids SQLite julianday() quirks across devices.
@@ -926,7 +1239,16 @@ public class CustomerDao {
                 "     WHERE t3.customer_id=c._id AND t3.type='JUAL')) AS fu_last_qty " +
                 "FROM customers c " +
                 "LEFT JOIN transactions t ON c._id = t.customer_id " +
-                "WHERE c.name <> ? AND c." + DatabaseHelper.COL_IS_MINE + " = 1 AND " + NOT_HANDED_OVER_HERE + " " +
+                // Follow Up itu cabang-luas (siapa pun staf boleh diingatkan follow up pelanggan mana
+                // pun) — BUKAN filter "Hanya Pelanggan Saya" (is_mine, opsional di Daftar Pelanggan).
+                // is_mine=1 HANYA true untuk pelanggan yang DIDAFTARKAN dari perangkat ini sendiri
+                // (lihat SyncController::is_mine di server), jadi mensyaratkannya di sini membuat
+                // daftar Follow Up kosong di HP mana pun yang jarang mendaftarkan pelanggan baru
+                // (kurir, admin, HP baru diprovisioning) walau ada banyak pelanggan cabang yang
+                // sudah lama tak beli.
+                "WHERE c.name <> ? AND " + NOT_HANDED_OVER_HERE
+                + (filterOrigin ? " AND c." + DatabaseHelper.COL_ORIGIN_LABEL + " IN ("
+                        + placeholders(originLabels.size()) + ")" : "") + " " +
                 "GROUP BY c._id " +
                 // Masuk daftar bila: (a) ditandai MANUAL dari web (terlepas riwayat beli), ATAU
                 // (b) belum beli ≥ N hari — kecuali sudah di-"Remove", KECUALI beli lagi setelahnya.
@@ -937,7 +1259,11 @@ public class CustomerDao {
                 // Entri manual di atas (terbaru dulu), lalu yang paling lama tidak beli.
                 "ORDER BY (c." + DatabaseHelper.COL_FOLLOWUP_MANUAL_AT + " IS NULL), " +
                 "         c." + DatabaseHelper.COL_FOLLOWUP_MANUAL_AT + " DESC, last_jual ASC";
-        Cursor cursor = db.rawQuery(query, new String[]{UMUM_NAME, cutoff});
+        List<String> args = new ArrayList<>();
+        args.add(UMUM_NAME);
+        if (filterOrigin) args.addAll(originLabels);
+        args.add(cutoff);
+        Cursor cursor = db.rawQuery(query, args.toArray(new String[0]));
         while (cursor.moveToNext()) {
             // Ambang DINAMIS: HAVING di atas (aturan fixed) adalah SUPERSET-nya — pelanggan masuk
             // daftar hanya setelah melewati masa PALING LAMA antara fixed dan prediksi konsumsi.
@@ -946,6 +1272,34 @@ public class CustomerDao {
             boolean manual = idxManual >= 0 && !cursor.isNull(idxManual);
             int idxLast = cursor.getColumnIndex("last_jual");
             String lastJual = idxLast >= 0 ? cursor.getString(idxLast) : null;
+
+            // Order terakhir EFEKTIF = paling baru antara transaksi LOKAL, srv_last_jual (order
+            // terakhir lintas SEMUA perangkat menurut server) dan handed_over_at. WAJIB: transaksi
+            // TIDAK branch-wide — HP ini tak menyimpan penjualan HP lain, jadi tanpa penggabungan ini
+            // pelanggan yang barusan dilayani rekan tetap dianggap "lama tak beli" dan daftar Follow
+            // Up jadi berbeda-beda tiap perangkat. Cermin Daftar Kunjungan (VisitListActivity).
+            // Dibandingkan dalam MILIDETIK (bukan string): nilai server bisa berformat UTC-ISO
+            // sedangkan tanggal lokal jam dinding perangkat — banding teks akan salah sehari.
+            int idxSrvLj = cursor.getColumnIndex(DatabaseHelper.COL_SRV_LAST_JUAL);
+            String srvLastJual = idxSrvLj >= 0 ? cursor.getString(idxSrvLj) : null;
+            int idxHandedAt = cursor.getColumnIndex(DatabaseHelper.COL_HANDED_OVER_AT);
+            String handedAt = idxHandedAt >= 0 ? cursor.getString(idxHandedAt) : null;
+            long msLocal = parseMillisOrMin(lastJual);
+            long msSrv = parseMillisOrMin(srvLastJual);
+            long msHanded = parseMillisOrMin(handedAt);
+            long msEff = Math.max(msLocal, Math.max(msSrv, msHanded));
+            if (msEff > msLocal && msEff != Long.MIN_VALUE) {
+                // DIFORMAT ULANG ke jam dinding perangkat — JANGAN oper string server apa adanya:
+                // nilainya bisa UTC-ISO, sementara kartu ("Terakhir beli") & ambang memakai pola
+                // lokal "yyyy-MM-dd HH:mm:ss" → tanggalnya bisa meleset sehari.
+                lastJual = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+                        .format(new java.util.Date(msEff));
+            }
+            // Sudah order (di perangkat MANA PUN) dalam N hari → bukan kandidat follow-up.
+            if (!manual && msEff != Long.MIN_VALUE && msEff >= cutoffMillis(days)) {
+                continue;
+            }
+
             double galonTotal = cursor.getDouble(cursor.getColumnIndexOrThrow("fu_galon_jual"));
             String firstJual = cursor.getString(cursor.getColumnIndexOrThrow("fu_first_jual"));
             double lastQty = cursor.getDouble(cursor.getColumnIndexOrThrow("fu_last_qty"));
@@ -1055,6 +1409,21 @@ public class CustomerDao {
         Calendar cal = Calendar.getInstance();
         cal.add(Calendar.DAY_OF_YEAR, -days);
         return new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(cal.getTime());
+    }
+
+    /**
+     * {@link #cutoffTimestamp} dalam MILIDETIK (awal hari batas, waktu perangkat) — dipakai
+     * membandingkan order terakhir EFEKTIF (gabungan lokal + server) yang formatnya bisa
+     * berbeda-beda (UTC-ISO vs jam dinding lokal), sehingga banding teks tak bisa dipakai.
+     */
+    private long cutoffMillis(int days) {
+        Calendar cal = Calendar.getInstance();
+        cal.add(Calendar.DAY_OF_YEAR, -days);
+        cal.set(Calendar.HOUR_OF_DAY, 0);
+        cal.set(Calendar.MINUTE, 0);
+        cal.set(Calendar.SECOND, 0);
+        cal.set(Calendar.MILLISECOND, 0);
+        return cal.getTimeInMillis();
     }
 
     public int getTotalCustomers() {
@@ -1366,11 +1735,27 @@ public class CustomerDao {
                 if (l == null || (l.lat == 0 && l.lng == 0)) continue; // (0,0) = belum ditandai
                 try {
                     org.json.JSONObject o = new org.json.JSONObject();
+                    // Id stabil (cermin web) — dikunci ke nama berkas koleksi foto; tanpa ini,
+                    // menambah/hapus baris lain akan menggeser foto yang sudah diunggah ke lokasi lain.
+                    if (l.id != null && !l.id.trim().isEmpty()) o.put("id", l.id.trim());
                     String nm = l.name == null ? "" : l.name.trim();
                     o.put("name", nm.isEmpty() ? Customer.DEFAULT_LOCATION_NAME : nm);
                     o.put("lat", l.lat);
                     o.put("lng", l.lng);
                     o.put("wajib_ongkir", l.wajibOngkir);
+                    // Round-trip foto per-lokasi apa adanya — kalau di-drop, edit pelanggan (web ATAU
+                    // HP, keduanya bisa mengubah koleksi sekarang) akan menghapus foto lokasi saat
+                    // push balik.
+                    if (l.photo != null && !l.photo.trim().isEmpty()) {
+                        o.put("photo", l.photo.trim());
+                    }
+                    if (l.photos != null && !l.photos.isEmpty()) {
+                        org.json.JSONArray photos = new org.json.JSONArray();
+                        for (String p : l.photos) {
+                            if (p != null && !p.trim().isEmpty()) photos.put(p.trim());
+                        }
+                        if (photos.length() > 0) o.put("photos", photos);
+                    }
                     arr.put(o);
                     if (first == null) first = l;
                 } catch (org.json.JSONException ignored) { }
@@ -1405,7 +1790,70 @@ public class CustomerDao {
                 if (name.isEmpty()) name = Customer.DEFAULT_LOCATION_NAME;
                 boolean wajib = o.optBoolean("wajib_ongkir", false)
                         || o.optInt("wajib_ongkir", 0) != 0;
-                list.add(new Customer.Location(name, lat, lng, wajib));
+                Customer.Location loc = new Customer.Location(name, lat, lng, wajib);
+                String id = o.isNull("id") ? "" : o.optString("id", "").trim();
+                if (!id.isEmpty() && !"null".equalsIgnoreCase(id)) loc.id = id;
+                // optString() mengembalikan STRING "null" untuk JSON null (jebakan org.json) — nilai
+                // itu ikut terdorong balik ke server sebagai {"photo":"null"}, membuat web memasang
+                // tag "Foto" tanpa foto DAN memblokir fallback ke foto pelanggan. isNull() dulu.
+                String photo = o.isNull("photo") ? "" : o.optString("photo", "").trim();
+                if (!photo.isEmpty() && !"null".equalsIgnoreCase(photo)) loc.photo = photo;
+                // Koleksi foto (maks 5, diunggah lewat web) — 'photos' menang; 'photo' tunggal
+                // legacy jadi fallback satu-elemen bila koleksi belum ada (baris lama/HP versi lama).
+                org.json.JSONArray photosArr = o.optJSONArray("photos");
+                if (photosArr != null) {
+                    for (int j = 0; j < photosArr.length() && loc.photos.size() < 5; j++) {
+                        String p = photosArr.isNull(j) ? "" : photosArr.optString(j, "").trim();
+                        if (!p.isEmpty() && !"null".equalsIgnoreCase(p)) loc.photos.add(p);
+                    }
+                }
+                if (loc.photos.isEmpty() && loc.photo != null) loc.photos.add(loc.photo);
+                list.add(loc);
+            }
+            return list.isEmpty() ? null : list;
+        } catch (org.json.JSONException e) {
+            return null;
+        }
+    }
+
+    /** Serialize daftar NOMOR HP → JSON array (dedup by nomor kanonik, urutan dijaga) + CERMIN
+     *  skalar `phone` = nomor UTAMA (phones[0]). Model tak menyetel phones (null) → biarkan skalar
+     *  `phone` dari pemanggil (back-compat jalur simpan lama). Daftar kosong → "[]" (bukan null)
+     *  supaya penghapusan ikut tersinkron (push meniadakan kolom null). */
+    private void putPhones(ContentValues values, Customer customer) {
+        java.util.List<String> list = customer.getPhones();
+        if (list == null) {
+            return;   // jalur lama hanya set `phone` skalar → jangan sentuh
+        }
+        org.json.JSONArray arr = new org.json.JSONArray();
+        String primary = null;
+        java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
+        for (String p : list) {
+            if (p == null) continue;
+            String t = p.trim();
+            if (t.isEmpty()) continue;
+            String k = canonicalPhone(t);
+            if (k.isEmpty()) k = t;
+            if (seen.contains(k)) continue;
+            seen.add(k);
+            arr.put(t);
+            if (primary == null) primary = t;
+        }
+        values.put(DatabaseHelper.COL_PHONES, arr.toString());
+        // Cermin nomor utama. Daftar KOSONG → "" (bukan null): push meniadakan kolom null, jadi null
+        // akan bikin penghapusan nomor tak terkirim ke server + nomor lama "bangkit" saat pull ulang.
+        values.put(DatabaseHelper.COL_PHONE, primary != null ? primary : "");
+    }
+
+    /** Parse JSON array NOMOR HP → List&lt;String&gt;. Null/kosong/invalid → null. */
+    public static java.util.List<String> parsePhones(String json) {
+        if (json == null || json.trim().isEmpty()) return null;
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray(json);
+            java.util.List<String> list = new ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) {
+                String s = arr.optString(i, "").trim();
+                if (!s.isEmpty()) list.add(s);
             }
             return list.isEmpty() ? null : list;
         } catch (org.json.JSONException e) {
@@ -1435,7 +1883,13 @@ public class CustomerDao {
         c.setId(cursor.getLong(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_ID)));
         c.setName(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_NAME)));
         c.setPhone(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_PHONE)));
+        // Multi-nomor (getColumnIndex, bukan OrThrow: tak semua query select kolom ini). Null → model
+        // sintesis [phone] via getPhonesOrDefault.
+        int idxPhones = cursor.getColumnIndex(DatabaseHelper.COL_PHONES);
+        if (idxPhones >= 0 && !cursor.isNull(idxPhones)) c.setPhones(parsePhones(cursor.getString(idxPhones)));
         c.setAddress(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_ADDRESS)));
+        int idxOrderNote = cursor.getColumnIndex(DatabaseHelper.COL_ORDER_NOTE);
+        if (idxOrderNote >= 0 && !cursor.isNull(idxOrderNote)) c.setOrderNote(cursor.getString(idxOrderNote));
         c.setPhotoPath(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_PHOTO_PATH)));
         c.setLatitude(cursor.getDouble(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_LATITUDE)));
         c.setLongitude(cursor.getDouble(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_LONGITUDE)));
@@ -1468,10 +1922,16 @@ public class CustomerDao {
         if (idxSrvBor >= 0) c.setSrvBorrowed(cursor.getInt(idxSrvBor));
         int idxSrvKmb = cursor.getColumnIndex(DatabaseHelper.COL_SRV_KEMBALI);
         if (idxSrvKmb >= 0) c.setSrvKembali(cursor.getInt(idxSrvKmb));
+        int idxSrvHeld = cursor.getColumnIndex(DatabaseHelper.COL_SRV_HELD);
+        if (idxSrvHeld >= 0) c.setSrvHeld(cursor.getInt(idxSrvHeld));
         int idxSrvFj = cursor.getColumnIndex(DatabaseHelper.COL_SRV_FIRST_JUAL);
         if (idxSrvFj >= 0 && !cursor.isNull(idxSrvFj)) c.setSrvFirstJual(cursor.getString(idxSrvFj));
         int idxOrigin = cursor.getColumnIndex(DatabaseHelper.COL_ORIGIN_LABEL);
         if (idxOrigin >= 0 && !cursor.isNull(idxOrigin)) c.setOriginLabel(cursor.getString(idxOrigin));
+        int idxDesa = cursor.getColumnIndex(DatabaseHelper.COL_DESA);
+        if (idxDesa >= 0 && !cursor.isNull(idxDesa)) c.setDesa(cursor.getString(idxDesa));
+        int idxKecamatan = cursor.getColumnIndex(DatabaseHelper.COL_KECAMATAN);
+        if (idxKecamatan >= 0 && !cursor.isNull(idxKecamatan)) c.setKecamatan(cursor.getString(idxKecamatan));
         int idxSrvSaldo = cursor.getColumnIndex(DatabaseHelper.COL_SRV_SALDO);
         if (idxSrvSaldo >= 0) c.setSrvSaldo(cursor.getDouble(idxSrvSaldo));
         int idxSrvPromo = cursor.getColumnIndex(DatabaseHelper.COL_SRV_PROMO_GALON);
@@ -1480,6 +1940,10 @@ public class CustomerDao {
         if (idxSrvPromoPulled >= 0) c.setSrvPromoPulled(cursor.getInt(idxSrvPromoPulled));
         int idxReseller = cursor.getColumnIndex(DatabaseHelper.COL_IS_RESELLER);
         if (idxReseller >= 0) c.setReseller(cursor.getInt(idxReseller) == 1);
+        // Kolom v75 — defensif (getColumnIndex, bukan OrThrow): perangkat yang belum upgrade DB /
+        // query lama tanpa kolom ini tak boleh crash.
+        int idxBonusEnabled = cursor.getColumnIndex(DatabaseHelper.COL_CUST_BONUS_ENABLED);
+        if (idxBonusEnabled >= 0) c.setBonusEnabled(cursor.getInt(idxBonusEnabled) == 1);
         int idxWajibOngkir = cursor.getColumnIndex(DatabaseHelper.COL_WAJIB_ONGKIR);
         if (idxWajibOngkir >= 0) c.setWajibOngkir(cursor.getInt(idxWajibOngkir) == 1);
         int idxSince = cursor.getColumnIndex(DatabaseHelper.COL_RESELLER_SINCE);
@@ -1490,6 +1954,8 @@ public class CustomerDao {
         if (idxAddPrice >= 0) c.setKomisiAddToPrice(cursor.getInt(idxAddPrice) == 1);
         int idxLinkedR = cursor.getColumnIndex(DatabaseHelper.COL_LINKED_RESELLER_UUID);
         if (idxLinkedR >= 0 && !cursor.isNull(idxLinkedR)) c.setLinkedResellerUuid(cursor.getString(idxLinkedR));
+        int idxAssignDev = cursor.getColumnIndex(DatabaseHelper.COL_CUST_ASSIGN_DEVICE);
+        if (idxAssignDev >= 0 && !cursor.isNull(idxAssignDev)) c.setAssignedDeviceUuid(cursor.getString(idxAssignDev));
         int idxPinjamAdj = cursor.getColumnIndex(DatabaseHelper.COL_GALON_PINJAM_ADJUST);
         if (idxPinjamAdj >= 0 && !cursor.isNull(idxPinjamAdj)) c.setGalonPinjamAdjust(cursor.getInt(idxPinjamAdj));
         int idxMine = cursor.getColumnIndex(DatabaseHelper.COL_IS_MINE);
@@ -1529,6 +1995,22 @@ public class CustomerDao {
         if (idxIsRepBy >= 0 && !cursor.isNull(idxIsRepBy)) c.setIssueReportedBy(cursor.getString(idxIsRepBy));
         int idxIsResAt = cursor.getColumnIndex(DatabaseHelper.COL_ISSUE_RESOLVED_AT);
         if (idxIsResAt >= 0 && !cursor.isNull(idxIsResAt)) c.setIssueResolvedAt(cursor.getString(idxIsResAt));
+        // Pelanggan Prioritas: kolom priority_* (guard — hanya query SELECT c.* yang memuatnya).
+        int idxPrAt = cursor.getColumnIndex(DatabaseHelper.COL_PRIORITY_AT);
+        if (idxPrAt >= 0 && !cursor.isNull(idxPrAt)) c.setPriorityAt(cursor.getString(idxPrAt));
+        int idxPrReason = cursor.getColumnIndex(DatabaseHelper.COL_PRIORITY_REASON);
+        if (idxPrReason >= 0 && !cursor.isNull(idxPrReason)) c.setPriorityReason(cursor.getString(idxPrReason));
+        int idxPrBy = cursor.getColumnIndex(DatabaseHelper.COL_PRIORITY_BY);
+        if (idxPrBy >= 0 && !cursor.isNull(idxPrBy)) c.setPriorityBy(cursor.getString(idxPrBy));
+        int idxPrCleared = cursor.getColumnIndex(DatabaseHelper.COL_PRIORITY_CLEARED_AT);
+        if (idxPrCleared >= 0 && !cursor.isNull(idxPrCleared)) c.setPriorityClearedAt(cursor.getString(idxPrCleared));
+        // Kunjungi Urgent: kolom visit_urgent_* (guard sama — hanya query SELECT c.* yang memuatnya).
+        int idxVuAt = cursor.getColumnIndex(DatabaseHelper.COL_VISIT_URGENT_AT);
+        if (idxVuAt >= 0 && !cursor.isNull(idxVuAt)) c.setVisitUrgentAt(cursor.getString(idxVuAt));
+        int idxVuBy = cursor.getColumnIndex(DatabaseHelper.COL_VISIT_URGENT_BY);
+        if (idxVuBy >= 0 && !cursor.isNull(idxVuBy)) c.setVisitUrgentBy(cursor.getString(idxVuBy));
+        int idxVuDone = cursor.getColumnIndex(DatabaseHelper.COL_VISIT_URGENT_DONE_AT);
+        if (idxVuDone >= 0 && !cursor.isNull(idxVuDone)) c.setVisitUrgentDoneAt(cursor.getString(idxVuDone));
         // Multi-lokasi + lazy synthesis (hanya di MODEL, tidak dipersist pembaca): baris legacy
         // tanpa kolom locations tapi punya koordinat → satu entri "Kediaman" membawa flag
         // wajib ongkir legacy, supaya semua pemakai cukup melihat getLocations().
@@ -1630,12 +2112,15 @@ public class CustomerDao {
      *  daftarnya (akuisisi tercatat DI PERANGKAT INI), plus tanggal PEMBELIAN pertamanya. */
     public static class PromoRow {
         public long id;
+        public String uuid;        // sync_uuid — dibutuhkan untuk memanggil endpoint /intro-wa (branch-wide)
         public String name;
         public String phone;
         public String promoDay;    // "yyyy-MM-dd" — kapan promosi diberikan
         public int galon;          // galon gratis yang diberikan
-        public String repeatDay;   // "yyyy-MM-dd" pembelian pertama, null = belum order ulang
-        public int days;           // jeda hari promo → pembelian (hanya valid bila repeatDay != null)
+        public String repeatDay;   // "yyyy-MM-dd" ORDER KEMBALI (hari > akuisisi), null = belum
+        public int days;           // jeda hari akuisisi → order kembali (hanya valid bila repeatDay != null)
+        public boolean paidAtAcq;  // akuisisi BERBAYAR yang beli di hari akuisisi tapi belum order kembali
+        public boolean introWaSent; // "Kirim WA Perkenalan" pernah dikirim (server-authoritative)
     }
 
     /**
@@ -1665,17 +2150,27 @@ public class CustomerDao {
                 + "   AND COALESCE(t." + DatabaseHelper.COL_DELIVERY_STATUS + ",'')<>'TERTUNDA'"
                 + "   THEN substr(t." + DatabaseHelper.COL_TANGGAL + ",1,10) END) AS local_repeat"
                 + ", c." + DatabaseHelper.COL_SRV_FIRST_PAID
+                + ", c." + DatabaseHelper.COL_SRV_PROMO_GALON
+                + ", c." + DatabaseHelper.COL_SRV_PROMO_PAID
+                + ", c." + DatabaseHelper.COL_SYNC_UUID
+                + ", c." + DatabaseHelper.COL_INTRO_WA_SENT_AT
+                // LEFT JOIN: pelanggan yang galon promosinya tercatat di PERANGKAT LAIN tak punya
+                // transaksi lokal — tetap harus muncul lewat srv_promo_galon (agg server). Hari promo
+                // efektif = hari daftar (promo diberi saat akuisisi) bila tak ada baris lokal.
                 + " FROM " + DatabaseHelper.TABLE_CUSTOMERS + " c"
-                + " JOIN " + DatabaseHelper.TABLE_TRANSACTIONS + " t ON t." + DatabaseHelper.COL_CUSTOMER_ID + "=c." + DatabaseHelper.COL_ID
+                + " LEFT JOIN " + DatabaseHelper.TABLE_TRANSACTIONS + " t ON t." + DatabaseHelper.COL_CUSTOMER_ID + "=c." + DatabaseHelper.COL_ID
                 + "   AND t." + DatabaseHelper.COL_TYPE + "='JUAL'"
                 + "   AND COALESCE(t." + DatabaseHelper.COL_CATATAN + ",'') NOT LIKE '%[PENCAIRAN KOMISI]%'"
                 + (search != null && !search.trim().isEmpty()
                     ? " WHERE (c." + DatabaseHelper.COL_NAME + " LIKE ? OR c." + DatabaseHelper.COL_PHONE + " LIKE ?)" : "")
                 + " GROUP BY c." + DatabaseHelper.COL_ID
-                + " HAVING promo_day IS NOT NULL"
-                + (startDay != null ? " AND promo_day >= ?" : "")
-                + (endDay != null ? " AND promo_day <= ?" : "")
-                + " ORDER BY promo_day DESC, c." + DatabaseHelper.COL_NAME + " ASC";
+                // Kohort promo = ada galon gratis di hari daftar (lokal) ATAU agg server > 0
+                // (gratis lintas-perangkat) ATAU akuisisi BERBAYAR-marketing (srv_promo_paid).
+                + " HAVING (promo_day IS NOT NULL OR c." + DatabaseHelper.COL_SRV_PROMO_GALON + " > 0"
+                + "   OR c." + DatabaseHelper.COL_SRV_PROMO_PAID + " > 0)"
+                + (startDay != null ? " AND COALESCE(promo_day, reg_day) >= ?" : "")
+                + (endDay != null ? " AND COALESCE(promo_day, reg_day) <= ?" : "")
+                + " ORDER BY COALESCE(promo_day, reg_day) DESC, c." + DatabaseHelper.COL_NAME + " ASC";
         java.util.List<String> argList = new java.util.ArrayList<>();
         if (search != null && !search.trim().isEmpty()) {
             String like = "%" + search.trim() + "%";
@@ -1694,15 +2189,24 @@ public class CustomerDao {
                 r.name = c.getString(1);
                 r.phone = c.getString(2);
                 String regDay = c.getString(3);
-                r.promoDay = c.getString(4);
-                r.galon = c.getInt(5);
+                String promoDayLocal = c.isNull(4) ? null : c.getString(4);
+                int galonLocal = c.getInt(5);
                 String localRepeat = c.isNull(6) ? null : c.getString(6);
                 String srvPaid = c.isNull(7) ? null : c.getString(7);
-                // Konversi = yang PALING AWAL antara agg server & transaksi lokal; agg server
-                // hanya dihitung bila jatuh di hari LEBIH BARU dari hari daftar (pembelian
-                // berbayar di hari akuisisi = bagian akuisisi, bukan order ulang).
+                int srvPromoGalon = c.getInt(8);
+                int srvPromoPaid = c.getInt(9);
+                r.uuid = c.isNull(10) ? null : c.getString(10);
+                r.introWaSent = !c.isNull(11);
+                // Hari promo efektif = hari galon-gratis lokal, atau hari daftar bila promonya
+                // hanya terlihat dari agg server (transaksi di perangkat lain). Galon akuisisi =
+                // bagian GRATIS (lokal bila ada, else server) + bagian BERBAYAR-marketing (server).
+                r.promoDay = promoDayLocal != null ? promoDayLocal : regDay;
+                r.galon = (galonLocal > 0 ? galonLocal : srvPromoGalon) + srvPromoPaid;
+                // ORDER KEMBALI (konversi sejati) = pembelian berbayar pertama di hari LEBIH BARU
+                // dari akuisisi — yang PALING AWAL antara transaksi lokal & agg server (srv sudah
+                // strictly-after dari server). Berlaku untuk akuisisi gratis MAUPUN berbayar.
                 String srvDay = (srvPaid != null && srvPaid.length() >= 10) ? srvPaid.substring(0, 10) : null;
-                if (srvDay != null && regDay != null && srvDay.compareTo(regDay) <= 0) srvDay = null;
+                if (srvDay != null && regDay != null && srvDay.compareTo(regDay) <= 0) srvDay = null;   // defensif
                 String repeat = localRepeat;
                 if (srvDay != null && (repeat == null || srvDay.compareTo(repeat) < 0)) repeat = srvDay;
                 r.repeatDay = repeat;
@@ -1712,6 +2216,52 @@ public class CustomerDao {
                         r.days = (int) (ms / (24L * 60 * 60 * 1000));
                     } catch (Exception ignored) { r.days = 0; }
                 }
+                // Akuisisi BERBAYAR (srv_promo_paid>0) yang membeli saat akuisisi tapi BELUM order
+                // kembali → "langsung beli saat akuisisi" (cermin web paid_at_acq), bukan "belum".
+                r.paidAtAcq = repeat == null && srvPromoPaid > 0;
+                out.add(r);
+            }
+        }
+        return out;
+    }
+
+    /** Kandidat badge "WA Perkenalan": koordinat utk uji wilayah di pemanggil (0/0 = tanpa titik). */
+    public static class IntroPendingRow {
+        public long id;
+        public String name;
+        public double lat, lng;
+    }
+
+    /**
+     * Pelanggan PROMOSI (kohort = HAVING yang sama dgn {@link #getPromoCustomers}: galon gratis
+     * lokal di hari daftar ATAU srv_promo_galon>0 ATAU srv_promo_paid>0) yang BELUM pernah dikirim
+     * WA Perkenalan (promo_intro_wa_sent_at NULL — stempel server-authoritative, pull-only; turun
+     * begitu perangkat mana pun mengirim). Tanpa batas tanggal — badge menghitung SEMUA yang
+     * tertunggak. Uji wilayah dilakukan pemanggil (butuh konfigurasi zona dari SyncSettings).
+     */
+    public java.util.List<IntroPendingRow> getPromoIntroPending() {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String sql = "SELECT c." + DatabaseHelper.COL_ID + ", c." + DatabaseHelper.COL_NAME
+                + ", c." + DatabaseHelper.COL_LATITUDE + ", c." + DatabaseHelper.COL_LONGITUDE
+                + ", substr(MIN(CASE WHEN t." + DatabaseHelper.COL_TOTAL_HARGA + "=0"
+                + "   AND substr(t." + DatabaseHelper.COL_TANGGAL + ",1,10)=substr(c." + DatabaseHelper.COL_CREATED_AT + ",1,10)"
+                + "   THEN t." + DatabaseHelper.COL_TANGGAL + " END),1,10) AS promo_day"
+                + " FROM " + DatabaseHelper.TABLE_CUSTOMERS + " c"
+                + " LEFT JOIN " + DatabaseHelper.TABLE_TRANSACTIONS + " t ON t." + DatabaseHelper.COL_CUSTOMER_ID + "=c." + DatabaseHelper.COL_ID
+                + "   AND t." + DatabaseHelper.COL_TYPE + "='JUAL'"
+                + "   AND COALESCE(t." + DatabaseHelper.COL_CATATAN + ",'') NOT LIKE '%[PENCAIRAN KOMISI]%'"
+                + " WHERE c." + DatabaseHelper.COL_INTRO_WA_SENT_AT + " IS NULL"
+                + " GROUP BY c." + DatabaseHelper.COL_ID
+                + " HAVING (promo_day IS NOT NULL OR c." + DatabaseHelper.COL_SRV_PROMO_GALON + " > 0"
+                + "   OR c." + DatabaseHelper.COL_SRV_PROMO_PAID + " > 0)";
+        java.util.List<IntroPendingRow> out = new java.util.ArrayList<>();
+        try (Cursor c = db.rawQuery(sql, null)) {
+            while (c.moveToNext()) {
+                IntroPendingRow r = new IntroPendingRow();
+                r.id = c.getLong(0);
+                r.name = c.getString(1);
+                r.lat = c.isNull(2) ? 0 : c.getDouble(2);
+                r.lng = c.isNull(3) ? 0 : c.getDouble(3);
                 out.add(r);
             }
         }

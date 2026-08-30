@@ -52,6 +52,9 @@ public class ReceiptActivity extends AppCompatActivity {
     public static final String EXTRA_HARGA_PER_GALON = "harga_per_galon";
     public static final String EXTRA_ONGKIR = "ongkir";
     public static final String EXTRA_ONGKIR_TYPE = "ongkir_type";
+    /** Harga & kepemilikan botol — dipakai rekonsiliasi ongkir (beli botol BUKAN ongkir). */
+    public static final String EXTRA_HARGA_BOTOL = "harga_botol";
+    public static final String EXTRA_OWNERSHIP = "galon_ownership";
     public static final String EXTRA_TOTAL_HARGA = "total_harga";
     public static final String EXTRA_CATATAN = "catatan";
     public static final String EXTRA_PAYMENT_METHOD = "payment_method";
@@ -62,10 +65,23 @@ public class ReceiptActivity extends AppCompatActivity {
     public static final String EXTRA_ITEMS_JSON = "items_json";
     public static final String EXTRA_REWARD_UNLOCKED = "reward_unlocked";
     public static final String EXTRA_REWARDS_NEW_COUNT = "rewards_new_count";
+    /** 🔁 Order kembali PERTAMA (pembelian ke-2 pelanggan) — popup informasi + status prioritas.
+     *  Cermin TransactionController::store di web (session flash repeatOrderPrompt). */
+    public static final String EXTRA_FIRST_REPEAT_ORDER = "first_repeat_order";
+    public static final String EXTRA_FIRST_REPEAT_PRIORITIZED = "first_repeat_prioritized";
+    /** 🎁 "Bonus Beli N Gratis 1" terpenuhi pada order ini — deskripsi siap-tampil ("1× Galon 19L"),
+     *  null/kosong = tak ada bonus. Cermin popup web (App\Support\ProductBonus). */
+    public static final String EXTRA_PRODUCT_BONUS_GRANTED = "product_bonus_granted";
     public static final String EXTRA_TRANSACTION_ID = "transaction_id";
     /** sync_uuid transaksi ini — dipakai untuk menampilkan gift yang di-klaim (redeemed) oleh
      *  transaksi ini di struk (gambar + teks WA). Diisi dari Transaksi Baru & saat re-share. */
     public static final String EXTRA_GIFT_TRX_UUID = "gift_trx_uuid";
+    /** ID transaksi unik struk (<KODE>-DDMMYY-<COUNTER>) — cermin App\Support\ReceiptNumber (web). */
+    public static final String EXTRA_RECEIPT_NO = "receipt_no";
+    /** _id transaksi yang BARU dibuat — hanya untuk popup "pelanggan punya gift produk".
+     *  Sengaja terpisah dari EXTRA_TRANSACTION_ID: extra itu memicu hidrasi ulang seluruh
+     *  extras dari DB, yang akan menimpa data poin/reward yang sudah disusun TransactionActivity. */
+    public static final String EXTRA_GIFT_TRX_ID = "gift_trx_id";
     /** True = jangan tawarkan kirim struk ke pelanggan di sini (struk dikirim saat
      *  order ditandai Selesai di Antrian Delivery). Dipakai oleh Transaksi Baru (JUAL). */
     public static final String EXTRA_DEFER_CUSTOMER_SEND = "defer_customer_send";
@@ -89,6 +105,8 @@ public class ReceiptActivity extends AppCompatActivity {
     public static final String EXTRA_SALDO_BEFORE = "saldo_before";
     public static final String EXTRA_SALDO_AFTER = "saldo_after";
     public static final String EXTRA_SALDO_DIPOTONG = "saldo_dipotong"; // bagian JUAL yang dibayar dari saldo komisi
+    /** Bagian JUAL yang dibayar dari SALDO REFUND (uang kembali). Dibaca dari buku besar refund. */
+    public static final String EXTRA_REFUND_DIPOTONG = "refund_dipotong";
 
     private static final int RECEIPT_WIDTH = 32; // chars for 58mm printer
     private static final UUID SPP_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
@@ -123,6 +141,11 @@ public class ReceiptActivity extends AppCompatActivity {
         // di layar + gambar struk diisi dari data extras yang sama.
         receiptText = buildReceipt();
         populateReceiptCard();
+        // Keputusan kampanye diambil dari SERVER (otoritatif) di latar, SEBELUM preview digambar —
+        // hasilnya menyusul lalu preview & tombol Kirim memakainya. Lihat prefetchServerCampaigns().
+        prefetchServerCampaigns();
+        populateStrukTeksPreview();
+        wireStrukViewToggle();
 
         com.google.android.material.button.MaterialButton btnShare = findViewById(R.id.btnShare);
         String custName = getIntent().getStringExtra(EXTRA_CUSTOMER_NAME);
@@ -168,6 +191,35 @@ public class ReceiptActivity extends AppCompatActivity {
             new AlertDialog.Builder(this)
                     .setTitle("\uD83C\uDF89 Selamat! Pelanggan Dapat Hadiah")
                     .setMessage(msg)
+                    .setPositiveButton("OK", null)
+                    .setCancelable(false)
+                    .show();
+        }
+        // \uD83D\uDD01 Order kembali PERTAMA: pelanggan baru saja balik order kedua kalinya \u2014 cermin
+        // _repeat_order_prompt.blade.php di web.
+        if (getIntent().getBooleanExtra(EXTRA_FIRST_REPEAT_ORDER, false)) {
+            boolean prioritized = getIntent().getBooleanExtra(EXTRA_FIRST_REPEAT_PRIORITIZED, false);
+            String repeatCustName = getIntent().getStringExtra(EXTRA_CUSTOMER_NAME);
+            String repeatMsg = (repeatCustName != null && !repeatCustName.isEmpty() ? repeatCustName : "Pelanggan")
+                    + " baru saja balik order \u2014 ini pembelian KEDUA mereka sejak bergabung. "
+                    + "Tanda retensi yang bagus, layak diprioritaskan."
+                    + (prioritized
+                        ? "\n\n\u2B50 Order ini otomatis ditandai PRIORITAS \u2014 akan tampil paling atas di antrian delivery."
+                        : "");
+            new AlertDialog.Builder(this)
+                    .setTitle("\uD83D\uDD01 Order Kembali Pertama")
+                    .setMessage(repeatMsg)
+                    .setPositiveButton("OK", null)
+                    .setCancelable(false)
+                    .show();
+        }
+        // \uD83C\uDF81 Bonus "Beli N Gratis 1" terpenuhi \u2014 cermin _repeat_order_prompt / popup web.
+        String bonusGranted = getIntent().getStringExtra(EXTRA_PRODUCT_BONUS_GRANTED);
+        if (bonusGranted != null && !bonusGranted.isEmpty()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("\uD83C\uDF81 Bonus Terpenuhi!")
+                    .setMessage("Pelanggan berhak dapat GRATIS: " + bonusGranted
+                            + "\n\nSudah otomatis ditambahkan ke transaksi ini \u2014 jangan lupa serahkan galonnya.")
                     .setPositiveButton("OK", null)
                     .setCancelable(false)
                     .show();
@@ -263,6 +315,7 @@ public class ReceiptActivity extends AppCompatActivity {
         i.putExtra(EXTRA_CUSTOMER_ID, t.getCustomerId());   // re-share dari struk tersimpan tetap bawa kampanye
         // Gift yang di-klaim transaksi ini → struk yang dibuka ulang tetap menampilkan hadiahnya.
         i.putExtra(EXTRA_GIFT_TRX_UUID, dao.getSyncUuidById(id));
+        i.putExtra(EXTRA_RECEIPT_NO, t.getReceiptNo());
         // Lookup phone
         com.crowja.damiupos.db.CustomerDao cDao = new com.crowja.damiupos.db.CustomerDao(DatabaseHelper.getInstance(this));
         com.crowja.damiupos.model.Customer c = cDao.getById(t.getCustomerId());
@@ -275,6 +328,8 @@ public class ReceiptActivity extends AppCompatActivity {
         i.putExtra(EXTRA_HARGA_PER_GALON, t.getHargaPerGalon());
         i.putExtra(EXTRA_ONGKIR, t.getOngkir());
         i.putExtra(EXTRA_ONGKIR_TYPE, t.getOngkirType());
+        i.putExtra(EXTRA_HARGA_BOTOL, t.getHargaBotolGalon());
+        i.putExtra(EXTRA_OWNERSHIP, t.getGalonOwnership());
         i.putExtra(EXTRA_TOTAL_HARGA, t.getTotalHarga());
         i.putExtra(EXTRA_CATATAN, t.getCatatan());
         // Token link lacak → struk yang dibuka ulang (mis. kirim ulang dari Antrian Delivery)
@@ -343,6 +398,24 @@ public class ReceiptActivity extends AppCompatActivity {
                 } catch (Exception ignored) {}
             }
         }
+        // Potongan SALDO REFUND: dibaca dari BUKU BESAR lewat uuid transaksi (bukan penanda
+        // catatan — penanda bisa hilang bila catatan diedit). Fallback ke penanda untuk baris
+        // yang buku besarnya belum sempat tersinkron ke perangkat ini.
+        double refundDip = 0;
+        String trxUuidForRefund = dao.getSyncUuidById(t.getId());
+        if (trxUuidForRefund != null && !trxUuidForRefund.isEmpty()) {
+            refundDip = new com.crowja.damiupos.db.CustomerRefundDao(DatabaseHelper.getInstance(this))
+                    .usedForTransaction(trxUuidForRefund);
+        }
+        if (refundDip <= 0 && t.getCatatan() != null && t.getCatatan().contains("[REFUND")) {
+            java.util.regex.Matcher mr = java.util.regex.Pattern
+                    .compile("\\[REFUND Rp ([0-9.]+)\\]").matcher(t.getCatatan());
+            if (mr.find()) {
+                try { refundDip = Double.parseDouble(mr.group(1).replace(".", "")); } catch (Exception ignored) {}
+            }
+        }
+        if (refundDip > 0) i.putExtra(EXTRA_REFUND_DIPOTONG, refundDip);
+
         // Points info recalculated from DB at view time (no history-cross detection)
         SettingsDao s = new SettingsDao(DatabaseHelper.getInstance(this));
         if (s.isPointsEnabled() && com.crowja.damiupos.model.Transaction.TYPE_JUAL.equals(t.getType())) {
@@ -383,6 +456,34 @@ public class ReceiptActivity extends AppCompatActivity {
 
     /** Isi kartu struk modern (di-capture jadi PNG) dari extras yang sama dengan versi
      *  teks. Menangani 3 varian: Penjualan (JUAL), Ganti Rugi, dan Pencairan Komisi. */
+    /** Isi tab "Teks" — preview pesan WA LENGKAP (rincian + kampanye aktif), sama persis dengan
+     *  yang benar-benar terkirim lewat {@link #sendStrukWithTracking()}. */
+    private void populateStrukTeksPreview() {
+        TextView tv = findViewById(R.id.tvStrukTeks);
+        if (tv == null) return;
+        tv.setText(composeTrackingCaption(getIntent().getStringExtra(EXTRA_CUSTOMER_NAME)));
+        // Jawaban server bisa tiba setelah layar tergambar → gambar ulang preview supaya yang
+        // dilihat staf identik dengan yang akan terkirim.
+        if (!serverCampaignsSettled) {
+            withServerCampaigns(this::populateStrukTeksPreview);
+        }
+    }
+
+    /** Toggle tab "Teks" ⇄ "Gambar" di atas struk — default Teks (lihat activity_receipt.xml). */
+    private void wireStrukViewToggle() {
+        View cardTeks = findViewById(R.id.cardStrukTeks);
+        View cardGambar = findViewById(R.id.cardStrukGambar);
+        com.google.android.material.button.MaterialButtonToggleGroup toggle = findViewById(R.id.strukViewToggle);
+        if (toggle == null || cardTeks == null || cardGambar == null) return;
+        toggle.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
+            if (!isChecked) return;
+            boolean showTeks = checkedId == R.id.btnStrukTeks;
+            cardTeks.setVisibility(showTeks ? View.VISIBLE : View.GONE);
+            cardGambar.setVisibility(showTeks ? View.GONE : View.VISIBLE);
+        });
+        toggle.check(R.id.btnStrukTeks);
+    }
+
     private void populateReceiptCard() {
         if (receiptCard == null) return;
         Intent in = getIntent();
@@ -423,11 +524,16 @@ public class ReceiptActivity extends AppCompatActivity {
         // --- Meta tanggal + nomor ---
         cardText(R.id.rcMetaDate, new SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.US).format(new Date()));
         long trxId = in.getLongExtra(EXTRA_TRANSACTION_ID, -1);
-        // Nomor order = sequence harian per cabang (sama dgn web). Tanggalnya sudah tampil di
-        // baris Tgl, jadi cukup "No. N".
-        int orderNo = trxId > 0
-                ? new TransactionDao(DatabaseHelper.getInstance(this)).dailyOrderNo(trxId) : 0;
-        cardShow(R.id.rcMetaNo, orderNo > 0 ? "No. " + orderNo : null);
+        // ID transaksi unik (App\Support\ReceiptNumber) WAJIB dicetak bila ada; baris lama sebelum
+        // fitur ini (tanpa receipt_no) jatuh ke nomor urut harian lama.
+        String cardReceiptNo = in.getStringExtra(EXTRA_RECEIPT_NO);
+        if (cardReceiptNo != null && !cardReceiptNo.isEmpty()) {
+            cardShow(R.id.rcMetaNo, cardReceiptNo);
+        } else {
+            int orderNo = trxId > 0
+                    ? new TransactionDao(DatabaseHelper.getInstance(this)).dailyOrderNo(trxId) : 0;
+            cardShow(R.id.rcMetaNo, orderNo > 0 ? "No. " + orderNo : null);
+        }
 
         // --- Pelanggan / Reseller ---
         String custName = isPayout ? in.getStringExtra(EXTRA_RESELLER_NAME) : in.getStringExtra(EXTRA_CUSTOMER_NAME);
@@ -516,13 +622,27 @@ public class ReceiptActivity extends AppCompatActivity {
             } else {
                 hide(R.id.rcKembaliRow);
             }
-            // Potong saldo komisi
+            // Potongan pembayaran: saldo komisi &/atau SALDO REFUND. Kotak rincian tampil bila
+            // salah satu dipakai; "Sisa dibayar" memperhitungkan KEDUANYA.
             double saldoDipotong = in.getDoubleExtra(EXTRA_SALDO_DIPOTONG, 0);
-            if (saldoDipotong > 0) {
-                cardText(R.id.rcSaldoDipotong, "− Rp " + nf.format(Math.round(saldoDipotong)));
-                cardText(R.id.rcSisaBayar, "Rp " + nf.format(Math.round(Math.max(0, totalHarga - saldoDipotong))));
+            double refundDipotong = in.getDoubleExtra(EXTRA_REFUND_DIPOTONG, 0);
+            if (saldoDipotong > 0 || refundDipotong > 0) {
+                if (saldoDipotong > 0) {
+                    cardText(R.id.rcSaldoDipotong, "− Rp " + nf.format(Math.round(saldoDipotong)));
+                    show(R.id.rcSaldoKomisiRow);
+                } else {
+                    hide(R.id.rcSaldoKomisiRow);
+                }
+                if (refundDipotong > 0) {
+                    cardText(R.id.rcRefundDipotong, "− Rp " + nf.format(Math.round(refundDipotong)));
+                    show(R.id.rcRefundRow);
+                } else {
+                    hide(R.id.rcRefundRow);
+                }
+                cardText(R.id.rcSisaBayar, "Rp " + nf.format(
+                        Math.round(Math.max(0, totalHarga - saldoDipotong - refundDipotong))));
                 double saldoSisa = in.getDoubleExtra(EXTRA_SALDO_AFTER, -1);
-                if (saldoSisa >= 0) {
+                if (saldoDipotong > 0 && saldoSisa >= 0) {
                     cardText(R.id.rcSisaSaldo, "Rp " + nf.format(Math.round(saldoSisa)));
                     show(R.id.rcSisaSaldoRow);
                 } else {
@@ -565,11 +685,117 @@ public class ReceiptActivity extends AppCompatActivity {
 
         cardNotes(stripMarkers(in.getStringExtra(EXTRA_CATATAN)));
         renderGiftBox();
+        maybeOfferProductGift();
         // Link tracking TIDAK ditanam di gambar — dikirim sebagai pesan teks terpisah di WA
         // (EXTRA_TEXT) supaya gambar struk tetap bersih dan link-nya bisa diklik.
     }
 
     /** Gift yang di-klaim transaksi ini → kotak amber "🎁 GIFT UNTUK ANDA" + alasan pada gambar struk. */
+    /** Popup gift produk hanya sekali per layar struk (renderGiftBox bisa dipanggil ulang). */
+    private boolean giftOffered = false;
+
+    /**
+     * Sesaat setelah transaksi jadi: kalau pelanggan punya gift PRODUK yang belum diberikan,
+     * tanyakan wujudnya — tambah sebagai baris Rp 0 (produknya boleh ditukar ke yang benar-benar
+     * dibeli), atau gratiskan sebagian item yang dibeli. Menutup popup = gift tetap pending dan
+     * ditawarkan lagi di transaksi berikutnya. Cermin popup yang sama di dashboard web.
+     */
+    private void maybeOfferProductGift() {
+        if (giftOffered) return;
+        final long trxId = getIntent().getLongExtra(EXTRA_GIFT_TRX_ID, -1);
+        final String trxUuid = getIntent().getStringExtra(EXTRA_GIFT_TRX_UUID);
+        final long custId = getIntent().getLongExtra(EXTRA_CUSTOMER_ID, -1);
+        if (trxId <= 0 || trxUuid == null || trxUuid.isEmpty() || custId <= 0) return;
+
+        final com.crowja.damiupos.db.CustomerGiftDao giftDao =
+                new com.crowja.damiupos.db.CustomerGiftDao(DatabaseHelper.getInstance(this));
+        java.util.List<com.crowja.damiupos.db.CustomerGiftDao.Gift> gifts =
+                giftDao.pendingProductForCustomer(custId);
+        if (gifts.isEmpty()) return;
+        giftOffered = true;
+
+        final com.crowja.damiupos.db.CustomerGiftDao.Gift gift = gifts.get(0);
+        final java.util.List<TransactionItem> items = new java.util.ArrayList<>(
+                TransactionItem.listFromJson(getIntent().getStringExtra(EXTRA_ITEMS_JSON)));
+
+        // Satu daftar pilihan: tambah (nama gift) → tambah (tukar ke tiap item dibeli) → gratiskan
+        // tiap baris yang jumlahnya cukup. Indeksnya dipetakan lewat dua list paralel di bawah.
+        final java.util.List<String> labels = new java.util.ArrayList<>();
+        final java.util.List<Integer> swapIdx = new java.util.ArrayList<>();   // -1 = pakai nama gift
+        final java.util.List<Integer> freeIdx = new java.util.ArrayList<>();   // -1 = bukan "gratiskan"
+
+        labels.add("➕ Tambah gratis: " + gift.qty + " pcs " + gift.itemName);
+        swapIdx.add(-1);
+        freeIdx.add(-1);
+        for (int i = 0; i < items.size(); i++) {
+            TransactionItem it = items.get(i);
+            if (it.productName != null && !it.productName.equals(gift.itemName)) {
+                labels.add("➕ Tambah gratis (tukar): " + gift.qty + " pcs " + it.productName);
+                swapIdx.add(i);
+                freeIdx.add(-1);
+            }
+        }
+        for (int i = 0; i < items.size(); i++) {
+            TransactionItem it = items.get(i);
+            if (it.jumlah >= gift.qty) {
+                labels.add("🏷️ Gratiskan " + gift.qty + " pcs dari " + it.productName
+                        + " (total −Rp " + NumberFormat.getInstance(new Locale("id", "ID")).format(Math.round(gift.qty * it.hargaPerGalon)) + ")");
+                swapIdx.add(-1);
+                freeIdx.add(i);
+            }
+        }
+
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("🎁 Pelanggan punya gift")
+                .setItems(labels.toArray(new String[0]), (d, which) -> {
+                    int swap = swapIdx.get(which);
+                    int free = freeIdx.get(which);
+                    double total = getIntent().getDoubleExtra(EXTRA_TOTAL_HARGA, 0);
+                    int galon = 0;
+                    for (TransactionItem it : items) galon += it.jumlah;
+
+                    if (free >= 0) {
+                        // Gratiskan: baris dipecah jadi sisa berbayar + baris Rp 0. Galon tidak
+                        // bertambah (tak ada galon ekstra keluar), totalnya yang berkurang.
+                        TransactionItem line = items.get(free);
+                        int rest = line.jumlah - gift.qty;
+                        total = Math.max(0, total - (gift.qty * line.hargaPerGalon));
+                        if (rest > 0) {
+                            items.set(free, new TransactionItem(line.productId, line.productName, rest, line.hargaPerGalon));
+                        } else {
+                            items.remove(free);
+                        }
+                        items.add(new TransactionItem(line.productId, line.productName, gift.qty, 0));
+                    } else {
+                        // Tambah: galon fisik memang keluar → jumlah galon bertambah, total tetap.
+                        String name = swap >= 0 ? items.get(swap).productName : gift.itemName;
+                        long pid = swap >= 0 ? items.get(swap).productId : 0;
+                        items.add(new TransactionItem(pid, name, gift.qty, 0));
+                        galon += gift.qty;
+                    }
+
+                    new TransactionDao(DatabaseHelper.getInstance(this))
+                            .applyGiftItems(trxId, items, total, galon);
+                    giftDao.redeemOne(gift.localId, trxUuid,
+                            new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this))
+                                    .getCurrentUserName());
+
+                    // Struk digambar ulang dari extras → perbarui dulu, lalu susun ulang layar ini.
+                    getIntent().putExtra(EXTRA_ITEMS_JSON, TransactionItem.listToJson(items));
+                    getIntent().putExtra(EXTRA_TOTAL_HARGA, total);
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                    // Gambar ulang di tempat, BUKAN recreate(): onCreate menjadwalkan iklan
+                    // interstitial, jadi menyusun ulang activity akan memunculkan iklan kedua.
+                    // populateReceiptCard() mengosongkan kontainer item lebih dulu, jadi aman
+                    // dipanggil berulang.
+                    receiptText = buildReceipt();
+                    populateReceiptCard();
+                    populateStrukTeksPreview();
+                })
+                .setNegativeButton("Nanti saja", null)   // gift tetap pending
+                .show();
+    }
+
     private void renderGiftBox() {
         View box = receiptCard.findViewById(R.id.rcGiftBox);
         LinearLayout items = receiptCard.findViewById(R.id.rcGiftItems);
@@ -656,8 +882,35 @@ public class ReceiptActivity extends AppCompatActivity {
 
     private static String stripMarkers(String catatan) {
         if (catatan == null) return "";
-        return catatan.replaceAll("\\[SALDO KOMISI Rp [0-9.]+\\]", "")
+        return catatan.replaceAll("\\[(SALDO KOMISI|REFUND) Rp [0-9.]+\\]", "")
                 .replace("[PENCAIRAN KOMISI]", "").trim();
+    }
+
+    /**
+     * Catatan transaksi yang LAYAK dibaca PELANGGAN (untuk pesan WA). Kolom catatan dipakai ganda:
+     * catatan manual staf SEKALIGUS penanda pembukuan internal — penanda dibuang supaya pelanggan
+     * tak menerima "[PENCAIRAN KOMISI]" / "[SALDO KOMISI Rp 50.000]" di struknya. Cermin
+     * App\Support\StrukWa::customerNote di web; ubah keduanya bersamaan.
+     */
+    static String customerNote(String catatan) {
+        if (catatan == null) return "";
+        String s = catatan;
+        // Transaksi yang dibuat di WEB menyimpan JEJAK AUDIT komposit di kolom ini (nomor HP
+        // pelanggan, nama pembuat, salinan seluruh rincian struk) dengan catatan manusia menempel
+        // di ekor sebagai "Catatan: …". Kirim HANYA ekornya; tanpa ekor → tak ada yang layak tampil.
+        int web = s.toLowerCase(java.util.Locale.ROOT).indexOf("dibuat di web");
+        if (web >= 0) {
+            int p = s.toLowerCase(java.util.Locale.ROOT).lastIndexOf("catatan:");
+            if (p < 0) return "";
+            s = s.substring(p + "catatan:".length());
+        }
+        s = s.replaceAll(
+                "(?i)\\[(SALDO KOMISI|REFUND|GANTI RUGI|PENCAIRAN KOMISI|JUAL BOTOL KOSONG|PROMOSI|TARIK GALON PROMOSI|ORDER ONLINE|BAYAR HUTANG|CASH BON|BAYAR SEBAGIAN)[^\\]]*\\]", " ");
+        s = s.replaceAll("\\s+", " ");
+        // Sisa pemisah menggantung setelah penanda dibuang ("· catatan" / "- catatan").
+        s = s.replaceAll("^[\\s·\\-–—,;:]+", "")
+             .replaceAll("[\\s·\\-–—,;:]+$", "");
+        return s.trim();
     }
 
     private static String initials(String name) {
@@ -691,7 +944,7 @@ public class ReceiptActivity extends AppCompatActivity {
         // Marker potongan saldo komisi punya baris rincian sendiri di bawah TOTAL,
         // jadi jangan ikut tercetak mentah di baris "Catatan:".
         if (catatan != null) {
-            catatan = catatan.replaceAll("\\[SALDO KOMISI Rp [0-9.]+\\]", "").trim();
+            catatan = catatan.replaceAll("\\[(SALDO KOMISI|REFUND) Rp [0-9.]+\\]", "").trim();
         }
 
         NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
@@ -810,6 +1063,15 @@ public class ReceiptActivity extends AppCompatActivity {
                 sb.append(leftRight("Sisa saldo komisi",
                         "Rp " + nf.format(Math.round(saldoSisa)))).append("\n");
             }
+        }
+        // SALDO REFUND yang dipakai membayar order ini → pelanggan melihat potongannya sendiri
+        // dan berapa yang benar-benar dibayar. TOTAL di atas sengaja tidak dikurangi.
+        double refundDipotongWa = getIntent().getDoubleExtra(EXTRA_REFUND_DIPOTONG, 0);
+        if (refundDipotongWa > 0) {
+            sb.append(leftRight("Dari saldo refund",
+                    "- Rp " + nf.format(Math.round(refundDipotongWa)))).append("\n");
+            double sisaBayarRef = Math.max(0, totalHarga - saldoDipotong - refundDipotongWa);
+            sb.append(leftRight("Sisa dibayar", "Rp " + nf.format(Math.round(sisaBayarRef)))).append("\n");
         }
         sb.append(line('=')).append("\n");
 
@@ -1104,9 +1366,17 @@ public class ReceiptActivity extends AppCompatActivity {
     }
 
     private void shareReceipt() {
-        // Struk dibagikan sebagai GAMBAR (PNG). Bila pelanggan punya nomor HP, langsung tuju chat
-        // WhatsApp pelanggan itu (lewat extra "jid") → TIDAK perlu memilih kontak; struk masuk ke
-        // kotak kirim chat-nya, staf tinggal menekan "Kirim". (WhatsApp tidak mengizinkan menekan
+        // Ikuti tab yang SEDANG TERLIHAT (toggle Teks/Gambar di atas struk) — bukan selalu gambar.
+        // Tab "Teks" (default) berisi tautan QRIS/lacak yang bisa DIKETUK di WhatsApp; membagikannya
+        // sebagai gambar PNG (perilaku lama) meratakan tautan itu jadi teks statis tak bisa diklik.
+        com.google.android.material.button.MaterialButtonToggleGroup toggle = findViewById(R.id.strukViewToggle);
+        if (toggle != null && toggle.getCheckedButtonId() == R.id.btnStrukTeks) {
+            sendStrukWithTracking();
+            return;
+        }
+        // Tab "Gambar": dibagikan sebagai GAMBAR (PNG). Bila pelanggan punya nomor HP, langsung tuju
+        // chat WhatsApp pelanggan itu (lewat extra "jid") → TIDAK perlu memilih kontak; struk masuk
+        // ke kotak kirim chat-nya, staf tinggal menekan "Kirim". (WhatsApp tidak mengizinkan menekan
         // "Kirim" otomatis lewat intent demi anti-spam, jadi satu ketukan tetap dilakukan staf.)
         final Uri uri = prepareReceiptImageUri();
         if (uri == null) {
@@ -1239,18 +1509,21 @@ public class ReceiptActivity extends AppCompatActivity {
         finish();
     }
 
-    /** URL link lacak pengiriman live untuk transaksi ini, atau null bila tak ada token. */
-    private String trackingUrl() {
-        String token = getIntent().getStringExtra(EXTRA_DELIVERY_TOKEN);
-        if (token == null || token.isEmpty()) return null;
-        String base = new com.crowja.damiupos.sync.SyncSettings(
-                new SettingsDao(DatabaseHelper.getInstance(this))).getTrackBaseUrl();
-        if (base == null || base.isEmpty()) return null;
-        return base + "/tracking/" + token;
+    /**
+     * Order ini benar-benar DIANTAR? Dipakai untuk memutuskan baris "Ongkir: *FREE*" — penjualan di
+     * tempat/ambil sendiri tak punya ongkir untuk digratiskan. Penandanya token pengiriman, sinyal
+     * yang sama dengan link lacak (dan dengan delivery_status/token di web). CATATAN: jangan memakai
+     * ongkir_type='none' sebagai penanda "tanpa pengiriman" — di HP "Tanpa" berarti ongkir GRATIS.
+     */
+    private static boolean isDeliveryOrder(android.content.Intent in) {
+        String token = in.getStringExtra(EXTRA_DELIVERY_TOKEN);
+
+        return token != null && !token.isEmpty();
     }
 
     /** Pesan WhatsApp: template (Konfigurasi web, sinkron semua perangkat; placeholder {nama}
-     *  {depot}) + (jika ada) link lacak pengiriman live + teks kampanye aktif. */
+     *  {depot}) + (jika ada) link lacak pengiriman live + teks kampanye aktif. Dipakai untuk teks
+     *  yang benar-benar dikirim MAUPUN preview di layar (tab "Teks") — keduanya harus identik. */
     private String composeTrackingCaption(String custName) {
         String name = (custName != null && !custName.isEmpty()) ? custName : "Pelanggan";
         SettingsDao settings = new SettingsDao(DatabaseHelper.getInstance(this));
@@ -1258,16 +1531,18 @@ public class ReceiptActivity extends AppCompatActivity {
         // baru tracking + kampanye di bawahnya.
         StringBuilder sb = new StringBuilder(settings.getWaStrukTemplate()
                 .replace("{nama}", name)
-                .replace("{depot}", settings.getDepotName()));
+                .replace("{depot}", settings.getDepotName())
+                .replace("{fast-order}", fastOrderLine()));
         String strukText = composeTextStruk();
         if (!strukText.isEmpty()) sb.append("\n\n").append(strukText);
-        String url = trackingUrl();
-        if (url != null) {
-            sb.append("\n\n🚚 Pantau progres pengiriman & lokasi kurir secara langsung di sini:\n")
-                    .append(url);
-        }
+        // Link lacak standalone DIHAPUS 2026-08: pelacakan kini digabung ke link kampanye ORDER
+        // persisten (appendActiveCampaigns di bawah) — begitu kampanye itu aktif & menyasar
+        // pelanggan, link /c/{token}-nya SELALU dilampirkan (tak lagi digerbang kelayakan), jadi
+        // satu link itu sudah cukup untuk lacak + riwayat + pesan lagi. Cermin StrukWa::compose (web).
         appendActiveCampaigns(sb);
-        return sb.toString();
+        // Setelan cabang "struk tanpa emoji" dibuang di SATU titik akhir, sama seperti
+        // StrukWa::compose di web, supaya tak ada bagian pesan yang terlewat.
+        return settings.isWaStrukNoEmoji() ? stripEmoji(sb.toString()) : sb.toString();
     }
 
     /**
@@ -1275,8 +1550,7 @@ public class ReceiptActivity extends AppCompatActivity {
      * <pre>
      * Produk A 1 x Rp9.000 = Rp9.000
      * Ongkir Per Galon Rp2.000 x 3 = Rp6.000
-     * *Total: Rp21.000*
-     * Pembayaran: Tunai
+     * *Total: Rp21.000 (Bayar Tunai)*
      * </pre>
      * Data dari intent extras (items_json / fallback produk tunggal + ongkir + total + metode bayar).
      */
@@ -1284,14 +1558,20 @@ public class ReceiptActivity extends AppCompatActivity {
         try {
             java.text.NumberFormat nf = java.text.NumberFormat.getInstance(new java.util.Locale("id", "ID"));
             android.content.Intent in = getIntent();
-            StringBuilder sb = new StringBuilder("🧾 *Rincian Pembelian*");
+            // ID transaksi unik (App\Support\ReceiptNumber) — WAJIB disematkan di judul rincian bila
+            // baris ini sudah punya receipt_no (baris lama sebelum fitur ini: judul polos).
+            String receiptNo = in.getStringExtra(EXTRA_RECEIPT_NO);
+            StringBuilder sb = new StringBuilder("🧾 *Rincian Pembelian"
+                    + (receiptNo != null && !receiptNo.isEmpty() ? " - " + receiptNo : "") + "*");
             int totalGalon = 0;
+            double itemsSum = 0;   // untuk rekonsiliasi ongkir dari total yang dibayar
             String itemsJson = in.getStringExtra(EXTRA_ITEMS_JSON);
             List<TransactionItem> items = itemsJson != null ? TransactionItem.listFromJson(itemsJson) : null;
             if (items != null && !items.isEmpty()) {
                 for (TransactionItem it : items) {
                     if (it.jumlah <= 0) continue;
                     totalGalon += it.jumlah;
+                    itemsSum += it.jumlah * it.hargaPerGalon;
                     sb.append("\n").append(it.productName != null ? it.productName : "Produk")
                             .append(" ").append(it.jumlah)
                             .append(" x Rp").append(nf.format(Math.round(it.hargaPerGalon)))
@@ -1304,6 +1584,7 @@ public class ReceiptActivity extends AppCompatActivity {
                 double harga = in.getDoubleExtra(EXTRA_HARGA_PER_GALON, 0);
                 if (jumlah > 0) {
                     totalGalon = jumlah;
+                    itemsSum = jumlah * harga;
                     sb.append("\n").append(pname != null ? pname : "Air Minum")
                             .append(" ").append(jumlah)
                             .append(" x Rp").append(nf.format(Math.round(harga)))
@@ -1312,20 +1593,128 @@ public class ReceiptActivity extends AppCompatActivity {
             }
             double ongkir = in.getDoubleExtra(EXTRA_ONGKIR, 0);
             String ongkirType = in.getStringExtra(EXTRA_ONGKIR_TYPE);
-            if (ongkir > 0 && "per_galon".equals(ongkirType) && totalGalon > 0) {
+            double total = in.getDoubleExtra(EXTRA_TOTAL_HARGA, 0);
+            // ONGKIR — angkanya DITURUNKAN dari total yang benar-benar dibayar (cermin PERSIS
+            // StrukWa::rincian + Transaction::strukExtras di web): sisa total yang tak dijelaskan
+            // baris produk & botol dikembalikan ke ongkir. Satu rumus melayani ketiga bentuk
+            // penyimpanan (tarif per galon HP / nilai datar / order web yang meleburnya ke total),
+            // dan "Gratis Ongkir" hanya diklaim bila baris yang DICETAK berjumlah pas dengan *Total*.
+            double botol = "BELI".equals(in.getStringExtra(EXTRA_OWNERSHIP))
+                    ? in.getDoubleExtra(EXTRA_HARGA_BOTOL, 0) * totalGalon : 0;
+            double colOngkir = ongkir <= 0 ? 0
+                    : ("per_galon".equals(ongkirType) ? ongkir * totalGalon : ongkir);
+            double unexplained = total - itemsSum - botol - colOngkir;
+            double paidOngkir = unexplained > 0.5 ? colOngkir + unexplained : colOngkir;
+            if (paidOngkir > 0.5 && ongkir > 0 && totalGalon > 0
+                    && Math.abs(ongkir * totalGalon - paidOngkir) < 1) {
                 sb.append("\nOngkir Per Galon Rp").append(nf.format(Math.round(ongkir)))
                         .append(" x ").append(totalGalon)
-                        .append(" = Rp").append(nf.format(Math.round(ongkir * totalGalon)));
-            } else if (ongkir > 0) {
-                sb.append("\nOngkir = Rp").append(nf.format(Math.round(ongkir)));
+                        .append(" = Rp").append(nf.format(Math.round(paidOngkir)));
+            } else if (paidOngkir > 0.5) {
+                sb.append("\nOngkir = Rp").append(nf.format(Math.round(paidOngkir)));
+            } else if (isDeliveryOrder(in) && itemsSum > 0 && Math.abs(total - itemsSum - botol) <= 0.5) {
+                // Diantar & seluruh rupiah sudah dijelaskan baris cetak → ongkirnya memang digratiskan.
+                // Cermin App\Support\StrukWa::rincian di web (isFreeDelivery) — teks "Gratis Ongkir"
+                // (bukan "FREE") supaya pelanggan langsung paham tanpa perlu tahu bahasa Inggris.
+                sb.append("\nGratis Ongkir");
             }
-            double total = in.getDoubleExtra(EXTRA_TOTAL_HARGA, 0);
-            sb.append("\n*Total: Rp").append(nf.format(Math.round(total))).append("*");
+            // Metode pembayaran DILEBUR ke baris Total (satu baris) — "*Total: Rp5.000 (Bayar
+            // Tunai)*", DILEWATI bila ada pelunasan hutang lama (di bawah) -- *Total* sudah gabungan
+            // dua hal berbeda, jadi tak dilabeli satu metode bayar saja. Cermin App\Support\StrukWa
+            // ::rincian di web.
             String pay = in.getStringExtra(EXTRA_PAYMENT_METHOD);
+            String payLabel = null;
             if (pay != null && !pay.isEmpty()) {
-                String label = pay.substring(0, 1).toUpperCase()
-                        + pay.substring(1).toLowerCase(java.util.Locale.ROOT);
-                sb.append("\nPembayaran: ").append(label);
+                payLabel = " (Bayar " + pay.substring(0, 1).toUpperCase()
+                        + pay.substring(1).toLowerCase(java.util.Locale.ROOT) + ")";
+            }
+            long custIdForDebt = in.getLongExtra(EXTRA_CUSTOMER_ID, -1);
+            // PELUNASAN HUTANG LAMA lewat transaksi ini ("Sekalian Lunasi Hutang" saat checkout, atau
+            // bayar sebagian saat Selesai) -- uang TAMBAHAN di luar tagihan penjualan, dicetak sebagai
+            // BARIS TAGIHAN tersendiri ("Hutang (Pembelian Sebelumnya <ID_TRX>): Rp...") lalu dilebur
+            // ke *Total* -- supaya *Total* SELALU sama dengan uang yang benar-benar diserahkan
+            // pelanggan hari ini, bukan ringkasan terpisah sesudahnya. Cermin App\Support\StrukWa
+            // ::rincian di web.
+            String trxUuidForDebt = in.getStringExtra(EXTRA_GIFT_TRX_UUID);
+            com.crowja.damiupos.db.CustomerDebtDao debtDao =
+                    new com.crowja.damiupos.db.CustomerDebtDao(DatabaseHelper.getInstance(this));
+            double debtPaidNow = trxUuidForDebt != null ? debtDao.paidForTransaction(trxUuidForDebt) : 0;
+            if (debtPaidNow > 0) {
+                List<String> debtOrigins = custIdForDebt > 0 ? debtDao.originReceiptsFor(custIdForDebt, 1) : new ArrayList<>();
+                String debtKet = !debtOrigins.isEmpty()
+                        ? "Pembelian Sebelumnya " + android.text.TextUtils.join(", ", debtOrigins)
+                        : "Hutang Sebelumnya";
+                sb.append("\nHutang (").append(debtKet).append("): Rp").append(nf.format(Math.round(debtPaidNow)));
+            }
+            // SALDO REFUND yang dipakai membayar order ini -> pelanggan harus melihat berapa yang
+            // dipotong dan berapa sisa yang benar-benar dibayar. Bila ada potongan, label pembayaran
+            // PINDAH ke baris "Sisa dibayar" (Total tetap kotor). Urutan & kata-katanya cermin
+            // App\Support\StrukWa::rincian di web -- dulu blok ini tak ada sama sekali di HP,
+            // jadi pelanggan menerima "Total: Rp30.000" tanpa keterangan bahwa itu sudah lunas dari saldonya.
+            double refundDipotong = in.getDoubleExtra(EXTRA_REFUND_DIPOTONG, 0);
+            double grandTotal = total + debtPaidNow;
+            sb.append("\n*Total: Rp").append(nf.format(Math.round(grandTotal))).append("*")
+                    .append(refundDipotong > 0 || debtPaidNow > 0 ? "" : (payLabel != null ? payLabel : ""));
+            if (refundDipotong > 0) {
+                sb.append("\nDipotong saldo refund: -Rp").append(nf.format(Math.round(refundDipotong)));
+                sb.append("\n*Sisa dibayar: Rp")
+                        .append(nf.format(Math.round(Math.max(0, grandTotal - refundDipotong))))
+                        .append("*").append(debtPaidNow > 0 ? "" : (payLabel != null ? payLabel : ""));
+            }
+            if (pay != null && !pay.isEmpty()) {
+                // QRIS: link statis PER CABANG airfrez.com/{slug}-qris (slug dari /api/me, diatur
+                // admin di Kelola Cabang) — satu QRIS per cabang, bukan lagi satu untuk semua
+                // cabang (tiap cabang punya rekening/merchant sendiri). Halaman itu sendiri
+                // live-fetch gambar QRIS terkini, jadi tak perlu di-update di sini saat admin
+                // re-upload. Slug kosong = cabang belum dikonfigurasi → tak ada baris disematkan.
+                if ("QRIS".equalsIgnoreCase(pay)) {
+                    String slug = new com.crowja.damiupos.sync.SyncSettings(
+                            new SettingsDao(DatabaseHelper.getInstance(this))).getBranchSlug();
+                    if (slug != null && !slug.trim().isEmpty()) {
+                        sb.append("\nUnduh gambar QRIS: https://airfrez.com/").append(slug.trim()).append("-qris");
+                    }
+                } else if ("TRANSFER".equalsIgnoreCase(pay)) {
+                    String bankDetail = new SettingsDao(DatabaseHelper.getInstance(this)).getBankTransferDetail();
+                    if (bankDetail != null && !bankDetail.trim().isEmpty()) {
+                        sb.append("\n").append(bankDetail.trim());
+                    }
+                }
+            }
+            // Order ini dibuat OTOMATIS oleh fitur "Pesanan Terjadwal" (web-only, ScheduledOrders::
+            // createAutoTertunda) — deteksi lewat header audit di catatan MENTAH (sebelum
+            // customerNote() membuangnya), cermin App\Support\StrukWa::rincian di web.
+            String rawCatatan = in.getStringExtra(EXTRA_CATATAN);
+            if (rawCatatan != null && rawCatatan.toLowerCase(java.util.Locale.ROOT).contains("pesanan terjadwal")
+                    && rawCatatan.toLowerCase(java.util.Locale.ROOT).contains("dibuat di web")) {
+                sb.append("\n📅 [TERJADWAL]");
+            }
+            // Catatan transaksi (bila ada & bukan sekadar penanda internal) — cermin baris "Catatan:"
+            // pada struk cetak/foto + StrukWa::rincian di web.
+            String note = customerNote(rawCatatan);
+            if (!note.isEmpty()) {
+                sb.append("\n📝 Catatan: ").append(note);
+            }
+            // SISA HUTANG pelanggan -- dibaca LIVE dari buku besar, sudah termasuk piutang baru dari
+            // transaksi ini sendiri (Cash Bon / bayar sebagian) bila ada. Cermin App\Support\StrukWa
+            // ::rincian di web. Pelanggan tak diketahui (walk-in/Umum) -> tak ada baris ini.
+            if (custIdForDebt > 0) {
+                double sisaHutang = debtDao.balanceFor(custIdForDebt);
+                if (sisaHutang > 0) {
+                    sb.append("\n\n🧾 *Sisa Hutang Anda saat ini: Rp")
+                            .append(nf.format(Math.round(sisaHutang))).append("*");
+                    // ID transaksi terhutang asalnya — pelanggan tahu hutang ini berasal dari
+                    // pembelian yang mana. {@see CustomerDebtDao#originReceiptsFor}
+                    List<String> origins = debtDao.originReceiptsFor(custIdForDebt, 1);
+                    if (!origins.isEmpty()) {
+                        sb.append("\n(dari transaksi ").append(android.text.TextUtils.join(", ", origins)).append(")");
+                    }
+                }
+                // TIDAK menegaskan "Hutang Anda sudah LUNAS" di sini walau sisaHutang sudah 0 lewat
+                // pelunasan transaksi ini -- keputusan lunas/belum/sebagian dibayar baru FINAL saat
+                // order diselesaikan (popup Selesai/Ubah), bukan saat transaksi ini dibuat/dicetak
+                // struknya. Nominal pelunasannya sendiri (baris "Hutang (Pembelian Sebelumnya
+                // ...)"/"Total" di atas) tetap dicetak -- itu fakta uang yang sungguh diterima,
+                // bukan simpulan status. Cermin App\Support\StrukWa::rincian di web.
             }
             return sb.toString();
         } catch (Throwable t) {
@@ -1338,10 +1727,225 @@ public class ReceiptActivity extends AppCompatActivity {
      * pelanggan ini (belum pernah diklik). Link DILAMPIRKAN ULANG di tiap struk sampai pelanggan klik —
      * atau kampanye dihapus/dinonaktifkan di web. Memakai delivery yang sama (token tetap) lalu memicu
      * sinkronisasi agar link {@code /c/{token}} bisa dibuka. No-op tanpa pelanggan / belum terhubung server.
+     *
+     * INFO "sematkan di struk" ({@code p.strukInline}): judul + teks pendek LANGSUNG, tanpa link — tak
+     * perlu {@link com.crowja.damiupos.db.CampaignDao#ensureDelivery} / sinkronisasi dulu.
      */
+    /** Placeholder {fast-order}: "Pesan-antar Jalur Cepat: <link Order Online persisten pelanggan>",
+     *  kampanye ORDER aktif pertama yang menyasarnya — cermin StrukWa::fastOrderLine (web). '' bila
+     *  tak ada pelanggan/kampanye ORDER aktif (placeholder lenyap, bukan menyisakan link kosong). */
+    private String fastOrderLine() {
+        try {
+            long custId = getIntent().getLongExtra(EXTRA_CUSTOMER_ID, -1);
+            if (custId <= 0) return "";
+            com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                    new SettingsDao(DatabaseHelper.getInstance(this)));
+            if (!cfg.isEnrolled()) return "";
+            String deviceUuid = cfg.getDeviceUuid();
+            String base = cfg.getTrackBaseUrl();
+            if (deviceUuid == null || deviceUuid.isEmpty() || base == null || base.isEmpty()) return "";
+            base = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+
+            com.crowja.damiupos.db.CampaignDao cDao =
+                    new com.crowja.damiupos.db.CampaignDao(DatabaseHelper.getInstance(this));
+            for (com.crowja.damiupos.db.CampaignDao.Pending p : cDao.activeForCustomer(deviceUuid, custId, campaignScheduleDate())) {
+                if (!p.isOrder) continue;
+                String path = cDao.ensureDelivery(p.campaignLocalId, custId);
+                if (path == null) continue;
+                return "Pesan-antar Jalur Cepat: " + base + "/" + path;
+            }
+        } catch (Throwable ignored) {
+            // Best-effort, sama seperti appendActiveCampaigns: kegagalan tak boleh menggagalkan struk.
+        }
+        return "";
+    }
+
+    /**
+     * Tanggal untuk menilai JADWAL KAMPANYE pada struk ini ("yyyy-MM-dd"), atau null = hari ini.
+     *
+     * <p>Order TERTUNDA: struk disusun hari ini tetapi galonnya baru sampai pada tanggal LANJUT,
+     * jadi kampanye berjadwal harus dinilai di tanggal itu — info "promo Sabtu" pada order yang
+     * dijadwalkan lanjut Sabtu memang layak disematkan walau struknya dibuat Kamis. Cermin
+     * Transaction::strukScheduleDate() di web.</p>
+     */
+    private String campaignScheduleDate() {
+        try {
+            long trxId = getIntent().getLongExtra(EXTRA_TRANSACTION_ID, -1);
+            if (trxId <= 0) return null;
+            com.crowja.damiupos.model.Transaction t =
+                    new com.crowja.damiupos.db.TransactionDao(DatabaseHelper.getInstance(this)).getById(trxId);
+            if (t == null) return null;
+            if (!com.crowja.damiupos.model.Transaction.DELIVERY_TERTUNDA.equals(t.getDeliveryStatus())) {
+                return null;
+            }
+            String resume = t.getDeliveryTertundaResumeAt();
+            return resume != null && resume.length() >= 10 ? resume.substring(0, 10) : null;
+        } catch (Throwable ignored) {
+            return null;   // best-effort: gagal baca → pakai hari ini, seperti sebelumnya
+        }
+    }
+
+    /**
+     * Buang emoji/piktograf (termasuk variation selector & ZWJ) lalu rapikan spasi sisa.
+     * Rentang karakternya cermin App\Support\StrukWa::stripEmoji di server, supaya struk
+     * dari HP dan dari dashboard menghasilkan teks yang sama saat setelan itu aktif.
+     */
+    private static String stripEmoji(String s) {
+        if (s == null || s.isEmpty()) return s;
+        String out = s.replaceAll("[\\x{1F000}-\\x{1FAFF}\\x{2190}-\\x{2BFF}\\x{FE00}-\\x{FE0F}\\x{200D}\\x{20E3}]", "");
+        out = out.replaceAll("[ \\t]{2,}", " ");
+        out = out.replaceAll("(?m)^[ \\t]+|[ \\t]+$", "");
+        return out.trim();
+    }
+
+    // ---------------------------------------------------------------- kampanye: server otoritatif
+    /**
+     * Satu kampanye yang boleh dilampirkan, PERSIS seperti keputusan server.
+     * {@code url} sudah lengkap (server yang membuat delivery/token-nya), jadi HP hanya merender.
+     */
+    private static final class ServerCampaign {
+        String title;
+        String url;
+        boolean inline;
+        String text;
+        boolean isOrder;
+        boolean trackingOnly;
+    }
+
+    /** Hasil dari server; null = belum/ tak tersedia → jatuh ke cermin lokal (CampaignDao). */
+    private volatile java.util.List<ServerCampaign> serverCampaigns;
+
+    /** Sudah selesai mencoba (berhasil ATAU gagal) — pembeda "masih jalan" vs "memang tak ada". */
+    private volatile boolean serverCampaignsSettled;
+
+    /** Antre menunggu hasil fetch (mis. tombol Kirim WA ditekan saat fetch masih jalan). */
+    private final java.util.List<Runnable> serverCampaignsWaiters = new java.util.ArrayList<>();
+
+    /**
+     * AMBIL keputusan kampanye dari SERVER, bukan menghitungnya ulang di HP.
+     *
+     * <p>Aturan "kampanye mana yang ikut struk" berlapis (aktif, jadwal tanggal/hari, berhenti
+     * melampir setelah diklik/terkirim, kelayakan pesan-ulang, urutan prioritas). Selama HP juga
+     * menghitungnya sendiri, ada DUA implementasi atas satu aturan — dan cermin yang meleset
+     * langsung terlihat pelanggan: kampanye berjadwal Rabu/Minggu pernah ikut terkirim di hari
+     * Sabtu karena HP-nya memakai APK lama yang belum tahu ada jadwal.</p>
+     *
+     * <p>Karena itu: ONLINE → server yang memutuskan (fungsi yang sama dengan struk web & PDF),
+     * OFFLINE → cermin lokal {@link com.crowja.damiupos.db.CampaignDao} sebagai jaring pengaman.
+     * Dijalankan di latar sejak layar struk dibuka, jadi hasilnya sudah siap saat staf menekan
+     * Kirim; tak pernah memblokir UI.</p>
+     */
+    private void prefetchServerCampaigns() {
+        long custId = getIntent().getLongExtra(EXTRA_CUSTOMER_ID, -1);
+        if (custId <= 0) {
+            settleServerCampaigns(null);
+            return;
+        }
+        final com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                new SettingsDao(DatabaseHelper.getInstance(this)));
+        if (!cfg.isEnrolled()) {
+            settleServerCampaigns(null);
+            return;
+        }
+        final String custUuid = new com.crowja.damiupos.db.CustomerDao(DatabaseHelper.getInstance(this))
+                .getSyncUuidById(custId);
+        if (custUuid == null || custUuid.isEmpty()) {
+            settleServerCampaigns(null);
+            return;
+        }
+        final String trxUuid = getIntent().getStringExtra(EXTRA_GIFT_TRX_UUID);
+
+        new Thread(() -> {
+            java.util.List<ServerCampaign> out = null;
+            try {
+                org.json.JSONObject res = new com.crowja.damiupos.sync.SyncApi(cfg)
+                        .campaignAttachments(custUuid, trxUuid);
+                org.json.JSONArray arr = res != null ? res.optJSONArray("items") : null;
+                if (arr != null) {
+                    out = new java.util.ArrayList<>();
+                    for (int i = 0; i < arr.length(); i++) {
+                        org.json.JSONObject o = arr.optJSONObject(i);
+                        if (o == null) continue;
+                        ServerCampaign sc = new ServerCampaign();
+                        sc.title = o.optString("title", "");
+                        sc.url = o.optString("url", "");
+                        sc.inline = o.optBoolean("inline", false);
+                        sc.text = o.isNull("text") ? null : o.optString("text", null);
+                        sc.isOrder = o.optBoolean("order", false);
+                        sc.trackingOnly = o.optBoolean("tracking_only", false);
+                        out.add(sc);
+                    }
+                }
+            } catch (Throwable ignored) {
+                // Offline / server tak terjangkau → biarkan null: cermin lokal yang dipakai.
+            }
+            final java.util.List<ServerCampaign> result = out;
+            runOnUiThread(() -> settleServerCampaigns(result));
+        }).start();
+    }
+
+    /** Tandai fetch selesai + jalankan yang menunggu (dipanggil di UI thread). */
+    private void settleServerCampaigns(java.util.List<ServerCampaign> result) {
+        serverCampaigns = result;
+        serverCampaignsSettled = true;
+        java.util.List<Runnable> waiters = new java.util.ArrayList<>(serverCampaignsWaiters);
+        serverCampaignsWaiters.clear();
+        for (Runnable r : waiters) {
+            try { r.run(); } catch (Throwable ignored) {}
+        }
+    }
+
+    /**
+     * Jalankan {@code action} setelah keputusan kampanye server tersedia (atau gagal). Tidak pernah
+     * memblokir: bila fetch masih jalan, action-nya diantrekan dan dijalankan saat hasilnya tiba.
+     */
+    private void withServerCampaigns(Runnable action) {
+        if (serverCampaignsSettled) {
+            action.run();
+            return;
+        }
+        serverCampaignsWaiters.add(action);
+    }
+
+    /**
+     * Render bagian kampanye DARI keputusan server. Mengembalikan false bila server tak menjawab
+     * (offline) supaya pemanggil jatuh ke cermin lokal.
+     */
+    private boolean appendServerCampaigns(StringBuilder sb) {
+        java.util.List<ServerCampaign> list = serverCampaigns;
+        if (list == null) return false;
+        boolean any = false;
+        for (ServerCampaign p : list) {
+            if (p.trackingOnly) {
+                if (p.url == null || p.url.isEmpty()) continue;
+                sb.append("\n\n🚚 Pantau progres pengiriman & lokasi kurir secara langsung di sini:\n")
+                        .append(p.url);
+                any = true;
+                continue;
+            }
+            String body;
+            if (p.inline) {
+                body = p.text != null ? p.text : "";
+            } else {
+                if (p.url == null || p.url.isEmpty()) continue;
+                body = p.isOrder ? p.url
+                        : "Untuk info selengkapnya, silakan klik link di bawah ini:\n" + p.url;
+            }
+            sb.append("\n\n📣 *").append(p.title != null ? p.title : "").append("*\n").append(body);
+            any = true;
+        }
+        if (any) {
+            sb.append("\n\nTerima kasih 🙏");
+        }
+        return true;   // server sudah menjawab — daftar kosong pun keputusan yang sah
+    }
+
     private void appendActiveCampaigns(StringBuilder sb) {
         long custId = getIntent().getLongExtra(EXTRA_CUSTOMER_ID, -1);
         if (custId <= 0) return;
+        // ONLINE: keputusan SERVER yang dipakai (satu implementasi aturan, tak bisa menyimpang).
+        // Blok lokal di bawah hanya berjalan saat server tak terjangkau. Lihat prefetchServerCampaigns().
+        if (appendServerCampaigns(sb)) return;
         try {
             com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
                     new SettingsDao(DatabaseHelper.getInstance(this)));
@@ -1354,16 +1958,39 @@ public class ReceiptActivity extends AppCompatActivity {
             com.crowja.damiupos.db.CampaignDao cDao =
                     new com.crowja.damiupos.db.CampaignDao(DatabaseHelper.getInstance(this));
             java.util.List<com.crowja.damiupos.db.CampaignDao.Pending> pending =
-                    cDao.activeForCustomer(deviceUuid, custId);
+                    cDao.activeForCustomer(deviceUuid, custId, campaignScheduleDate());
             boolean any = false;
             for (com.crowja.damiupos.db.CampaignDao.Pending p : pending) {
-                String token = cDao.ensureDelivery(p.campaignLocalId, custId);
-                if (token == null) continue;               // sudah diklik (terpenuhi) → lewati
-                // Cukup judul (📣 + tebal WA *…*) + ajakan klik link; isi selengkapnya ada di halaman
-                // kampanye (/c/{token}), bukan di pesan WA — biar pesannya ringkas.
-                sb.append("\n\n📣 *").append(p.title != null ? p.title : "").append("*")
-                        .append("\nUntuk info selengkapnya, silakan klik link di bawah ini:")
-                        .append("\n").append(base).append("/c/").append(token);
+                if (p.trackingOnly) {
+                    // Belum layak pesan-ulang (min_repeat_orders): sembunyikan judul + ajakan "Pesan
+                    // lagi" — tapi link-nya (halaman yang sama) tetap berguna untuk lacak pengiriman +
+                    // riwayat, jadi dilampirkan sebagai baris netral tanpa framing promosi kampanye.
+                    // Cermin StrukWa::campaigns() di web.
+                    String path = cDao.ensureDelivery(p.campaignLocalId, custId);
+                    if (path == null) continue;
+                    sb.append("\n\n🚚 Pantau progres pengiriman & lokasi kurir secara langsung di sini:\n")
+                            .append(base).append("/").append(path);
+                    any = true;
+                    continue;
+                }
+                String body;
+                if (p.strukInline) {
+                    // Sematkan langsung: teks pendek, TANPA link — tak perlu delivery/token sinkron
+                    // dulu supaya link resolve; teksnya sudah lengkap di sini.
+                    body = p.strukText != null ? p.strukText : "";
+                } else {
+                    // "c/{token}" atau (kampanye ORDER, sekali server memintal slug-nya) "fast/{slug}".
+                    String path = cDao.ensureDelivery(p.campaignLocalId, custId);
+                    if (path == null) continue;             // sudah diklik (terpenuhi) → lewati
+                    // Cukup judul (📣 + tebal WA *…*) + ajakan klik link; isi selengkapnya ada di halaman
+                    // kampanye, bukan di pesan WA — biar pesannya ringkas. ORDER: judul + link TELANJANG,
+                    // tanpa kalimat pengantar (cermin StrukWa::campaigns() di web — link-nya sendiri
+                    // sudah jadi rumah pesan-ulang + lacak + riwayat).
+                    body = p.isOrder
+                            ? base + "/" + path
+                            : "Untuk info selengkapnya, silakan klik link di bawah ini:\n" + base + "/" + path;
+                }
+                sb.append("\n\n📣 *").append(p.title != null ? p.title : "").append("*\n").append(body);
                 any = true;
             }
             if (any) {
@@ -1383,6 +2010,13 @@ public class ReceiptActivity extends AppCompatActivity {
      * Fallback: chooser sistem. Dipanggil dari tombol akhir struk penjualan.
      */
     private void sendStrukWithTracking() {
+        // Tunggu keputusan kampanye dari server bila fetch-nya masih jalan — pesan yang TERKIRIM ke
+        // pelanggan tak boleh memakai cermin lokal hanya karena staf menekan Kirim beberapa ratus
+        // milidetik lebih cepat. Tidak memblokir: aksinya diantrekan lalu dijalankan ulang.
+        if (!serverCampaignsSettled) {
+            withServerCampaigns(this::sendStrukWithTracking);
+            return;
+        }
         String caption = composeTrackingCaption(getIntent().getStringExtra(EXTRA_CUSTOMER_NAME));
         String waPackage = pickWaPackage();
 
@@ -1434,6 +2068,18 @@ public class ReceiptActivity extends AppCompatActivity {
         // and fill the canvas white so any residual transparency composites to white (not grey).
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             view.setForceDarkAllowed(false);
+        }
+        // rcCard hidup di dalam cardStrukGambar, yang mulai GONE (tab default "Teks" — lihat
+        // wireStrukViewToggle). Sebuah View GONE tak pernah diukur oleh induknya, jadi getWidth()/
+        // getHeight() masih 0 kalau staf langsung tekan Bagikan tanpa pernah membuka tab "Gambar" —
+        // Bitmap.createBitmap(0,0,...) lalu crash (IllegalArgumentException). Ukur+layout manual di
+        // sini kalau perlu, TANPA mengubah visibility (tak ada kedip pindah tab).
+        if (view.getWidth() == 0 || view.getHeight() == 0) {
+            int width = getWindow().getDecorView().getWidth();
+            int widthSpec = View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY);
+            int heightSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+            view.measure(widthSpec, heightSpec);
+            view.layout(0, 0, view.getMeasuredWidth(), view.getMeasuredHeight());
         }
         Bitmap bitmap = Bitmap.createBitmap(view.getWidth(), view.getHeight(), Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(bitmap);

@@ -124,7 +124,7 @@ public class CustomerAdapter extends RecyclerView.Adapter<CustomerAdapter.ViewHo
     }
 
     class ViewHolder extends RecyclerView.ViewHolder {
-        TextView tvInitial, tvName, tvPhone, tvSaldoGalon, tvStats, tvResellerBadge, tvAfiliasiBadge, tvOrigin, tvMediaStatus;
+        TextView tvInitial, tvName, tvPhone, tvSaldoGalon, tvStats, tvResellerBadge, tvAfiliasiBadge, tvOngkirBadge, tvOrigin, tvMediaStatus;
         MaterialCardView card;
         int defaultStrokeColor;
         int defaultStrokeWidth;
@@ -139,6 +139,7 @@ public class CustomerAdapter extends RecyclerView.Adapter<CustomerAdapter.ViewHo
             tvStats = itemView.findViewById(R.id.tvStats);
             tvResellerBadge = itemView.findViewById(R.id.tvResellerBadge);
             tvAfiliasiBadge = itemView.findViewById(R.id.tvAfiliasiBadge);
+            tvOngkirBadge = itemView.findViewById(R.id.tvOngkirBadge);
             tvOrigin = itemView.findViewById(R.id.tvOrigin);
             tvMediaStatus = itemView.findViewById(R.id.tvMediaStatus);
             defaultStrokeColor = card.getStrokeColor();
@@ -174,7 +175,8 @@ public class CustomerAdapter extends RecyclerView.Adapter<CustomerAdapter.ViewHo
                     ? String.valueOf(name.charAt(0)).toUpperCase() : "?");
             // Nama gabungan bila orang yang sama bernama beda antar-perangkat ("NAMA1 / NAMA2");
             // fallback ke nama asli untuk daftar non-dedup. Inisial avatar tetap dari nama wakil.
-            tvName.setText(customer.getDisplayName());
+            // Pelanggan prioritas: prefiks ⭐ pada nama (diutamakan di antrian delivery & follow up).
+            tvName.setText((customer.isPriority() ? "⭐ " : "") + customer.getDisplayName());
             tvPhone.setText(customer.getPhone() != null ? customer.getPhone() : "-");
             // Angka galon BESAR = TOTAL galon yang diambil pelanggan (akuisisi/pembelian), bukan
             // hanya saldo pinjam (yang 0 untuk galon yang dibeli, mis. reseller) — supaya "jumlah
@@ -193,6 +195,11 @@ public class CustomerAdapter extends RecyclerView.Adapter<CustomerAdapter.ViewHo
             if (tvAfiliasiBadge != null) {
                 String linked = customer.getLinkedResellerUuid();
                 tvAfiliasiBadge.setVisibility(linked != null && !linked.isEmpty() ? View.VISIBLE : View.GONE);
+            }
+            // Penanda "ONGKIR" — pelanggan punya setidaknya satu lokasi wajib ongkir (termasuk yang
+            // tercatat di salinan perangkat lain; diangkat oleh applyMergedAggregates).
+            if (tvOngkirBadge != null) {
+                tvOngkirBadge.setVisibility(customer.isWajibOngkirEffective() ? View.VISIBLE : View.GONE);
             }
 
             // Stats: jumlah transaksi · sisa pinjam (bila ada) · konsumsi gl/hr (agregat gabungan
@@ -240,13 +247,20 @@ public class CustomerAdapter extends RecyclerView.Adapter<CustomerAdapter.ViewHo
                 }
             }
 
-            // Visual selection state — stroke biru tebal kalau terpilih
+            // Visual selection state — stroke biru tebal kalau terpilih. Kalau tidak terpilih tapi
+            // pelanggan BERMASALAH (issue aktif), latar kartu jadi merah muda + garis merah supaya
+            // langsung terlihat perlu diperbaiki.
             boolean selected = selectionMode && selectedIds.contains(customer.getId());
             if (selected) {
                 card.setStrokeColor(Color.parseColor("#1565C0"));
                 card.setStrokeWidth((int) (3 * itemView.getResources()
                         .getDisplayMetrics().density));
                 card.setCardBackgroundColor(Color.parseColor("#E3F2FD"));
+            } else if (customer.hasOpenIssue()) {
+                card.setStrokeColor(Color.parseColor("#EF5350"));
+                card.setStrokeWidth((int) (1.5f * itemView.getResources()
+                        .getDisplayMetrics().density));
+                card.setCardBackgroundColor(Color.parseColor("#FDECEA"));
             } else {
                 card.setStrokeColor(defaultStrokeColor);
                 card.setStrokeWidth(defaultStrokeWidth);

@@ -83,6 +83,9 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onReceive(Context context, Intent intent) {
             refreshDashboard();
+            // Sinkron baru saja membawa pesanan untuk perangkat ini dengan pelanggan belum
+            // lengkap → tampilkan popup "Lengkapi Data Pelanggan" (jika ada yang antre).
+            showPendingIncompleteWarnings();
         }
     };
 
@@ -130,7 +133,7 @@ public class MainActivity extends AppCompatActivity {
         // Tap toolbar saat ada pesanan baru → akui (acknowledge) +
         // buka inbox; sound + blink stop.
         toolbar.setOnClickListener(v -> {
-            if (orderInboxDao != null && orderInboxDao.countPending() > 0) {
+            if (orderInboxDao != null && orderInboxDao.countPendingForThisDevice() > 0) {
                 acknowledgeAlerts();
                 startActivity(new Intent(this, OrderInboxActivity.class));
             }
@@ -265,7 +268,7 @@ public class MainActivity extends AppCompatActivity {
         View btnAdminLogout = findViewById(R.id.btnAdminLogout);
         if (btnIstirahat != null) btnIstirahat.setOnClickListener(v -> doIstirahat());
         // Pulang: konfirmasi → selfie → catat OUT → laporan + apresiasi.
-        if (btnClockOut != null) btnClockOut.setOnClickListener(v -> confirmPulang());
+        if (btnClockOut != null) btnClockOut.setOnClickListener(v -> warnIncompleteDeliveryThenConfirmPulang());
         // Admin: logout biasa (tanpa absensi/laporan).
         if (btnAdminLogout != null) btnAdminLogout.setOnClickListener(v -> doAdminLogout());
 
@@ -310,6 +313,12 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private static final int REQ_BG_LOCATION = 9314;
+    /** Sudah minta izin lokasi "sepanjang waktu" pada SESI proses ini? Sengaja NON-persisten:
+     *  bila staf menutup dialog, app minta lagi saat dibuka berikutnya — pelacakan latar wajib,
+     *  jadi tak boleh menyerah permanen setelah sekali ditolak. */
+    private boolean bgLocationAsked;
+
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
                                            @NonNull int[] grantResults) {
@@ -317,10 +326,96 @@ public class MainActivity extends AppCompatActivity {
         if (requestCode == REQ_LOCATION && grantResults.length > 0
                 && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
             LocationService.start(this);
+            ensureBackgroundReliability();   // lanjut minta lokasi "sepanjang waktu" + pengecualian baterai
+        } else if (requestCode == REQ_BG_LOCATION) {
+            // Apapun hasilnya, mulai/segarkan service — dgn bg-location ter-grant, restart dari
+            // background/boot nanti bisa membaca GPS.
+            LocationService.ensureOnline(getApplicationContext());
+        }
+    }
+
+    /**
+     * Minta izin/pengaturan yang membuat sinkronisasi + lapor koordinat TETAP JALAN saat app tidak
+     * di foreground. Dipanggil dari onResume; tiap item hanya diminta SEKALI (flag SharedPreferences)
+     * supaya tidak mengganggu.
+     * <ol>
+     *   <li>Pengecualian optimasi baterai (Doze) — membantu SEMUA proses latar (sync + lokasi) agar
+     *       tak dibunuh sistem. Diminta saat perangkat terhubung ke cabang.</li>
+     *   <li>Lokasi "Izinkan sepanjang waktu" (ACCESS_BACKGROUND_LOCATION) — supaya FGS bertipe
+     *       location tetap membaca GPS setelah di-restart dari background/boot. Hanya bila pelacakan
+     *       lokasi aktif & izin lokasi dasar sudah diberi.</li>
+     * </ol>
+     */
+    private void ensureBackgroundReliability() {
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                new SettingsDao(DatabaseHelper.getInstance(this)));
+        if (!cfg.isEnrolled()) return;
+        android.content.SharedPreferences p = getSharedPreferences("damiu_reliability", MODE_PRIVATE);
+
+        // (1) Pengecualian optimasi baterai — sekali saja.
+        if (!p.getBoolean("battery_asked", false)) {
+            p.edit().putBoolean("battery_asked", true).apply();
+            try {
+                android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                    Intent i = new Intent(
+                            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                            .setData(android.net.Uri.parse("package:" + getPackageName()));
+                    if (i.resolveActivity(getPackageManager()) != null) startActivity(i);
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        // (2) Lokasi "sepanjang waktu" — hanya bila pelacakan aktif, fine sudah diberi, bg belum.
+        //     Guard NON-persisten (bgLocationAsked): app minta lagi tiap dibuka sampai diberi —
+        //     GPS latar TAK BISA terbaca tanpa izin ini, jadi jangan menyerah setelah sekali ditolak.
+        if (cfg.isLocationTrackingEnabled()
+                && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                && !bgLocationAsked
+                && androidx.core.content.ContextCompat.checkSelfPermission(this,
+                        android.Manifest.permission.ACCESS_FINE_LOCATION)
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED
+                && androidx.core.content.ContextCompat.checkSelfPermission(this,
+                        android.Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            bgLocationAsked = true;
+            androidx.core.app.ActivityCompat.requestPermissions(this,
+                    new String[]{android.Manifest.permission.ACCESS_BACKGROUND_LOCATION}, REQ_BG_LOCATION);
         }
     }
 
     /** Konfirmasi sebelum Pulang (clock out) — gate selfie + pencatatan OUT. */
+    /**
+     * Gerbang sebelum Konfirmasi Pulang: kalau HP ini masih punya order di Antrian Delivery
+     * (PENDING, belum diselesaikan/ditunda), tampilkan peringatan seru dulu — staf gampang lupa
+     * ada pengiriman menggantung saat buru-buru pulang, dan order itu akan tertinggal di HP sampai
+     * staf berikutnya (atau dia sendiri besok) membukanya lagi. "Tetap Pulang" tetap tersedia
+     * (bukan blokir keras — order boleh dilanjutkan staf shift berikutnya), hanya diingatkan dulu.
+     */
+    private void warnIncompleteDeliveryThenConfirmPulang() {
+        int pending = 0;
+        try {
+            pending = transactionDao.countDeliveryQueue();
+        } catch (Exception ignored) {}
+        if (pending <= 0) {
+            confirmPulang();
+            return;
+        }
+
+        IncompleteCustomerDialog.playAlarm(this);
+        new AlertDialog.Builder(this)
+                .setIcon(android.R.drawable.ic_dialog_alert)
+                .setTitle("⚠️ Masih Ada Pengiriman Belum Selesai!")
+                .setMessage("Antrian Delivery HP ini masih ada " + pending
+                        + " pesanan yang belum diselesaikan/ditunda.\n\n"
+                        + "Yakin mau Pulang sekarang? Order yang tersisa akan menunggu "
+                        + "sampai dilanjutkan (oleh kamu lagi atau staf shift berikutnya).")
+                .setPositiveButton("Lihat Antrian Dulu", (d, w) ->
+                        startActivity(new Intent(this, DeliveryQueueActivity.class)))
+                .setNegativeButton("Tetap Pulang", (d, w) -> confirmPulang())
+                .show();
+    }
+
     private void confirmPulang() {
         long uid = settingsDao.getCurrentUserId();
         StringBuilder msg = new StringBuilder("Akhiri shift dan catat jam pulang sekarang? "
@@ -386,17 +481,27 @@ public class MainActivity extends AppCompatActivity {
         if (qaJual != null) qaJual.setVisibility(isViewer ? View.GONE : View.VISIBLE);
         if (qaKembali != null) qaKembali.setVisibility(isViewer ? View.GONE : View.VISIBLE);
 
-        // Marketing hanya melakukan Promosi → sembunyikan panel Jual/Kembali,
-        // tampilkan tombol Promosi (Admin lihat keduanya).
+        // Marketing kini JUGA boleh Jual Air Minum & Botol Galon Kembali langsung dari sini
+        // (dulu disembunyikan, hanya Promosi) — tombol Promosi tetap tampil terpisah di bawah.
         View cardQuickActions = findViewById(R.id.cardQuickActions);
         if (cardQuickActions != null) {
-            cardQuickActions.setVisibility(isMarketing ? View.GONE : View.VISIBLE);
+            cardQuickActions.setVisibility(View.VISIBLE);
         }
         // Marketing tidak ikut flow delivery (antrean kiriman dikerjakan kurir/staf depot)
         // → sembunyikan tombol Delivery beserta badge-nya (parent FrameLayout keduanya).
         View btnDelivery = findViewById(R.id.btnAntrianDelivery);
         if (btnDelivery != null && btnDelivery.getParent() instanceof View) {
             ((View) btnDelivery.getParent()).setVisibility(isMarketing ? View.GONE : View.VISIBLE);
+        }
+
+        // Pencapaian Penjualan: Admin & Marketing (User.canViewSalesAchievement) — peran yang
+        // memantau capaian tim. Disembunyikan untuk peran lain: layarnya memuat omzet SE-CABANG.
+        View btnAchievement = findViewById(R.id.btnSalesAchievement);
+        if (btnAchievement != null) {
+            boolean canSee = show && (isAdmin || isMarketing);
+            btnAchievement.setVisibility(canSee ? View.VISIBLE : View.GONE);
+            btnAchievement.setOnClickListener(v ->
+                    startActivity(new Intent(this, SalesAchievementActivity.class)));
         }
 
         // Input Promosi Galon: Marketing & Admin selalu; staf lain bila promo_enabled (salary_config).
@@ -406,14 +511,29 @@ public class MainActivity extends AppCompatActivity {
                     && new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).canPromosi(uid);
             btnPromosi.setVisibility(canPromosi ? View.VISIBLE : View.GONE);
             // Pelanggan Promosi (daftar + statistik konversi) mengikuti gate yang sama.
-            View btnPromoCust = findViewById(R.id.btnPromoCustomers);
-            if (btnPromoCust != null) btnPromoCust.setVisibility(canPromosi ? View.VISIBLE : View.GONE);
+            // Visibilitas dipasang pada PEMBUNGKUS (FrameLayout badge WA Perkenalan), bukan tombolnya.
+            View boxPromoCust = findViewById(R.id.boxPromoCustomers);
+            if (boxPromoCust != null) boxPromoCust.setVisibility(canPromosi ? View.VISIBLE : View.GONE);
         }
 
-        // Daftar Kunjungan (pedoman kunjungan lapangan): Marketing & Admin.
-        View btnKunjungan = findViewById(R.id.btnKunjungan);
-        if (btnKunjungan != null) {
-            btnKunjungan.setVisibility(show && (isMarketing || isAdmin) ? View.VISIBLE : View.GONE);
+        // Daftar Kunjungan Urgent: Marketing & Admin. Visibilitas dipasang pada PEMBUNGKUS
+        // (FrameLayout tombol + badge) — kalau dipasang di tombolnya saja, badge jumlah tetap
+        // melayang di layar meski tombolnya sudah disembunyikan.
+        View wrapKunjungan = findViewById(R.id.wrapKunjungan);
+        if (wrapKunjungan != null) {
+            wrapKunjungan.setVisibility(show && (isMarketing || isAdmin) ? View.VISIBLE : View.GONE);
+        }
+
+        // Stok Galon & Reseller: khusus Admin. Non-admin (Staf/SPV/Marketing/Viewer) tak perlu
+        // melihat angka stok gudang atau data reseller/komisi — sembunyikan tile & kartu statistiknya.
+        boolean adminOnly = show && isAdmin;
+        View cardGalonBeredar = findViewById(R.id.cardGalonBeredar);
+        if (cardGalonBeredar != null) {
+            cardGalonBeredar.setVisibility(!show || adminOnly ? View.VISIBLE : View.GONE);
+        }
+        View btnReseller = findViewById(R.id.btnReseller);
+        if (btnReseller != null) {
+            btnReseller.setVisibility(!show || adminOnly ? View.VISIBLE : View.GONE);
         }
 
         if (!show) return;
@@ -565,6 +685,10 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQ_SELFIE_LOGOUT = 702;
     private long pendingLogoutUid;
     private String pendingLogoutName;
+    // Vonis area absensi untuk event OUT yang sedang diproses (diisi dari hasil layar selfie).
+    private boolean pendingOutOfRadius;
+    private int pendingDistanceM = -1;
+    private String pendingRadiusReason;
 
     /** Tombol Pulang: ambil selfie wajah dulu, baru proses clock out. */
     private void startSelfieThenClockOut() {
@@ -590,6 +714,13 @@ public class MainActivity extends AppCompatActivity {
             }
             String photo = data != null
                     ? data.getStringExtra(CameraCaptureActivity.EXTRA_PHOTO_PATH) : null;
+            // Vonis area absensi dari layar selfie (alasan sudah ditagih di sana bila di luar radius).
+            pendingOutOfRadius = data != null
+                    && data.getBooleanExtra(CameraCaptureActivity.EXTRA_OUT_OF_RADIUS, false);
+            pendingDistanceM = data != null
+                    ? data.getIntExtra(CameraCaptureActivity.EXTRA_DISTANCE_M, -1) : -1;
+            pendingRadiusReason = data != null
+                    ? data.getStringExtra(CameraCaptureActivity.EXTRA_RADIUS_REASON) : null;
             finishClockOut(photo);
         }
     }
@@ -619,7 +750,11 @@ public class MainActivity extends AppCompatActivity {
         long workMs = ShiftReporter.workedMillisToday(dbHelper, uid);
 
         // Catat OUT + foto pulang.
-        long outAttId = attDao.log(uid, Attendance.EVENT_OUT, logoutPhoto);
+        long outAttId = attDao.log(uid, Attendance.EVENT_OUT, logoutPhoto,
+                pendingOutOfRadius, pendingDistanceM, pendingRadiusReason);
+        pendingOutOfRadius = false;
+        pendingDistanceM = -1;
+        pendingRadiusReason = null;
         LocationService.stampAttendanceLocation(this, outAttId);   // GPS pulang untuk dashboard
         com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());   // absensi real-time
         // Shift selesai → batalkan pengingat jam kerja + lepas sesi SEGERA
@@ -733,7 +868,7 @@ public class MainActivity extends AppCompatActivity {
         MenuItem inbox = menu.findItem(R.id.action_inbox);
         if (inbox != null) inbox.setVisible(
                 !com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(this)
-                        && orderInboxDao != null && orderInboxDao.countPending() > 0);
+                        && orderInboxDao != null && orderInboxDao.countPendingForThisDevice() > 0);
         return super.onPrepareOptionsMenu(menu);
     }
 
@@ -859,6 +994,9 @@ public class MainActivity extends AppCompatActivity {
         // selama app hidup (termasuk background), tidak bergantung pada shift —
         // sehingga perubahan dari dashboard (karyawan baru, dll.) sampai real-time.
         LocationService.ensureOnline(getApplicationContext());
+        // Minta pengecualian baterai + lokasi "sepanjang waktu" (sekali) supaya sinkronisasi &
+        // lapor koordinat tetap jalan walau app tidak di foreground / setelah reboot.
+        ensureBackgroundReliability();
         // Listen broadcast "sinkron membawa data baru" → badge Antrian Delivery
         // (dan KPI/transaksi terakhir) ikut update real-time saat dashboard terbuka.
         IntentFilter syncedFilter = new IntentFilter(com.crowja.damiupos.sync.SyncEngine.ACTION_SYNCED);
@@ -880,6 +1018,9 @@ public class MainActivity extends AppCompatActivity {
         invalidateOptionsMenu();
         // Tampilkan pesan admin yang tertunda (mis. tiba saat app di background).
         showPendingAdminMessage();
+        // Popup "Lengkapi Data Pelanggan" tertunda: pesanan baru untuk perangkat ini yang
+        // pelanggannya belum lengkap foto/koordinat (mis. sinkron terjadi saat app di background).
+        showPendingIncompleteWarnings();
         // Alarm langka: transaksi yang SUDAH lama (>15 mnt) tapi belum terkonfirmasi tersinkron ke
         // server — normalnya nihil karena sync + reconcile memulihkannya otomatis. Kalau tetap ada,
         // operator perlu tahu (mis. HP lama offline / satu baris bermasalah) agar penjualan tak "hilang"
@@ -932,6 +1073,32 @@ public class MainActivity extends AppCompatActivity {
                 .show();
     }
 
+    /**
+     * Tampilkan popup "⚠️ Lengkapi Data Pelanggan" untuk pesanan baru (antrean) yang pelanggannya
+     * belum lengkap foto/koordinat — dikumpulkan saat sinkron (lihat {@code SyncEngine}). Antrean
+     * dikonsumsi sekali; bila ada beberapa, tampilkan satu popup teratas dan sisakan sisanya untuk
+     * kunjungan layar berikutnya (hindari menumpuk dialog). Pelanggan yang sudah lengkap sejak
+     * dikumpulkan (mis. dilengkapi via perangkat lain) dibuang diam-diam.
+     */
+    private void showPendingIncompleteWarnings() {
+        if (isFinishing() || settingsDao == null || customerDao == null) return;
+        // Setting cabut-kredit nonaktif untuk cabang ini → tak ada void yang perlu dicegah;
+        // jangan ganggu operator dengan popup (biarkan antrean apa adanya bila nanti diaktifkan).
+        if (!settingsDao.isRevokeCreditIncompleteEnabled()) return;
+        java.util.List<Long> ids = settingsDao.takePendingIncompleteWarn();
+        if (ids.isEmpty()) return;
+        com.crowja.damiupos.model.Customer toShow = null;
+        java.util.List<Long> rest = new java.util.ArrayList<>();
+        for (Long id : ids) {
+            com.crowja.damiupos.model.Customer c = customerDao.getById(id);
+            if (!IncompleteCustomerDialog.shouldWarn(c)) continue;   // sudah lengkap → buang
+            if (toShow == null) toShow = c; else rest.add(id);
+        }
+        // Sisanya tampil di kunjungan layar berikutnya (satu popup per kali agar tak menumpuk).
+        if (!rest.isEmpty()) settingsDao.addPendingIncompleteWarn(rest);
+        if (toShow != null) IncompleteCustomerDialog.warn(this, toShow);
+    }
+
     private void startBlink(View view) {
         AlphaAnimation blink = new AlphaAnimation(1f, 0.3f);
         blink.setDuration(500);
@@ -940,7 +1107,28 @@ public class MainActivity extends AppCompatActivity {
         view.startAnimation(blink);
     }
 
+    /**
+     * Badge "Daftar Kunjungan Urgent" = berapa ORANG yang masih menunggu dikunjungi.
+     *
+     * Sumbernya CustomerDao.countVisitUrgent(), yang memakai definisi SQL yang sama persis dengan
+     * isi daftarnya — kalau dihitung terpisah, badge dan daftar cepat atau lambat pasti berbeda.
+     * Dipanggil bersama badge Follow Up supaya keduanya segar di saat yang sama (termasuk setelah
+     * sinkron membawa tanda baru dari web).
+     */
+    private void updateVisitUrgentIndicator() {
+        TextView badge = findViewById(R.id.tvKunjunganBadge);
+        if (badge == null) return;
+        int n = customerDao.countVisitUrgent();
+        if (n > 0) {
+            badge.setText(String.valueOf(n));
+            badge.setVisibility(View.VISIBLE);
+        } else {
+            badge.setVisibility(View.GONE);
+        }
+    }
+
     private void updateFollowUpIndicator() {
+        updateVisitUrgentIndicator();
         if (btnFollowUp == null) return;
         int count = customerDao.countFollowUpCandidates(settingsDao.getFollowupDays());
         btnFollowUp.setText("Follow Up");
@@ -973,6 +1161,32 @@ public class MainActivity extends AppCompatActivity {
         int count = 0;
         try {
             count = transactionDao.countDeliveryQueue();
+        } catch (Exception ignored) {}
+        if (count > 0) {
+            badge.setText(String.valueOf(count));
+            badge.setVisibility(View.VISIBLE);
+        } else {
+            badge.setVisibility(View.GONE);
+        }
+    }
+
+    /**
+     * Badge "WA Perkenalan tertunggak" pada tombol Pelanggan Promosi — HANYA untuk perangkat yang
+     * dicentang "Petugas WA Perkenalan" di web. Hitungan = pelanggan promosi (gratis/berbayar)
+     * yang belum pernah dikirim WA Perkenalan, disaring ke sektor wilayah yang ditugaskan
+     * ({@link IntroWaDuty#filterPending}); turun otomatis begitu perangkat MANA PUN mengirim
+     * (stempel server tersinkron pull). Disegarkan bersama refreshDashboard (ACTION_SYNCED).
+     */
+    private void updatePromoIntroBadge() {
+        TextView badge = findViewById(R.id.tvPromoIntroBadge);
+        if (badge == null) return;
+        int count = 0;
+        try {
+            com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                    new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this)));
+            if (cfg.isIntroWaDevice()) {
+                count = IntroWaDuty.filterPending(customerDao.getPromoIntroPending(), cfg).size();
+            }
         } catch (Exception ignored) {}
         if (count > 0) {
             badge.setText(String.valueOf(count));
@@ -1048,6 +1262,7 @@ public class MainActivity extends AppCompatActivity {
         updateStockIndicator();
         refreshOperatorBar();
         updateDeliveryBadge();
+        updatePromoIntroBadge();
 
         // Recent transactions
         List<Transaction> recent = transactionDao.getRecent(10);
@@ -1157,8 +1372,10 @@ public class MainActivity extends AppCompatActivity {
         if (tvToolbarTitle == null || orderInboxDao == null) return;
         // Karyawan marketing tidak menangani pesanan → jangan tampilkan/bunyikan alert pesanan
         // (order baru dari WA/web). Perlakukan seperti tidak ada pesanan pending.
+        // Hanya pesanan yang DITUGASKAN ke perangkat ini (penugasan pelanggan / wilayah) — HP lain
+        // tak ikut berkedip & berbunyi untuk order yang bukan tanggung jawabnya.
         int pendingCount = com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(this)
-                ? 0 : orderInboxDao.countPending();
+                ? 0 : orderInboxDao.countPendingForThisDevice();
         if (pendingCount == 0) {
             // Reset ke tampilan default + matikan alert
             tvToolbarTitle.setText(R.string.app_name);
@@ -1171,7 +1388,7 @@ public class MainActivity extends AppCompatActivity {
             com.crowja.damiupos.wa.OrderAlertService.stop(this);
             return;
         }
-        OrderInbox latest = orderInboxDao.getLatestPending();
+        OrderInbox latest = orderInboxDao.getLatestPendingForThisDevice();
         if (latest == null) return;
         ParsedOrder parsed = ParsedOrder.fromJson(latest.getParsedJson());
 

@@ -70,7 +70,10 @@ public class LoginActivity extends AppCompatActivity {
         // (Admin / 00000) supaya owner selalu bisa login & mengatur.
         userDao.ensureDefaultAdmin();
 
-        users = userDao.getActive();
+        // Hanya staf yang BOLEH login di perangkat ini (whitelist device_staff_logins dari web);
+        // tanpa whitelist = semua staf aktif. Admin selalu disertakan (jaring anti-terkunci).
+        users = userDao.getActiveForLogin(
+                new com.crowja.damiupos.sync.SyncSettings(settingsDao).getDeviceUuid());
         if (users.isEmpty()) {
             // Sangat tidak mungkin (ensureDefaultAdmin menambah admin aktif),
             // tapi kalau toh kosong, matikan fitur LOKAL saja supaya app tidak
@@ -199,7 +202,10 @@ public class LoginActivity extends AppCompatActivity {
         if (userDao == null || userAdapter == null || spUser == null) return;
         Object sel = spUser.getSelectedItem();
         long selId = sel instanceof User ? ((User) sel).getId() : -1;
-        List<User> fresh = userDao.getActive();
+        // Hormati whitelist "boleh login" perangkat ini (sama seperti onCreate) — jangan
+        // memunculkan kembali staf yang tak diizinkan saat sinkron membawa data baru.
+        List<User> fresh = userDao.getActiveForLogin(
+                new com.crowja.damiupos.sync.SyncSettings(settingsDao).getDeviceUuid());
         users = fresh;
         userAdapter.clear();
         userAdapter.addAll(fresh);
@@ -246,8 +252,16 @@ public class LoginActivity extends AppCompatActivity {
             // Foto boleh null (kamera gagal/ditolak) — absensi tetap jalan.
             String photo = data != null
                     ? data.getStringExtra(CameraCaptureActivity.EXTRA_PHOTO_PATH) : null;
+            // Vonis area absensi dari layar selfie (alasan sudah ditagih di sana bila di luar radius).
+            boolean outOfRadius = data != null
+                    && data.getBooleanExtra(CameraCaptureActivity.EXTRA_OUT_OF_RADIUS, false);
+            int distanceM = data != null
+                    ? data.getIntExtra(CameraCaptureActivity.EXTRA_DISTANCE_M, -1) : -1;
+            String radiusReason = data != null
+                    ? data.getStringExtra(CameraCaptureActivity.EXTRA_RADIUS_REASON) : null;
             long attId = new AttendanceDao(DatabaseHelper.getInstance(this))
-                    .log(pendingUser.getId(), Attendance.EVENT_IN, photo);
+                    .log(pendingUser.getId(), Attendance.EVENT_IN, photo,
+                            outOfRadius, distanceM, radiusReason);
             LocationService.stampAttendanceLocation(this, attId);   // GPS clock-in untuk dashboard
             com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());   // absensi real-time
             settingsDao.setCurrentUser(pendingUser.getId(), pendingUser.getName());

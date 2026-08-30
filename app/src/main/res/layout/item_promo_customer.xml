@@ -63,5 +63,15 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
             android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/tvIntroWaSent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="💬 WA Perkenalan sudah dikirim"
+            android:textColor="@color/grey_medium"
+            android:textSize="12sp"
+            android:visibility="gone" />
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

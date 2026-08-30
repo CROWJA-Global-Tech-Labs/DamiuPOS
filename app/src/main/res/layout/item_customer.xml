@@ -37,15 +37,20 @@
             android:orientation="vertical">
 
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
+                <!-- Nama fleksibel: ambil ruang sisa & potong dengan "…" bila panjang,
+                     supaya badge di sebelahnya tidak terhimpit sampai teksnya melipat. -->
                 <TextView
                     android:id="@+id/tvName"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:maxLines="1"
+                    android:ellipsize="end"
                     android:textColor="@color/text_primary"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -61,13 +66,16 @@
                     android:paddingEnd="8dp"
                     android:paddingTop="1dp"
                     android:paddingBottom="1dp"
+                    android:singleLine="true"
+                    android:maxLines="1"
                     android:text="RESELLER"
                     android:textColor="@color/white"
                     android:textSize="10sp"
                     android:textStyle="bold"
                     android:visibility="gone" />
 
-                <!-- Penanda pelanggan yang tertaut ke reseller (auto-afiliasi di Transaksi Baru) -->
+                <!-- Penanda pelanggan yang tertaut ke reseller (auto-afiliasi di Transaksi Baru).
+                     singleLine + wrap_content → teks badge selalu satu baris, tak pernah melipat. -->
                 <TextView
                     android:id="@+id/tvAfiliasiBadge"
                     android:layout_width="wrap_content"
@@ -78,7 +86,29 @@
                     android:paddingEnd="8dp"
                     android:paddingTop="1dp"
                     android:paddingBottom="1dp"
+                    android:singleLine="true"
+                    android:maxLines="1"
                     android:text="TERAFILIASI"
+                    android:textColor="@color/white"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
+                <!-- Penanda pelanggan yang punya lokasi WAJIB ONGKIR (setidaknya satu lokasi),
+                     supaya kurir tahu sebelum membuka detail. -->
+                <TextView
+                    android:id="@+id/tvOngkirBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_ongkir_badge"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:paddingTop="1dp"
+                    android:paddingBottom="1dp"
+                    android:singleLine="true"
+                    android:maxLines="1"
+                    android:text="ONGKIR"
                     android:textColor="@color/white"
                     android:textSize="10sp"
                     android:textStyle="bold"

@@ -70,25 +70,41 @@ public class SyncEngine {
                     DatabaseHelper.COL_FOLLOWUP_EXCLUDE_REASON, DatabaseHelper.COL_LAST_FOLLOWUP_AT,
                     DatabaseHelper.COL_FOLLOWUP_MANUAL_AT, DatabaseHelper.COL_FOLLOWUP_NOTE,
                     DatabaseHelper.COL_PRODUCT_PRICES, DatabaseHelper.COL_LOCATIONS,
+                    DatabaseHelper.COL_PHONES, DatabaseHelper.COL_CUST_ASSIGN_DEVICE,
                     DatabaseHelper.COL_HANDED_OVER_AT, DatabaseHelper.COL_HANDED_OVER_BY,
                     DatabaseHelper.COL_CUST_CREATED_BY,
                     DatabaseHelper.COL_ISSUE_FLAGS, DatabaseHelper.COL_ISSUE_NOTE,
                     DatabaseHelper.COL_ISSUE_REPORTED_AT, DatabaseHelper.COL_ISSUE_REPORTED_BY,
                     DatabaseHelper.COL_ISSUE_RESOLVED_AT,
+                    // "Kunjungi Urgent" — DUA ARAH: web menandai, HP menyelesaikan kunjungan.
+                    DatabaseHelper.COL_VISIT_URGENT_AT, DatabaseHelper.COL_VISIT_URGENT_BY,
+                    DatabaseHelper.COL_VISIT_URGENT_DONE_AT, DatabaseHelper.COL_VISIT_URGENT_DONE_REASON,
+                    DatabaseHelper.COL_PRIORITY_AT, DatabaseHelper.COL_PRIORITY_REASON,
+                    DatabaseHelper.COL_PRIORITY_BY, DatabaseHelper.COL_PRIORITY_CLEARED_AT,
+                    // "Kirim WA Perkenalan" (Pelanggan Promosi) — server-authoritative, di-set saat
+                    // endpoint /intro-wa dipanggil (web ATAU HP). Pull-only: server men-skip kolom ini
+                    // dari push (lihat SyncController::fillColumns di web).
+                    DatabaseHelper.COL_INTRO_WA_SENT_AT,
                     DatabaseHelper.COL_PHOTO_URL, DatabaseHelper.COL_CREATED_AT,
+                    // "Bonus Beli N Gratis 1" — di-set DI WEB saja; HP tidak punya kontrol UI untuk
+                    // mengubahnya (dua-arah secara mekanis, sama seperti is_reseller/wajib_ongkir,
+                    // tapi tak ada tombol di app untuk menulisnya).
+                    DatabaseHelper.COL_CUST_BONUS_ENABLED,
             }, NO_REFS),
 
             new Spec("products", DatabaseHelper.TABLE_PRODUCTS, new String[]{
-                    DatabaseHelper.COL_PRODUCT_NAME, DatabaseHelper.COL_HARGA_JUAL,
+                    DatabaseHelper.COL_PRODUCT_NAME, DatabaseHelper.COL_PRODUCT_SLUG,
+                    DatabaseHelper.COL_HARGA_JUAL,
                     DatabaseHelper.COL_HARGA_MODAL, DatabaseHelper.COL_COLOR,
                     DatabaseHelper.COL_CREATED_AT,
             }, NO_REFS),
 
-            // Staff (PIN operators). pin is NOT synced — server pin_hash stays null;
-            // cross-device PIN auth is a later, security-reviewed change.
+            // Staff (PIN operators). pin_hash = PIN yang di-set/reset dari WEB (SHA-256, pull-only):
+            // otoritatif bila terisi, NULL = fallback ke PIN lokal HP. PIN lokal sendiri tak di-push.
             new Spec("staff", DatabaseHelper.TABLE_USERS, new String[]{
                     DatabaseHelper.COL_USER_NAME, DatabaseHelper.COL_USER_ROLE,
-                    DatabaseHelper.COL_USER_ACTIVE, DatabaseHelper.COL_USER_CREATED_AT,
+                    DatabaseHelper.COL_USER_ACTIVE, DatabaseHelper.COL_USER_PIN_HASH,
+                    DatabaseHelper.COL_USER_CREATED_AT,
             }, NO_REFS),
 
             new Spec("expenses", DatabaseHelper.TABLE_EXPENSES, new String[]{
@@ -109,6 +125,8 @@ public class SyncEngine {
                     DatabaseHelper.COL_ATT_EVENT, DatabaseHelper.COL_ATT_TS,
                     DatabaseHelper.COL_PHOTO_URL,
                     DatabaseHelper.COL_ATT_LAT, DatabaseHelper.COL_ATT_LNG,
+                    DatabaseHelper.COL_ATT_OUT_OF_RADIUS, DatabaseHelper.COL_ATT_DISTANCE_M,
+                    DatabaseHelper.COL_ATT_RADIUS_REASON,
             }, new Ref[]{
                     new Ref(DatabaseHelper.COL_ATT_USER_ID, "staff_uuid", DatabaseHelper.TABLE_USERS),
             }),
@@ -157,12 +175,40 @@ public class SyncEngine {
                     DatabaseHelper.COL_ITEMS_JSON, DatabaseHelper.COL_GALON_OWNERSHIP,
                     DatabaseHelper.COL_HARGA_BOTOL, DatabaseHelper.COL_PAYMENT_METHOD,
                     DatabaseHelper.COL_DELIVERY_STATUS, DatabaseHelper.COL_DELIVERY_QUEUED_AT,
+                    // Pesanan Tertunda — cermin App\Support\TertundaSchedule di web (dua arah: HP bisa
+                    // membuatnya, web bisa menjadwalkan ulang/melanjutkannya).
+                    DatabaseHelper.COL_DELIVERY_TERTUNDA_AT, DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT,
                     DatabaseHelper.COL_DELIVERY_DONE_AT, DatabaseHelper.COL_DELIVERY_TOKEN,
+                    // "Sedang dikerjakan" (▶ Jalankan) + stempel berhentinya — DITULIS HP, dua arah.
+                    // Dua stempel karena push membuang kolom null (berhenti tak bisa dikirim NULL).
+                    DatabaseHelper.COL_DELIVERY_STARTED_AT, DatabaseHelper.COL_DELIVERY_STARTED_CLEARED_AT,
                     DatabaseHelper.COL_CREATED_BY_NAME, DatabaseHelper.COL_CREATED_VIA,
-                    DatabaseHelper.COL_COMPLETED_BY_NAME, DatabaseHelper.COL_DELIVERY_DEVICE_UUID,
+                    DatabaseHelper.COL_COMPLETED_BY_NAME, DatabaseHelper.COL_CREDIT_GRACE_UNTIL,
+                    DatabaseHelper.COL_DELIVERY_DEVICE_UUID,
+                    // Urutan antar MANUAL (Strategi Pengiriman) — server menolaknya dari push HP,
+                    // jadi praktis pull-only: HP hanya MEMBACA urutan yang disusun operator di web.
+                    DatabaseHelper.COL_DELIVERY_SEQ,
                     DatabaseHelper.COL_DELIVERY_DEST_NAME, DatabaseHelper.COL_DELIVERY_DEST_LAT,
                     DatabaseHelper.COL_DELIVERY_DEST_LNG, DatabaseHelper.COL_ASSIGNED_DEVICE_UUID,
+                    // ⚡ Prioritas pengiriman (+ alasan + penanda) — server-authoritative: server
+                    // menolak nilai ini dari push HP, jadi praktis pull-only walau ikut dataCols.
+                    DatabaseHelper.COL_DELIVERY_PRIORITY_AT, DatabaseHelper.COL_DELIVERY_PRIORITY_REASON,
+                    DatabaseHelper.COL_DELIVERY_PRIORITY_BY,
+                    // "Pesanan Terbuka" (lelang) — server-authoritative (distempel storePending/
+                    // resumeDueTertunda di web), pull-only walau ikut dataCols sama seperti prioritas.
+                    DatabaseHelper.COL_DELIVERY_OPEN_DISPATCH_AT,
+                    // Badge ✏️/🗑️ "sudah pernah diubah" di kartu antrian — server-authoritative
+                    // (di-skip dari fillColumns push, lihat komentar konstantanya), pull-only.
+                    DatabaseHelper.COL_LAST_MANUAL_EDIT_AT, DatabaseHelper.COL_VOID_REQUEST_PENDING_AT,
                     DatabaseHelper.COL_TANGGAL, DatabaseHelper.COL_CATATAN,
+                    // BUKTI SELESAI: hanya URL yang disinkron — photo_path lokal-saja (pola persis
+                    // attendance/expenses: path tak pernah meninggalkan perangkat).
+                    DatabaseHelper.COL_PHOTO_URL,
+                    // ID transaksi unik struk (<KODE>-DDMMYY-<COUNTER>) — HP menghitungnya SENDIRI
+                    // offline (counter lokal per-perangkat, lihat TransactionDao.insert()) lalu
+                    // push; server hanya mengisi bila baris ini lahir DI WEB (Transaction::booted).
+                    // Dua arah agar HP juga melihat receipt_no baris yang dibuat di web/perangkat lain.
+                    DatabaseHelper.COL_RECEIPT_NO,
             }, new Ref[]{
                     new Ref(DatabaseHelper.COL_CUSTOMER_ID, "customer_uuid", DatabaseHelper.TABLE_CUSTOMERS),
                     new Ref(DatabaseHelper.COL_TRX_PRODUCT_ID, "product_uuid", DatabaseHelper.TABLE_PRODUCTS),
@@ -187,14 +233,19 @@ public class SyncEngine {
             new Spec("campaigns", DatabaseHelper.TABLE_CAMPAIGNS, new String[]{
                     DatabaseHelper.COL_CAMP_TYPE, DatabaseHelper.COL_CAMP_TITLE,
                     DatabaseHelper.COL_CAMP_BODY, DatabaseHelper.COL_CAMP_ACTIVE,
-                    DatabaseHelper.COL_CAMP_TARGETS, DatabaseHelper.COL_CREATED_AT,
+                    DatabaseHelper.COL_CAMP_TARGETS, DatabaseHelper.COL_CAMP_STRUK_STOP,
+                    DatabaseHelper.COL_CAMP_STRUK_INLINE, DatabaseHelper.COL_CAMP_STRUK_TEXT,
+                    DatabaseHelper.COL_CAMP_MIN_REPEAT, DatabaseHelper.COL_CAMP_SORT_ORDER,
+                    DatabaseHelper.COL_CAMP_STARTS_AT, DatabaseHelper.COL_CAMP_ENDS_AT,
+                    DatabaseHelper.COL_CAMP_SCHEDULE_DAYS, DatabaseHelper.COL_CAMP_PRIORITY,
+                    DatabaseHelper.COL_CREATED_AT,
             }, NO_REFS),
 
             // Deliveries (two-way) — created on this device when a campaign link is shared with the
             // struk (anti-rebroadcast key = campaign+customer). After campaigns so its campaign_uuid
             // ref resolves on pull; after customers for customer_uuid.
             new Spec("campaign_deliveries", DatabaseHelper.TABLE_CAMPAIGN_DELIVERIES, new String[]{
-                    DatabaseHelper.COL_CD_TOKEN, DatabaseHelper.COL_CD_SENT_AT,
+                    DatabaseHelper.COL_CD_TOKEN, DatabaseHelper.COL_CD_SLUG, DatabaseHelper.COL_CD_SENT_AT,
                     DatabaseHelper.COL_CD_CLICKED_AT, DatabaseHelper.COL_CD_RESPONDED_AT,
                     DatabaseHelper.COL_CD_REACTION, DatabaseHelper.COL_CD_REACTED_AT,
             }, new Ref[]{
@@ -216,6 +267,54 @@ public class SyncEngine {
                     DatabaseHelper.COL_CREATED_AT,
             }, new Ref[]{
                     new Ref(DatabaseHelper.COL_GIFT_CUSTOMER_ID, "customer_uuid", DatabaseHelper.TABLE_CUSTOMERS),
+            }),
+
+            // REFUND pelanggan (branch-wide, DUA ARAH): baris 'credit' ditulis web saat operator
+            // memberi refund; baris 'usage' ditulis SIAPA PUN yang memotong saldo — web maupun HP
+            // saat membuat transaksi. transaction_uuid dibawa mentah (transaksi device-isolated,
+            // struk-nya tak selalu ada di tiap HP); customer_uuid lewat Ref seperti gift. Harus
+            // SESUDAH customers agar ref-nya resolve saat pull.
+            new Spec("customer_refunds", DatabaseHelper.TABLE_CUSTOMER_REFUNDS, new String[]{
+                    DatabaseHelper.COL_REFUND_KIND, DatabaseHelper.COL_REFUND_AMOUNT,
+                    DatabaseHelper.COL_REFUND_REASON, DatabaseHelper.COL_REFUND_TRX_UUID,
+                    DatabaseHelper.COL_REFUND_BY, DatabaseHelper.COL_CREATED_AT,
+            }, new Ref[]{
+                    new Ref(DatabaseHelper.COL_REFUND_CUSTOMER_ID, "customer_uuid", DatabaseHelper.TABLE_CUSTOMERS),
+            }),
+
+            // HUTANG pelanggan (branch-wide, DUA ARAH): baris 'debt' lahir dari penjualan berbayar
+            // "HUTANG" atau dicatat manual; baris 'payment' ditulis SIAPA PUN yang menerima
+            // pelunasan — kuriirlah yang paling sering menerimanya di lapangan. Sama seperti refund:
+            // transaction_uuid mentah, customer_uuid lewat Ref, dan HARUS SESUDAH customers agar
+            // ref-nya resolve saat pull.
+            new Spec("customer_debts", DatabaseHelper.TABLE_CUSTOMER_DEBTS, new String[]{
+                    DatabaseHelper.COL_DEBT_KIND, DatabaseHelper.COL_DEBT_AMOUNT,
+                    DatabaseHelper.COL_DEBT_REASON, DatabaseHelper.COL_DEBT_TRX_UUID,
+                    DatabaseHelper.COL_DEBT_BY, DatabaseHelper.COL_CREATED_AT,
+            }, new Ref[]{
+                    new Ref(DatabaseHelper.COL_DEBT_CUSTOMER_ID, "customer_uuid", DatabaseHelper.TABLE_CUSTOMERS),
+            }),
+
+            // Whitelist "boleh login" per perangkat (pull-only dari web, branch-wide). Layar login
+            // memfilter daftar staf: hanya yang ada di sini untuk perangkat ini (kosong = semua).
+            new Spec("device_staff_logins", DatabaseHelper.TABLE_DEVICE_STAFF_LOGINS, new String[]{
+                    DatabaseHelper.COL_DSL_DEVICE_UUID, DatabaseHelper.COL_DSL_STAFF_UUID,
+            }, NO_REFS),
+
+            // "Laporan Kendala Pengiriman" se-rit dari kurir (alasan + foto + pelanggan terdampak).
+            // COL_PHOTO_PATH SENGAJA TIDAK ikut dataCols: path itu lokal-perangkat & tak berarti di
+            // server — yang disinkron hanya photo_url hasil unggahan MediaUploader (persis pola
+            // expenses). staff_id dikirim sebagai staff_uuid lewat Ref supaya bermakna lintas HP.
+            new Spec("delivery_obstacles", DatabaseHelper.TABLE_DELIVERY_OBSTACLES, new String[]{
+                    DatabaseHelper.COL_DO_REASON, DatabaseHelper.COL_PHOTO_URL,
+                    DatabaseHelper.COL_DO_DEVICE_UUID, DatabaseHelper.COL_DO_CUSTOMER_UUIDS,
+                    DatabaseHelper.COL_DO_AFFECTED_COUNT, DatabaseHelper.COL_DO_NOTIFIED_AT,
+                    DatabaseHelper.COL_DO_NOTIFIED_COUNT, DatabaseHelper.COL_DO_NOTIFY_RESULTS,
+                    DatabaseHelper.COL_DO_LAT, DatabaseHelper.COL_DO_LNG,
+                    DatabaseHelper.COL_DO_CREATED_BY, DatabaseHelper.COL_DO_REPORTED_AT,
+                    DatabaseHelper.COL_CREATED_AT,
+            }, new Ref[]{
+                    new Ref(DatabaseHelper.COL_DO_STAFF_ID, "staff_uuid", DatabaseHelper.TABLE_USERS),
             }),
     };
 
@@ -251,9 +350,45 @@ public class SyncEngine {
     // {nama, tanggal pembelian}. Dibaca di sync() → notifikasi "order pembelian pertama".
     private final java.util.List<String[]> pulledPromoConversions = new java.util.ArrayList<>();
 
+    // Pesanan BARU (order_inbox PENDING) yang baru masuk lewat pull UNTUK PERANGKAT INI dan
+    // pelanggannya belum lengkap (foto/koordinat) → bisa menyebabkan kredit galon dicabut server.
+    // Isi = {customerLocalId (Long), nama (String)}. Diisi HANYA di cabang INSERT applyRows
+    // (localId == -1) → tepat sekali per baris pesanan yang benar-benar baru; dibaca di sync()
+    // untuk notifikasi + antre popup "Lengkapi Data Pelanggan" yang ditampilkan MainActivity.
+    private final java.util.List<Object[]> pulledIncompleteQueueCustomers = new java.util.ArrayList<>();
+
+    // Order yang SEBELUM pull ini ada di antrian PERANGKAT INI (delivery_device_uuid null-atau-milik-
+    // sendiri, delivery_status PENDING), tapi pull baru saja mengubahnya. Isi = nama pelanggan. Dua
+    // kejadian: (a) DIPINDAHKAN ke perangkat lain oleh web (delivery_device_uuid berubah ke uuid lain);
+    // (b) DISELESAIKAN oleh pihak lain (device lain / web) — delivery_status berubah jadi DONE padahal
+    // perangkat ini tak pernah memanggil markDelivered() untuk baris itu (kalau device ini yang
+    // menyelesaikan, status lokal SUDAH DONE sebelum pull ini datang, jadi tak pernah masuk sini — lihat
+    // catatan di applyRows). Diisi HANYA di cabang UPDATE (localId != -1); dibaca &amp; dikosongkan di
+    // sync() untuk notifikasi ⚠.
+    private final java.util.List<String> pulledRoutedAway = new java.util.ArrayList<>();
+    private final java.util.List<String[]> pulledCompletedElsewhere = new java.util.ArrayList<>();   // {nama, completedByName}
+
+    // PELANGGAN PERKENALAN baru (pelanggan promosi marketing — gratis/berbayar — yang belum dikirim
+    // WA Perkenalan) yang BARU masuk lewat pull, sudah tersaring wilayah tugas perangkat ini. Hanya
+    // terisi bila perangkat dicentang "Petugas WA Perkenalan" di web. Isi = nama; dibaca di sync()
+    // untuk notifikasi "sapa pelanggan baru". Diisi HANYA di cabang INSERT (dedup alami).
+    private final java.util.List<String> pulledPromoIntroArrivals = new java.util.ArrayList<>();
+
     // Set by push() when the server reports customers it doesn't have (referenced by pushed
     // transactions): they + their history were re-queued, so sync() pushes a second pass.
     private boolean backfillPending = false;
+
+    // SyncEngine has no singleton — LocationService, SyncWorker, OnlineTasks, SyncSettingsActivity
+    // and WizardActivity each construct their OWN "new SyncEngine(ctx)". The old "synchronized"
+    // modifier on sync()/pull() etc. locked on THIS instance only, so it never actually excluded
+    // two independently-triggered SyncEngine objects from running pull()'s non-transactional
+    // check-then-insert (applyRows) at the same time — e.g. LocationService's own ~60s poll loop
+    // (which bypasses WorkManager entirely) racing the syncNow() fired right after this device
+    // mints a campaign delivery token. That race is what let TWO local `campaigns` rows appear for
+    // one server campaign, which then made appendActiveCampaigns() mint two different delivery
+    // tokens for what should have been one idempotent link (duplicate kampanye on the struk).
+    // A STATIC lock closes it process-wide regardless of instance count.
+    private static final Object SYNC_LOCK = new Object();
 
     public SyncEngine(Context ctx) {
         this.appCtx = ctx.getApplicationContext();
@@ -294,26 +429,49 @@ public class SyncEngine {
         return res;
     }
 
-    public synchronized Result sync() {
+    public Result sync() {
+        synchronized (SYNC_LOCK) { return syncLocked(true); }
+    }
+
+    /**
+     * PULL-ONLY sync — dipakai SEKALI saat provisioning HP baru ({@link
+     * com.crowja.damiupos.WizardActivity#startProvisioning}). Fitur "import data perangkat ke
+     * server" (push otomatis begitu enroll sukses) sengaja DIMATIKAN di titik ini: HP yang baru
+     * di-provisioning bisa saja masih menyimpan data lokal sisa (bekas testing/demo/HP lama yang
+     * di-reset), dan push otomatis akan langsung mengunggahnya ke cabang yang baru terhubung tanpa
+     * sepengetahuan admin. Sinkron rutin sesudahnya (SyncScheduler) tetap push+pull seperti biasa —
+     * gerbang ini HANYA untuk momen provisioning itu sendiri.
+     */
+    public Result pullOnly() {
+        synchronized (SYNC_LOCK) { return syncLocked(false); }
+    }
+
+    private Result syncLocked(boolean push) {
         Result res = new Result();
         if (!cfg.isEnrolled()) { res.error = "Belum terhubung ke server"; return res; }
         try {
             uuidCache.clear();
-            // Upload pending images first so freshly-stamped photo_url values ride this
-            // cycle's push. Failures here are swallowed inside the uploader (retry next run).
-            try { MediaUploader.uploadPending(dbHelper.getWritableDatabase(), api); }
-            catch (Throwable ignored) {}
-            res.pushed = push();
-            // A push can reveal customers the dashboard is missing (e.g. after re-provisioning):
-            // they + their full transaction history were just re-queued — push once more to seed them.
-            if (backfillPending) res.pushed += push();
-            // Safety-net: ask the server which of our RECENT transactions/expenses it never received
-            // and re-push them. Catches any sale that slipped through (dropped push, an old build that
-            // wrongly marked a skipped row synced) so a struk'd sale can't stay missing on the web.
-            try { if (reconcile()) res.pushed += push(); }
-            catch (Throwable ignored) {}
+            if (push) {
+                // Upload pending images first so freshly-stamped photo_url values ride this
+                // cycle's push. Failures here are swallowed inside the uploader (retry next run).
+                try { MediaUploader.uploadPending(dbHelper.getWritableDatabase(), api); }
+                catch (Throwable ignored) {}
+                res.pushed = push();
+                // A push can reveal customers the dashboard is missing (e.g. after re-provisioning):
+                // they + their full transaction history were just re-queued — push once more to seed them.
+                if (backfillPending) res.pushed += push();
+                // Safety-net: ask the server which of our RECENT transactions/expenses it never received
+                // and re-push them. Catches any sale that slipped through (dropped push, an old build that
+                // wrongly marked a skipped row synced) so a struk'd sale can't stay missing on the web.
+                try { if (reconcile()) res.pushed += push(); }
+                catch (Throwable ignored) {}
+            }
             pulledManualFollowups.clear();
             pulledPromoConversions.clear();
+            pulledIncompleteQueueCustomers.clear();
+            pulledRoutedAway.clear();
+            pulledCompletedElsewhere.clear();
+            pulledPromoIntroArrivals.clear();
             try {
                 res.pulled = pull();
             } finally {
@@ -354,6 +512,62 @@ public class SyncEngine {
                         OnlineNotifier.deliverAdminMessage(appCtx, "Follow Up Baru", body, 7910 + (i % 10));
                     } catch (Throwable ignored) {}
                 }
+            }
+            // Pesanan baru untuk perangkat ini dgn pelanggan belum lengkap (foto/koordinat) →
+            // notifikasi sistem + antre popup "Lengkapi Data Pelanggan" (mencegah kredit galon
+            // penjualan dicabut server). BERLAKU SEMUA PERAN termasuk marketing — justru merekalah
+            // yang paling sering mendaftarkan pelanggan tanpa foto/koordinat. Popup aktual (dengan
+            // tombol "Lengkapi Sekarang") ditampilkan MainActivity saat foreground; notifikasi ini
+            // menutup kasus app di background.
+            if (!pulledIncompleteQueueCustomers.isEmpty()) {
+                java.util.List<Long> ids = new java.util.ArrayList<>();
+                for (int i = 0; i < pulledIncompleteQueueCustomers.size(); i++) {
+                    Object[] e = pulledIncompleteQueueCustomers.get(i);
+                    long id = (Long) e[0];
+                    String name = (String) e[1];
+                    ids.add(id);
+                    try {
+                        OnlineNotifier.postNotif(appCtx, "Lengkapi Data Pelanggan",
+                                name + " (pesanan baru) belum ada foto/koordinat — lengkapi agar "
+                                        + "kredit galon penjualan tidak dibatalkan.", 7920 + (i % 10));
+                    } catch (Throwable ignored) {}
+                }
+                try { settingsDao.addPendingIncompleteWarn(ids); } catch (Throwable ignored) {}
+            }
+            // Order yang tadinya ada di antrian PERANGKAT INI dipindah ke perangkat lain oleh
+            // web/operator lain → notifikasi ⚠ supaya kurir tak bingung kenapa ordernya menghilang.
+            for (int i = 0; i < pulledRoutedAway.size(); i++) {
+                String name = pulledRoutedAway.get(i);
+                try {
+                    OnlineNotifier.postNotif(appCtx, "⚠ Order Dipindahkan",
+                            "Order \"" + name + "\" dipindahkan ke perangkat lain.", 7930 + (i % 10));
+                } catch (Throwable ignored) {}
+            }
+            // Order yang tadinya ada di antrian PERANGKAT INI diselesaikan oleh perangkat/pihak lain
+            // (web dashboard atau kurir lain) → notifikasi ⚠ supaya tak diantar/diproses dobel.
+            for (int i = 0; i < pulledCompletedElsewhere.size(); i++) {
+                String[] e = pulledCompletedElsewhere.get(i);
+                String name = e[0];
+                String by = e[1];
+                try {
+                    OnlineNotifier.postNotif(appCtx, "⚠ Order Diselesaikan Pihak Lain",
+                            "Order \"" + name + "\" sudah diselesaikan"
+                                    + (by != null && !by.trim().isEmpty() ? " oleh " + by.trim() : " oleh perangkat/pihak lain")
+                                    + " — tak perlu diantar lagi.", 7940 + (i % 10));
+                } catch (Throwable ignored) {}
+            }
+            // PELANGGAN PERKENALAN baru untuk PERANGKAT PETUGAS WA Perkenalan (sudah tersaring
+            // wilayah di applyRows): dirangkum satu notifikasi supaya sinkron awal/borongan tak
+            // membanjiri — badge di dashboard yang memuat daftar lengkapnya.
+            if (!pulledPromoIntroArrivals.isEmpty()) {
+                try {
+                    String body = pulledPromoIntroArrivals.size() == 1
+                            ? "Pelanggan baru dari promosi: \"" + pulledPromoIntroArrivals.get(0)
+                                    + "\" masuk wilayah Anda — kirim WA Perkenalan."
+                            : pulledPromoIntroArrivals.size() + " pelanggan baru dari promosi masuk wilayah Anda"
+                                    + " — buka Pelanggan Promosi untuk kirim WA Perkenalan.";
+                    OnlineNotifier.postNotif(appCtx, "👋 Pelanggan Perkenalan Baru", body, 7960);
+                } catch (Throwable ignored) {}
             }
             // Kasus B (upgrade): jenis galon ganda — katalog lokal lama ber-uuid beda dari
             // katalog web. Peringatkan admin sekali (rising-edge) supaya dirapikan di dashboard.
@@ -443,7 +657,11 @@ public class SyncEngine {
      * {@code /api/sync/import}. New rows are imported server-side; rows that already exist but
      * differ become reviewable conflicts on the dashboard. Run off the main thread.
      */
-    public synchronized Result fullExport() {
+    public Result fullExport() {
+        synchronized (SYNC_LOCK) { return fullExportLocked(); }
+    }
+
+    private Result fullExportLocked() {
         Result res = new Result();
         if (!cfg.isEnrolled()) { res.error = "Belum terhubung ke server"; return res; }
         try {
@@ -472,7 +690,11 @@ public class SyncEngine {
      * Enrolment lokal TIDAK dihapus di sini — caller yang menghapus SETELAH sukses, supaya
      * kegagalan jaringan tidak memutus HP dengan data yang belum terselamatkan.
      */
-    public synchronized Result retireAndArchive() {
+    public Result retireAndArchive() {
+        synchronized (SYNC_LOCK) { return retireAndArchiveLocked(); }
+    }
+
+    private Result retireAndArchiveLocked() {
         Result res = new Result();
         if (!cfg.isEnrolled()) { res.error = "Belum terhubung ke server"; return res; }
         try {
@@ -504,7 +726,11 @@ public class SyncEngine {
      * settings to the dashboard, where they're archived for review & restore (mirrors the
      * enroll-time settings snapshot). Secrets are never included — only SHAREABLE_KEYS.
      */
-    public synchronized Result exportSettings() {
+    public Result exportSettings() {
+        synchronized (SYNC_LOCK) { return exportSettingsLocked(); }
+    }
+
+    private Result exportSettingsLocked() {
         Result res = new Result();
         if (!cfg.isEnrolled()) { res.error = "Belum terhubung ke server"; return res; }
         try {
@@ -533,7 +759,11 @@ public class SyncEngine {
      * the single source of what gets imported. Activity created after provisioning syncs
      * normally. Run off the main thread.
      */
-    public synchronized Result provisioningImport(java.util.Collection<String> entityNames) {
+    public Result provisioningImport(java.util.Collection<String> entityNames) {
+        synchronized (SYNC_LOCK) { return provisioningImportLocked(entityNames); }
+    }
+
+    private Result provisioningImportLocked(java.util.Collection<String> entityNames) {
         Result res = new Result();
         if (!cfg.isEnrolled()) { res.error = "Belum terhubung ke server"; return res; }
         try {
@@ -644,6 +874,7 @@ public class SyncEngine {
     private void handleRevoked() {
         cfg.clear();                          // forget token + disable sync
         try { SyncScheduler.cancelAll(appCtx); } catch (Throwable ignored) {}
+        try { ServiceRestartReceiver.cancel(appCtx); } catch (Throwable ignored) {}
         try { com.crowja.damiupos.LocationService.stop(appCtx); } catch (Throwable ignored) {}
         OnlineNotifier.postNotif(appCtx, "Akses dicabut",
                 "Perangkat dilepas oleh admin. Daftar ulang (provisioning) untuk terhubung lagi.",
@@ -776,6 +1007,11 @@ public class SyncEngine {
                     row.put("uuid", uuid);
                     row.put("edited_at", edited);
                     row.put("deleted_at", edited);
+                    // Atribusi penghapusan (bila ada) — server menyimpannya utk "Dihapus oleh …".
+                    String delName = str(t, DatabaseHelper.COL_DELETED_BY_NAME);
+                    String delDev = str(t, DatabaseHelper.COL_DELETED_BY_DEVICE);
+                    if (delName != null) row.put("deleted_by_name", delName);
+                    if (delDev != null) row.put("deleted_by_device", delDev);
                     appendTo(entities, s.entity, row);
                     sentTombs.add(new String[]{s.entity, uuid});
                     total++;
@@ -931,6 +1167,18 @@ public class SyncEngine {
             cfg.setCursor("customers", "1970-01-01 00:00:00.000000");
             cfg.markCustomerRepulled();
         }
+        // Buku besar Hutang/Refund: tarik ulang PENUH dari epoch lalu PANGKAS baris lokal yang
+        // ternyata tak ada di server. uuid yang benar-benar dikirim server dikumpulkan di sini;
+        // {@see #pruneStaleRows} memakainya sesudah drain tuntas. Kosong = tak ada rekonsiliasi
+        // penuh di siklus ini (perilaku normal).
+        Map<String, java.util.Set<String>> fullResync = new HashMap<>();
+        if (cfg.needsDebtRepull()) {
+            cfg.setCursor("customer_debts", "1970-01-01 00:00:00.000000");
+            cfg.setCursor("customer_refunds", "1970-01-01 00:00:00.000000");
+            fullResync.put("customer_debts", new java.util.HashSet<>());
+            fullResync.put("customer_refunds", new java.util.HashSet<>());
+            cfg.markDebtRepulled();
+        }
 
         int applied = 0;
         boolean firstPage = true;
@@ -961,7 +1209,19 @@ public class SyncEngine {
 
             for (Spec s : SPECS) {
                 JSONArray arr = entities != null ? entities.optJSONArray(s.entity) : null;
-                if (arr != null) applied += applyRows(db, s, arr);
+                if (arr != null) {
+                    applied += applyRows(db, s, arr);
+                    // Rekonsiliasi penuh: catat uuid yang SUNGGUH dikirim server (termasuk yang
+                    // ber-tombstone) — sisanya nanti dipangkas dari salinan lokal.
+                    java.util.Set<String> seen = fullResync.get(s.entity);
+                    if (seen != null) {
+                        for (int i = 0; i < arr.length(); i++) {
+                            JSONObject o = arr.optJSONObject(i);
+                            String u = o != null ? o.optString("uuid", null) : null;
+                            if (u != null && !u.isEmpty()) seen.add(u);
+                        }
+                    }
+                }
                 if (newCursors != null) {
                     cfg.setCursor(s.entity, newCursors.optString(s.entity, cfg.getCursor(s.entity)));
                 }
@@ -1008,10 +1268,131 @@ public class SyncEngine {
             firstPage = false;
         } while (more && ++guard < MAX_PULL_PAGES);
 
+        // Pangkas HANYA bila drain selesai WAJAR (more==false). Kalau berhenti karena pagar
+        // MAX_PULL_PAGES, daftar uuid server belum lengkap — memangkas dari daftar setengah jadi
+        // akan membuang baris yang sebenarnya masih ada.
+        if (!more) {
+            for (Map.Entry<String, java.util.Set<String>> e : fullResync.entrySet()) {
+                applied += pruneStaleRows(db, e.getKey(), e.getValue());
+            }
+        }
+
         return applied;
     }
 
+    /**
+     * Buang baris LOKAL sebuah entitas yang server ternyata TIDAK punya — dijalankan HANYA sesudah
+     * tarik-ulang PENUH dari epoch selesai tuntas, jadi {@code serverUuids} memuat SELURUH baris
+     * cabang untuk entitas itu (termasuk yang ber-tombstone).
+     *
+     * <p>Ini menutup satu-satunya lubang yang tak bisa disembuhkan pull biasa: baris yang lenyap
+     * dari server TANPA tombstone (terhapus keras langsung di database) tak akan pernah disebut
+     * lagi oleh pull mana pun, sehingga perangkat menyimpannya selamanya dan saldo buku besarnya
+     * menyimpang dari dashboard. {@see SyncSettings#needsDebtRepull()}
+     *
+     * <p>Dua pagar keselamatan yang disengaja:
+     * <ul>
+     *   <li>Hanya baris {@code synced=1} — baris yang dibuat di HP dan BELUM ter-push tak boleh
+     *       ikut terbuang hanya karena server memang belum tahu.</li>
+     *   <li>HARD delete LOKAL tanpa tombstone. Kalau dugaan ini keliru, pull berikutnya
+     *       mengembalikan barisnya dari server (server tetap sumber kebenaran). Tombstone justru
+     *       akan MENGHAPUS baris aslinya di server — kerusakan yang tak bisa ditarik balik.</li>
+     * </ul>
+     */
+    private int pruneStaleRows(SQLiteDatabase db, String entity, java.util.Set<String> serverUuids) {
+        Spec spec = null;
+        for (Spec s : SPECS) {
+            if (s.entity.equals(entity)) { spec = s; break; }
+        }
+        if (spec == null) return 0;
+
+        java.util.List<String> doomed = new java.util.ArrayList<>();
+        Cursor c = db.query(spec.table, new String[]{DatabaseHelper.COL_SYNC_UUID},
+                DatabaseHelper.COL_SYNCED + "=1 AND " + DatabaseHelper.COL_SYNC_UUID + " IS NOT NULL",
+                null, null, null, null);
+        try {
+            while (c.moveToNext()) {
+                String u = c.getString(0);
+                if (u != null && !u.isEmpty() && !serverUuids.contains(u)) doomed.add(u);
+            }
+        } finally {
+            c.close();
+        }
+        for (String u : doomed) {
+            db.delete(spec.table, DatabaseHelper.COL_SYNC_UUID + "=?", new String[]{u});
+        }
+        if (!doomed.isEmpty()) {
+            android.util.Log.w("SyncEngine", "prune " + entity + ": " + doomed.size()
+                    + " baris lokal basi dibuang (tak ada di server)");
+        }
+        return doomed.size();
+    }
+
+    /**
+     * Pelanggan ini ditangani perangkat INI? Cermin {@link com.crowja.damiupos.db.OrderInboxDao}
+     * assignedHere per-item: override perangkat per-pelanggan MENGALAHKAN wilayah otomatis; bila
+     * penugasan tak bisa ditentukan (belum provisioning / tanpa koordinat / wilayah belum diatur)
+     * dianggap "ya" agar pengingat tidak hilang dari semua perangkat.
+     */
+    private boolean assignedToThisDevice(com.crowja.damiupos.model.Customer c) {
+        if (c == null) return false;
+        String myUuid = cfg.getDeviceUuid();
+        if (myUuid == null || myUuid.trim().isEmpty()) return true;
+        String dev = com.crowja.damiupos.Wilayah.effectiveDevice(
+                c.getAssignedDeviceUuid(), cfg.getBranchCenter(), cfg.getWilayahZones(),
+                c.getLatitude(), c.getLongitude());
+        return dev == null || dev.trim().isEmpty() || dev.equals(myUuid);
+    }
+
+    /**
+     * Order delivery (baris transaksi) ini ditugaskan ke perangkat INI? delivery_device_uuid
+     * (server-otoritatif) menang bila terisi; bila kosong, jatuh ke wilayah/override pelanggan
+     * ({@link #assignedToThisDevice}).
+     */
+    private boolean deliveryAssignedHere(ContentValues v, com.crowja.damiupos.model.Customer c) {
+        String devUuid = v.getAsString(DatabaseHelper.COL_DELIVERY_DEVICE_UUID);
+        if (devUuid != null && !devUuid.trim().isEmpty()) {
+            String myUuid = cfg.getDeviceUuid();
+            return myUuid != null && devUuid.equals(myUuid);
+        }
+        return assignedToThisDevice(c);
+    }
+
+    /**
+     * Kumpulkan pelanggan antrean baru yang belum lengkap untuk popup "Lengkapi Data Pelanggan".
+     * Hanya bila setting cabut-kredit cabang AKTIF (jadi void nyata bisa terjadi — kalau mati,
+     * tak ada yang perlu dicegah) DAN pelanggan memenuhi predikat server ({@code shouldWarn}:
+     * tak lengkap, bukan Umum, bukan afiliasi reseller). Dedup per-siklus by customerId supaya
+     * satu pelanggan yang muncul di dua sumber antrean tak dikumpulkan/di-notif dua kali.
+     */
+    private void collectIncompleteQueueCustomer(com.crowja.damiupos.model.Customer c) {
+        if (c == null) return;
+        if (!settingsDao.isRevokeCreditIncompleteEnabled()) return;
+        if (!com.crowja.damiupos.IncompleteCustomerDialog.shouldWarn(c)) return;
+        for (Object[] e : pulledIncompleteQueueCustomers) {
+            if (((Long) e[0]).longValue() == c.getId()) return;   // sudah dikumpulkan siklus ini
+        }
+        pulledIncompleteQueueCustomers.add(new Object[]{c.getId(), c.getName()});
+    }
+
     private int applyRows(SQLiteDatabase db, Spec s, JSONArray arr) {
+        // Batches this page's check-then-insert/update as one atomic unit — previously each row's
+        // SELECT-by-sync_uuid + INSERT/UPDATE auto-committed individually with no beginTransaction()
+        // anywhere in this file. Doesn't change the happy path (all rows still applied one by one);
+        // on an exception partway through, nothing in this entity's page is left half-applied — the
+        // whole batch retries next pull (edited_at cursor for this entity is only advanced by the
+        // caller AFTER this method returns, so no cursor/data desync either way).
+        db.beginTransaction();
+        try {
+            int applied = applyRowsInner(db, s, arr);
+            db.setTransactionSuccessful();
+            return applied;
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    private int applyRowsInner(SQLiteDatabase db, Spec s, JSONArray arr) {
         int applied = 0;
         for (int i = 0; i < arr.length(); i++) {
             JSONObject obj = arr.optJSONObject(i);
@@ -1056,6 +1437,7 @@ public class SyncEngine {
                     sv.put(DatabaseHelper.COL_SRV_ORDERED, obj.optInt("agg_ordered", 0));
                     sv.put(DatabaseHelper.COL_SRV_BORROWED, obj.optInt("agg_borrowed", 0));
                     sv.put(DatabaseHelper.COL_SRV_KEMBALI, obj.optInt("agg_kembali", 0));
+                    sv.put(DatabaseHelper.COL_SRV_HELD, obj.optInt("agg_held", 0));
                     sv.put(DatabaseHelper.COL_SRV_FIRST_JUAL,
                             obj.isNull("agg_first_jual") ? null : obj.optString("agg_first_jual", null));
                     sv.put(DatabaseHelper.COL_SRV_FIRST_PAID,
@@ -1063,9 +1445,14 @@ public class SyncEngine {
                     sv.put(DatabaseHelper.COL_SRV_LAST_JUAL,
                             obj.isNull("agg_last_jual") ? null : obj.optString("agg_last_jual", null));
                     sv.put(DatabaseHelper.COL_SRV_PROMO_GALON, obj.optInt("agg_promo_galon", 0));
+                    sv.put(DatabaseHelper.COL_SRV_PROMO_PAID, obj.optInt("agg_promo_paid", 0));
                     sv.put(DatabaseHelper.COL_SRV_PROMO_PULLED, obj.optInt("agg_promo_pulled", 0));
                     sv.put(DatabaseHelper.COL_ORIGIN_LABEL, obj.optString("origin_label", ""));
                     sv.put(DatabaseHelper.COL_SRV_SALDO, obj.optDouble("agg_saldo", 0));
+                    sv.put(DatabaseHelper.COL_SRV_PAID_JUAL_COUNT, obj.optInt("agg_paid_jual_count", 0));
+                    // Desa/Kecamatan (reverse-geocode server) — pull-only, sama pola dgn origin_label.
+                    sv.put(DatabaseHelper.COL_DESA, obj.isNull("desa") ? null : obj.optString("desa", null));
+                    sv.put(DatabaseHelper.COL_KECAMATAN, obj.isNull("kecamatan") ? null : obj.optString("kecamatan", null));
                     db.update(s.table, sv, DatabaseHelper.COL_SYNC_UUID + "=?", new String[]{uuid});
                 }
                 continue;   // don't clobber a newer un-pushed local edit
@@ -1104,6 +1491,7 @@ public class SyncEngine {
                 v.put(DatabaseHelper.COL_SRV_ORDERED, obj.optInt("agg_ordered", 0));
                 v.put(DatabaseHelper.COL_SRV_BORROWED, obj.optInt("agg_borrowed", 0));
                 v.put(DatabaseHelper.COL_SRV_KEMBALI, obj.optInt("agg_kembali", 0));
+                v.put(DatabaseHelper.COL_SRV_HELD, obj.optInt("agg_held", 0));
                 v.put(DatabaseHelper.COL_SRV_FIRST_JUAL,
                         obj.isNull("agg_first_jual") ? null : obj.optString("agg_first_jual", null));
                 v.put(DatabaseHelper.COL_SRV_FIRST_PAID,
@@ -1111,9 +1499,29 @@ public class SyncEngine {
                 v.put(DatabaseHelper.COL_SRV_LAST_JUAL,
                         obj.isNull("agg_last_jual") ? null : obj.optString("agg_last_jual", null));
                 v.put(DatabaseHelper.COL_SRV_PROMO_GALON, obj.optInt("agg_promo_galon", 0));
+                v.put(DatabaseHelper.COL_SRV_PROMO_PAID, obj.optInt("agg_promo_paid", 0));
                 v.put(DatabaseHelper.COL_SRV_PROMO_PULLED, obj.optInt("agg_promo_pulled", 0));
                 v.put(DatabaseHelper.COL_ORIGIN_LABEL, obj.optString("origin_label", ""));
                 v.put(DatabaseHelper.COL_SRV_SALDO, obj.optDouble("agg_saldo", 0));
+                v.put(DatabaseHelper.COL_SRV_PAID_JUAL_COUNT, obj.optInt("agg_paid_jual_count", 0));
+                // Desa/Kecamatan (reverse-geocode server) — pull-only, sama pola dgn origin_label.
+                v.put(DatabaseHelper.COL_DESA, obj.isNull("desa") ? null : obj.optString("desa", null));
+                v.put(DatabaseHelper.COL_KECAMATAN, obj.isNull("kecamatan") ? null : obj.optString("kecamatan", null));
+
+                // PELANGGAN PERKENALAN BARU masuk lewat pull (INSERT = benar-benar baru di HP ini,
+                // dedup alami — cermin pulledIncompleteQueueCustomers): pelanggan promosi marketing
+                // (gratis: agg_promo_galon>0, ATAU berbayar: agg_promo_paid>0) yang belum dikirim
+                // WA Perkenalan → notifikasi untuk PERANGKAT PETUGAS (dicentang di web), disaring
+                // ke wilayah tugasnya. Perangkat non-petugas tak pernah dinotifikasi.
+                if (localId == -1 && cfg.isIntroWaDevice()
+                        && (obj.optInt("agg_promo_galon", 0) > 0 || obj.optInt("agg_promo_paid", 0) > 0)
+                        && obj.isNull(DatabaseHelper.COL_INTRO_WA_SENT_AT)) {
+                    double plat = obj.optDouble(DatabaseHelper.COL_LATITUDE, 0);
+                    double plng = obj.optDouble(DatabaseHelper.COL_LONGITUDE, 0);
+                    if (com.crowja.damiupos.IntroWaDuty.inMyZones(cfg, plat, plng)) {
+                        pulledPromoIntroArrivals.add(obj.optString(DatabaseHelper.COL_NAME, "Pelanggan"));
+                    }
+                }
 
                 String inManual = obj.isNull(DatabaseHelper.COL_FOLLOWUP_MANUAL_AT) ? null
                         : obj.optString(DatabaseHelper.COL_FOLLOWUP_MANUAL_AT, null);
@@ -1132,6 +1540,78 @@ public class SyncEngine {
                                         : obj.optString(DatabaseHelper.COL_FOLLOWUP_NOTE, "")});
                     }
                 }
+            }
+
+            // Antrean BARU untuk perangkat ini dgn pelanggan belum lengkap (foto/koordinat) →
+            // kumpulkan supaya operator diperingatkan melengkapi (mencegah kredit galon penjualan
+            // dicabut server saat delivery selesai). Hanya cabang INSERT (localId == -1) = baris
+            // yang benar-benar baru → tepat sekali per antrean (dedup alami). Dua sumber "antrean":
+            //  (a) pesanan masuk  — order_inbox PENDING;
+            //  (b) order delivery ditugaskan ke perangkat ini — transactions delivery PENDING
+            //      (mis. order online dari airfrez.com yang dirutekan ke perangkat ini).
+            // customers spec di-apply lebih dulu → baris pelanggan (foto/koordinat) sudah segar.
+            if (localId == -1) {
+                try {
+                    if ("order_inbox".equals(s.entity)) {
+                        String inStatus = obj.isNull(DatabaseHelper.COL_INBOX_STATUS) ? null
+                                : obj.optString(DatabaseHelper.COL_INBOX_STATUS, null);
+                        Long custLocal = v.getAsLong(DatabaseHelper.COL_INBOX_CUSTOMER_ID);
+                        if (com.crowja.damiupos.model.OrderInbox.STATUS_PENDING.equals(inStatus)
+                                && custLocal != null && custLocal > 0) {
+                            com.crowja.damiupos.model.Customer oc =
+                                    new com.crowja.damiupos.db.CustomerDao(dbHelper).getById(custLocal);
+                            if (assignedToThisDevice(oc)) collectIncompleteQueueCustomer(oc);
+                        }
+                    } else if ("transactions".equals(s.entity)) {
+                        String delStatus = v.getAsString(DatabaseHelper.COL_DELIVERY_STATUS);
+                        Long custLocal = v.getAsLong(DatabaseHelper.COL_CUSTOMER_ID);
+                        if (com.crowja.damiupos.model.Transaction.DELIVERY_PENDING.equals(delStatus)
+                                && custLocal != null && custLocal > 0) {
+                            com.crowja.damiupos.model.Customer tc =
+                                    new com.crowja.damiupos.db.CustomerDao(dbHelper).getById(custLocal);
+                            if (deliveryAssignedHere(v, tc)) collectIncompleteQueueCustomer(tc);
+                        }
+                    }
+                } catch (Throwable ignored) {}
+            }
+
+            // Order yang SEBELUM update ini ada di antrian perangkat ini (lihat komentar
+            // pulledRoutedAway di atas) tiba-tiba DIPINDAH ke perangkat lain atau DISELESAIKAN oleh
+            // pihak lain → kumpulkan untuk notifikasi ⚠. Cabang UPDATE saja (localId != -1): baris
+            // baru (INSERT) tak punya "sebelumnya" yang berarti. Dibungkus try/catch — kegagalan di
+            // sini tak boleh menggagalkan penerapan sync itu sendiri.
+            if (localId != -1 && "transactions".equals(s.entity)) {
+                try {
+                    Cursor oc = db.query(s.table,
+                            new String[]{DatabaseHelper.COL_DELIVERY_DEVICE_UUID,
+                                    DatabaseHelper.COL_DELIVERY_STATUS, DatabaseHelper.COL_CUSTOMER_ID},
+                            DatabaseHelper.COL_SYNC_UUID + "=?", new String[]{uuid}, null, null, null);
+                    if (oc.moveToFirst()) {
+                        String oldDev = oc.getString(0);
+                        String oldStatus = oc.getString(1);
+                        long oldCustId = oc.getLong(2);
+                        String myUuid = cfg.getDeviceUuid();
+                        boolean wasMine = oldDev == null || oldDev.trim().isEmpty() || oldDev.equals(myUuid);
+                        if (wasMine && com.crowja.damiupos.model.Transaction.DELIVERY_PENDING.equals(oldStatus)) {
+                            String newDev = v.getAsString(DatabaseHelper.COL_DELIVERY_DEVICE_UUID);
+                            String newStatus = v.getAsString(DatabaseHelper.COL_DELIVERY_STATUS);
+                            String custName = null;
+                            if (oldCustId > 0) {
+                                com.crowja.damiupos.model.Customer oldC =
+                                        new com.crowja.damiupos.db.CustomerDao(dbHelper).getById(oldCustId);
+                                if (oldC != null) custName = oldC.getName();
+                            }
+                            if (custName == null) custName = "Pelanggan";
+                            if (newDev != null && !newDev.trim().isEmpty() && !newDev.equals(myUuid)) {
+                                pulledRoutedAway.add(custName);
+                            } else if (com.crowja.damiupos.model.Transaction.DELIVERY_DONE.equals(newStatus)) {
+                                pulledCompletedElsewhere.add(new String[]{custName,
+                                        v.getAsString(DatabaseHelper.COL_COMPLETED_BY_NAME)});
+                            }
+                        }
+                    }
+                    oc.close();
+                } catch (Throwable ignored) {}
             }
 
             if (localId != -1) {

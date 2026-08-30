@@ -3,8 +3,22 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <item
-        android:id="@+id/action_route_select"
-        android:icon="@android:drawable/ic_menu_directions"
-        android:title="Buat Rute"
-        app:showAsAction="ifRoom" />
+        android:id="@+id/action_view_other_device"
+        android:title="Lihat Antrian Perangkat Lain"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_delivery_map"
+        android:title="🗺 Peta Antrian Delivery"
+        app:showAsAction="never" />
+
+    <!-- Ikonnya EMOJI, bukan android:icon: baris menu overflow pada tema Material 2 aplikasi ini
+         tak pernah merender drawable (getOptionalIconsVisible=false, tanpa atribut tema untuk
+         mengubahnya) — memaksanya butuh API @RestrictTo yang menggagalkan lintVitalRelease.
+         Seluruh app konsisten memakai pola ini; lihat "🗺 Peta Antrian Delivery" di atas.
+         🚧 dipilih, BUKAN ⚠️ yang sudah dipakai "Tandai Bermasalah" (fitur pelanggan, beda hal). -->
+    <item
+        android:id="@+id/action_report_obstacle"
+        android:title="🚧 Laporkan Kendala Pengiriman"
+        app:showAsAction="never" />
 </menu>

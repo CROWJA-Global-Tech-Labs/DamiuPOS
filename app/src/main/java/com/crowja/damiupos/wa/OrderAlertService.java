@@ -273,9 +273,11 @@ public class OrderAlertService extends Service {
         }
     }
 
+    /** Hanya pesanan yang DITUGASKAN ke perangkat ini — notifikasi & alarm tak boleh berbunyi di
+     *  HP lain untuk pelanggan yang bukan tanggung jawabnya. */
     private int countPending() {
         try {
-            return new OrderInboxDao(DatabaseHelper.getInstance(this)).countPending();
+            return new OrderInboxDao(DatabaseHelper.getInstance(this)).countPendingForThisDevice();
         } catch (Exception e) {
             return 0;
         }

@@ -20,9 +20,11 @@
     <string name="harga_per_galon">Harga per Galon</string>
     <string name="total_harga">Total Harga</string>
     <string name="catatan">Catatan (opsional)</string>
-    <string name="pendapatan_hari_ini">Pendapatan Hari Ini</string>
+    <string name="pendapatan_hari_ini">Pendapatan Hari Ini · HP ini</string>
     <string name="transaksi_hari_ini">Transaksi Hari Ini</string>
-    <string name="galon_terjual_hari_ini">Galon Terjual Hari Ini</string>
+    <string name="galon_terjual_hari_ini">Galon Terjual Hari Ini · HP ini</string>
+    <!-- Keterangan cakupan angka beranda: transaksi per-perangkat, pelanggan & galon se-depot. -->
+    <string name="kpi_scope_note">Pendapatan · Galon Terjual · TRX = penjualan HP INI. GLN &amp; CUST = se-depot.</string>
     <string name="galon_beredar">Galon Beredar</string>
     <string name="total_pelanggan">Total Pelanggan</string>
     <string name="saldo_galon">Galon Diakusisi</string>
@@ -36,5 +38,5 @@
     <string name="pilih_pelanggan">Pilih Pelanggan</string>
     <string name="wa_tidak_tersedia">WhatsApp tidak terinstall</string>
     <string name="no_telepon_kosong">Nomor telepon pelanggan kosong</string>
-    <string name="wa_autosend_desc">Otomatis menekan tombol "Kirim" di WhatsApp tepat setelah DAMIU POS membagikan struk ke pelanggan, sehingga staf tidak perlu menekan Kirim manual. Layanan ini hanya membaca layar WhatsApp dan hanya aktif beberapa detik setelah Anda membagikan struk.</string>
+    <string name="wa_autosend_desc">Dua fitur: (1) Otomatis menekan tombol "Kirim" di WhatsApp tepat setelah DAMIU POS membagikan struk ke pelanggan; (2) Tombol melayang "+ Trx" yang membuka Transaksi Baru untuk pelanggan pada chat WhatsApp yang sedang dibuka. Layanan memeriksa aplikasi apa yang sedang terbuka, dan hanya membaca judul chat bila itu WhatsApp — isi percakapan dan aplikasi lain tidak dibaca.</string>
 </resources>

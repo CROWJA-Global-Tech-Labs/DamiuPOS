@@ -78,6 +78,25 @@
                             android:inputType="phone" />
                     </com.google.android.material.textfield.TextInputLayout>
 
+                    <!-- Nomor HP lain (opsional): satu orang bisa punya beberapa nomor. Baris di-inflate
+                         programatik (etPhoneExtra + tombol ✕), pola sama dgn baris lokasi. -->
+                    <LinearLayout
+                        android:id="@+id/llPhonesExtra"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:orientation="vertical" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnAddPhone"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp"
+                        android:text="+ Tambah nomor lain"
+                        android:textAllCaps="false" />
+
                     <com.google.android.material.textfield.TextInputLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -94,6 +113,28 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="textPostalAddress"
+                            android:minLines="2" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <!-- Catatan Order: instruksi pengiriman tetap, otomatis ditambahkan ke catatan
+                         SETIAP transaksi baru pelanggan ini (web & HP). -->
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:hint="Catatan Order"
+                        app:helperText="Instruksi pengiriman tetap (mis. &quot;titip satpam&quot;) — otomatis ditambahkan ke catatan tiap transaksi baru"
+                        app:boxCornerRadiusBottomEnd="8dp"
+                        app:boxCornerRadiusBottomStart="8dp"
+                        app:boxCornerRadiusTopEnd="8dp"
+                        app:boxCornerRadiusTopStart="8dp">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etCatatanOrder"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="textMultiLine"
                             android:minLines="2" />
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
@@ -177,6 +218,19 @@
                 android:text="Tidak ditautkan — ketuk untuk pilih reseller"
                 android:textAllCaps="false"
                 android:textSize="13sp" />
+
+            <!-- Muncul hanya saat pelanggan dijadikan/ditautkan reseller: opsi melewati kewajiban
+                 foto rumah + koordinat (biasanya wajib untuk pelanggan baru marketing/staf/SPV) —
+                 pelanggan reseller/terafiliasi tidak perlu diverifikasi lokasi fisik seketat itu. -->
+            <com.google.android.material.checkbox.MaterialCheckBox
+                android:id="@+id/cbSkipPhotoCoordReseller"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:checked="true"
+                android:text="Lewati wajib foto &amp; koordinat (pelanggan reseller/terafiliasi)"
+                android:textSize="13sp"
+                android:visibility="gone" />
 
             <!-- Foto Rumah -->
             <com.google.android.material.card.MaterialCardView

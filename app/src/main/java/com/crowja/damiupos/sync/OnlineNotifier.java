@@ -89,7 +89,10 @@ public final class OnlineNotifier {
         }
     }
 
-    private static void ensureChannel(Context ctx) {
+    /** Pastikan channel notifikasi ada. Publik: pemanggil yang membangun notifikasi sendiri
+     *  (mis. {@link com.crowja.damiupos.wa.WaGateway} dengan PendingIntent khusus) wajib
+     *  memanggilnya dulu — di Android O+ notifikasi ke channel yang belum ada dibuang diam-diam. */
+    public static void ensureChannel(Context ctx) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationManager nm = ctx.getSystemService(NotificationManager.class);
         if (nm == null || nm.getNotificationChannel(CHANNEL_PUSH) != null) return;

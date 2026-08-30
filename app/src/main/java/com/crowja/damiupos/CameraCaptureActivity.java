@@ -17,6 +17,8 @@ import android.os.Bundle;
 import android.os.CountDownTimer;
 import android.os.Handler;
 import android.os.Looper;
+import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -63,6 +65,12 @@ public class CameraCaptureActivity extends AppCompatActivity {
     /** true = user menekan "Batal" di peringatan lokasi (batalkan absensi),
      *  beda dari kamera gagal/izin ditolak (yang tetap lanjut tanpa foto). */
     public static final String EXTRA_USER_CANCELLED = "user_cancelled";
+    /** true = titik selfie berada DI LUAR area absensi (geofence) cabang. */
+    public static final String EXTRA_OUT_OF_RADIUS = "out_of_radius";
+    /** Jarak (meter, dibulatkan) dari pusat area absensi; -1 = tak terukur. */
+    public static final String EXTRA_DISTANCE_M = "distance_m";
+    /** Alasan yang diketik staf saat absen di luar area — disimpan sebagai bukti. */
+    public static final String EXTRA_RADIUS_REASON = "radius_reason";
 
     private static final int REQ_CAMERA = 901;
 
@@ -288,9 +296,84 @@ public class CameraCaptureActivity extends AppCompatActivity {
                 });
     }
 
+    /**
+     * Foto selesai → tegakkan area absensi. Di luar radius, staf WAJIB mengetik alasan sebelum
+     * absennya tercatat; alasan + jaraknya ikut kembali ke pemanggil dan tersimpan sebaris dengan
+     * event absensi (jadi bukti untuk laporan &amp; penggajian).
+     *
+     * <p>Pusat/radius memakai kunci geofence yang SAMA dengan dashboard (App\Support\Reports::
+     * geofence) sehingga vonis di HP dan vonis di slip gaji tidak pernah berbeda. Geofence belum
+     * diatur, atau lokasi tak terukur → lanjut seperti biasa: fitur ini menagih alasan, bukan
+     * memblokir absensi.
+     */
     private void finishWithPhoto(String path) {
+        double[] center = null;
+        double radius = 0;
+        try {
+            SettingsDao sd = new SettingsDao(DatabaseHelper.getInstance(this));
+            center = sd.getGeofenceCenter();
+            radius = sd.getGeofenceRadius();
+        } catch (Throwable ignored) {}
+
+        Location loc = selfieLocation != null ? selfieLocation : getLastLocation();
+        if (center == null || loc == null) {
+            deliverPhoto(path, false, -1, null);
+            return;
+        }
+
+        float[] out = new float[1];
+        Location.distanceBetween(center[0], center[1], loc.getLatitude(), loc.getLongitude(), out);
+        int distance = Math.round(out[0]);
+        if (distance <= radius) {
+            deliverPhoto(path, false, distance, null);
+            return;
+        }
+        askOutOfRadiusReason(path, distance, (int) Math.round(radius));
+    }
+
+    /** Popup WAJIB-isi: absen di luar area → alasan tidak boleh kosong, tak bisa ditutup di luar. */
+    private void askOutOfRadiusReason(String path, int distance, int radius) {
+        if (isFinishing()) {
+            deliverPhoto(path, true, distance, null);
+            return;
+        }
+        final EditText input = new EditText(this);
+        input.setHint("Contoh: antar pesanan ke pelanggan, motor mogok di jalan…");
+        input.setMinLines(2);
+        input.setGravity(android.view.Gravity.TOP | android.view.Gravity.START);
+        int pad = Math.round(getResources().getDisplayMetrics().density * 20);
+        FrameLayout box = new FrameLayout(this);
+        box.setPadding(pad, pad / 2, pad, 0);
+        box.addView(input);
+
+        AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle("Absen di Luar Area")
+                .setMessage("Anda berada ± " + distance + " m dari titik absensi (batas "
+                        + radius + " m).\n\nTuliskan alasan absen di luar area. "
+                        + "Alasan ini tersimpan di server sebagai bukti untuk laporan & penggajian.")
+                .setView(box)
+                .setCancelable(false)
+                .setPositiveButton("Simpan Alasan", null)   // di-override supaya dialog tak menutup saat kosong
+                .create();
+        dlg.show();
+        // Validasi tanpa menutup dialog: alasan kosong = tidak ada bukti, jadi tombolnya menolak.
+        dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String reason = input.getText() != null ? input.getText().toString().trim() : "";
+            if (reason.length() < 5) {
+                input.setError("Alasan wajib diisi (minimal 5 huruf)");
+                return;
+            }
+            dlg.dismiss();
+            deliverPhoto(path, true, distance, reason);
+        });
+    }
+
+    private void deliverPhoto(String path, boolean outOfRadius, int distance, String reason) {
         Intent data = new Intent();
         data.putExtra(EXTRA_PHOTO_PATH, path);
+        data.putExtra(EXTRA_OUT_OF_RADIUS, outOfRadius);
+        data.putExtra(EXTRA_DISTANCE_M, distance);
+        if (reason != null) data.putExtra(EXTRA_RADIUS_REASON, reason);
         setResult(RESULT_OK, data);
         finish();
     }

@@ -362,22 +362,40 @@ public class WizardActivity extends AppCompatActivity {
      * default server URL.
      */
     private void handleProvisionScan(String contents) {
-        String url = "", code = "";
-        try {
-            org.json.JSONObject j = new org.json.JSONObject(contents);
-            url = j.optString("url", "");
-            code = j.optString("code", "");
-        } catch (org.json.JSONException ignored) {}
-        if (code.isEmpty()) code = contents;                      // plain-text QR = the code itself
-        if (url.isEmpty()) url = SyncSettings.DEFAULT_BASE_URL;   // QR may omit the URL
+        com.crowja.damiupos.sync.ProvisioningQr qr =
+                com.crowja.damiupos.sync.ProvisioningQr.parse(contents);
+        if (qr == null) {
+            if (tvProvisionStatus != null)
+                tvProvisionStatus.setText("QR ditolak: alamatnya bukan HTTPS.");
+            return;
+        }
+        // Server ASING harus dikonfirmasi DULU sambil ditampilkan hostnya — QR bisa dicetak siapa
+        // pun. Tanpa gerbang ini, memindai satu gambar sudah cukup membuat HP mendaftar ke server
+        // penyerang lalu mengunggah seluruh data cabang ke sana pada sinkron pertama.
+        if (!qr.trustedHost) {
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle("⚠ Server tidak dikenal")
+                    .setMessage("QR ini menyuruh aplikasi terhubung ke:\n\n" + qr.host()
+                            + "\n\nBukan server resmi (" + com.crowja.damiupos.sync.ProvisioningQr.defaultHost()
+                            + "). Melanjutkan berarti data HP ini akan dikirim ke sana.")
+                    .setNegativeButton("Batal", null)
+                    .setPositiveButton("Saya paham, lanjutkan", (d, w) -> startProvisioning(qr.url, qr.code))
+                    .show();
+            return;
+        }
+        startProvisioning(qr.url.isEmpty() ? SyncSettings.DEFAULT_BASE_URL : qr.url, qr.code);
+    }
 
+    private void startProvisioning(String url, String code) {
         if (tvProvisionStatus != null) tvProvisionStatus.setText("Menghubungkan ke dashboard…");
         final String baseUrl = url, credential = code.trim();
         final String deviceName = (android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).trim();
         final SyncEngine engine = new SyncEngine(this);
         new Thread(() -> {
             SyncEngine.Result r = engine.enroll(baseUrl, credential, deviceName);
-            if (r.ok) engine.sync();   // pull the branch's shared data right away
+            // Pull-only: jangan otomatis push data lokal HP ini ke server saat baru diprovisioning
+            // (lihat doc SyncEngine.pullOnly) — cukup tarik data cabang supaya wizard bisa lanjut.
+            if (r.ok) engine.pullOnly();
             runOnUiThread(() -> {
                 if (r.ok) {
                     SyncScheduler.schedulePeriodic(getApplicationContext());

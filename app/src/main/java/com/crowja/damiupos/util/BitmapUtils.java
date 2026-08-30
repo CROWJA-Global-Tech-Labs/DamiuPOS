@@ -165,30 +165,51 @@ public final class BitmapUtils {
      */
     public static java.io.File downloadToCache(Context ctx, String url, String name) {
         if (ctx == null || url == null || url.isEmpty() || name == null) return null;
+        java.net.HttpURLConnection conn = null;
+        java.io.File tmp = null;
         try {
             java.io.File dir = new java.io.File(ctx.getCacheDir(), "remote_img");
             if (!dir.exists() && !dir.mkdirs()) return null;
             java.io.File out = new java.io.File(dir, name);
             if (out.exists() && out.length() > 0) return out;   // cached
-            java.io.File tmp = new java.io.File(dir, name + ".part");
-            java.net.HttpURLConnection conn = (java.net.HttpURLConnection)
-                    new java.net.URL(url).openConnection();
+            tmp = new java.io.File(dir, name + ".part");
+            conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
             conn.setConnectTimeout(15000);
             conn.setReadTimeout(30000);
             conn.setInstanceFollowRedirects(true);
+            // Sebagian CDN (mis. Hostinger yang meng-host dashboard) MENYAJIKAN varian gambar berbeda
+            // (mengoptimasi/mengecilkan) atau memblok berdasarkan User-Agent default Java/Android. Kirim
+            // UA + Accept ala-browser supaya bytes yang diterima konsisten dengan yang tampil di web.
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) DAMIUPOS");
+            conn.setRequestProperty("Accept", "image/*,*/*");
+            int code = conn.getResponseCode();
+            if (code / 100 != 2) {
+                android.util.Log.w("DAMIU", "downloadToCache HTTP " + code + " " + url);
+                return null;
+            }
+            long expected = conn.getContentLengthLong();   // -1 bila server tak kirim Content-Length
+            long written = 0;
             try (java.io.InputStream in = conn.getInputStream();
                  java.io.OutputStream os = new java.io.FileOutputStream(tmp)) {
-                if (conn.getResponseCode() / 100 != 2) return null;
                 byte[] buf = new byte[8192];
                 int n;
-                while ((n = in.read(buf)) != -1) os.write(buf, 0, n);
-            } finally {
-                conn.disconnect();
+                while ((n = in.read(buf)) != -1) { os.write(buf, 0, n); written += n; }
             }
-            if (tmp.length() == 0 || !tmp.renameTo(out)) { tmp.delete(); return null; }
+            // TOLAK unduhan terpotong (jaringan HP putus di tengah) — kalau tidak, file rusak ter-cache
+            // permanen: decode gagal → avatar kosong SELAMANYA (cache-hit mencegah unduh ulang).
+            if (written == 0 || (expected >= 0 && written != expected)) {
+                android.util.Log.w("DAMIU", "downloadToCache truncated " + written + "/" + expected + " " + url);
+                tmp.delete();
+                return null;
+            }
+            if (!tmp.renameTo(out)) { tmp.delete(); return null; }
             return out;
         } catch (Throwable t) {
+            android.util.Log.w("DAMIU", "downloadToCache error " + url + " : " + t, t);
+            if (tmp != null) tmp.delete();
             return null;
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
 

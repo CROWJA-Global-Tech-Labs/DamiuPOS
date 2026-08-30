@@ -1,5 +1,7 @@
 package com.crowja.damiupos;
 
+import com.crowja.damiupos.map.LiveDeviceOverlay;
+
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.Context;
@@ -40,6 +42,9 @@ public class MapPickerActivity extends AppCompatActivity {
     private LocationListener locationListener;
 
     @SuppressLint("SetJavaScriptEnabled")
+    /** Pin posisi LIVE perangkat lain — dipasang di semua peta aplikasi. */
+    private LiveDeviceOverlay liveDev;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -64,7 +69,17 @@ public class MapPickerActivity extends AppCompatActivity {
         settings.setUserAgentString(MapTiles.userAgent());
 
         webView.addJavascriptInterface(new MapBridge(), "Android");
-        webView.setWebViewClient(new WebViewClient());
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                // Pemilih koordinat pun menampilkan posisi perangkat lain: berguna untuk menaruh
+                // titik pelanggan relatif terhadap kurir yang sedang di lapangan.
+                if (liveDev == null) {
+                    liveDev = new LiveDeviceOverlay(MapPickerActivity.this, webView);
+                }
+                liveDev.start();
+            }
+        });
 
         String html = buildMapHtml(initLat, initLng);
         webView.loadDataWithBaseURL("https://unpkg.com", html, "text/html", "UTF-8", null);
@@ -172,6 +187,7 @@ public class MapPickerActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (liveDev != null) liveDev.stop();
         super.onDestroy();
         if (locationManager != null && locationListener != null) {
             try { locationManager.removeUpdates(locationListener); } catch (Exception ignored) {}

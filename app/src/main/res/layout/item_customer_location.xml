@@ -105,6 +105,18 @@
         </LinearLayout>
 
         <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnPakaiGmapsRow"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Pakai Link Google Maps"
+            android:textAllCaps="false"
+            app:icon="@android:drawable/ic_menu_share"
+            app:iconGravity="textStart"
+            app:iconSize="18dp" />
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnBukaMapsRow"
             style="@style/Widget.MaterialComponents.Button.TextButton"
             android:layout_width="match_parent"
@@ -126,5 +138,29 @@
             android:layout_marginTop="4dp"
             android:text="Wajib Ongkir (default Ongkos Kirim: Per Galon)"
             android:textSize="13sp" />
+
+        <!-- Koleksi foto lokasi (maks 5): thumbnail bisa dihapus (✕) + tombol "+ Foto" mengambil
+             foto baru & mengunggahnya. Diisi/dirender dari kode (jumlah foto berubah-ubah). -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="Foto Lokasi"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/llLokasiFoto"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

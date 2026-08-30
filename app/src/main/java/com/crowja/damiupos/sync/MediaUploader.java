@@ -28,6 +28,14 @@ final class MediaUploader {
             {"customers", DatabaseHelper.TABLE_CUSTOMERS, "1280", "12"},   // foto rumah → 720p
             {"attendance", DatabaseHelper.TABLE_ATTENDANCE, "1600", "4"},
             {"expenses", DatabaseHelper.TABLE_EXPENSES, "1600", "4"},   // foto nota → URL disinkron ke dashboard
+            // Foto bukti "Laporan Kendala Pengiriman" (motor rusak/banjir) — volume rendah, satu per
+            // laporan; setara absensi/nota. Server WAJIB sudah mengizinkan entitas ini di
+            // MediaController::ENTITIES, kalau tidak tiap unggahan 4xx dan kuota terbakar diam-diam.
+            {"delivery_obstacles", DatabaseHelper.TABLE_DELIVERY_OBSTACLES, "1600", "4"},
+            // Foto BUKTI SELESAI pengiriman (delivery_proof_required) — satu per order Selesai;
+            // volume ≈ jumlah delivery harian. Server sudah mengizinkan 'transactions' di
+            // MediaController::ENTITIES; URL-nya distempel ke transactions.photo_url (disinkron).
+            {"transactions", DatabaseHelper.TABLE_TRANSACTIONS, "1600", "6"},
     };
 
     private static final int SCAN_LIMIT = 40;      // rows examined per entity per run

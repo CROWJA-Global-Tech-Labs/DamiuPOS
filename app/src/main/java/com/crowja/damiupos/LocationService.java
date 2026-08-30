@@ -84,7 +84,25 @@ public class LocationService extends Service {
         if (!cfg.isEnrolled() || !cfg.isLocationTrackingEnabled()) return;
         if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED) return;
-        ContextCompat.startForegroundService(ctx, new Intent(ctx, LocationService.class));
+        safeStart(ctx, new Intent(ctx, LocationService.class));
+    }
+
+    /**
+     * Mulai foreground service dgn aman: Android 12+ melempar
+     * {@code ForegroundServiceStartNotAllowedException} (subclass IllegalStateException) bila
+     * dipanggil dari background tanpa pengecualian yang berlaku. Jangan sampai crash — kalau gagal,
+     * setidaknya jalankan sinkronisasi lewat WorkManager supaya data tetap terkirim, dan pasang
+     * watchdog agar service dicoba lagi nanti (dari alarm persis yang MEMANG dikecualikan).
+     */
+    private static void safeStart(Context ctx, Intent intent) {
+        Context app = ctx.getApplicationContext();
+        try {
+            ContextCompat.startForegroundService(app, intent);
+        } catch (Throwable t) {
+            try { com.crowja.damiupos.sync.SyncScheduler.syncNow(app); } catch (Throwable ignored) {}
+        }
+        // Selalu jaga watchdog tetap ter-arm (idempoten) — pemulihan berkala bila service dibunuh.
+        try { com.crowja.damiupos.sync.ServiceRestartReceiver.arm(app); } catch (Throwable ignored) {}
     }
 
     /**
@@ -99,8 +117,7 @@ public class LocationService extends Service {
         // permission (the only FGS type without an Android-14 daily time cap).
         if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED) return;
-        ContextCompat.startForegroundService(ctx,
-                new Intent(ctx, LocationService.class).putExtra(EXTRA_POLL_ONLY, true));
+        safeStart(ctx, new Intent(ctx, LocationService.class).putExtra(EXTRA_POLL_ONLY, true));
     }
 
     /**
@@ -217,18 +234,39 @@ public class LocationService extends Service {
                 && LocationReporter.currentStaffUuid(this) != null;
 
         ensureChannel();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIF_ID, buildNotification(wantGps, shiftActive),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
-        } else {
-            startForeground(NOTIF_ID, buildNotification(wantGps, shiftActive));
+        // PENTING: startForeground() sendiri bisa MELEMPAR — bukan hanya startForegroundService().
+        //  • Android 12+: promosi FGS dari background tanpa pengecualian → ForegroundServiceStartNotAllowedException.
+        //  • Android 14+: tipe "location" adalah while-in-use → SecurityException bila di-start dari
+        //    background tanpa izin lokasi latar (mis. restart dari boot/alarm, FINE hanya "saat dipakai").
+        // Exception ini muncul di SINI (async, main-thread), DI LUAR jangkauan safeStart. Tanpa guard
+        // ini, service crash di setiap boot / tembakan watchdog. Tangkap → sinkron via WorkManager +
+        // coba lagi nanti lewat watchdog, lalu berhenti (tanpa startForeground yang sukses, FGS tak
+        // boleh lanjut — sekaligus mencegah ANR "did not call startForeground()").
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIF_ID, buildNotification(wantGps, shiftActive),
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
+            } else {
+                startForeground(NOTIF_ID, buildNotification(wantGps, shiftActive));
+            }
+        } catch (Throwable t) {
+            try { com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext()); } catch (Throwable ignored) {}
+            try { com.crowja.damiupos.sync.ServiceRestartReceiver.arm(this); } catch (Throwable ignored) {}
+            stopSelf();
+            return START_NOT_STICKY;
         }
         RUNNING = true;
 
         if (!cfg.isEnrolled()) {
+            com.crowja.damiupos.sync.ServiceRestartReceiver.cancel(this);   // unenrolled → stop resurrecting
             stopSelf();
             return START_NOT_STICKY;
         }
+
+        // Pasang watchdog alarm (idempoten): bila service ini dibunuh OEM/Doze saat app di
+        // background, alarm persis berkala akan menghidupkannya lagi (jalur start-FGS yang
+        // diizinkan Android 12+ dari background).
+        com.crowja.damiupos.sync.ServiceRestartReceiver.arm(this);
 
         // Continuous background polling — runs whenever enrolled (shift or not), so the
         // app receives dashboard changes (new staff/config/commands) in near real-time.
@@ -311,7 +349,11 @@ public class LocationService extends Service {
                 SyncSettings cfg = new SyncSettings(sdao);
                 // Only wind down when the device is no longer enrolled — otherwise the
                 // poll runs forever (shift or not) for real-time dashboard sync.
-                if (!cfg.isEnrolled()) { stopSelf(); return; }
+                if (!cfg.isEnrolled()) {
+                    com.crowja.damiupos.sync.ServiceRestartReceiver.cancel(app);
+                    stopSelf();
+                    return;
+                }
                 new SyncEngine(app).sync();
                 OnlineTasks.tick(app);   // config (/me heartbeat), version, broadcasts, commands
 
@@ -364,6 +406,25 @@ public class LocationService extends Service {
             poller = null;
         }
         super.onDestroy();
+    }
+
+    /**
+     * User menyapu app dari Recents. Di banyak OEM (Samsung/Xiaomi) ini membunuh proses + service,
+     * dan START_STICKY sering TIDAK dihormati → sinkronisasi/lokasi mati sampai app dibuka lagi.
+     * Saat ini dipanggil, service MASIH foreground (belum benar-benar mati), jadi kita boleh
+     * memicu start-ulang: pasang watchdog untuk beberapa detik lagi supaya service bangkit kembali
+     * meski prosesnya keburu di-tear-down. Hanya bila masih terhubung ke cabang.
+     */
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        try {
+            Context app = getApplicationContext();
+            if (new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(app))).isEnrolled()) {
+                // Jeda pendek → bangkit cepat setelah disapu (bukan menunggu siklus 15 menit).
+                com.crowja.damiupos.sync.ServiceRestartReceiver.armIn(app, 3000L);
+            }
+        } catch (Throwable ignored) {}
+        super.onTaskRemoved(rootIntent);
     }
 
     @Override

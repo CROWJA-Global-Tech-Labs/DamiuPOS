@@ -647,6 +647,19 @@
                 </com.google.android.material.card.MaterialCardView>
             </LinearLayout>
 
+            <!-- Keterangan CAKUPAN angka: transaksi TIDAK dibagi antar-HP (tiap perangkat hanya
+                 menyimpan penjualannya sendiri + order web), sedangkan pelanggan & galon beredar
+                 adalah data se-depot. Tanpa keterangan ini staf mengira dua HP "berbeda data". -->
+            <TextView
+                android:id="@+id/tvKpiScopeNote"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/kpi_scope_note"
+                android:textSize="10sp"
+                android:alpha="0.75"
+                android:gravity="center" />
+
             <!-- Quick Actions (dominant panel) -->
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/cardQuickActions"
@@ -726,71 +739,167 @@
             </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- Pencapaian Penjualan — Admin & Marketing (lihat User.canViewSalesAchievement).
+                 Rekap penjualan per karyawan SE-CABANG, dihitung di server & disegarkan berkala,
+                 jadi angkanya sama persis dengan dashboard web. -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnSalesAchievement"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:minHeight="50dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp"
+                android:text="🏆 Pencapaian Penjualan"
+                android:textAllCaps="false"
+                android:textColor="@color/white"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                app:backgroundTint="#00695C"
+                app:cornerRadius="12dp"
+                app:elevation="0dp"
+                android:stateListAnimator="@null"
+                app:icon="@android:drawable/ic_menu_sort_by_size"
+                app:iconPadding="6dp"
+                app:iconSize="20dp"
+                app:iconTint="@color/white"
+                app:iconGravity="textStart" />
+
             <!-- Input Promosi Galon — Marketing & Admin selalu; staf lain bila promo_enabled.
                  Buat pelanggan BARU dulu, lalu Transaksi Baru mode Promosi (Gratis/Berbayar). -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnPromosi"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:minHeight="76dp"
-                android:paddingTop="16dp"
-                android:paddingBottom="16dp"
+                android:layout_marginTop="8dp"
+                android:minHeight="50dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp"
                 android:text="🎁 Input Promosi Galon"
                 android:textAllCaps="false"
                 android:textColor="@color/white"
-                android:textSize="16sp"
+                android:textSize="15sp"
                 android:textStyle="bold"
                 android:visibility="gone"
                 app:backgroundTint="#2E7D32"
-                app:cornerRadius="16dp"
+                app:cornerRadius="12dp"
                 app:elevation="0dp"
                 android:stateListAnimator="@null"
                 app:icon="@android:drawable/ic_input_add"
-                app:iconPadding="8dp"
-                app:iconSize="26dp"
+                app:iconPadding="6dp"
+                app:iconSize="20dp"
                 app:iconTint="@color/white"
                 app:iconGravity="textStart" />
 
             <!-- Pelanggan Promosi — daftar + statistik konversi hasil promo galon gratis
-                 (kapan diberi promosi, kapan pembelian pertamanya). Visibilitas = btnPromosi. -->
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnPromoCustomers"
+                 (kapan diberi promosi, kapan pembelian pertamanya). Visibilitas = btnPromosi.
+                 Dibungkus FrameLayout untuk badge "WA Perkenalan tertunggak" (Petugas WA
+                 Perkenalan — pola sama dgn tvDeliveryBadge). -->
+            <FrameLayout
+                android:id="@+id/boxPromoCustomers"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="📊 Pelanggan Promosi"
-                android:textAllCaps="false"
-                android:textColor="#2E7D32"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:visibility="gone"
-                app:strokeColor="#2E7D32"
-                app:strokeWidth="1dp"
-                app:backgroundTint="@color/white"
-                app:cornerRadius="16dp"
-                app:elevation="0dp"
-                android:stateListAnimator="@null" />
+                android:visibility="gone">
 
-            <!-- Daftar Kunjungan — pedoman kunjungan lapangan marketing: pelanggan diurut dari
-                 yang paling lama tidak order (termasuk belum pernah). Visibilitas: marketing/admin. -->
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnKunjungan"
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPromoCustomers"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="44dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="📊 Pelanggan Promosi"
+                    android:textAllCaps="false"
+                    android:textColor="#2E7D32"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    app:strokeColor="#2E7D32"
+                    app:strokeWidth="1dp"
+                    app:backgroundTint="@color/white"
+                    app:cornerRadius="12dp"
+                    app:elevation="0dp"
+                    android:stateListAnimator="@null" />
+
+                <TextView
+                    android:id="@+id/tvPromoIntroBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="top|end"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginEnd="2dp"
+                    android:background="@drawable/bg_pending_badge"
+                    android:minWidth="22dp"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:paddingTop="1dp"
+                    android:paddingBottom="1dp"
+                    android:elevation="6dp"
+                    android:gravity="center"
+                    android:text="0"
+                    android:textColor="@color/white"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+            </FrameLayout>
+
+            <!-- Daftar Kunjungan Urgent — pelanggan yang ditandai "Kunjungi Urgent" dari Follow Up
+                 (web / HP admin) dan belum dikunjungi. Visibilitas: marketing/admin.
+                 Dibungkus FrameLayout supaya badge jumlah bisa menempel di pojok, pola yang sama
+                 dengan badge Follow Up. Visibilitas diatur pada PEMBUNGKUS, bukan tombolnya —
+                 kalau di tombol, badge-nya tetap melayang saat tombol disembunyikan. -->
+            <FrameLayout
+                android:id="@+id/wrapKunjungan"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="🧭 Daftar Kunjungan"
-                android:textAllCaps="false"
-                android:textColor="#1565C0"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:visibility="gone"
-                app:strokeColor="#1565C0"
-                app:strokeWidth="1dp"
-                app:backgroundTint="@color/white"
-                app:cornerRadius="16dp"
-                app:elevation="0dp"
-                android:stateListAnimator="@null" />
+                android:visibility="gone">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnKunjungan"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="44dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="🧭 Daftar Kunjungan Urgent"
+                    android:textAllCaps="false"
+                    android:textColor="#1565C0"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    app:strokeColor="#1565C0"
+                    app:strokeWidth="1dp"
+                    app:backgroundTint="@color/white"
+                    app:cornerRadius="12dp"
+                    app:elevation="0dp"
+                    android:stateListAnimator="@null" />
+
+                <TextView
+                    android:id="@+id/tvKunjunganBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="top|end"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginEnd="2dp"
+                    android:background="@drawable/bg_followup_badge"
+                    android:minWidth="22dp"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:paddingTop="1dp"
+                    android:paddingBottom="1dp"
+                    android:elevation="6dp"
+                    android:gravity="center"
+                    android:text="0"
+                    android:textColor="#FF7043"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+            </FrameLayout>
 
             <LinearLayout
                 android:layout_width="match_parent"

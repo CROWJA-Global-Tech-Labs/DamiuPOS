@@ -24,10 +24,31 @@ public final class OnlineTasks {
     private static final long CONFIG_CHECK_INTERVAL_MS  = 15 * 60 * 1000L;   // /me (interval lokasi) tiap 15 mnt
     private static final long VERSION_CHECK_INTERVAL_MS  = 60 * 60 * 1000L;  // /version tiap 1 jam
 
+    /** Perintah wa_send lebih tua dari ini dibuang (HP mati seharian → jangan kirim pesan basi). */
+    private static final long WA_SEND_TTL_MS = 15 * 60 * 1000L;
+
+    /** Maksimal pesan WA yang dikirim dalam satu tick (sisanya menyusul ~60 dtk kemudian). */
+    private static final int MAX_WA_SEND_PER_TICK = 2;
+
+    /** Dua pemicu tick berjalan bebas (poller LocationService ~60 dtk & SyncWorker "sync now").
+     *  Tanpa penjaga ini keduanya bisa menarik daftar perintah yang SAMA sebelum kursor tersimpan →
+     *  satu perintah dijalankan dua kali (pesan WA dobel ke pelanggan). */
+    private static final java.util.concurrent.atomic.AtomicBoolean RUNNING =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
     /** Run config + version + broadcasts over REST. Call off the main thread. */
     public static void tick(Context ctx) {
         SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(ctx)));
         if (!cfg.isEnrolled()) return;
+        if (!RUNNING.compareAndSet(false, true)) return;   // tick lain masih jalan → lewati
+        try {
+            tickLocked(ctx, cfg);
+        } finally {
+            RUNNING.set(false);
+        }
+    }
+
+    private static void tickLocked(Context ctx, SyncSettings cfg) {
         SyncApi api = new SyncApi(cfg);
         long now = System.currentTimeMillis();
         // /me & /version tak perlu tiap tick (~60 dtk) — pull sudah membawa data live + heartbeat
@@ -61,12 +82,60 @@ public final class OnlineTasks {
             boolean blocked = r.optBoolean("version_blocked", false);
             cfg.setVersionBlocked(blocked, com.crowja.damiupos.BuildConfig.VERSION_CODE,
                     r.optString("blocked_note", ""));
+            // Roster perangkat cabang → cache untuk picker "Perangkat yang ditugaskan" (marketing/SPV).
+            JSONArray devices = r.optJSONArray("devices");
+            if (devices != null) cfg.setDeviceRoster(devices.toString());
+
+            // Muatan max perangkat ini (Strategi Pengiriman) — diatur admin di dashboard.
+            if (r.has("max_load")) cfg.setMaxLoad(r.optInt("max_load", 0));
+            // Kode prefix ID transaksi struk perangkat ini (App\Support\ReceiptNumber di web) —
+            // dipakai TransactionDao.insert() menyusun receipt_no baris JUAL baru, offline.
+            if (r.has("receipt_code")) cfg.setReceiptCode(r.optString("receipt_code", ""));
+            // Slug cabang (Kelola Cabang) → link statis airfrez.com/{slug}-qris di struk WA QRIS.
+            // Dari /me (bukan hanya enroll) supaya terisi walau diatur admin SETELAH HP terdaftar.
+            JSONObject branchObj = r.optJSONObject("branch");
+            if (branchObj != null) cfg.setBranchSlug(branchObj.optString("slug", ""));
+            // Wilayah penugasan → cache pusat cabang + sektor (default perangkat + filter wilayah).
+            JSONObject bc = r.optJSONObject("branch_center");
+            cfg.setBranchCenter(bc != null ? bc.toString() : "");
+            JSONArray qz = r.optJSONArray("wilayah_zones");
+            cfg.setWilayahZones(qz != null ? qz.toString() : "");
+            // "Petugas WA Perkenalan": perangkat ini bertugas menyapa pelanggan promosi baru →
+            // badge + notifikasi kedatangan, dibatasi index sektor di intro_wa_zones.
+            cfg.setIntroWaDevice(r.optBoolean("is_intro_wa", false));
+            JSONArray iwz = r.optJSONArray("intro_wa_zones");
+            cfg.setIntroWaZones(iwz != null ? iwz.toString() : "");
+            // Paket PANTUN follow-up: dicek bareng /me (tiap 15 menit) tapi hanya benar-benar
+            // diunduh saat versinya berubah — praktis sekali saja lalu diam. Sengaja TIDAK lewat
+            // pipa sinkron: korpusnya 10.000 baris identik untuk semua cabang (lihat docblock
+            // migrasi create_pantun_table). Gagal unduh = diabaikan; pantun cuma opsi tambahan.
+            refreshPantunPack(ctx, api);
+
             if (blocked && System.currentTimeMillis() >= cfg.getSnoozeUntil()
                     && !VersionUpdater.updateNeeded(ctx, cfg)) {
                 // Pembaruan-hash punya notifnya sendiri (7842) — ini hanya untuk kasus blokir murni.
                 OnlineNotifier.postNotif(ctx, "Versi Aplikasi Dinonaktifkan",
                         "Versi aplikasi ini dinonaktifkan admin. Buka aplikasi lalu lakukan update.", 7845);
             }
+        } catch (Throwable ignored) {}
+    }
+
+    /**
+     * /api/pantun/pack → simpan paket pantun LOKAL supaya pesan follow-up bisa dirakit tanpa
+     * jaringan. Mengirim {@code ?have=<versi yang dipegang>}: kalau server menjawab
+     * {@code unchanged}, tak ada isi yang ikut terkirim — jadi pemeriksaan rutin ini cuma
+     * beberapa puluh byte, dan unduhan penuh (±25 KB ter-gzip) hanya terjadi saat korpus berubah.
+     */
+    private static void refreshPantunPack(Context ctx, SyncApi api) {
+        try {
+            com.crowja.damiupos.db.SettingsDao sdao = new com.crowja.damiupos.db.SettingsDao(
+                    com.crowja.damiupos.db.DatabaseHelper.getInstance(ctx));
+            String have = sdao.getPantunPackVersion();
+            JSONObject r = api.pantunPack(have);
+            if (r == null || r.optBoolean("unchanged", false)) return;
+            JSONArray items = r.optJSONArray("items");
+            if (items == null || items.length() == 0) return;
+            sdao.setPantunPack(r.toString(), r.optString("version", ""));
         } catch (Throwable ignored) {}
     }
 
@@ -108,20 +177,55 @@ public final class OnlineTasks {
             JSONObject r = api.commands(cfg.getCommandCursor());
             JSONArray arr = r.optJSONArray("commands");
             if (arr == null || arr.length() == 0) return;
-            String maxAt = cfg.getCommandCursor();
+            String serverTime = r.optString("server_time", "");
+            int waSent = 0;
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject o = arr.optJSONObject(i);
                 if (o == null) continue;
-                runCommand(ctx, cfg, o.optString("cmd", ""), o.optJSONObject("payload"));
+                String cmd = o.optString("cmd", "");
+                // wa_send/wa_check memblokir sampai WhatsApp memberi bukti (bisa puluhan detik) dan
+                // HARUS berurutan — satu WhatsApp di depan pada satu waktu. Batasi per tick agar
+                // poller (heartbeat + GPS) tak tertahan lama; sisanya diambil tick berikutnya karena
+                // kursor sengaja TIDAK dimajukan melewatinya.
+                boolean blockingWa = "wa_send".equals(cmd) || "wa_check".equals(cmd);
+                if (blockingWa && waSent >= MAX_WA_SEND_PER_TICK) break;
                 String at = o.optString("created_at", "");
-                if (at.compareTo(maxAt) > 0) maxAt = at;
+                // Kursor dimajukan SEBELUM menjalankan, dan disimpan per-perintah (bukan sekali di
+                // akhir batch). Perintah tak-idempoten seperti wa_send mengirim pesan NYATA ke
+                // pelanggan: satu pesan gagal jauh lebih murah daripada pesan dobel bila langkah
+                // berikutnya melempar dan seluruh batch terulang tiap 60 detik.
+                if (at.compareTo(cfg.getCommandCursor()) > 0) cfg.setCommandCursor(at);
+                try {
+                    runCommand(ctx, cfg, api, cmd, o.optJSONObject("payload"),
+                            o.optLong("id", 0L), at, serverTime);
+                } catch (Throwable ignored) {}   // satu perintah gagal tak membatalkan sisanya
+                if (blockingWa) waSent++;
             }
-            if (!maxAt.equals(cfg.getCommandCursor())) cfg.setCommandCursor(maxAt);
         } catch (Throwable ignored) {}
     }
 
+    /** Selisih milidetik dua stempel server ("Y-m-d H:i:s[.u]"); 0 bila tak terparse. Keduanya
+     *  diurai dengan formatter & zona yang sama, jadi selisihnya sahih tanpa peduli zona. */
+    private static long ageMs(String createdAt, String serverTime) {
+        long a = parseTs(createdAt), b = parseTs(serverTime);
+        return (a == 0L || b == 0L) ? 0L : b - a;
+    }
+
+    private static long parseTs(String s) {
+        if (s == null || s.length() < 19) return 0L;
+        try {
+            java.text.SimpleDateFormat f =
+                    new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US);
+            java.util.Date d = f.parse(s.substring(0, 19));
+            return d != null ? d.getTime() : 0L;
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
+
     /** Execute one dashboard → device command. */
-    private static void runCommand(Context ctx, SyncSettings cfg, String cmd, JSONObject payload) {
+    private static void runCommand(Context ctx, SyncSettings cfg, SyncApi api, String cmd,
+                                   JSONObject payload, long id, String createdAt, String serverTime) {
         if (cmd == null) return;
         switch (cmd) {
             case "sync":
@@ -138,6 +242,32 @@ public final class OnlineTasks {
                 // Push a fresh GPS fix if a shift is currently tracking location.
                 LocationService.reconfigure(ctx);
                 break;
+            case "wa_send": {
+                // Gateway WhatsApp (Opsi A): buka chat wa.me nomor tujuan dengan pesan terisi lalu
+                // tekan "Kirim" otomatis via Aksesibilitas. WhatsApp dibawa ke foreground sesaat.
+                String phone = payload != null ? payload.optString("phone", "") : "";
+                String text = payload != null ? payload.optString("text", "") : "";
+                // Pesan basi jangan dikirim: HP mati/offline seharian lalu menyala malam hari tak
+                // boleh tiba-tiba mengirim "galon sudah kami antar ya" dari pagi tadi.
+                long age = ageMs(createdAt, serverTime);
+                String status = age > WA_SEND_TTL_MS
+                        ? "expired_ttl"
+                        : com.crowja.damiupos.wa.WaGateway.send(ctx, phone, text);
+                ackCommand(api, id, status);
+                break;
+            }
+            case "wa_check": {
+                // Cek nomor pelanggan yang didaftarkan/diedit lewat WEB (di HP tak ada yang bisa
+                // mengeceknya sendiri). Membuka chat wa.me lalu MEMBACA layarnya — tidak mengirim
+                // apa pun. Server yang menandai pelanggan bermasalah saat menerima ack-nya.
+                String phone = payload != null ? payload.optString("phone", "") : "";
+                long age = ageMs(createdAt, serverTime);
+                String status = age > WA_SEND_TTL_MS
+                        ? "expired_ttl"
+                        : com.crowja.damiupos.wa.WaGateway.check(ctx, phone);
+                ackCommand(api, id, status);
+                break;
+            }
             case "pull_data": {
                 // Dashboard "Pull Data": full-upload customers/transactions/expenses for import.
                 SyncEngine.Result r = new SyncEngine(ctx).fullExport();
@@ -159,6 +289,7 @@ public final class OnlineTasks {
             case "unbind":
                 cfg.clear();                      // drop token + disable sync
                 SyncScheduler.cancelAll(ctx);     // stop periodic worker
+                ServiceRestartReceiver.cancel(ctx);   // stop watchdog resurrection alarm
                 LocationService.stop(ctx);
                 OnlineNotifier.postNotif(ctx, "Akses dicabut",
                         "Perangkat dilepas oleh admin. Daftar ulang (provisioning) untuk terhubung lagi.",
@@ -167,5 +298,12 @@ public final class OnlineTasks {
             default:
                 break;
         }
+    }
+
+    /** Laporkan hasil sebuah perintah balik ke dashboard (best-effort; kegagalan lapor tak
+     *  mengulang perintahnya — kursor sudah maju agar pesan tak terkirim dobel). */
+    private static void ackCommand(SyncApi api, long id, String status) {
+        if (id <= 0) return;
+        try { api.ackCommand(id, status); } catch (Throwable ignored) {}
     }
 }

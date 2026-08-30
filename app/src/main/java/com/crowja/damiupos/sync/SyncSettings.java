@@ -25,6 +25,19 @@ public class SyncSettings {
     private static final String K_BRANCH_CODE = "sync_branch_code";
     private static final String K_BRANCH_UUID = "sync_branch_uuid";
     private static final String K_BRANCH_NAME = "sync_branch_name";
+    /** Slug cabang (Kelola Cabang di web) untuk link statis airfrez.com/{slug}-qris di struk WA
+     *  QRIS — datang dari /api/me (bukan enroll, supaya terisi walau diatur SETELAH HP terdaftar).
+     *  "" = belum diatur → struk tak menyertakan baris link QRIS. */
+    private static final String K_BRANCH_SLUG = "sync_branch_slug";
+    /** Kode 3-karakter prefix ID transaksi struk perangkat ini (App\Support\ReceiptNumber di web)
+     *  — datang dari /api/me. "" = belum diatur → cadangan "DEV" dipakai TransactionDao.insert. */
+    private static final String K_RECEIPT_CODE = "sync_receipt_code";
+    /** Counter LOKAL (bukan kolom sinkron — key ini sengaja di luar SHAREABLE_KEYS) untuk urutan
+     *  ID transaksi struk perangkat ini: "{DDMMYY}:{N}". Dipakai TransactionDao.insert() SENDIRI,
+     *  offline — TIDAK boleh dihitung dari COUNT baris lokal transactions, karena tabel itu juga
+     *  memuat baris ASAL LAIN yang di-pull (order dirutekan ke perangkat ini untuk pengiriman),
+     *  yang akan membuat urutan meleset/bertabrakan bila ikut dihitung. */
+    private static final String K_RECEIPT_SEQ = "local_receipt_seq";
     private static final String K_ENABLED     = "sync_enabled";
     private static final String K_LAST_AT     = "sync_last_at";
     private static final String K_CURSOR      = "sync_cursor_"; // + entity
@@ -52,6 +65,20 @@ public class SyncSettings {
     // Throttle: /api/version & /api/me tak perlu tiap tick (60 dtk). Simpan epoch cek terakhir.
     private static final String K_VERSION_CHECK_AT = "sync_version_check_at";
     private static final String K_CONFIG_CHECK_AT  = "sync_config_check_at";
+
+    // Roster perangkat cabang dari /api/me (JSON array [{uuid,name}]) — untuk picker "Perangkat yang
+    // ditugaskan" di layar buat transaksi (marketing/SPV). Cache lokal, disegarkan tiap heartbeat.
+    private static final String K_DEVICE_ROSTER = "sync_device_roster";
+    private static final String K_MAX_LOAD = "sync_max_load";
+    // Wilayah penugasan (dari /api/me): pusat cabang {lat,lng} + sektor [{start,device,label}].
+    // HP menghitung wilayah pelanggan → default perangkat saat buat trx + "Hanya Pelanggan Wilayah Saya".
+    private static final String K_BRANCH_CENTER = "sync_branch_center";
+    private static final String K_WILAYAH_ZONES = "sync_wilayah_zones";
+    // "Petugas WA Perkenalan" (dari /api/me): perangkat ini bertugas menyapa pelanggan baru hasil
+    // promosi marketing → badge jumlah yang belum dikirim WA + notifikasi kedatangan. Zones =
+    // JSON array INDEX sektor wilayah yang ia tangani ("[]"/kosong = semua wilayah).
+    private static final String K_INTRO_WA = "sync_intro_wa";
+    private static final String K_INTRO_WA_ZONES = "sync_intro_wa_zones";
 
     // Track this device's staff location while clocked in (default on when enrolled).
     private static final String K_LOC_ENABLED = "sync_loc_enabled";
@@ -89,6 +116,38 @@ public class SyncSettings {
     public String getDeviceUuid()       { return settings.get(K_DEVICE_UUID, ""); }
     public void setDeviceUuid(String v) { settings.set(K_DEVICE_UUID, v != null ? v : ""); }
 
+    /** Roster perangkat cabang (JSON array [{uuid,name}]) dari /api/me — cache untuk picker penugasan. */
+    public String getDeviceRoster()       { return settings.get(K_DEVICE_ROSTER, ""); }
+    public void setDeviceRoster(String v) { settings.set(K_DEVICE_ROSTER, v != null ? v : ""); }
+
+    /** MUATAN MAX perangkat ini (galon sekali jalan) dari /api/me — dasar Strategi Pengiriman.
+     *  0 = belum diatur di dashboard → seluruh antrean dianggap satu rit. */
+    public int getMaxLoad() {
+        try {
+            return Integer.parseInt(settings.get(K_MAX_LOAD, "0"));
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    public void setMaxLoad(int v) { settings.set(K_MAX_LOAD, String.valueOf(Math.max(0, v))); }
+
+    /** Pusat cabang {lat,lng} (JSON) untuk hitung wilayah; "" bila belum diset. */
+    public String getBranchCenter()       { return settings.get(K_BRANCH_CENTER, ""); }
+    public void setBranchCenter(String v) { settings.set(K_BRANCH_CENTER, v != null ? v : ""); }
+
+    /** Sektor wilayah (JSON array [{start,device,label}]); "" / "[]" bila belum diatur. */
+    public String getWilayahZones()       { return settings.get(K_WILAYAH_ZONES, ""); }
+    public void setWilayahZones(String v) { settings.set(K_WILAYAH_ZONES, v != null ? v : ""); }
+
+    /** Perangkat ini "Petugas WA Perkenalan"? (dicentang admin di web → /api/me). */
+    public boolean isIntroWaDevice()      { return "1".equals(settings.get(K_INTRO_WA, "0")); }
+    public void setIntroWaDevice(boolean v) { settings.set(K_INTRO_WA, v ? "1" : "0"); }
+
+    /** INDEX sektor wilayah yang ditangani (JSON array int); "" / "[]" = SEMUA wilayah. */
+    public String getIntroWaZones()       { return settings.get(K_INTRO_WA_ZONES, ""); }
+    public void setIntroWaZones(String v) { settings.set(K_INTRO_WA_ZONES, v != null ? v : ""); }
+
     // Throttle cek versi/config: hemat request pada HP 24/7 (pull sudah membawa data + heartbeat).
     public long getVersionCheckAt() { return parseLong(settings.get(K_VERSION_CHECK_AT, "0")); }
     public void setVersionCheckAt(long v) { settings.set(K_VERSION_CHECK_AT, String.valueOf(v)); }
@@ -105,6 +164,32 @@ public class SyncSettings {
         settings.set(K_BRANCH_CODE, code != null ? code : "");
         settings.set(K_BRANCH_UUID, uuid != null ? uuid : "");
         settings.set(K_BRANCH_NAME, name != null ? name : "");
+    }
+
+    public String getBranchSlug()       { return settings.get(K_BRANCH_SLUG, ""); }
+    public void setBranchSlug(String v) { settings.set(K_BRANCH_SLUG, v != null ? v : ""); }
+
+    public String getReceiptCode()       { return settings.get(K_RECEIPT_CODE, ""); }
+    public void setReceiptCode(String v) { settings.set(K_RECEIPT_CODE, v != null ? v : ""); }
+
+    /**
+     * Nomor urut LOKAL berikutnya untuk hari {@code dayKey} (format "ddMMyy") — dipakai menyusun
+     * receipt_no ("{@code <KODE>-<dayKey>-<N>}"). Reset otomatis ke 1 begitu hari berganti (counter
+     * disimpan berpasangan dengan hari terakhirnya, bukan per-tanggal terpisah — cukup untuk
+     * transaksi yang selalu dibuat mendekati waktu sekarang).
+     */
+    public int nextLocalReceiptSeq(String dayKey) {
+        String raw = settings.get(K_RECEIPT_SEQ, "");
+        int seq = 1;
+        if (raw != null && raw.startsWith(dayKey + ":")) {
+            try {
+                seq = Integer.parseInt(raw.substring(dayKey.length() + 1)) + 1;
+            } catch (NumberFormatException ignored) {
+                seq = 1;
+            }
+        }
+        settings.set(K_RECEIPT_SEQ, dayKey + ":" + seq);
+        return seq;
     }
 
     public boolean isEnabled()        { return "1".equals(settings.get(K_ENABLED, "0")); }
@@ -160,10 +245,41 @@ public class SyncSettings {
      *  <p>Bumped to v6: build v1.4.3 adds srv_promo_galon + srv_promo_pulled (galon promo gratis
      *  & yang sudah ditarik, lintas perangkat — Tarik Galon Promosi); tanpa re-pull kolomnya 0 di
      *  semua baris lama: penarikan pelanggan hasil sync tertolak keliru DAN penarikan perangkat
-     *  lain tak terlihat (tawaran tarik-ulang) sampai barisnya kebetulan berubah di server. */
-    private static final String K_REPULL_CUSTOMERS = "sync_repull_customers_v6";
+     *  lain tak terlihat (tawaran tarik-ulang) sampai barisnya kebetulan berubah di server.
+     *  <p>Bumped to v7: build ini menambah srv_held ("Galon Dipinjam" = saldo berjalan floor-0,
+     *  galon fisik di konsumen, lintas perangkat); tanpa re-pull kolomnya 0 di semua baris lama →
+     *  pelanggan tukar tetap tampil 0 sampai barisnya kebetulan berubah di server.
+     *  <p>Bumped to v10: build ini menambah kolom priority_* (Pelanggan Prioritas); tanpa re-pull,
+     *  pelanggan yang sudah ditandai prioritas di web tampil biasa di HP sampai barisnya kebetulan
+     *  berubah di server.
+     *  <p>Bumped to v11: kartu "Galon Beredar" kini menjumlah srv_held per pelanggan (bukan lagi
+     *  Σ transaksi LOKAL) — baris lama yang srv_held-nya belum terisi akan membuat angkanya kecil
+     *  sampai barisnya kebetulan berubah di server. SEKALIGUS memulihkan perangkat yang tertinggal
+     *  tombstone: tarik-ulang dari epoch menerima kembali baris terhapus (server mengirim withTrashed)
+     *  sehingga pelanggan basi ikut terhapus — gejalanya jumlah CUST beda antar-HP padahal pelanggan
+     *  itu data se-cabang. */
+    private static final String K_REPULL_CUSTOMERS = "sync_repull_customers_v11";
     public boolean needsCustomerRepull() { return ! "1".equals(settings.get(K_REPULL_CUSTOMERS, "0")); }
     public void markCustomerRepulled()   { settings.set(K_REPULL_CUSTOMERS, "1"); }
+
+    /**
+     * Tarik-ulang PENUH buku besar Hutang/Refund dari epoch, SEKALI per versi kunci — lalu
+     * {@code SyncEngine.pruneStaleRows} membuang baris lokal yang ternyata TAK ADA di server.
+     *
+     * <p>Kenapa perlu: saldo = Σdebt − Σpayment, jadi SATU baris yang beda saja membuat angkanya
+     * salah. Pull biasa hanya mengirim baris {@code updated_at > cursor}, dan penghapusan disebar
+     * lewat TOMBSTONE (soft delete). Baris yang lenyap dari server TANPA tombstone — mis. terhapus
+     * keras (hard delete) langsung di database — tak akan pernah disebutkan lagi oleh pull mana pun,
+     * sehingga perangkat yang sudah menariknya menyimpannya SELAMANYA dan saldonya menyimpang dari
+     * dashboard tanpa ada yang bisa mengoreksi. Kasus nyata 2026-08-29: 3 baris terhapus keras saat
+     * uji coba → HP menghitung Rp 21.000 sementara web Rp 42.000.
+     *
+     * <p>Naikkan versi kunci ini (v2 → v3 → …) kapan pun buku besar perlu direkonsiliasi ulang
+     * menyeluruh di seluruh armada.
+     */
+    private static final String K_REPULL_DEBTS = "sync_repull_debts_v2";
+    public boolean needsDebtRepull() { return ! "1".equals(settings.get(K_REPULL_DEBTS, "0")); }
+    public void markDebtRepulled()   { settings.set(K_REPULL_DEBTS, "1"); }
 
     /** Rising-edge flag: sudah pernah memperingatkan admin soal jenis galon ganda
      *  (Kasus B upgrade). Diset saat duplikat terdeteksi, di-reset saat sudah bersih,

@@ -121,6 +121,154 @@ public class SyncApi {
         return post(cfg.getBaseUrl() + "/api/allocation-requests", body, cfg.getToken());
     }
 
+    /**
+     * Ajukan "detail bermasalah pelanggan SUDAH DIPERBAIKI" (+catatan). Server membuat permintaan
+     * PENDING dan mengirim link persetujuan ke email laporan; masalah baru ditandai selesai
+     * (issue_resolved_at) setelah owner menyetujui, lalu tersinkron balik. Balas
+     * {@code {"ok":true,"emailed":true,"message":"..."}} atau 422. Branch-scoped by the token.
+     */
+    public JSONObject proposeIssueResolve(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/issue-resolve-requests", body, cfg.getToken());
+    }
+
+    /**
+     * Ajukan VOID sebuah transaksi antrian delivery (+alasan wajib). Server membuat permintaan
+     * PENDING dan mengirim link persetujuan ke email izin void; transaksi baru dibatalkan
+     * (soft-delete + pasangan KEMBALI) setelah super admin menyetujui, lalu tombstone tersinkron
+     * balik. Balas {@code {"ok":true,"emailed":true,"message":"..."}} atau 422. Branch-scoped.
+     */
+    public JSONObject proposeVoid(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/void-requests", body, cfg.getToken());
+    }
+
+    /**
+     * EDIT sebuah transaksi antrian delivery — tambah/hapus baris produk, jumlah, harga, ongkir,
+     * galon kembali AKTUAL. Server memutuskan jalurnya: order MASIH di antrian (PENDING/TERTUNDA)
+     * → diterapkan LANGSUNG + email LAPORAN (balas {@code {"ok":true,"applied":true,"message":...}});
+     * selain itu → tetap alur token izin lama, alasan jadi wajib (balas
+     * {@code {"ok":true,"applied":false,"emailed":true,"message":...}}). Hasil akhir Rp 0 selalu
+     * ditolak (422) — pakai Void. Branch-scoped.
+     */
+    public JSONObject proposeTrxEdit(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/edit-requests", body, cfg.getToken());
+    }
+
+    /**
+     * "Ambil Alih": pindahkan rute satu order delivery dari perangkat lain ke perangkat INI.
+     * Body: {@code {transaction_uuid, expected_device_uuid}} — {@code expected_device_uuid} adalah
+     * pemilik order MENURUT layar saat tombol ditekan; server menolak (409) bila di sana sudah
+     * berpindah, sehingga dua kurir yang menekan bersamaan tak sama-sama merasa menang.
+     * Balas {@code {"ok":true,"message":"…"}} atau 422/409. Branch-scoped by the token.
+     */
+    public JSONObject claimDelivery(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/claim", body, cfg.getToken());
+    }
+
+    /**
+     * "Kirim ke Perangkat Lain": pindahkan rute satu order dari antrian perangkat INI ke perangkat
+     * lain yang dipilih. Body: {@code {transaction_uuid, target_device_uuid}}. Server menolak (409)
+     * bila order sudah tak lagi di antrian perangkat ini (mis. sudah diambil alih kurir lain
+     * duluan). Balas {@code {"ok":true,"message":"…"}} atau 422/409. Branch-scoped by the token.
+     */
+    public JSONObject routeDelivery(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/route", body, cfg.getToken());
+    }
+
+    /**
+     * "Lepas": lepaskan satu order dari antrian perangkat INI menjadi "Pesanan Terbuka" — bisa
+     * diklaim perangkat mana pun via {@link #claimDelivery}. Body: {@code {transaction_uuid}}.
+     * Server menolak (422) bila order bukan milik antrian perangkat ini, sudah selesai/dibatalkan,
+     * sedang dijalankan, atau sudah terbuka. Balas {@code {"ok":true,"message":"…"}} atau 422.
+     * Branch-scoped by the token.
+     */
+    public JSONObject openDispatch(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/open", body, cfg.getToken());
+    }
+
+    /**
+     * Paket PANTUN follow-up (sebagian korpus, bukan 10.000) untuk dipakai LURING oleh HP.
+     * {@code have} = cap versi yang sedang dipegang perangkat; bila sama, server menjawab
+     * {@code {"version":…,"unchanged":true}} TANPA isi sehingga pemeriksaan rutin nyaris gratis.
+     * Balas {@code {version, count, items[]}} saat ada versi baru.
+     */
+    public JSONObject pantunPack(String have) throws Exception {
+        okhttp3.HttpUrl built = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/pantun/pack")
+                .newBuilder()
+                .addQueryParameter("have", have != null ? have : "")
+                .build();
+        return get(built.toString(), cfg.getToken());
+    }
+
+    /**
+     * "Jadwalkan Ulang" (Tunda): pindahkan satu order dari antrian perangkat INI ke TERTUNDA dengan
+     * jadwal lanjut otomatis. Body: {@code {transaction_uuid, resume_at}} — resume_at wall-clock
+     * lokal "yyyy-MM-dd HH:mm:ss". Server menolak (422) bila order bukan milik antrian perangkat
+     * ini, bukan PENDING (sudah tertunda/selesai/dibatalkan), atau sedang dijalankan. Order langsung
+     * hilang dari antrian aktif (server & HP, keduanya memfilter PENDING) begitu berhasil; tanggal
+     * transaksinya ikut pindah ke jadwal itu. Balas {@code {"ok":true,"message":"…"}} atau 422.
+     * Branch-scoped by the token.
+     */
+    public JSONObject postponeDelivery(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/postpone", body, cfg.getToken());
+    }
+
+    /**
+     * "Jadikan Prioritas": tandai ⚡ prioritas order yang SUDAH ada di antrian (dibuat di web ATAU di
+     * HP) — satu-satunya jalan RESMI HP menyetel delivery_priority_at/reason/by pada baris yang
+     * sudah tersimpan (push sinkron biasa sengaja membuang ketiga kolom itu). Body:
+     * {@code {transaction_uuid, reason?, requester_name?}}. Server menolak (422) bila order sudah
+     * bukan PENDING/TERTUNDA. Balas {@code {"ok":true,...}} atau 404/422. Branch-scoped by the token.
+     */
+    public JSONObject markPriority(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/priority", body, cfg.getToken());
+    }
+
+    /**
+     * "Peta Antrian Delivery": persebaran order aktif SE-CABANG (pin per order, warna per perangkat
+     * penanggung jawab efektif) + roster perangkat delivery + posisi terakhir tiap perangkat.
+     * Balas {@code {"devices":[...],"queue":[...],"positions":[...]}}. Branch-scoped by the token.
+     */
+    public JSONObject deliveryMap() throws Exception {
+        return get(cfg.getBaseUrl() + "/api/delivery/map", cfg.getToken());
+    }
+
+    /**
+     * Transaksi Baru: nama produk pembelian TERAKHIR (kedip "↩ Terakhir dibeli") + jumlah pengiriman
+     * per lokasi (badge "Kirim ke") — SE-CABANG (bukan dari DB lokal HP): sync transaksi per-perangkat
+     * SENGAJA terisolasi (lihat SyncEngine), jadi pelanggan yang biasa order lewat HP staf lain tak
+     * akan pernah punya baris lokal di sini. Balas {@code {"last_jual_items":[...],
+     * "delivery_counts":{"Nama Lokasi":N,...}}}. Branch-scoped by the token.
+     */
+    public JSONObject orderInsights(String customerUuid) throws Exception {
+        return get(cfg.getBaseUrl() + "/api/customers/" + customerUuid + "/order-insights", cfg.getToken());
+    }
+
+    /**
+     * Laporan Pelanggan Promosi: "Kirim WA Perkenalan" — server menyusun teks pesan (template +
+     * daftar harga produk efektif pelanggan) dan menyetel stempel {@code promo_intro_wa_sent_at}.
+     * Balas {@code {"text":"...", "link":"https://wa.me/..."}}. {@code promoDate} opsional (tanggal
+     * akuisisi promo dari kohort, dipakai token {tanggal}); null → server pakai tanggal dibuatnya.
+     */
+    public JSONObject introWa(String customerUuid, @Nullable String promoDate) throws Exception {
+        String url = cfg.getBaseUrl() + "/api/customers/" + customerUuid + "/intro-wa";
+        if (promoDate != null && !promoDate.isEmpty()) {
+            url = okhttp3.HttpUrl.parse(url).newBuilder()
+                    .addQueryParameter("promo_date", promoDate).build().toString();
+        }
+        return post(url, new JSONObject(), cfg.getToken());
+    }
+
+    /**
+     * "Pakai GMaps": tempel link Google Maps (panjang ATAU pendek, maps.app.goo.gl) atau teks
+     * "lat, lng" → koordinat. Balas {@code {"lat":..,"lng":..}} atau 422 (bukan link Maps / tak ada
+     * koordinat di link itu) / 429 (terlalu sering). Branch-scoped by the token.
+     */
+    public JSONObject resolveMapsLink(String url) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("url", url);
+        return post(cfg.getBaseUrl() + "/api/maps-link/resolve", body, cfg.getToken());
+    }
+
     public JSONObject version(String baseUrl) throws Exception {
         Request.Builder b = new Request.Builder()
                 .url(trim(baseUrl) + "/api/version")
@@ -150,6 +298,64 @@ public class SyncApi {
         okhttp3.HttpUrl built = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/broadcasts")
                 .newBuilder()
                 .addQueryParameter("since", sinceIso != null ? sinceIso : "")
+                .build();
+        return get(built.toString(), cfg.getToken());
+    }
+
+    /**
+     * Laporkan hasil akhir sebuah perintah ke dashboard (mis. {@code wa_send} → {@code sent} /
+     * {@code manual} / {@code no_whatsapp} / {@code expired}). Tanpa ini dashboard hanya bisa
+     * bilang "diantrikan" dan tak pernah tahu pesannya benar-benar terkirim atau tidak.
+     */
+    public JSONObject ackCommand(long id, String status) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("id", id);
+        body.put("status", status != null ? status : "");
+        return post(cfg.getBaseUrl() + "/api/commands/ack", body, cfg.getToken());
+    }
+
+    /**
+     * "Lihat Antrian Perangkat Lain" (read-only, on-demand — transaksi device-isolated jadi HP ini
+     * tak pernah menyinkron baris milik perangkat lain secara lokal). Server balas
+     * {@code {device:{uuid,name}, queue:[{id,name,phone,address,latitude,longitude,galon,total,
+     * items,queued_at,is_priority,order_priority,order_priority_reason,pickup_only,dest_name,...}]}} —
+     * bentuk kartu SAMA dgn Antrian Delivery web ({@code App\Support\Reports::deviceQueue}).
+     */
+    public JSONObject deviceQueue(String deviceUuid) throws Exception {
+        return get(cfg.getBaseUrl() + "/api/devices/" + deviceUuid + "/queue", cfg.getToken());
+    }
+
+    /**
+     * Checkbox "Tampilkan Antrian Perangkat Lain" di Antrian Delivery — antrian AKTIF SEMUA
+     * perangkat LAIN di cabang digabung satu daftar (server sudah mengecualikan milik pemanggil
+     * sendiri). Balasan {@code {queue:[{...bentuk sama dengan deviceQueue...}]}}.
+     */
+    public JSONObject devicesQueueAll() throws Exception {
+        return get(cfg.getBaseUrl() + "/api/devices/queue-all", cfg.getToken());
+    }
+
+    /**
+     * "Pencapaian Penjualan" (layar marketing/admin) — rekap penjualan per KARYAWAN se-cabang,
+     * dihitung DI SERVER. Transaksi device-isolated di lapisan sync (HP hanya memegang barisnya
+     * sendiri), jadi angka se-cabang mustahil dihitung dari DB lokal; ini panggilan on-demand
+     * seperti {@link #devicesQueueAll()}.
+     *
+     * <p>Server memakai perakit yang SAMA dengan halaman web "Penjualan per Karyawan", jadi angka
+     * di HP dan di dashboard tak pernah berbeda untuk preset yang sama.</p>
+     *
+     * @param preset  today|yesterday|week|week_prev|cutoff|last_cutoff|last_3m|custom
+     *                (kosong/tak dikenal → periode potong gaji BERJALAN)
+     * @param start   Y-m-d, hanya dipakai saat preset = custom
+     * @param end     Y-m-d, hanya dipakai saat preset = custom
+     * @param devices uuid perangkat dipisah koma; KOSONG = semua perangkat
+     */
+    public JSONObject salesAchievement(String preset, String start, String end, String devices) throws Exception {
+        okhttp3.HttpUrl built = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/sales/achievement")
+                .newBuilder()
+                .addQueryParameter("preset", preset != null ? preset : "")
+                .addQueryParameter("start", start != null ? start : "")
+                .addQueryParameter("end", end != null ? end : "")
+                .addQueryParameter("devices", devices != null ? devices : "")
                 .build();
         return get(built.toString(), cfg.getToken());
     }
@@ -187,6 +393,46 @@ public class SyncApi {
         String token = cfg.getToken();
         if (token != null && !token.isEmpty()) b.header("Authorization", "Bearer " + token);
         return execute(b.build());
+    }
+
+    /**
+     * Unggah SATU foto koleksi lokasi pelanggan (maks 5 per lokasi — Edit Pelanggan). Beda dari
+     * {@link #uploadMedia}: nama berkas server disisipi timestamp (banyak foto per lokasi, bukan
+     * satu slot tetap), jadi balasannya HARUS langsung disisipkan ke {@code Location.photos} oleh
+     * pemanggil — tak ada kolom photo_url tunggal yang otomatis membawanya seperti foto rumah.
+     */
+    public JSONObject uploadLocationPhoto(String customerUuid, String locationId, File file) throws Exception {
+        RequestBody fileBody = RequestBody.create(file, MediaType.parse("image/jpeg"));
+        RequestBody body = new MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("customer_uuid", customerUuid)
+                .addFormDataPart("location_id", locationId)
+                .addFormDataPart("file", file.getName(), fileBody)
+                .build();
+        Request.Builder b = new Request.Builder()
+                .url(cfg.getBaseUrl() + "/api/media/upload-location-photo")
+                .header("Accept", "application/json")
+                .post(body);
+        String token = cfg.getToken();
+        if (token != null && !token.isEmpty()) b.header("Authorization", "Bearer " + token);
+        return execute(b.build());
+    }
+
+    /**
+     * Kampanye yang BOLEH ikut struk pelanggan ini — jawaban OTORITATIF server (jadwal, aturan
+     * berhenti-melampir, kelayakan, urutan). Dipakai ReceiptActivity saat online supaya cermin
+     * lokal di HP tak bisa menyimpang dari server; cermin itu tinggal jaring pengaman offline.
+     * Delivery/token dibuat SERVER di sini — HP tak perlu membuatnya sendiri.
+     *
+     * @param trxUuid transaksi yang struknya disusun (boleh null) — menentukan tanggal penilaian
+     *                jadwal untuk order TERTUNDA.
+     */
+    public JSONObject campaignAttachments(String customerUuid, String trxUuid) throws Exception {
+        String url = cfg.getBaseUrl() + "/api/customers/" + customerUuid + "/campaign-attachments";
+        if (trxUuid != null && !trxUuid.isEmpty()) {
+            url += "?transaction_uuid=" + android.net.Uri.encode(trxUuid);
+        }
+        return get(url, cfg.getToken());
     }
 
     private JSONObject get(String url, String token) throws Exception {

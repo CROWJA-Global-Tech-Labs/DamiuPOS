@@ -69,6 +69,29 @@
             android:text="Hanya Pelanggan Saya"
             android:textSize="14sp" />
 
+        <!-- Filter: tampilkan hanya pelanggan BERMASALAH (issue aktif) untuk diperbaiki. -->
+        <com.google.android.material.checkbox.MaterialCheckBox
+            android:id="@+id/cbBermasalah"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="-8dp"
+            android:text="⚠️ Hanya Bermasalah"
+            android:textSize="14sp" />
+
+        <!-- Filter: hanya pelanggan yang WILAYAH-nya ditugaskan ke perangkat ini (peta persebaran). -->
+        <com.google.android.material.checkbox.MaterialCheckBox
+            android:id="@+id/cbWilayahSaya"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginTop="-8dp"
+            android:visibility="gone"
+            android:text="🧭 Hanya Pelanggan Wilayah Saya"
+            android:textSize="14sp" />
+
         <!-- Filter tanggal DITAMBAHKAN (created_at) — rentang tanggal pendaftaran pelanggan. -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnDateRange"

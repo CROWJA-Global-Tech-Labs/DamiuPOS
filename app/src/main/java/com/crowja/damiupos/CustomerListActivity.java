@@ -55,7 +55,13 @@ public class CustomerListActivity extends AppCompatActivity
     /** Filter "Hanya Pelanggan Saya" (semua role): pelanggan kini branch-wide (semua perangkat),
      *  centang ini untuk fokus ke pelanggan milik perangkat ini saja. Default tak dicentang. */
     private com.google.android.material.checkbox.MaterialCheckBox cbSaya;
+    /** Filter "Hanya Bermasalah" (semua role): tampilkan hanya pelanggan dengan issue aktif. */
+    private com.google.android.material.checkbox.MaterialCheckBox cbBermasalah;
+    /** Filter "Hanya Pelanggan Wilayah Saya": pelanggan yang wilayah petanya ditugaskan ke perangkat
+     *  ini (config wilayah dari web). Hanya tampil bila perangkat ini punya wilayah tertugas. */
+    private com.google.android.material.checkbox.MaterialCheckBox cbWilayahSaya;
     private boolean marketingUser = false;
+    private boolean canDeleteCustomer = true;   // Admin/owner saja boleh hapus pelanggan dari HP
     /** Filter "Ditambahkan" — rentang tanggal pendaftaran (created_at). Null = semua tanggal.
      *  STATIC (in-memory, level proses): filter TETAP berlaku saat user berpindah-pindah activity
      *  lalu kembali ke daftar pelanggan, dan otomatis BERSIH saat aplikasi di-restart (proses mati).
@@ -64,6 +70,11 @@ public class CustomerListActivity extends AppCompatActivity
     private static String createdFrom = null;   // yyyy-MM-dd (tanggal lokal)
     private static String createdTo = null;
     private static String createdLabel = "Semua";   // label tombol utk dipulihkan saat kembali
+    /** Filter "Wilayah Administratif" (Kecamatan/Desa, hasil reverse-geocode server) — null = tanpa
+     *  filter level itu. STATIC seperti createdFrom/To: bertahan antar-kunjungan activity, bersih
+     *  saat proses restart. */
+    private static String selectedKecamatan = null;
+    private static String selectedDesa = null;
     /** Kalau true, toolbar di-switch jadi mode "N dipilih" + menu Hapus. */
     private int selectedCount = 0;
 
@@ -106,6 +117,9 @@ public class CustomerListActivity extends AppCompatActivity
                 ? new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid)
                 : null;
         marketingUser = cur != null && cur.isMarketing();
+        // Hapus pelanggan: Admin saja (uid<=0 = mode single-user/owner = boleh). Non-admin: tombol
+        // "Hapus" di mode seleksi disembunyikan + aksi di-guard.
+        canDeleteCustomer = uid <= 0 || cur == null || cur.canDeleteCustomer();
         cbHariIni = findViewById(R.id.cbHariIni);
         if (marketingUser) {
             cbHariIni.setVisibility(View.VISIBLE);
@@ -122,6 +136,14 @@ public class CustomerListActivity extends AppCompatActivity
 
         // "Hanya Pelanggan Saya" — semua role. Pelanggan sekarang branch-wide (tersinkron ke semua
         // perangkat); centang untuk hanya menampilkan milik perangkat ini.
+        cbBermasalah = findViewById(R.id.cbBermasalah);
+        cbBermasalah.setOnCheckedChangeListener((b, checked) ->
+                loadCustomers(etSearch.getText().toString().trim()));
+        cbWilayahSaya = findViewById(R.id.cbWilayahSaya);
+        cbWilayahSaya.setOnCheckedChangeListener((b, checked) ->
+                loadCustomers(etSearch.getText().toString().trim()));
+        // Tampilkan filter wilayah hanya bila perangkat ini punya wilayah tertugas di config.
+        if (deviceHasWilayah()) cbWilayahSaya.setVisibility(android.view.View.VISIBLE);
         cbSaya = findViewById(R.id.cbSaya);
         cbSaya.setOnCheckedChangeListener((b, checked) ->
                 loadCustomers(etSearch.getText().toString().trim()));
@@ -188,6 +210,22 @@ public class CustomerListActivity extends AppCompatActivity
                 () -> startActivity(new Intent(this, CustomerFormActivity.class)));
     }
 
+    /** Perangkat ini punya wilayah tertugas di config peta? (menentukan tampil-tidaknya filter wilayah). */
+    private boolean deviceHasWilayah() {
+        try {
+            com.crowja.damiupos.sync.SyncSettings cfg =
+                    new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
+            String myUuid = cfg.getDeviceUuid();
+            org.json.JSONArray z = Wilayah.parseZones(cfg.getWilayahZones());
+            if (z == null || myUuid == null || myUuid.isEmpty()) return false;
+            for (int i = 0; i < z.length(); i++) {
+                org.json.JSONObject o = z.optJSONObject(i);
+                if (o != null && myUuid.equals(o.optString("device", ""))) return true;
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
     private void loadCustomers(String keyword) {
         // Rentang "Ditambahkan" mendahului centang "Hari Ini" (keduanya memfilter created_at).
         boolean rangeActive = createdFrom != null && createdTo != null;
@@ -217,6 +255,38 @@ public class CustomerListActivity extends AppCompatActivity
             List<Customer> mine = new java.util.ArrayList<>();
             for (Customer c : list) if (c.isMine()) mine.add(c);
             list = mine;
+        }
+        // Filter "Hanya Bermasalah": sisakan pelanggan dengan issue aktif (hasOpenIssue).
+        if (cbBermasalah != null && cbBermasalah.isChecked()) {
+            List<Customer> flagged = new java.util.ArrayList<>();
+            for (Customer c : list) if (c.hasOpenIssue()) flagged.add(c);
+            list = flagged;
+        }
+        // Filter "Hanya Pelanggan Wilayah Saya": pelanggan yang wilayah petanya (arah dari depot)
+        // ditugaskan ke PERANGKAT INI menurut config wilayah web.
+        if (cbWilayahSaya != null && cbWilayahSaya.isChecked()) {
+            com.crowja.damiupos.sync.SyncSettings cfg =
+                    new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
+            String center = cfg.getBranchCenter(), zones = cfg.getWilayahZones(), myUuid = cfg.getDeviceUuid();
+            List<Customer> mine = new java.util.ArrayList<>();
+            for (Customer c : list) {
+                // Perangkat EFEKTIF: override per-pelanggan menang atas wilayah otomatis.
+                String dev = Wilayah.effectiveDevice(c.getAssignedDeviceUuid(), center, zones,
+                        c.getLatitude(), c.getLongitude());
+                if (dev != null && dev.equals(myUuid)) mine.add(c);
+            }
+            list = mine;
+        }
+        // Filter "Wilayah Administratif" (Kecamatan/Desa, hasil reverse-geocode server).
+        if (selectedKecamatan != null) {
+            List<Customer> f = new java.util.ArrayList<>();
+            for (Customer c : list) if (selectedKecamatan.equals(c.getKecamatan())) f.add(c);
+            list = f;
+        }
+        if (selectedDesa != null) {
+            List<Customer> f = new java.util.ArrayList<>();
+            for (Customer c : list) if (selectedDesa.equals(c.getDesa())) f.add(c);
+            list = f;
         }
         // Konsumsi gl/hr butuh perhitungan hari → sort di Java (DAO balikin urut nama).
         if (sortMode == CustomerDao.SORT_KONSUMSI) {
@@ -255,19 +325,28 @@ public class CustomerListActivity extends AppCompatActivity
     /** Isi menu berdasarkan apakah lagi selection mode atau normal mode. */
     private void rebuildMenu(Menu menu) {
         if (selectedCount > 0) {
-            // Selection mode — tampilkan action Hapus + Pilih Semua
-            menu.add(0, 101, 0, "Hapus")
-                    .setIcon(android.R.drawable.ic_menu_delete)
-                    .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+            // Selection mode — "Hapus" hanya untuk Admin/owner; Pilih Semua tetap untuk semua.
+            if (canDeleteCustomer) {
+                menu.add(0, 101, 0, "Hapus")
+                        .setIcon(android.R.drawable.ic_menu_delete)
+                        .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+            }
             menu.add(0, 102, 1, "Pilih Semua")
                     .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
         } else {
             // Normal mode — menu existing
-            menu.add(0, 2, 0, "Urutkan")
+            menu.add(0, 4, 0, "Peta Persebaran")
+                    .setIcon(android.R.drawable.ic_dialog_map)
+                    .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+            menu.add(0, 2, 1, "Urutkan")
                     .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
-            menu.add(0, 1, 1, "Sinkronisasi dari Kontak")
+            menu.add(0, 1, 2, "Sinkronisasi dari Kontak")
                     .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
-            menu.add(0, 3, 2, "Hapus Duplikat")
+            menu.add(0, 3, 3, "Hapus Duplikat")
+                    .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
+            String wilayahLabel = "Wilayah Administratif"
+                    + (selectedKecamatan != null || selectedDesa != null ? " ●" : "");
+            menu.add(0, 5, 4, wilayahLabel)
                     .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
         }
     }
@@ -278,6 +357,8 @@ public class CustomerListActivity extends AppCompatActivity
         if (id == 1) { syncFromContacts(); return true; }
         if (id == 2) { showSortDialog(); return true; }
         if (id == 3) { confirmDedupe(); return true; }
+        if (id == 5) { showAdminAreaFilterDialog(); return true; }
+        if (id == 4) { startActivity(new Intent(this, CustomerMapActivity.class)); return true; }
         if (id == 101) { confirmDeleteSelected(); return true; }
         if (id == 102) { adapter.selectAll(); return true; }
         return super.onOptionsItemSelected(item);
@@ -306,6 +387,62 @@ public class CustomerListActivity extends AppCompatActivity
                     sortMode = modes[which];
                     loadCustomers(etSearch.getText().toString().trim());
                     dialog.dismiss();
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /** Dialog filter "Wilayah Administratif": 2 dropdown independen (Kecamatan/Desa) dari
+     *  hasil reverse-geocode koordinat pelanggan (server) — "Semua" = tanpa filter level itu. */
+    private void showAdminAreaFilterDialog() {
+        android.widget.LinearLayout root = new android.widget.LinearLayout(this);
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        int pad = Math.round(16 * getResources().getDisplayMetrics().density);
+        root.setPadding(pad, pad / 2, pad, 0);
+
+        final android.widget.Spinner[] spinners = new android.widget.Spinner[2];
+        String[] labels = {"Kecamatan", "Desa"};
+        List<List<String>> options = java.util.Arrays.asList(
+                customerDao.getDistinctKecamatan(), customerDao.getDistinctDesa());
+        String[] current = {selectedKecamatan, selectedDesa};
+
+        for (int i = 0; i < 2; i++) {
+            android.widget.TextView label = new android.widget.TextView(this);
+            label.setText(labels[i]);
+            label.setTextSize(12f);
+            label.setPadding(0, pad / 2, 0, 0);
+            root.addView(label);
+
+            List<String> opts = new java.util.ArrayList<>();
+            opts.add("Semua " + labels[i]);
+            opts.addAll(options.get(i));
+            android.widget.ArrayAdapter<String> ad = new android.widget.ArrayAdapter<>(
+                    this, android.R.layout.simple_spinner_item, opts);
+            ad.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+            android.widget.Spinner sp = new android.widget.Spinner(this);
+            sp.setAdapter(ad);
+            int sel = current[i] != null ? opts.indexOf(current[i]) : 0;
+            sp.setSelection(Math.max(0, sel));
+            root.addView(sp);
+            spinners[i] = sp;
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("Wilayah Administratif")
+                .setView(root)
+                .setPositiveButton("Terapkan", (d, w) -> {
+                    selectedKecamatan = spinners[0].getSelectedItemPosition() == 0 ? null
+                            : (String) spinners[0].getSelectedItem();
+                    selectedDesa = spinners[1].getSelectedItemPosition() == 0 ? null
+                            : (String) spinners[1].getSelectedItem();
+                    invalidateOptionsMenu();
+                    loadCustomers(etSearch.getText().toString().trim());
+                })
+                .setNeutralButton("Reset", (d, w) -> {
+                    selectedKecamatan = null;
+                    selectedDesa = null;
+                    invalidateOptionsMenu();
+                    loadCustomers(etSearch.getText().toString().trim());
                 })
                 .setNegativeButton("Batal", null)
                 .show();
@@ -487,6 +624,10 @@ public class CustomerListActivity extends AppCompatActivity
     }
 
     private void confirmDeleteSelected() {
+        if (!canDeleteCustomer) {   // guard: non-admin tak boleh hapus (mis. via jalur tak terduga)
+            Toast.makeText(this, "Hanya Admin yang boleh menghapus pelanggan", Toast.LENGTH_SHORT).show();
+            return;
+        }
         Set<Long> ids = adapter.getSelectedIds();
         if (ids.isEmpty()) return;
         int n = ids.size();

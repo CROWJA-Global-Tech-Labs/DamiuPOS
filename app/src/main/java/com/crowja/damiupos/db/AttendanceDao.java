@@ -24,11 +24,30 @@ public class AttendanceDao {
 
     /** Catat event absensi + path foto wajah (nullable). */
     public long log(long userId, String event, String photoPath) {
+        return log(userId, event, photoPath, false, -1, null);
+    }
+
+    /**
+     * Catat event absensi lengkap dengan vonis geofence-nya. Alasan disimpan SEBARIS dengan
+     * event-nya (bukan tabel terpisah) supaya ikut terdorong ke server pada push absensi yang
+     * sama — bukti alasannya tak pernah terpisah dari absen yang dibelanya.
+     *
+     * @param outOfRadius true bila event ini di LUAR radius geofence cabang
+     * @param distanceM   jarak (meter) dari pusat geofence; &lt; 0 = tak terukur
+     * @param reason      alasan yang diketik staf; diabaikan bila absennya di dalam area
+     */
+    public long log(long userId, String event, String photoPath,
+                    boolean outOfRadius, int distanceM, String reason) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_ATT_USER_ID, userId);
         v.put(DatabaseHelper.COL_ATT_EVENT, event);
         if (photoPath != null) v.put(DatabaseHelper.COL_ATT_PHOTO_PATH, photoPath);
+        v.put(DatabaseHelper.COL_ATT_OUT_OF_RADIUS, outOfRadius ? 1 : 0);
+        if (distanceM >= 0) v.put(DatabaseHelper.COL_ATT_DISTANCE_M, distanceM);
+        if (outOfRadius && reason != null && !reason.trim().isEmpty()) {
+            v.put(DatabaseHelper.COL_ATT_RADIUS_REASON, reason.trim());
+        }
         return dbHelper.syncInsert(db, DatabaseHelper.TABLE_ATTENDANCE, v);
     }
 
@@ -204,6 +223,12 @@ public class AttendanceDao {
         a.setTs(c.getString(c.getColumnIndexOrThrow(DatabaseHelper.COL_ATT_TS)));
         int idxPhoto = c.getColumnIndex(DatabaseHelper.COL_ATT_PHOTO_PATH);
         if (idxPhoto >= 0) a.setPhotoPath(c.getString(idxPhoto));
+        int idxOut = c.getColumnIndex(DatabaseHelper.COL_ATT_OUT_OF_RADIUS);
+        if (idxOut >= 0) a.setOutOfRadius(c.getInt(idxOut) == 1);
+        int idxDist = c.getColumnIndex(DatabaseHelper.COL_ATT_DISTANCE_M);
+        if (idxDist >= 0 && !c.isNull(idxDist)) a.setDistanceM(c.getInt(idxDist));
+        int idxReason = c.getColumnIndex(DatabaseHelper.COL_ATT_RADIUS_REASON);
+        if (idxReason >= 0) a.setRadiusReason(c.getString(idxReason));
         return a;
     }
 }

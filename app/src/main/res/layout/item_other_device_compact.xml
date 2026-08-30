@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Kartu RINGKAS reused oleh Tab 2 "Antrian Perangkat Lain" DAN Tab 3 "Pesanan Terbuka"
+     (OtherDevicesAdapter & OpenDispatchAdapter keduanya inflate layout ini — satu tampilan,
+     dua adapter). Border SOLID kuning secara default; Tab 3 meng-override jadi berkedip amber
+     untuk order ⚡ PRIORITAS lewat h.card (id di bawah) — Tab 2 tak pernah memicu itu. -->
+<com.google.android.material.card.MaterialCardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/card"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="8dp"
+    app:cardCornerRadius="10dp"
+    app:cardElevation="1dp"
+    app:strokeColor="#F9A825"
+    app:strokeWidth="2dp">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:padding="10dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <!-- Baris 1: ⚡ prefiks (order prioritas, teks polos tanpa kapsul) + ⭐ prefiks
+                     (pelanggan prioritas) + nama. Melebar penuh sampai batas kanan card — badge umur
+                     floating (lihat tvElapsed) sengaja MENINDIHI bagian kanan label ini, bukan lagi
+                     disisakan ruang sendiri. -->
+                <TextView
+                    android:id="@+id/tvCustomer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="2"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <!-- Khusus Tab 1 "Antrian Saya": "⚡ PRIORITAS: alasan" besar+berkedip di bawah nama
+                     (lihat blinkViewForever di QueueAdapter). GONE default, Tab 2/3 tak pernah
+                     mengisinya. -->
+                <TextView
+                    android:id="@+id/tvPriorityBig"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:textColor="#F57C00"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
+                <!-- Baris 2: [✗ FOTO / ✗ LOKASI badge merah bila belum lengkap, khusus Tab 1] · jarak ·
+                     N galon. Kontras lebih tinggi dari label sekunder biasa (bold + warna teks utama,
+                     bukan grey_medium) supaya gampang dipindai sekilas. -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/tvNoFoto"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/bg_pending_badge"
+                        android:backgroundTint="#D32F2F"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:paddingTop="2dp"
+                        android:paddingBottom="2dp"
+                        android:text="✗ FOTO"
+                        android:textColor="@color/white"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/tvNoLokasi"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/bg_pending_badge"
+                        android:backgroundTint="#D32F2F"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:paddingTop="2dp"
+                        android:paddingBottom="2dp"
+                        android:text="✗ LOKASI"
+                        android:textColor="@color/white"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/tvMeta"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="@color/text_primary"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <!-- Baris 3: ongkir (bila ada, tinggi disamakan dgn kapsul produk) + kapsul produk
+                     berwarna slug (lihat bindOtherDeviceChips — sekarang pakai warna/slug master
+                     produk, cermin Tab 1). "N galon" sudah pindah ke baris meta setelah jarak. -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/tvOngkir"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        android:background="@drawable/bg_pending_badge"
+                        android:backgroundTint="#607D8B"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:paddingTop="3dp"
+                        android:paddingBottom="3dp"
+                        android:text="🛵 Ongkir"
+                        android:textColor="@color/white"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+
+                    <LinearLayout
+                        android:id="@+id/productChips"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:visibility="gone" />
+
+                    <!-- Khusus kartu VOID DIAJUKAN (Tab 1): total transaksi, SETELAH badge produk —
+                         teks polos tanpa kapsul. GONE default. -->
+                    <TextView
+                        android:id="@+id/tvVoidTotal"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:textColor="@color/text_primary"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+                </LinearLayout>
+
+                <!-- Khusus Tab 1: "🚩 Bermasalah: alasan" DI BAWAH baris badge produk. GONE default,
+                     Tab 2/3 tak pernah mengisinya. -->
+                <TextView
+                    android:id="@+id/tvIssue"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:textColor="#D32F2F"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
+                <!-- "📍 Dusun, Desa, Kec. X" — hasil reverse-geocode koordinat pelanggan (server),
+                     DI BAGIAN PALING BAWAH kartu. GONE selama belum di-geocode / tanpa koordinat. -->
+                <TextView
+                    android:id="@+id/tvAdminArea"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="@color/grey_medium"
+                    android:textSize="11sp"
+                    android:visibility="gone" />
+
+                <!-- "📝 catatan order" — DISEMATKAN PALING BAWAH kartu, di ketiga tab (Antrian Saya,
+                     Perangkat Lain, Pesanan Terbuka). Isinya catatan yang layak dibaca manusia:
+                     penanda pembukuan internal ([PENCAIRAN KOMISI], [PROMOSI], …) dan blob audit
+                     order web sudah dibuang lebih dulu — lihat bindOrderNote / ReceiptActivity.customerNote.
+                     Boleh 3 baris: catatan kurir kerap memuat patokan alamat yang panjang, dan
+                     memotongnya di 1 baris justru menghilangkan bagian yang paling berguna.
+                     GONE default → kartu tanpa catatan tingginya persis seperti sebelumnya. -->
+                <TextView
+                    android:id="@+id/tvOrderNote"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:background="@drawable/bg_order_note"
+                    android:ellipsize="end"
+                    android:maxLines="3"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:paddingTop="5dp"
+                    android:paddingBottom="5dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <!-- ⋮ Lainnya (Preview Peta + Foto, lihat showOtherDeviceMoreMenu) — menggantikan tombol
+                 ikon peta terpisah, supaya baris aksi hanya menyisakan 📥 Ambil Alih yang selalu
+                 langsung terlihat (cermin pola "Menu ⋮" di kartu Antrian Saya penuh). -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnMore"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:layout_marginStart="4dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:padding="0dp"
+                android:text="⋮"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:contentDescription="Lainnya" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnTakeOver"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:layout_marginStart="2dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:padding="0dp"
+                android:text="📥"
+                android:textColor="@color/primary"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:contentDescription="Ambil Alih" />
+        </LinearLayout>
+
+        <!-- Badge umur FLOATING di pojok kanan atas card (di atas segalanya, lepas dari alur
+             baris 1) — tak lagi berbagi baris dengan nama sama sekali. -->
+        <TextView
+            android:id="@+id/tvElapsed"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|end"
+            android:layout_margin="6dp"
+            android:background="@drawable/bg_pending_badge"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:text="⏱ 00:00"
+            android:textColor="@color/white"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+    </FrameLayout>
+</com.google.android.material.card.MaterialCardView>

@@ -282,6 +282,7 @@
         android:visibility="gone">
 
         <LinearLayout
+            android:id="@+id/rcSaldoKomisiRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
@@ -298,6 +299,32 @@
 
             <TextView
                 android:id="@+id/rcSaldoDipotong"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/green"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- Potongan SALDO REFUND (uang kembali yang dipakai membayar order ini). -->
+        <LinearLayout
+            android:id="@+id/rcRefundRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingTop="3dp"
+            android:paddingBottom="3dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Dari saldo refund"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/rcRefundDipotong"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textColor="@color/green"

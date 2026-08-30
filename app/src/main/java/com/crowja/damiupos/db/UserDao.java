@@ -34,6 +34,23 @@ public class UserDao {
         }
     }
 
+    /**
+     * Apakah user yang SEDANG login berperan admin? Dipakai menggerbangi aksi yang setara dengan
+     * kewenangan dashboard — mis. menandai "Kunjungi Urgent" dari Follow Up. Tanpa login staf →
+     * false (perangkat tanpa login tidak boleh menandai atas nama siapa pun).
+     */
+    public static boolean isCurrentUserAdmin(android.content.Context ctx) {
+        try {
+            DatabaseHelper db = DatabaseHelper.getInstance(ctx);
+            long uid = new SettingsDao(db).getCurrentUserId();
+            if (uid <= 0) return false;
+            User u = new UserDao(db).getById(uid);
+            return u != null && u.isAdmin();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     public long insert(User u) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues v = new ContentValues();
@@ -57,13 +74,14 @@ public class UserDao {
     }
 
     /**
-     * Set just the PIN locally (PIN is never synced — it's device-local). Used on the first
-     * login of a staff added on the web dashboard, who arrives without a PIN.
+     * Set PIN LOKAL (fallback) staf — disimpan SHA-256. Dipakai saat staf yang ditambah di web
+     * belum diberi PIN dari web (pin_hash null) → buat sendiri di HP saat login pertama. Bila web
+     * sudah set PIN (pin_hash terisi), itu yang menang (lihat authenticate).
      */
     public int setPin(long id, String pin) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues v = new ContentValues();
-        v.put(DatabaseHelper.COL_USER_PIN, pin);
+        v.put(DatabaseHelper.COL_USER_PIN, User.sha256Hex(pin));
         return db.update(DatabaseHelper.TABLE_USERS, v,
                 DatabaseHelper.COL_USER_ID + "=?", new String[]{String.valueOf(id)});
     }
@@ -156,12 +174,77 @@ public class UserDao {
         return n;
     }
 
-    /** Cek PIN: return user kalau cocok & aktif, null kalau salah. */
+    /**
+     * Cek PIN: return user kalau cocok & aktif, null kalau salah. PIN dari WEB (pin_hash, SHA-256)
+     * OTORITATIF bila terisi; selain itu pakai PIN LOKAL (fallback). Dual-mode pada lokal: cocok bila
+     * sudah hash ATAU masih plaintext lama (jaring anti-terkunci saat transisi migrasi hash).
+     */
     public User authenticate(long userId, String pin) {
         User u = getById(userId);
-        if (u == null || !u.isActive()) return null;
-        if (u.getPin() == null || !u.getPin().equals(pin)) return null;
-        return u;
+
+        return matchesPin(u, pin) ? u : null;
+    }
+
+    /**
+     * SATU-SATUNYA aturan pencocokan PIN — dipakai {@link #authenticate} (login) DAN
+     * {@link #isAdminPin} (gerbang Pengaturan). JANGAN membandingkan kolom pin langsung di SQL:
+     * kolom {@code pin} menyimpan SHA-256 (lihat {@link #setPin} + migrasi hash di DatabaseHelper),
+     * sehingga {@code WHERE pin = <ketikan>} TAK PERNAH cocok — itulah bug "PIN admin salah terus".
+     */
+    private boolean matchesPin(User u, String pin) {
+        if (u == null || !u.isActive() || pin == null || pin.isEmpty()) return false;
+        String h = User.sha256Hex(pin);
+        String web = u.getPinHash();
+        if (web != null && !web.isEmpty()) {
+            return h.equalsIgnoreCase(web);   // PIN dari WEB otoritatif bila terisi
+        }
+        String local = u.getPin();
+        if (local == null || local.isEmpty()) return false;
+        // Dual-mode: sudah ter-hash ATAU masih plaintext lama (jaring anti-terkunci saat transisi).
+        return h.equalsIgnoreCase(local) || pin.equals(local);
+    }
+
+    /**
+     * Staf aktif yang BOLEH login di perangkat ini (whitelist device_staff_logins, diatur web). Tanpa
+     * whitelist untuk perangkat ini → semua staf aktif (backward-compatible). Admin SELALU disertakan &
+     * daftar TAK PERNAH dikosongkan — jaring anti-terkunci: whitelist salah konfigurasi tak boleh
+     * mengunci HP.
+     */
+    public List<User> getActiveForLogin(String deviceUuid) {
+        List<User> all = getActive();
+        if (deviceUuid == null || deviceUuid.isEmpty()) return all;
+
+        java.util.Set<String> allowed = new java.util.HashSet<>();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        try (Cursor c = db.query(DatabaseHelper.TABLE_DEVICE_STAFF_LOGINS,
+                new String[]{DatabaseHelper.COL_DSL_STAFF_UUID},
+                DatabaseHelper.COL_DSL_DEVICE_UUID + "=?", new String[]{deviceUuid}, null, null, null)) {
+            while (c.moveToNext()) {
+                String s = c.getString(0);
+                if (s != null && !s.isEmpty()) allowed.add(s);
+            }
+        } catch (Exception ignored) {}
+        if (allowed.isEmpty()) return all;   // tanpa whitelist → semua boleh
+
+        List<User> out = new ArrayList<>();
+        for (User u : all) {
+            if (u.isAdmin()) { out.add(u); continue; }   // admin selalu boleh (jangan kunci owner)
+            String su = syncUuidOf(u.getId());
+            if (su != null && allowed.contains(su)) out.add(u);
+        }
+        return out.isEmpty() ? all : out;   // jangan pernah kosong
+    }
+
+    /** sync_uuid (uuid server) sebuah user lokal, atau null. */
+    private String syncUuidOf(long userId) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        try (Cursor c = db.query(DatabaseHelper.TABLE_USERS,
+                new String[]{DatabaseHelper.COL_SYNC_UUID},
+                DatabaseHelper.COL_USER_ID + "=?", new String[]{String.valueOf(userId)}, null, null, null)) {
+            return c.moveToFirst() ? c.getString(0) : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
@@ -213,19 +296,21 @@ public class UserDao {
         return pin;
     }
 
-    /** Apakah {@code pin} cocok dengan salah satu admin yang aktif. */
+    /**
+     * Apakah {@code pin} cocok dengan salah satu admin yang aktif — gerbang Pengaturan.
+     *
+     * <p>Memakai {@link #matchesPin} (aturan yang SAMA dengan login), BUKAN perbandingan kolom di
+     * SQL: kolom {@code pin} berisi SHA-256, dan admin yang PIN-nya diatur dari web menyimpannya di
+     * {@code pin_hash} (kolom {@code pin} bisa kosong). Perbandingan mentah lama membuat PIN yang
+     * BENAR pun selalu ditolak sehingga Pengaturan tak bisa dibuka sama sekali.
+     */
     public boolean isAdminPin(String pin) {
-        if (pin == null) return false;
-        SQLiteDatabase db = dbHelper.getReadableDatabase();
-        Cursor c = db.query(DatabaseHelper.TABLE_USERS,
-                new String[]{DatabaseHelper.COL_USER_ID},
-                DatabaseHelper.COL_USER_ROLE + "=? AND " +
-                        DatabaseHelper.COL_USER_ACTIVE + "=1 AND " +
-                        DatabaseHelper.COL_USER_PIN + "=?",
-                new String[]{User.ROLE_ADMIN, pin}, null, null, null, "1");
-        boolean ok = c.moveToFirst();
-        c.close();
-        return ok;
+        if (pin == null || pin.isEmpty()) return false;
+        for (User u : getActive()) {
+            if (u.isAdmin() && matchesPin(u, pin)) return true;
+        }
+
+        return false;
     }
 
     /**
@@ -260,6 +345,8 @@ public class UserDao {
         u.setId(c.getLong(c.getColumnIndexOrThrow(DatabaseHelper.COL_USER_ID)));
         u.setName(c.getString(c.getColumnIndexOrThrow(DatabaseHelper.COL_USER_NAME)));
         u.setPin(c.getString(c.getColumnIndexOrThrow(DatabaseHelper.COL_USER_PIN)));
+        int idxHash = c.getColumnIndex(DatabaseHelper.COL_USER_PIN_HASH);
+        if (idxHash >= 0) u.setPinHash(c.getString(idxHash));
         u.setRole(c.getString(c.getColumnIndexOrThrow(DatabaseHelper.COL_USER_ROLE)));
         u.setActive(c.getInt(c.getColumnIndexOrThrow(DatabaseHelper.COL_USER_ACTIVE)) == 1);
         int idx = c.getColumnIndex(DatabaseHelper.COL_USER_CREATED_AT);

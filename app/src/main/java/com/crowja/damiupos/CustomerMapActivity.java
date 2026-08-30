@@ -1,5 +1,7 @@
 package com.crowja.damiupos;
 
+import com.crowja.damiupos.map.LiveDeviceOverlay;
+
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.Intent;
@@ -97,6 +99,9 @@ public class CustomerMapActivity extends AppCompatActivity {
     private Location lastLoc;          // fix GPS terakhir — dasar filter "Pelanggan Sekitar"
 
     @SuppressLint("SetJavaScriptEnabled")
+    /** Pin posisi LIVE perangkat lain — dipasang di semua peta aplikasi. */
+    private LiveDeviceOverlay liveDev;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -139,6 +144,11 @@ public class CustomerMapActivity extends AppCompatActivity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 pageReady = true;
+                // Pin perangkat lain disuntikkan SETELAH halaman siap (variabel global `map` sudah ada).
+                if (liveDev == null) {
+                    liveDev = new LiveDeviceOverlay(CustomerMapActivity.this, webView);
+                }
+                liveDev.start();
                 if (pendingLocation != null) {
                     pushLocationToMap(pendingLocation);
                     pendingLocation = null;
@@ -458,6 +468,7 @@ public class CustomerMapActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (liveDev != null) liveDev.stop();
         stopLocationUpdates();
         super.onDestroy();
     }
@@ -653,16 +664,28 @@ public class CustomerMapActivity extends AppCompatActivity {
                 "  return L.divIcon({className:'',html:'<div class=\"pin\">'+svg+'<div class=\"em\">'+emoji+'</div></div>',iconSize:[30,38],iconAnchor:[15,38],popupAnchor:[0,-34]});\n" +
                 "}\n" +
                 "function esc(s){return (s||'').replace(/'/g,\"\\\\'\");}\n" +
+                // KEAMANAN: popup dirakit sebagai STRING lalu diserahkan ke bindPopup() yang
+                // merendernya lewat innerHTML. Nama/nomor/lokasi pelanggan bisa diisi SIAPA SAJA —
+                // checkout online di landing publik bisa dipakai orang luar tanpa akun. Tanpa
+                // escape, "<img src=x onerror=…>" berjalan DI DALAM halaman peta ini, dan halaman
+                // ini memegang variabel `pts` berisi nama+nomor+titik rumah SELURUH pelanggan
+                // cabang → satu nama pelanggan jahat = kebocoran basis data dari tiap HP staf.
+                // esc() di atas hanya untuk konteks string JS (tanda kutip), bukan HTML.
+                "function escHtml(s){return String(s==null?'':s).replace(/[&<>\"']/g,function(c){\n" +
+                "  return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c];});}\n" +
                 "var markers=[];\n" +
                 "pts.forEach(function(p){\n" +
                 "  var m=L.marker([p.lat,p.lng],{icon:pinIcon(p.color,p.icon)});\n" +
                 "  m._p=p;\n" +
-                "  var phoneHtml = p.phone ? '<div class=\"pphone\">'+p.phone+'</div>' : '';\n" +
+                "  var phoneHtml = p.phone ? '<div class=\"pphone\">'+escHtml(p.phone)+'</div>' : '';\n" +
                 "  var badges = (p.reseller?'<span class=\"badge\" style=\"background:#fef3c7;color:#b45309\">Reseller</span>':'');\n" +
-                "  var locHtml = (p.loc && p.loc!=='Kediaman') ? '<div class=\"pphone\">📍 '+p.loc+'</div>' : '';\n" +
-                "  var det='<a class=\"detbtn\" href=\"#\" onclick=\"det('+p.cid+');return false;\">👤 Detail Pelanggan</a>';\n" +
-                "  var html='<div class=\"pname\">'+p.name+badges+'</div>'+phoneHtml+locHtml+det+\n" +
-                "    '<a class=\"navbtn\" href=\"#\" onclick=\"nav('+p.lat+','+p.lng+',\\''+esc(p.name)+'\\');return false;\">🧭 Navigasi (Google Maps)</a>';\n" +
+                "  var locHtml = (p.loc && p.loc!=='Kediaman') ? '<div class=\"pphone\">📍 '+escHtml(p.loc)+'</div>' : '';\n" +
+                "  var det='<a class=\"detbtn\" href=\"#\" onclick=\"det('+(+p.cid)+');return false;\">👤 Detail Pelanggan</a>';\n" +
+                "  var html='<div class=\"pname\">'+escHtml(p.name)+badges+'</div>'+phoneHtml+locHtml+det+\n" +
+                // Nama TIDAK lagi disisipkan ke atribut onclick: nilai di sana melewati DUA lapis
+                // parser (atribut HTML → string JS), dan nama bertanda kutip ganda cukup untuk
+                // keluar dari atributnya. Cukup kirim id numerik; namanya diambil dari objek titik.
+                "    '<a class=\"navbtn\" href=\"#\" onclick=\"navById('+(+p.cid)+');return false;\">🧭 Navigasi (Google Maps)</a>';\n" +
                 "  m.bindPopup(html);\n" +
                 "  markers.push(m);\n" +
                 "});\n" +
@@ -697,6 +720,9 @@ public class CustomerMapActivity extends AppCompatActivity {
                 "}\n" +
                 "function showAll(){selectedIds=null;hiddenOrigins={};clearRadiusState();renderLegend();applyFilter();}\n" +
                 "function nav(lat,lng,name){if(window.Android&&Android.navigate){Android.navigate(lat,lng,name);}}\n" +
+                // Cari titiknya dari daftar yang sudah ada — nama tak pernah melewati HTML sama sekali.
+                "function navById(cid){for(var i=0;i<pts.length;i++){if(pts[i].cid===cid){\n" +
+                "  nav(pts[i].lat,pts[i].lng,pts[i].name);return;}}}\n" +
                 "function det(cid){if(window.Android&&Android.openDetail){Android.openDetail(cid);}}\n" +
                 "function renderLegend(){\n" +
                 "  var el=document.getElementById('legend');el.innerHTML='';\n" +

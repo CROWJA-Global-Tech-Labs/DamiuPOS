@@ -42,7 +42,11 @@ public final class WhatsAppFollowUp {
      */
     public static void open(Context ctx, Customer c,
                             SettingsDao settingsDao, CustomerDao customerDao) {
-        open(ctx, c, settingsDao, customerDao, true);
+        // PANTUN adalah isi follow-up BAWAAN (bukan menu terpisah): sejak korpus ditulis ulang,
+        // pantunnya sendiri yang menanyakan "mau dikirim lagi hari ini/besok?". Kalau paket pantun
+        // belum terunduh atau Nama Merek belum diatur, open() otomatis kembali ke template biasa —
+        // jadi menyalakannya di sini tak pernah bisa menggagalkan pengiriman.
+        open(ctx, c, settingsDao, customerDao, true, true);
     }
 
     /**
@@ -52,6 +56,18 @@ public final class WhatsAppFollowUp {
      */
     public static void open(Context ctx, Customer c, SettingsDao settingsDao,
                             CustomerDao customerDao, boolean markFollowedUp) {
+        open(ctx, c, settingsDao, customerDao, markFollowedUp, true);
+    }
+
+    /**
+     * @param withPantun true = pakai PANTUN sebagai isi pesan. Pantunnya diambil BERURUTAN dari
+     *        paket lokal (lihat {@link PantunPicker}) — tiap kiriman maju satu langkah dan
+     *        melingkar, jadi seluruh isi paket kebagian. Bila paket belum terunduh ATAU merek belum
+     *        diatur, pesan otomatis kembali ke template biasa — fitur ini tak pernah menggagalkan
+     *        pengiriman.
+     */
+    public static void open(Context ctx, Customer c, SettingsDao settingsDao,
+                            CustomerDao customerDao, boolean markFollowedUp, boolean withPantun) {
         String phone = c != null ? c.getPhone() : null;
         if (phone == null || phone.isEmpty()) {
             Toast.makeText(ctx, "Pelanggan belum memiliki nomor WhatsApp",
@@ -82,6 +98,31 @@ public final class WhatsAppFollowUp {
         String word = deliveryDayWord(settingsDao.getOpsCloseTime());
         msg = msg.replace("{hari_kirim}", word);
         if ("besok".equals(word)) msg = msg.replace("hari ini", "besok");
+
+        // PANTUN: bila tersedia, ia MENGGANTIKAN badan pesan template di atas (lihat alasannya di
+        // dalam blok). Cermin FollowUpWa::deeplink di web.
+        if (withPantun) {
+            // Pantun BERIKUTNYA dalam putaran — takeNext() sekaligus memajukan kursor, jadi ia
+            // dipanggil TEPAT SEKALI di sini, pada jalur yang benar-benar mengirim pesan.
+            String pantun = PantunPicker.takeNext(settingsDao, word);
+            if (pantun != null && !pantun.trim().isEmpty()) {
+                // Pantun MENGGANTI badan pesan, bukan ditempel di bawahnya: isi pantun sendiri sudah
+                // menanyakan "mau dikirim lagi?", jadi mengirim template lengkap sekalian berarti
+                // bertanya dua kali. Bentuk akhir: pembuka (salam) / baris kosong / pantun / baris
+                // kosong / penutup (pertanyaan penegas) — dua-duanya bisa diubah owner di Konfigurasi
+                // dan tersinkron ke sini. CERMIN FollowUpWa::deeplink di web — jaga selaras.
+                String nama = c.getName() != null ? c.getName() : "";
+                String opener = settingsDao.getFollowUpOpener()
+                        .replace("{nama}", nama).replace("{hari_kirim}", word).trim();
+                String closer = settingsDao.getFollowUpCloser()
+                        .replace("{nama}", nama).replace("{hari_kirim}", word).trim();
+                StringBuilder sb = new StringBuilder();
+                if (!opener.isEmpty()) sb.append(opener).append("\n\n");
+                sb.append(pantun.trim());
+                if (!closer.isEmpty()) sb.append("\n\n").append(closer);
+                msg = sb.toString();
+            }
+        }
 
         try {
             Intent i = new Intent(Intent.ACTION_VIEW,

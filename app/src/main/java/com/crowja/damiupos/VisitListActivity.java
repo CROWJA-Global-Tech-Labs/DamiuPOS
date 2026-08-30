@@ -12,6 +12,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -40,14 +41,21 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Daftar Kunjungan (permintaan staf marketing): pedoman kunjungan lapangan satu per satu —
- * pelanggan diurut dari yang PALING LAMA tidak order (yang belum pernah order dinilai dari
- * tanggal daftarnya), supaya pelanggan "tidak efektif"/lama tak order dikunjungi lebih dulu.
+ * Daftar Kunjungan URGENT (staf marketing / admin): pelanggan yang DITANDAI "Kunjungi Urgent"
+ * dari Follow Up — baik di web maupun di HP (admin) — dan belum dikunjungi.
  *
- * <p>"Order terakhir" digabung LINTAS PERANGKAT per orang (grup dedup): MAX dari transaksi
+ * <p>Dulu daftar ini berisi SEMUA pelanggan diurut dari yang paling lama tidak order. Itu diganti:
+ * isinya sekarang murni daftar bertanda, karena penentuan siapa yang perlu didatangi dipindah ke
+ * Follow Up (di mana riwayat order & catatan pelanggannya kelihatan lengkap).
+ *
+ * <p>Tandanya TERSINKRON dua arah lewat kolom visit_urgent_*: web menandai, HP menyelesaikan.
+ * Karena itu "Sudah Dikunjungi" di sini bukan lagi catatan lokal — ia menyetel visit_urgent_done_at
+ * sehingga pelanggan hilang dari daftar ini DAN dari daftar di perangkat/web lain. Bentuk
+ * dua-timestamp-nya (bukan boolean) dijelaskan di DatabaseHelper.COL_VISIT_URGENT_AT.
+ *
+ * <p>"Order terakhir" tetap digabung LINTAS PERANGKAT per orang (grup dedup): MAX dari transaksi
  * lokal, srv_last_jual (agregat server, karena transaksi antar perangkat terisolasi), dan
  * handed_over_at ("Sudah Order Ulang" diperlakukan seperti order sungguhan — cermin web).
- * Tanda "Sudah Dikunjungi" disimpan LOKAL di perangkat ini saja (pedoman pribadi staf).
  */
 public class VisitListActivity extends AppCompatActivity {
 
@@ -60,6 +68,10 @@ public class VisitListActivity extends AppCompatActivity {
         boolean mine;                 // ada salinan created_by_name == staf yang login
         int trxSum, galonSum;         // agregat efektif dijumlah lintas salinan (cermin daftar pelanggan)
         final java.util.List<Long> visitedRowIds = new ArrayList<>();   // semua salinan bertanda (utk batal)
+        /** SEMUA salinan orang ini di perangkat ini. Menyelesaikan kunjungan harus menyentuh
+         *  semuanya: tanda urgent bisa mendarat di salinan mana pun lewat sinkron, dan menutup
+         *  satu salinan saja menyisakan yang lain tetap "menunggu" → orangnya muncul lagi. */
+        final java.util.List<Long> allRowIds = new ArrayList<>();
 
         long daysSince(long now) {
             return lastOrderMillis == Long.MIN_VALUE ? Long.MAX_VALUE
@@ -103,17 +115,23 @@ public class VisitListActivity extends AppCompatActivity {
         adapter = new VisitAdapter();
         rv.setAdapter(adapter);
 
+        setTitle("Daftar Kunjungan Urgent");
+
         // Default: marketing biasanya fokus ke pelanggan yang DIA daftarkan sendiri.
         cbSaya.setChecked(UserDao.isCurrentUserMarketing(this));
         cbSaya.setOnCheckedChangeListener((b, c) -> refreshList());
-        cbHideVisited.setOnCheckedChangeListener((b, c) -> refreshList());
-        toggleThreshold.addOnButtonCheckedListener((g, id, checked) -> { if (checked) refreshList(); });
         etSearch.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
             @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
             @Override public void afterTextChanged(Editable s) { refreshList(); }
         });
-        toggleThreshold.check(R.id.btnThAll);
+
+        // Ambang "sudah berapa lama tak order" dan "sembunyikan yang sudah dikunjungi" tidak lagi
+        // punya arti: daftar ini SELALU berisi tepat yang bertanda dan belum dikunjungi. Kontrolnya
+        // disembunyikan, bukan dihapus dari layout, supaya diff-nya kecil dan gampang dikembalikan
+        // kalau daftar "paling lama tak order" suatu saat dihidupkan lagi sebagai tab terpisah.
+        toggleThreshold.setVisibility(View.GONE);
+        cbHideVisited.setVisibility(View.GONE);
     }
 
     @Override
@@ -122,30 +140,9 @@ public class VisitListActivity extends AppCompatActivity {
         reload();
     }
 
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        menu.add(0, 1, 0, "Hapus Semua Tanda Kunjungan");
-        return true;
-    }
-
-    @Override
-    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
-        if (item.getItemId() == 1) {
-            new AlertDialog.Builder(this)
-                    .setTitle("Mulai Putaran Baru?")
-                    .setMessage("Hapus SEMUA tanda \"Sudah Dikunjungi\" di perangkat ini? "
-                            + "Daftar kembali bersih untuk putaran kunjungan berikutnya.")
-                    .setPositiveButton("YA, HAPUS SEMUA", (d, w) -> {
-                        int n = customerDao.clearAllVisited();
-                        Toast.makeText(this, n + " tanda kunjungan dihapus", Toast.LENGTH_SHORT).show();
-                        reload();
-                    })
-                    .setNegativeButton("Batal", null)
-                    .show();
-            return true;
-        }
-        return super.onOptionsItemSelected(item);
-    }
+    // Menu "Hapus Semua Tanda Kunjungan" DIHAPUS bersama daftar lamanya: tanda kunjungan sekarang
+    // tersinkron (menyelesaikan satu kunjungan mengabari web + perangkat lain), jadi menghapus
+    // massal secara lokal justru akan menutup pekerjaan orang lain tanpa jejak.
 
     /** Data siap? Sebelum muat pertama selesai, tampilkan "Memuat…" (bukan daftar kosong). */
     private boolean loaded = false;
@@ -156,7 +153,9 @@ public class VisitListActivity extends AppCompatActivity {
     private void reload() {
         final int gen = loadGen.incrementAndGet();
         new Thread(() -> {
-            List<Customer> rows = customerDao.getVisitCandidates();
+            // HANYA yang bertanda "Kunjungi Urgent" dan belum dikunjungi (definisi tunggal ada di
+            // CustomerDao.WHERE_VISIT_URGENT — dipakai bersama oleh daftar ini dan badge).
+            List<Customer> rows = customerDao.getVisitUrgent();
             String meName = settingsDao.getCurrentUserName();
             final String me = meName != null ? meName.trim() : "";
 
@@ -173,6 +172,7 @@ public class VisitListActivity extends AppCompatActivity {
                 } else if (!e.rep.isMine() && c.isMine()) {
                     e.rep = c;   // utamakan salinan milik perangkat ini (data lokal lebih segar)
                 }
+                e.allRowIds.add(c.getId());
                 long last = Math.max(CustomerDao.parseMillisOrMin(c.getLocalLastJual()),
                         Math.max(CustomerDao.parseMillisOrMin(c.getSrvLastJual()),
                                 CustomerDao.parseMillisOrMin(c.getHandedOverAt())));
@@ -181,7 +181,9 @@ public class VisitListActivity extends AppCompatActivity {
                 e.galonSum += c.effectiveOrdered();
                 if (c.getVisitedAt() != null && !c.getVisitedAt().isEmpty()) {
                     e.visitedRowIds.add(c.getId());
-                    if (e.visitedAt == null || c.getVisitedAt().compareTo(e.visitedAt) > 0) {
+                    // Stempel campur (ISO-UTC dari server vs lokal dari HP) → bandingkan nilai.
+                    if (e.visitedAt == null
+                            || com.crowja.damiupos.util.Ts.after(c.getVisitedAt(), e.visitedAt)) {
                         e.visitedAt = c.getVisitedAt();
                     }
                 }
@@ -202,10 +204,9 @@ public class VisitListActivity extends AppCompatActivity {
             }
 
             List<Entry> merged = new ArrayList<>(byKey.values());
-            // Yang belum dikunjungi dulu; lalu aktivitas paling lama (paling kecil) lebih dulu.
-            merged.sort(Comparator
-                    .comparing((Entry e) -> e.visitedAt != null)
-                    .thenComparingLong(e -> e.sortMillis));
+            // Semua isi daftar ini sama-sama "belum dikunjungi", jadi yang membedakan tinggal
+            // urgensinya: paling lama tak order didatangi lebih dulu.
+            merged.sort(Comparator.comparingLong(e -> e.sortMillis));
 
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
@@ -218,24 +219,14 @@ public class VisitListActivity extends AppCompatActivity {
         }).start();
     }
 
-    /** Terapkan filter (ambang hari / belum pernah / pelanggan saya / cari / sembunyikan dikunjungi). */
+    /** Terapkan filter yang masih relevan untuk daftar urgent: "pelanggan saya" + pencarian. */
     private void refreshList() {
         if (!loaded) return;   // muat pertama belum selesai → biarkan "Memuat…" (jangan flash kosong)
-        long now = System.currentTimeMillis();
-        int checked = toggleThreshold.getCheckedButtonId();
-        int minDays = checked == R.id.btnTh7 ? 7 : checked == R.id.btnTh30 ? 30
-                : checked == R.id.btnTh60 ? 60 : 0;
-        boolean neverOnly = checked == R.id.btnThNever;
         String q = etSearch.getText() != null
                 ? etSearch.getText().toString().trim().toLowerCase(Locale.ROOT) : "";
 
         List<Entry> out = new ArrayList<>();
-        int visitedCount = 0;   // progres putaran: dihitung SEBELUM filter sembunyikan-dikunjungi
         for (Entry e : allEntries) {
-            boolean never = e.lastOrderMillis == Long.MIN_VALUE;
-            if (neverOnly && !never) continue;
-            // Ambang hari: yang belum pernah order dianggap paling lama (selalu lolos ambang).
-            if (minDays > 0 && !never && e.daysSince(now) < minDays) continue;
             if (cbSaya.isChecked() && !e.mine) continue;
             if (!q.isEmpty()) {
                 Customer c = e.rep;
@@ -244,15 +235,17 @@ public class VisitListActivity extends AppCompatActivity {
                         + (c.getAddress() != null ? c.getAddress() : "")).toLowerCase(Locale.ROOT);
                 if (!hay.contains(q)) continue;
             }
-            if (e.visitedAt != null) visitedCount++;
-            if (cbHideVisited.isChecked() && e.visitedAt != null) continue;
             out.add(e);
         }
 
         adapter.setData(out);
         tvEmpty.setVisibility(out.isEmpty() ? View.VISIBLE : View.GONE);
-        tvSummary.setText(out.size() + " pelanggan dalam daftar kunjungan · "
-                + visitedCount + " sudah dikunjungi. Urut dari yang paling lama tidak order.");
+        // allEntries.size() (bukan out.size()) supaya angkanya tetap sepadan dengan badge di menu
+        // utama saat staf sedang menyaring "Pelanggan Saya" atau mengetik pencarian.
+        int total = allEntries.size();
+        tvSummary.setText(out.size() == total
+                ? total + " pelanggan menunggu kunjungan urgent. Paling lama tak order didahulukan."
+                : out.size() + " dari " + total + " pelanggan menunggu kunjungan urgent.");
     }
 
     // ----------------------------------------------------------------- aksi per pelanggan
@@ -287,18 +280,53 @@ public class VisitListActivity extends AppCompatActivity {
         }
     }
 
-    private void toggleVisited(Entry e) {
-        boolean visited = e.visitedAt != null;
-        if (visited) {
-            // Batalkan di SEMUA salinan bertanda (grup dedup) — satu klik benar-benar bersih.
-            for (long id : e.visitedRowIds) customerDao.setVisited(id, false);
-        } else {
-            customerDao.setVisited(e.rep.getId(), true);
-        }
-        Toast.makeText(this, !visited
-                ? "✔ " + safe(e.rep.getName()) + " ditandai sudah dikunjungi"
-                : "Tanda kunjungan " + safe(e.rep.getName()) + " dibatalkan", Toast.LENGTH_SHORT).show();
-        reload();
+    /**
+     * Selesaikan kunjungan urgent. Ditulis ke SEMUA salinan orang ini (grup dedup), bukan cuma ke
+     * baris wakil: tandanya bisa datang dari web ke salinan mana pun, dan menyelesaikan satu salinan
+     * saja akan menyisakan salinan lain tetap "menunggu" sehingga pelanggannya muncul lagi.
+     *
+     * <p>Tersinkron — begitu ter-push, pelanggan ini hilang juga dari daftar di perangkat lain dan
+     * tombolnya di Follow Up web kembali jadi "Kunjungi Urgent".
+     */
+    private void markUrgentVisitDone(Entry e) {
+        final EditText etReason = new EditText(this);
+        etReason.setHint("Alasan / hasil kunjungan (wajib)");
+        etReason.setMinLines(2);
+        etReason.setGravity(android.view.Gravity.TOP | android.view.Gravity.START);
+        LinearLayout wrap = new LinearLayout(this);
+        int pad = Math.round(20 * getResources().getDisplayMetrics().density);
+        wrap.setPadding(pad, 0, pad, 0);
+        wrap.addView(etReason, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle("Sudah dikunjungi?")
+                .setMessage(safe(e.rep.getName()) + " dikeluarkan dari Daftar Kunjungan Urgent. "
+                        + "Alasannya tercatat di Riwayat Perubahan pelanggan dan dikabarkan ke web.")
+                .setView(wrap)
+                .setPositiveButton("YA, SUDAH", null)   // di-override agar tak menutup saat kosong
+                .setNegativeButton("Batal", null)
+                .create();
+        dlg.setOnShowListener(d -> dlg.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(v -> {
+                    String reason = etReason.getText() != null
+                            ? etReason.getText().toString().trim() : "";
+                    // Wajib: tanpa alasan, "kenapa ini hilang dari daftar?" tak terjawab di web —
+                    // dan justru itu yang membuat riwayatnya berguna.
+                    if (reason.isEmpty()) { etReason.setError("Alasan wajib diisi"); return; }
+                    dlg.dismiss();
+                    new Thread(() -> {
+                        for (long id : e.allRowIds) customerDao.markVisitUrgentDone(id, reason);
+                        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                        runOnUiThread(() -> {
+                            if (isFinishing() || isDestroyed()) return;
+                            Toast.makeText(this, "✔ " + safe(e.rep.getName()) + " sudah dikunjungi",
+                                    Toast.LENGTH_SHORT).show();
+                            reload();
+                        });
+                    }).start();
+                }));
+        dlg.show();
     }
 
     /**
@@ -325,25 +353,24 @@ public class VisitListActivity extends AppCompatActivity {
 
     private void showActions(Entry e) {
         Customer c = e.rep;
-        boolean visited = e.visitedAt != null;
         String[] items = {
-                visited ? "↩ Batalkan Tanda Dikunjungi" : "✔ Tandai Sudah Dikunjungi",
+                "✔ Tandai Sudah Dikunjungi",
+                TarikGalon.menuLabel(this),
                 "🧭 Buka di Peta",
                 "💬 Kirim Pesan WhatsApp",
                 "🧾 Buat Transaksi",
-                "📥 Tarik Galon Promosi",
                 "👤 Lihat Detail Pelanggan",
         };
         new AlertDialog.Builder(this)
                 .setTitle(safe(c.getName()))
                 .setItems(items, (d, which) -> {
-                    if (which == 0) toggleVisited(e);
-                    else if (which == 1) openInMaps(c);
-                    else if (which == 2) openWa(e);
-                    else if (which == 3) startActivity(new Intent(this, TransactionActivity.class)
+                    if (which == 0) markUrgentVisitDone(e);
+                    else if (which == 1) TarikGalon.show(this, c.getId(), this::reload);
+                    else if (which == 2) openInMaps(c);
+                    else if (which == 3) openWa(e);
+                    else if (which == 4) startActivity(new Intent(this, TransactionActivity.class)
                             .putExtra("type", Transaction.TYPE_JUAL)
                             .putExtra("customer_id", c.getId()));
-                    else if (which == 4) TarikPromosi.show(this, c.getId(), this::reload);
                     else startActivity(new Intent(this, CustomerDetailActivity.class)
                             .putExtra("customer_id", c.getId()));
                 })
@@ -425,21 +452,20 @@ public class VisitListActivity extends AppCompatActivity {
             }
             h.tvInfo.setText(info);
 
-            if (e.visitedAt != null) {
-                long v = CustomerDao.parseMillisOrMin(e.visitedAt);
-                h.tvVisited.setVisibility(View.VISIBLE);
-                h.tvVisited.setText("✔ Sudah dikunjungi"
-                        + (v != Long.MIN_VALUE ? " · " + visitFmt.format(new Date(v)) : ""));
-                h.btnVisit.setText("↩ Batal");
-            } else {
-                h.tvVisited.setVisibility(View.GONE);
-                h.btnVisit.setText("✔ Dikunjungi");
+            // Baris di daftar ini SELALU "belum dikunjungi", jadi slot ini dipakai menerangkan
+            // ASAL tandanya (siapa & kapan) — itu yang membantu staf memutuskan urutan datang.
+            long flagged = CustomerDao.parseMillisOrMin(c.getVisitUrgentAt());
+            StringBuilder urg = new StringBuilder("🚩 Ditandai");
+            if (flagged != Long.MIN_VALUE) urg.append(' ').append(visitFmt.format(new Date(flagged)));
+            if (c.getVisitUrgentBy() != null && !c.getVisitUrgentBy().trim().isEmpty()) {
+                urg.append(" · ").append(c.getVisitUrgentBy().trim());
             }
+            h.tvVisited.setVisibility(View.VISIBLE);
+            h.tvVisited.setText(urg);
 
-            h.itemView.setAlpha(e.visitedAt != null ? 0.55f : 1f);
-            h.btnNavigate.setOnClickListener(v -> openInMaps(c));
-            h.btnWa.setOnClickListener(v -> openWa(e));
-            h.btnVisit.setOnClickListener(v -> toggleVisited(e));
+            // Tombol Peta/WA/Dikunjungi tak ada lagi di kartu (duplikat dialog aksi) — kartu
+            // ditekan untuk membuka dialognya, tekan-lama tetap langsung ke Detail Pelanggan.
+            h.itemView.setAlpha(1f);
             h.itemView.setOnClickListener(v -> showActions(e));
             h.itemView.setOnLongClickListener(v -> {
                 startActivity(new Intent(VisitListActivity.this, CustomerDetailActivity.class)
@@ -453,8 +479,6 @@ public class VisitListActivity extends AppCompatActivity {
 
         class VH extends RecyclerView.ViewHolder {
             final TextView tvInitial, tvName, tvSub, tvDays, tvDaysLabel, tvInfo, tvVisited;
-            final View btnNavigate, btnWa;
-            final android.widget.Button btnVisit;
 
             VH(View v) {
                 super(v);
@@ -465,9 +489,6 @@ public class VisitListActivity extends AppCompatActivity {
                 tvDaysLabel = v.findViewById(R.id.tvDaysLabel);
                 tvInfo = v.findViewById(R.id.tvInfo);
                 tvVisited = v.findViewById(R.id.tvVisited);
-                btnNavigate = v.findViewById(R.id.btnNavigate);
-                btnWa = v.findViewById(R.id.btnWa);
-                btnVisit = v.findViewById(R.id.btnVisit);
             }
         }
     }

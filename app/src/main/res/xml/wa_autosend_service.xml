@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Auto-kirim struk WhatsApp. Dibatasi ke paket WhatsApp saja (packageNames) → layanan tidak
-     pernah membaca layar aplikasi lain. -->
+<!-- Asisten WA: auto-kirim struk + tombol melayang "+ Trx". packageNames HANYA membatasi
+     pengiriman EVENT (dipakai jalur auto-kirim), BUKAN getRootInActiveWindow(). Saat bubble ditap,
+     paket aplikasi depan diperiksa; isi layar hanya dibaca bila WhatsApp (judul chat saja). -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
     android:accessibilityFeedbackType="feedbackGeneric"

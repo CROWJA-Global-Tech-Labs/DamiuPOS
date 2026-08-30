@@ -5,6 +5,10 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Lapor koordinat SAAT APP DI BACKGROUND / setelah service di-restart dari boot/alarm.
+         Tanpa ini, FGS bertipe location tak bisa membaca GPS begitu di-mulai dari latar belakang
+         (Android 10/11+). Wajib untuk pelacakan yang benar-benar berjalan di background. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.WRITE_CONTACTS" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -20,8 +24,17 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- Re-arm pengingat jam kerja setelah reboot perangkat. -->
+    <!-- Re-arm pengingat jam kerja + restart service sinkronisasi setelah reboot perangkat. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Minta pengecualian dari optimasi baterai (Doze) supaya service sinkronisasi/lokasi tidak
+         dibunuh sistem saat app lama di background. Normal permission — tak butuh grant runtime. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Alarm PERSIS untuk "watchdog" yang menghidupkan ulang service sinkronisasi secara berkala.
+         Alarm persis = satu-satunya cara memicu start foreground-service dari background pada
+         Android 12+ (selain BOOT & onTaskRemoved). APK didistribusikan sendiri (bukan Play), jadi
+         izin ini aman dipakai; runtime tetap di-guard canScheduleExactAlarms() + fallback inexact. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
@@ -104,6 +117,10 @@
         <activity android:name=".FollowUpMapActivity" />
         <activity android:name=".CustomerMapActivity" />
         <activity android:name=".DeliveryQueueActivity" />
+        <activity android:name=".OtherDeviceQueueActivity" />
+        <activity android:name=".SalesAchievementActivity" />
+        <activity android:name=".DeliveryMapActivity" />
+        <activity android:name=".DeliveryObstacleActivity" />
         <activity android:name=".ChangelogActivity" />
         <activity android:name=".SyncSettingsActivity" />
         <activity android:name=".UpgradeActivity" />
@@ -140,7 +157,7 @@
         <service
             android:name=".wa.WaAutoSendService"
             android:exported="false"
-            android:label="DAMIU POS — Auto-Kirim Struk WA"
+            android:label="DAMIU POS — Asisten WA (Auto-Kirim Struk &amp; Tombol + Trx)"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -178,6 +195,14 @@
         <!-- Re-notify wajib update setelah "Tunda 1 jam" habis. -->
         <receiver
             android:name=".sync.UpdateReminderReceiver"
+            android:exported="false" />
+
+        <!-- Watchdog: menghidupkan ulang LocationService (sinkronisasi + lapor lokasi) bila dibunuh
+             OEM/Doze saat app di background. Dipicu alarm persis berkala + saat app disapu dari
+             Recents (onTaskRemoved). Alarm/onTaskRemoved = jalur start-FGS yang diizinkan Android
+             12+ dari background. -->
+        <receiver
+            android:name=".sync.ServiceRestartReceiver"
             android:exported="false" />
 
         <!-- Re-arm pengingat jam kerja setelah perangkat reboot. -->

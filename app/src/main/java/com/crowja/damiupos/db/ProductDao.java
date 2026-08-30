@@ -114,6 +114,10 @@ public class ProductDao {
         int idxUuid = cursor.getColumnIndex(DatabaseHelper.COL_SYNC_UUID);
         if (idxUuid >= 0) p.setUuid(cursor.getString(idxUuid));
         p.setName(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_PRODUCT_NAME)));
+        // Defensif (getColumnIndex, bukan …OrThrow): kolom baru v71 — perangkat yang belum sempat
+        // upgrade DB / query lama yang tak menyertakan kolom ini tak boleh membuat app crash.
+        int idxSlug = cursor.getColumnIndex(DatabaseHelper.COL_PRODUCT_SLUG);
+        if (idxSlug >= 0) p.setSlug(cursor.getString(idxSlug));
         p.setHargaJual(cursor.getDouble(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_HARGA_JUAL)));
         p.setHargaModal(cursor.getDouble(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_HARGA_MODAL)));
         p.setColor(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_COLOR)));

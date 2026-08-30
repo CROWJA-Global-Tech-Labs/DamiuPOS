@@ -93,6 +93,20 @@
                                 android:textColor="@color/text_secondary"
                                 android:textSize="14sp" />
 
+                            <!-- Catatan Order: instruksi pengiriman tetap (mis. "titip satpam") — otomatis
+                                 ditambahkan ke tiap transaksi baru pelanggan ini. Ketuk teks untuk edit
+                                 (placeholder = trigger, bukan tombol ✏️ terpisah). -->
+                            <TextView
+                                android:id="@+id/tvCatatanOrder"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:textColor="@color/primary"
+                                android:textSize="13sp"
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:background="?attr/selectableItemBackground" />
+
                             <!-- Tag perangkat asal pelanggan (gabungan lintas salinan). -->
                             <TextView
                                 android:id="@+id/tvOrigin"
@@ -255,6 +269,90 @@
                         android:text="Galon Dipinjam"
                         android:textColor="@color/white"
                         android:textSize="13sp" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- HUTANG pelanggan (piutang depot). Kartu hanya tampil bila ADA sisa hutang; tombol
+                 "Catat Pembayaran" boleh ditekan siapa pun yang login (kurirlah yang menerima uangnya
+                 di lapangan). Buku besar ada di CustomerDebtDao — sisa TIDAK pernah disimpan sbg kolom. -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardHutang"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:visibility="gone"
+                app:cardBackgroundColor="#FFF1F2"
+                app:cardCornerRadius="10dp"
+                app:cardElevation="2dp"
+                app:strokeColor="#FECDD3"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Hutang Pelanggan"
+                            android:textColor="#9F1239"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvHutangSisa"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Rp 0"
+                            android:textColor="#BE123C"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvHutangRiwayat"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:textColor="#9F1239"
+                        android:textSize="12sp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnBayarHutang"
+                            style="@style/Widget.MaterialComponents.Button"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Catat Pembayaran"
+                            android:textSize="13sp"
+                            app:backgroundTint="#BE123C" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnCatatHutang"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:text="+ Hutang"
+                            android:textColor="#9F1239"
+                            android:textSize="13sp"
+                            app:strokeColor="#FDA4AF" />
+                    </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 

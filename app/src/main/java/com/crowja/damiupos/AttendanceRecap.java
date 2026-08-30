@@ -476,18 +476,26 @@ public final class AttendanceRecap {
 
     // ------------------------------------------------------------------ utils
 
+    /**
+     * Stempel absensi menjadi milidetik. WAJIB lewat {@link com.crowja.damiupos.util.Ts}: baris
+     * absensi yang ditulis dari WEB (link koreksi absensi / rekap dashboard) tiba sebagai ISO-UTC
+     * ("…T…Z"), sedangkan HP menulis waktu lokal. Parser satu-format dulu melempar pada bentuk
+     * ISO lalu mengembalikan 0 — hari itu terhitung 0 jam di rekap HP padahal dashboard
+     * menampilkannya utuh.
+     *
+     * @return 0 bila kosong/tak terurai (durasi hari itu jadi 0, bukan angka raksasa)
+     */
     private static long parseMillis(String ts) {
-        if (ts == null) return 0;
-        try {
-            Date d = SDF_DB.parse(ts);
-            return d != null ? d.getTime() : 0;
-        } catch (Exception e) {
-            return 0;
-        }
+        long ms = com.crowja.damiupos.util.Ts.millis(ts);
+
+        return ms == Long.MAX_VALUE ? 0 : ms;
     }
 
+    /** Jam:menit LOKAL — jangan substring mentah: stempel asal-web berzona UTC (selisih 7 jam). */
     private static String hm(String ts) {
-        return ts != null && ts.length() >= 16 ? ts.substring(11, 16) : (ts != null ? ts : "-");
+        String v = com.crowja.damiupos.util.Ts.hm(ts);
+
+        return v.isEmpty() ? (ts != null ? ts : "-") : v;
     }
 
     private static String join(List<String> items) {

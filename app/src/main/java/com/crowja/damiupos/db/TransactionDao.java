@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteDatabase;
 
 import com.crowja.damiupos.model.Attendance;
 import com.crowja.damiupos.model.Transaction;
+import com.crowja.damiupos.util.Ts;
 import com.crowja.damiupos.model.TransactionItem;
 import com.crowja.damiupos.model.User;
 
@@ -47,8 +48,25 @@ public class TransactionDao {
             values.put(DatabaseHelper.COL_CATATAN, trx.getCatatan());
         }
         // Tanggal custom (default DB = datetime now kalau tidak di-set).
+        String effectiveTanggal = (trx.getTanggal() != null && !trx.getTanggal().isEmpty())
+                ? trx.getTanggal() : DatabaseHelper.nowIso();
         if (trx.getTanggal() != null && !trx.getTanggal().isEmpty()) {
             values.put(DatabaseHelper.COL_TANGGAL, trx.getTanggal());
+        }
+        // ID transaksi unik struk (<KODE>-DDMMYY-<COUNTER>) — cermin App\Support\ReceiptNumber
+        // (web). Hanya JUAL (struk pembelian; KEMBALI tak punya). Dihitung SENDIRI di sini, offline,
+        // lewat counter LOKAL (SyncSettings.nextLocalReceiptSeq) — BUKAN dari COUNT baris lokal
+        // transactions, karena tabel itu juga memuat order asal LAIN yang dirutekan ke perangkat ini
+        // untuk pengiriman (lihat komentar K_RECEIPT_SEQ), yang akan membuat urutan meleset.
+        if (Transaction.TYPE_JUAL.equals(trx.getType())) {
+            com.crowja.damiupos.sync.SyncSettings receiptCfg =
+                    new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(dbHelper));
+            String code = receiptCfg.getReceiptCode();
+            if (code == null || code.isEmpty()) code = "DEV";
+            String dayKey = receiptDayKey(effectiveTanggal);
+            String receiptNo = code + "-" + dayKey + "-" + receiptCfg.nextLocalReceiptSeq(dayKey);
+            values.put(DatabaseHelper.COL_RECEIPT_NO, receiptNo);
+            trx.setReceiptNo(receiptNo);
         }
         // Resolve operator SEKALI (sebelumnya id/nama/role di-query 5-6× per transaksi).
         SettingsDao sdao = new SettingsDao(dbHelper);
@@ -67,16 +85,49 @@ public class TransactionDao {
         // air langsung diserahkan (bukan kiriman kurir) → tanpa delivery_status/token,
         // jadi tidak muncul di antrean HP maupun halaman Delivery dashboard web.
         boolean marketing = op != null && op.isMarketing();
-        if (Transaction.TYPE_JUAL.equals(trx.getType()) && !marketing) {
-            values.put(DatabaseHelper.COL_DELIVERY_STATUS, Transaction.DELIVERY_PENDING);
+        // "Perangkat yang ditugaskan" (marketing/SPV): transaksi ini ditugaskan ke perangkat LAIN.
+        // NIAT di-push (assigned_device_uuid) → server merutekan (delivery_device_uuid) + memindah
+        // kredit galon/komisi ke staf yang clock-in di perangkat tujuan. Activity mengirim null saat
+        // "Perangkat ini" terpilih, jadi di sini non-kosong pasti berarti perangkat lain.
+        String assigned = trx.getAssignedDeviceUuid();
+        boolean assignedElsewhere = Transaction.TYPE_JUAL.equals(trx.getType())
+                && assigned != null && !assigned.trim().isEmpty();
+        if (assignedElsewhere) {
+            values.put(DatabaseHelper.COL_ASSIGNED_DEVICE_UUID, assigned.trim());
+        }
+        // Pesanan Tertunda: staf memilih menjadwalkan lanjut nanti (tombol ⏸, cermin web) — trx sudah
+        // membawa delivery_status=TERTUNDA + jadwal lanjut sebelum insert() dipanggil (lihat
+        // TransactionActivity). Berlaku APA PUN peran (termasuk marketing), sama seperti web.
+        boolean tertundaRequested = Transaction.DELIVERY_TERTUNDA.equals(trx.getDeliveryStatus());
+        // JUAL diantrikan sebagai pengiriman bila: Pesanan Tertunda diminta, ATAU bukan akuisisi
+        // marketing di lokasi (perilaku lama), ATAU ditugaskan ke perangkat lain (agar perangkat
+        // tujuan melihatnya di antrean — termasuk untuk marketing yang menugaskan ke kurir).
+        if (Transaction.TYPE_JUAL.equals(trx.getType()) && (tertundaRequested || !marketing || assignedElsewhere)) {
+            if (tertundaRequested) {
+                // Diparkir: keluar dari antrian aktif (web & HP memfilter 'PENDING' persis), jadwal
+                // lanjut otomatis WAJIB — cermin App\Support\TertundaSchedule::apply di web.
+                values.put(DatabaseHelper.COL_DELIVERY_STATUS, Transaction.DELIVERY_TERTUNDA);
+                values.put(DatabaseHelper.COL_DELIVERY_TERTUNDA_AT, DatabaseHelper.nowIso());
+                values.put(DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT, trx.getDeliveryTertundaResumeAt());
+            } else {
+                values.put(DatabaseHelper.COL_DELIVERY_STATUS, Transaction.DELIVERY_PENDING);
+            }
             values.put(DatabaseHelper.COL_DELIVERY_QUEUED_AT, DatabaseHelper.nowIso());
             // Token link lacak publik (32 hex) → {base}/track/{token}, dikirim ke
             // pelanggan agar bisa memantau progres + lokasi kurir saat diantar.
             values.put(DatabaseHelper.COL_DELIVERY_TOKEN,
                     java.util.UUID.randomUUID().toString().replace("-", ""));
-            // Operator (kurir) = user yang sedang clock-in; disinkron sebagai staff_uuid
-            // supaya halaman lacak menampilkan GPS kurir yang benar.
-            if (operatorUid > 0) values.put(DatabaseHelper.COL_DELIVERY_STAFF_ID, operatorUid);
+            if (assignedElsewhere) {
+                // Route lokal ke perangkat tujuan → langsung hilang dari antrean perangkat ini; setelah
+                // perangkat tujuan menarik (server men-set delivery_device_uuid = sama), muncul di sana.
+                // JANGAN kreditkan operator perangkat ini: server menurunkan staff_uuid dari staf yang
+                // clock-in di perangkat tujuan (kredit galon/komisi pindah).
+                values.put(DatabaseHelper.COL_DELIVERY_DEVICE_UUID, assigned.trim());
+            } else if (operatorUid > 0) {
+                // Operator (kurir) = user yang sedang clock-in; disinkron sebagai staff_uuid
+                // supaya halaman lacak menampilkan GPS kurir yang benar.
+                values.put(DatabaseHelper.COL_DELIVERY_STAFF_ID, operatorUid);
+            }
             // Lokasi tujuan pengiriman terpilih (multi-lokasi pelanggan). Hanya ditulis
             // bila di-set — 0/NULL = pakai koordinat pelanggan saat navigasi.
             if (trx.getDeliveryDestName() != null && !trx.getDeliveryDestName().isEmpty()) {
@@ -85,6 +136,18 @@ public class TransactionDao {
             if (trx.getDeliveryDestLat() != 0 || trx.getDeliveryDestLng() != 0) {
                 values.put(DatabaseHelper.COL_DELIVERY_DEST_LAT, trx.getDeliveryDestLat());
                 values.put(DatabaseHelper.COL_DELIVERY_DEST_LNG, trx.getDeliveryDestLng());
+            }
+            // ⚡ Prioritas pengiriman diminta saat order DIBUAT (toggle "Tandai Prioritas" di
+            // Transaksi Baru, cermin DeliveryController::prioritize di web) — ditulis SEKALI di sini;
+            // perubahan/pembatalan setelahnya hanya boleh dari web (lihat SyncController::fillColumns
+            // yang men-skip kolom ini pada UPDATE, bukan pada baris baru).
+            if (trx.isPriorityRequested()) {
+                values.put(DatabaseHelper.COL_DELIVERY_PRIORITY_AT, DatabaseHelper.nowIso());
+                if (trx.getOrderPriorityReason() != null && !trx.getOrderPriorityReason().trim().isEmpty()) {
+                    values.put(DatabaseHelper.COL_DELIVERY_PRIORITY_REASON, trx.getOrderPriorityReason().trim());
+                }
+                values.put(DatabaseHelper.COL_DELIVERY_PRIORITY_BY,
+                        operator != null && !operator.isEmpty() ? operator : "HP");
             }
         }
         // Jaring absensi otomatis: kalau operator (staf yang sedang clock-in) BELUM punya event
@@ -139,6 +202,13 @@ public class TransactionDao {
         v.put(DatabaseHelper.COL_SYNCED, 0);   // edited_at sengaja tidak diubah
         db.update(DatabaseHelper.TABLE_TRANSACTIONS, v,
                 DatabaseHelper.COL_CUSTOMER_ID + "=?", new String[]{String.valueOf(customerId)});
+    }
+
+    /** "ddMMyy" dari stempel "yyyy-MM-dd..." (lokal maupun ISO — 10 karakter awal sama bentuknya).
+     *  Cermin Carbon::parse($t->tanggal)->format('dmy') di web ({@see App\Support\ReceiptNumber}). */
+    private static String receiptDayKey(String tanggal) {
+        if (tanggal == null || tanggal.length() < 10) return "000000";
+        return tanggal.substring(8, 10) + tanggal.substring(5, 7) + tanggal.substring(2, 4);
     }
 
     /** sync_uuid transaksi (untuk menautkan struk ke gift yang di-klaim); null bila tak ada. */
@@ -232,7 +302,7 @@ public class TransactionDao {
         }
     }
 
-    /** Marker catatan KEMBALI hasil penarikan galon promosi (ditulis TarikPromosi). Aman untuk
+    /** Marker catatan KEMBALI hasil penarikan galon promosi (ditulis TarikGalon untuk bagian yang membebani jatah promo). Aman untuk
      *  SQLite LIKE: '[' bukan wildcard (hanya % dan _), dan marker tak mengandung keduanya. */
     public static final String PROMO_PULL_MARKER = "[TARIK GALON PROMOSI]";
 
@@ -297,7 +367,21 @@ public class TransactionDao {
                 + "c." + DatabaseHelper.COL_PHONE + " AS cust_phone, "
                 + "c." + DatabaseHelper.COL_ADDRESS + " AS cust_addr, "
                 + "c." + DatabaseHelper.COL_LATITUDE + " AS cust_lat, "
-                + "c." + DatabaseHelper.COL_LONGITUDE + " AS cust_lng "
+                + "c." + DatabaseHelper.COL_LONGITUDE + " AS cust_lng, "
+                // Foto rumah (lokal ATAU terunggah) — untuk tanda "data belum lengkap" di kartu antrian.
+                + "c." + DatabaseHelper.COL_PHOTO_URL + " AS cust_photo, "
+                + "c." + DatabaseHelper.COL_PHOTO_PATH + " AS cust_photo_path, "
+                // Pelanggan PRIORITAS aktif (cermin Customer.isPriority): ditandai & belum dibatalkan.
+                // Dinormalkan ke waktu lokal dulu: priority_at kerap ISO-UTC dari server sedangkan
+                // priority_cleared_at ditulis HP dalam waktu lokal ({@link Ts#localExpr}).
+                + "(CASE WHEN c." + DatabaseHelper.COL_PRIORITY_AT + " IS NOT NULL AND (c."
+                + DatabaseHelper.COL_PRIORITY_CLEARED_AT + " IS NULL OR "
+                + Ts.localExpr("c." + DatabaseHelper.COL_PRIORITY_CLEARED_AT) + " < "
+                + Ts.localExpr("c." + DatabaseHelper.COL_PRIORITY_AT)
+                + ") THEN 1 ELSE 0 END) AS cust_priority, "
+                // ⚡ Prioritas PENGIRIMAN ini saja (ditandai operator web) — turunan untuk ORDER BY.
+                + "(CASE WHEN t." + DatabaseHelper.COL_DELIVERY_PRIORITY_AT + " IS NOT NULL AND t."
+                + DatabaseHelper.COL_DELIVERY_PRIORITY_AT + " <> '' THEN 1 ELSE 0 END) AS ord_priority "
                 + "FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t "
                 + "LEFT JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c ON c."
                 + DatabaseHelper.COL_ID + " = t." + DatabaseHelper.COL_CUSTOMER_ID + " "
@@ -318,7 +402,16 @@ public class TransactionDao {
                 + ", CAST(t2." + DatabaseHelper.COL_TRX_ID + " AS TEXT)) = COALESCE(t."
                 + DatabaseHelper.COL_SYNC_UUID + ", t." + DatabaseHelper.COL_DELIVERY_TOKEN
                 + ", CAST(t." + DatabaseHelper.COL_TRX_ID + " AS TEXT))) "
-                + "ORDER BY t." + DatabaseHelper.COL_DELIVERY_QUEUED_AT + " ASC";
+                // Urutan antrian, dari kunci terkuat (cermin Reports::deliveryList di web):
+                //  1) order "AMBIL GALON SAJA" (transaksi KEMBALI dijemput kurir) SELALU paling bawah —
+                //     tak ada barang yang diantar, jadi ia tak boleh menyerobot pelanggan yang menunggu
+                //     air; ini mengalahkan KEDUA jenis prioritas;
+                //  2) ⭐ pelanggan prioritas — sengaja DI ATAS ⚡ (keputusan owner 2026-07-27);
+                //  3) ⚡ prioritas pengiriman yang ditandai operator di web;
+                //  4) di dalam tiap grup, urutan antrian (FIFO) dijaga.
+                + "ORDER BY (CASE WHEN t." + DatabaseHelper.COL_TYPE + "='" + Transaction.TYPE_KEMBALI
+                + "' THEN 1 ELSE 0 END) ASC, cust_priority DESC, ord_priority DESC, t."
+                + DatabaseHelper.COL_DELIVERY_QUEUED_AT + " ASC";
         try (Cursor c = db.rawQuery(sql, new String[]{Transaction.DELIVERY_PENDING})) {
             while (c.moveToNext()) {
                 Transaction t = new Transaction();
@@ -333,6 +426,19 @@ public class TransactionDao {
                 t.setCatatan(getStr(c, DatabaseHelper.COL_CATATAN));
                 t.setDeliveryStatus(getStr(c, DatabaseHelper.COL_DELIVERY_STATUS));
                 t.setDeliveryQueuedAt(getStr(c, DatabaseHelper.COL_DELIVERY_QUEUED_AT));
+                t.setDeliveryTertundaAt(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_AT));
+                t.setDeliveryTertundaResumeAt(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT));
+                // "Pesanan Terbuka" MASIH terbuka = kolom terisi DAN belum diklaim (delivery_device_uuid
+                // masih kosong) — kolom mentahnya sendiri PERMANEN (server tak pernah meng-null-kannya
+                // lagi setelah diklaim, lihat Reports::resumeDueTertunda di web), jadi cek dua-duanya di
+                // sini persis seperti shapeQueueRow di web (kolom mentah ADA di cursor via SELECT t.*,
+                // tapi TIDAK dipetakan ke field Java tersendiri — hanya dipakai sesaat di sini).
+                String openAt = getStr(c, DatabaseHelper.COL_DELIVERY_OPEN_DISPATCH_AT);
+                String routedTo = getStr(c, DatabaseHelper.COL_DELIVERY_DEVICE_UUID);
+                t.setDeliveryOpenDispatchAt((openAt != null && routedTo == null) ? openAt : null);
+                // Badge ✏️/🗑️ "sudah pernah diubah" — server-authoritative, dibaca apa adanya.
+                t.setLastManualEditAt(getStr(c, DatabaseHelper.COL_LAST_MANUAL_EDIT_AT));
+                t.setVoidRequestPendingAt(getStr(c, DatabaseHelper.COL_VOID_REQUEST_PENDING_AT));
                 t.setDeliveryToken(getStr(c, DatabaseHelper.COL_DELIVERY_TOKEN));
                 // Lokasi tujuan terpilih (multi-lokasi) — SELECT t.* sudah memuatnya.
                 t.setDeliveryDestName(getStr(c, DatabaseHelper.COL_DELIVERY_DEST_NAME));
@@ -346,6 +452,24 @@ public class TransactionDao {
                 t.setCustomerLat(getDouble(c, "cust_lat"));
                 t.setCustomerLng(getDouble(c, "cust_lng"));
                 t.setCustomerAddress(getStr(c, "cust_addr"));
+                t.setCustomerPriority(getLong(c, "cust_priority") == 1);   // badge ⭐ di kartu antrian
+                // ⚡ Prioritas pengiriman ini saja (ditandai operator di web) + alasannya.
+                // Urutan manual dari Strategi Pengiriman (disusun di web) — dipakai DeliveryPlanner.
+                t.setDeliverySeq((int) getLong(c, DatabaseHelper.COL_DELIVERY_SEQ));
+                t.setOrderPriorityAt(getStr(c, DatabaseHelper.COL_DELIVERY_PRIORITY_AT));
+                t.setOrderPriorityReason(getStr(c, DatabaseHelper.COL_DELIVERY_PRIORITY_REASON));
+                t.setOrderPriorityBy(getStr(c, DatabaseHelper.COL_DELIVERY_PRIORITY_BY));
+                // Data pelanggan tujuan belum lengkap (foto ATAU koordinat) → kartu antrian ditandai ❗
+                // + berkedip. Umum / tanpa customer_id dikecualikan (memang tak berkoordinat/foto).
+                String custPhoto = getStr(c, "cust_photo");
+                String custPhotoPath = getStr(c, "cust_photo_path");
+                boolean hasPhoto = (custPhoto != null && !custPhoto.isEmpty())
+                        || (custPhotoPath != null && !custPhotoPath.isEmpty());
+                boolean hasCoord = t.getCustomerLat() != 0 || t.getCustomerLng() != 0;
+                boolean realCust = t.getCustomerId() > 0
+                        && !CustomerDao.UMUM_NAME.equalsIgnoreCase(t.getCustomerName());
+                t.setCustomerNoPhoto(realCust && !hasPhoto);
+                t.setCustomerNoCoord(realCust && !hasCoord);
                 list.add(t);
             }
         }
@@ -354,16 +478,116 @@ public class TransactionDao {
 
     /** Tandai order Selesai: status DONE + waktu selesai = sekarang (durasi terhitung). */
     public void markDelivered(long trxId) {
+        markDelivered(trxId, false);
+    }
+
+    /**
+     * Seperti {@link #markDelivered(long)}, tapi bila {@code revokeCredit} true (setting cabang aktif
+     * & data pelanggan tak lengkap saat Selesaikan) juga menstempel credit_grace_until =
+     * sekarang + 24 jam. Disinkron ke server; server yang mengeluarkan galonnya dari kredit staf
+     * setelah tenggang lewat & data masih belum lengkap.
+     */
+    public void markDelivered(long trxId, boolean revokeCredit) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_DELIVERY_STATUS, Transaction.DELIVERY_DONE);
         v.put(DatabaseHelper.COL_DELIVERY_DONE_AT, DatabaseHelper.nowIso());
         // Atribusi penyelesai: kurir yang menandai Selesai (bisa ≠ pembuat order, mis.
         // order disusun admin di web lalu diantar staf ini). Disinkron ke dashboard.
-        String courier = new SettingsDao(dbHelper).getCurrentUserName();
+        SettingsDao sdao = new SettingsDao(dbHelper);
+        String courier = sdao.getCurrentUserName();
         if (courier != null && !courier.isEmpty()) {
             v.put(DatabaseHelper.COL_COMPLETED_BY_NAME, courier);
         }
+        // KREDIT GALON: bila order belum ber-kurir (delivery_staff_id=0, mis. disusun di web saat tak
+        // ada yang absen di perangkat) & JUAL, stempel KURIR yang menyelesaikan sebagai delivery_staff_id
+        // → disinkron jadi staff_uuid (Ref SyncEngine). Poin penjualan galon jatuh ke staf yang benar-
+        // benar mengantar (identitas login HP = kebenaran, walau lupa absen), bukan operator web.
+        // Cermin aturan PEMBUATAN: hanya JUAL, non-marketing, user tersinkron; TAK menimpa kredit
+        // yang sudah ada (delivery_staff_id>0 = penjual asli). Server tak menimpa (staff_uuid sudah terisi).
+        long uid = sdao.getCurrentUserId();
+        if (uid > 0) {
+            long existingStaff = -1;
+            String type = null;
+            Cursor c = db.query(DatabaseHelper.TABLE_TRANSACTIONS,
+                    new String[]{DatabaseHelper.COL_DELIVERY_STAFF_ID, DatabaseHelper.COL_TYPE},
+                    DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)}, null, null, null, "1");
+            if (c.moveToFirst()) {
+                existingStaff = c.getLong(0);
+                type = c.getString(1);
+            }
+            c.close();
+            if (existingStaff <= 0 && Transaction.TYPE_JUAL.equals(type)) {
+                UserDao userDao = new UserDao(dbHelper);
+                User op = userDao.getById(uid);
+                String staffUuid = userDao.getSyncUuidById(uid);   // null = belum tersinkron → jangan atribusi
+                if ((op == null || !op.isMarketing()) && staffUuid != null && !staffUuid.isEmpty()) {
+                    v.put(DatabaseHelper.COL_DELIVERY_STAFF_ID, uid);
+                }
+            }
+        }
+        if (revokeCredit) {
+            v.put(DatabaseHelper.COL_CREDIT_GRACE_UNTIL,
+                    DatabaseHelper.isoFrom(System.currentTimeMillis() + 24L * 60 * 60 * 1000));
+        }
+        // Order selesai → stempel "sedang dikerjakan" ikut dimatikan, supaya dashboard tak menyorot
+        // order yang sudah kelar (dan tak menyisakan stempel basi bila nanti dibuka lagi).
+        v.put(DatabaseHelper.COL_DELIVERY_STARTED_CLEARED_AT, DatabaseHelper.nowIso());
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
+    }
+
+    /**
+     * ▶ JALANKAN pengiriman ini: stempel "sedang dikerjakan" (dashboard menyorot kartunya). Ditulis
+     * lewat syncUpdate → baris jadi kotor & terdorong ke server pada sinkron berikutnya.
+     *
+     * <p>Berhenti ditulis sebagai stempel TERSENDIRI ({@link #stopDelivery}), bukan meng-NULL-kan
+     * kolom ini: push HP MEMBUANG kolom bernilai null dari payload, jadi pembatalan yang ditulis
+     * sebagai NULL tak akan pernah sampai ke server. Cermin priority_at/priority_cleared_at.</p>
+     */
+    public void startDelivery(long trxId) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_DELIVERY_STARTED_AT, DatabaseHelper.nowIso());
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
+    }
+
+    /**
+     * Simpan path lokal foto BUKTI SELESAI (delivery_proof_required). Update POLOS — tanpa bump
+     * edited_at/synced: photo_path lokal-saja (tak pernah di-push; MediaUploader membacanya untuk
+     * unggah, lalu menstempel photo_url + synced=0 sendiri). markDelivered yang menyusul sudah
+     * men-dirty baris utk push status Selesai.
+     */
+    public void setDeliveryProofPath(long trxId, String path) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_PHOTO_PATH, path);
+        db.update(DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
+    }
+
+    /** Berhenti mengerjakan order ini (tombol Kembali) — stempel penutup; lihat {@link #startDelivery}. */
+    public void stopDelivery(long trxId) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_DELIVERY_STARTED_CLEARED_AT, DatabaseHelper.nowIso());
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
+    }
+
+    /**
+     * Cerminkan klaim "Pesanan Terbuka" (POST /api/delivery/claim) yang BARU SAJA sukses ke baris
+     * LOKAL, SEGERA — server yang menyimpan klaim itu sendiri, jadi ini murni cache optimistik supaya
+     * order langsung terlihat "milik perangkat ini" (isOpenDispatch()==false, ikut getDeliveryQueue()
+     * lewat cabang "= perangkat ini") tanpa menunggu siklus sinkron berikutnya. delivery_device_uuid
+     * SERVER-AUTHORITATIVE (di-skip dari push HP) jadi menulisnya lokal di sini aman — pull berikutnya
+     * cuma menegaskan ulang nilai yang sama (atau mengoreksi bila klaim ternyata gagal di sela waktu).
+     */
+    public void markClaimedLocally(long trxId, String deviceUuid) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_DELIVERY_DEVICE_UUID, deviceUuid);
         dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
                 DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
     }
@@ -420,19 +644,245 @@ public class TransactionDao {
 
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
+        // Penjualannya batal → piutang yang lahir dari penjualan itu ikut batal. Tombstone (bukan
+        // hard delete) supaya penghapusannya menyebar ke server & perangkat lain; baris PEMBAYARAN
+        // tak disentuh (cicilan yang terlanjur diterima tetap fakta, sisa hutang jatuh ke 0 sendiri).
+        new CustomerDebtDao(dbHelper).voidForTransaction(getSyncUuidById(id));
         return dbHelper.syncDelete(db, DatabaseHelper.TABLE_TRANSACTIONS, "transactions",
                 DatabaseHelper.COL_TRX_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
 
+    /**
+     * Timpa catatan transaksi (dipakai untuk menempelkan penanda seperti "[BAYAR HUTANG Rp ...]"
+     * SESUDAH barisnya tersimpan — nominal yang benar-benar tercatat baru diketahui setelah DAO
+     * memagarinya terhadap sisa hutang). syncUpdate bump edited_at + synced=0 -> LWW ke server.
+     */
+    public int updateCatatan(long trxId, String catatan) {
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_CATATAN, catatan != null ? catatan : "");
+
+        return dbHelper.syncUpdate(dbHelper.getWritableDatabase(), DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
+    }
+
     /** Edit terbatas (staf operator): ubah metode pembayaran transaksi JUAL. syncUpdate bump edited_at
      *  + synced=0 → LWW ke server & perangkat lain. Nominal/total tidak berubah. */
+    /**
+     * KOREKSI LAPANGAN saat menyelesaikan order ("Ubah" pada popup konfirmasi Selesai): produk &
+     * jumlah aktual, galon kembali, metode bayar, dan Cash Bon. Cermin
+     * {@code App\Support\DeliveryFinalize} di web.
+     *
+     * <p>Total DIHITUNG ULANG dari baris item + ongkir yang sudah tersimpan — angka dari form tak
+     * dipercaya. Transaksi KEMBALI berpasangan diselaraskan ke {@code returnQty} memakai aturan
+     * pencocokan yang sama dengan {@link #getReturnedGalonForSale} (pelanggan + tanggal PERSIS +
+     * penanda catatan), jadi tanggalnya sengaja TIDAK digeser.</p>
+     *
+     * <p>CASH BON = pintasan "Jumlah Dibayar" = 0 (uang belum diterima sama sekali).</p>
+     *
+     * <p><b>Jumlah Dibayar (bayar sebagian).</b> {@code paidAmount} boleh {@code null} (jalur lama:
+     * HUTANG eksplisit di dropdown = piutang penuh) atau berupa nominal yang BENAR-BENAR diterima
+     * sekarang. Bila kurang dari total tagihan — sedikit ATAU nol — selisihnya otomatis dihitung
+     * ulang jadi piutang lewat {@link CustomerDebtDao}, dengan nominal SELISIHNYA saja (bukan selalu
+     * total penuh). Bagian yang benar-benar diterima tetap tercatat pada metode bayar pilihan
+     * operator; total_harga TIDAK dikurangi (piutang adalah cara catat, bukan diskon). Cermin
+     * {@code App\Support\DeliveryFinalize} di server.</p>
+     *
+     * @return jumlah baris transaksi yang berubah (0 = transaksi tak ditemukan)
+     */
+    public int applyDeliveryAdjustment(long trxId, java.util.List<TransactionItem> items, int returnQty,
+                                       String paymentMethod, boolean cashBon, Double paidAmount,
+                                       String cashBonReason, String byName) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        Transaction t = getById(trxId);
+        if (t == null) return 0;
+
+        if (items == null || items.isEmpty()) items = t.getItems();
+        int galon = 0;
+        double itemTotal = 0;
+        if (items != null) {
+            for (TransactionItem it : items) {
+                if (it == null || it.jumlah <= 0) continue;
+                galon += it.jumlah;
+                itemTotal += it.getSubtotal();
+            }
+        }
+        // Ongkir Per Galon dikalikan jumlah galon; borongan datar. Aturannya sama dgn saat transaksi
+        // dibuat — kalau tidak, mengoreksi jumlah galon diam-diam salah menagih ongkirnya.
+        double ongkir = Transaction.ONGKIR_PER_GALON.equals(t.getOngkirType())
+                ? t.getOngkir() * galon : t.getOngkir();
+        double total = itemTotal + ongkir;
+
+        // CASH BON = pintasan "diterima Rp0". Bila paidAmount tak dikirim sama sekali (jalur lama),
+        // jatuh ke perilaku HUTANG-eksplisit: piutang penuh hanya bila dropdown pembayarannya HUTANG.
+        Double received = cashBon ? Double.valueOf(0.0) : paidAmount;
+        String payment = paymentMethod;
+        // HUTANG SEBELUMNYA — tagihan di pintu = penjualan ini + piutang lama, persis seperti yang
+        // dicetak di struk. Baris milik transaksi INI dikecualikan supaya tak terhitung dua kali &
+        // supaya penekanan "Selesai" berulang menghasilkan angka yang sama.
+        CustomerDebtDao debtDao = new CustomerDebtDao(dbHelper);
+        String trxUuid = getSyncUuidById(trxId);
+        double priorDebt = debtDao.balanceExcludingTransaction(t.getCustomerId(), trxUuid);
+        double expected = Math.round((total + priorDebt) * 100d) / 100d;
+        double owed;
+        double toOldDebt = 0;
+        if (received != null) {
+            double r = Math.max(0, received);
+            // ALOKASI: penjualan HARI INI dilunasi lebih dulu, sisanya baru menutup hutang lama —
+            // urutan yang sama dengan cara orang membayar di pintu.
+            double toSale = Math.min(r, total);
+            owed = Math.max(0, Math.round((total - toSale) * 100d) / 100d);
+            toOldDebt = Math.min(Math.round(Math.max(0, r - toSale) * 100d) / 100d, priorDebt);
+            if (r <= 0) payment = Transaction.PAY_HUTANG;
+        } else {
+            owed = Transaction.PAY_HUTANG.equals(payment) ? total : 0.0;
+        }
+
+        String note = t.getCatatan() != null ? t.getCatatan() : "";
+        // Penanda ditulis bila yang diterima KURANG dari tagihan di pintu (termasuk hutang lama).
+        if (received != null && received < expected
+                && !note.contains(CASH_BON_MARKER) && !note.contains(PARTIAL_PAYMENT_MARKER)) {
+            if (received <= 0) {
+                String reason = cashBonReason != null ? cashBonReason.trim() : "";
+                note = (note.isEmpty() ? "" : note + "\n") + CASH_BON_MARKER
+                        + (reason.isEmpty() ? "" : " " + reason);
+            } else {
+                note = (note.isEmpty() ? "" : note + "\n") + PARTIAL_PAYMENT_MARKER
+                        + java.text.NumberFormat.getNumberInstance(new java.util.Locale("in", "ID"))
+                                .format(Math.round(received)) + "]";
+            }
+        }
+
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_ITEMS_JSON, TransactionItem.listToJson(items));
+        v.put(DatabaseHelper.COL_JUMLAH_GALON, galon);
+        v.put(DatabaseHelper.COL_TOTAL_HARGA, total);
+        if (payment != null && !payment.isEmpty()) v.put(DatabaseHelper.COL_PAYMENT_METHOD, payment);
+        v.put(DatabaseHelper.COL_CATATAN, note);
+        // Penanda "pernah diubah manual" → badge di antrian web & HP, sama seperti Edit Transaksi.
+        v.put(DatabaseHelper.COL_LAST_MANUAL_EDIT_AT, DatabaseHelper.nowIso());
+        int n = dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
+
+        syncPairedReturn(db, t, returnQty);
+
+        if (received != null) {
+            // Nominal yang BENAR — bisa lebih kecil dari total (bayar sebagian), bukan selalu penuh.
+            debtDao.syncForTransaction(t.getCustomerId(), trxUuid,
+                    owed > 0 ? Transaction.PAY_HUTANG : Transaction.PAY_TUNAI, owed, byName);
+            // Kelebihan uang di atas tagihan hari ini = pelunasan HUTANG LAMA. Disetel (bukan
+            // ditambah) supaya Selesai yang ditekan berulang tidak menumpuk pembayaran.
+            debtDao.syncPaymentForTransaction(t.getCustomerId(), trxUuid, toOldDebt, byName,
+                    "Pelunasan hutang lama saat Selesai");
+        } else {
+            // Jalur lama: `payment` sudah dipaksa HUTANG di atas bila dropdown-nya HUTANG, jadi satu
+            // panggilan cukup — syncForTransaction sendiri yang membuat/memperbarui/membuang baris.
+            debtDao.syncForTransaction(t.getCustomerId(), trxUuid, payment, total, byName);
+        }
+        return n;
+    }
+
+    /** Penanda catatan Cash Bon — harus sama persis dgn App\Support\DeliveryFinalize di server. */
+    public static final String CASH_BON_MARKER = "[CASH BON]";
+
+    /**
+     * Alasan Cash Bon "pelanggan sedang tidak di tempat" — galon ditinggal, uang tak bisa diterima
+     * karena orangnya tak ada. Beda tajam dari "tidak memberikan uang" (orangnya ADA tapi menolak/
+     * menunda bayar), jadi penanganannya beda: alasan ini MEWAJIBKAN foto bukti pengiriman lalu
+     * memberitahu pelanggan lewat WA. Cermin {@code App\Support\DeliveryFinalize::CASH_BON_REASON_AWAY};
+     * string-nya disimpan apa adanya di ekor {@link #CASH_BON_MARKER} pada catatan dan dibaca ulang
+     * dari sana untuk mengenali kasus ini.
+     */
+    public static final String CASH_BON_REASON_AWAY = "Konsumen tidak ada di tempat";
+
+    /** Orangnya ADA, uangnya belum diserahkan (dulu "Konsumen tidak memberikan uang" — diperhalus:
+     *  yang dicatat adalah FAKTA uangnya belum masuk, bukan tuduhan ke pelanggan). */
+    public static final String CASH_BON_REASON_UNPAID = "Uang belum diterima";
+
+    /** Alasan di luar dua di atas — WAJIB disertai penjelasan bebas yang ikut ditulis ke catatan. */
+    public static final String CASH_BON_REASON_OTHER = "Lainnya";
+
+    /** Penanda catatan bayar sebagian — harus sama persis dgn App\Support\DeliveryFinalize di server. */
+    public static final String PARTIAL_PAYMENT_MARKER = "[BAYAR SEBAGIAN Rp ";
+
+    /**
+     * Selaraskan transaksi KEMBALI berpasangan sebuah JUAL ke {@code qty}: ubah baris pertama yang
+     * cocok, buat bila belum ada, atau hapus (tombstone) bila qty jadi 0. Baris berpasangan LAIN
+     * tak diutak-atik — tanpa kunci JUAL→KEMBALI eksplisit, menghapusnya bisa menghilangkan
+     * pengembalian penjualan lain yang kebetulan setanggal & sepelanggan (cermin alasan yang sama
+     * di TransactionController::reconcilePairedReturn pada web).
+     */
+    private void syncPairedReturn(SQLiteDatabase db, Transaction jual, int qty) {
+        if (!Transaction.TYPE_JUAL.equals(jual.getType()) || jual.getCustomerId() <= 0) return;
+        String tanggal = jual.getTanggal();
+        if (tanggal == null || tanggal.isEmpty()) return;
+        qty = Math.max(0, qty);
+
+        String where = DatabaseHelper.COL_CUSTOMER_ID + "=? AND " + DatabaseHelper.COL_TYPE + "=?"
+                + " AND " + DatabaseHelper.COL_TANGGAL + "=?"
+                + " AND (" + DatabaseHelper.COL_CATATAN + " = 'Tukar botol galon'"
+                + "      OR " + DatabaseHelper.COL_CATATAN + " LIKE 'Galon kembali dari penjualan%')";
+        String[] args = new String[]{String.valueOf(jual.getCustomerId()), Transaction.TYPE_KEMBALI, tanggal};
+
+        long existingId = -1;
+        Cursor c = db.query(DatabaseHelper.TABLE_TRANSACTIONS, new String[]{DatabaseHelper.COL_TRX_ID},
+                where, args, null, null, DatabaseHelper.COL_TRX_ID + " ASC", "1");
+        try {
+            if (c.moveToFirst()) existingId = c.getLong(0);
+        } finally {
+            c.close();
+        }
+
+        if (qty <= 0) {
+            if (existingId > 0) delete(existingId);
+            return;
+        }
+        if (existingId > 0) {
+            ContentValues kv = new ContentValues();
+            kv.put(DatabaseHelper.COL_JUMLAH_GALON, qty);
+            dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, kv,
+                    DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(existingId)});
+            return;
+        }
+        Transaction kembali = new Transaction();
+        kembali.setCustomerId(jual.getCustomerId());
+        kembali.setType(Transaction.TYPE_KEMBALI);
+        kembali.setJumlahGalon(qty);
+        kembali.setCatatan("Tukar botol galon");
+        kembali.setTanggal(tanggal);
+        insert(kembali);
+    }
+
     public int updatePaymentMethod(long trxId, String method) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_PAYMENT_METHOD, method);
-        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
+        int n = dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
                 DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
+        // Ganti metode bayar ke/dari "HUTANG" mengubah piutang → selaraskan buku besarnya, kalau
+        // tidak edit akan meninggalkan piutang hantu (atau menagih penjualan yang sudah dibayar).
+        syncDebtForTransaction(db, trxId, method);
+        return n;
+    }
+
+    /** Baca pelanggan + total transaksi lalu serahkan penyelarasan ke CustomerDebtDao. */
+    private void syncDebtForTransaction(SQLiteDatabase db, long trxId, String method) {
+        long customerId = -1;
+        double total = 0;
+        Cursor c = db.rawQuery("SELECT " + DatabaseHelper.COL_CUSTOMER_ID + ", "
+                        + DatabaseHelper.COL_TOTAL_HARGA + " FROM " + DatabaseHelper.TABLE_TRANSACTIONS
+                        + " WHERE " + DatabaseHelper.COL_TRX_ID + "=?",
+                new String[]{String.valueOf(trxId)});
+        try {
+            if (c.moveToFirst()) {
+                customerId = c.getLong(0);
+                total = c.getDouble(1);
+            }
+        } finally {
+            c.close();
+        }
+        new CustomerDebtDao(dbHelper).syncForTransaction(customerId, getSyncUuidById(trxId),
+                method, total, null);
     }
 
     /** Edit terbatas (staf operator): PINDAHKAN transaksi ke pelanggan lain (ubah "kolom nama
@@ -454,6 +904,23 @@ public class TransactionDao {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_JUMLAH_GALON, galon);
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
+    }
+
+    /**
+     * Terapkan gift PRODUK ke transaksi JUAL yang baru dibuat (dipilih staf di popup struk):
+     * simpan ulang daftar item, total, dan jumlah galon sekaligus. syncUpdate bump edited_at +
+     * synced=0 → menang LWW dan menyusul ke dashboard. Cermin Gifts::applyProductGift di server.
+     */
+    public int applyGiftItems(long trxId, java.util.List<com.crowja.damiupos.model.TransactionItem> items,
+                              double totalHarga, int jumlahGalon) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_ITEMS_JSON,
+                com.crowja.damiupos.model.TransactionItem.listToJson(items));
+        v.put(DatabaseHelper.COL_TOTAL_HARGA, totalHarga);
+        v.put(DatabaseHelper.COL_JUMLAH_GALON, jumlahGalon);
         return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
                 DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
     }
@@ -500,6 +967,37 @@ public class TransactionDao {
                 "SELECT " + custDay + " = " + txDay + " FROM customers WHERE _id = ?",
                 new String[]{tanggal, tanggal, tanggal, String.valueOf(customerId)})) {
             return c.moveToFirst() && c.getInt(0) == 1;
+        }
+    }
+
+    /** Info transaksi JUAL terbaru pelanggan pada hari kalender LOKAL ini (untuk gerbang
+     *  konfirmasi anti-order-ganda). {@link #deliveryStatus} null/kosong = tidak ada
+     *  status delivery (transaksi tunai langsung, dsb). */
+    public static class TodayOrderInfo {
+        public final String tanggal;
+        public final String deliveryStatus;
+        public TodayOrderInfo(String tanggal, String deliveryStatus) {
+            this.tanggal = tanggal;
+            this.deliveryStatus = deliveryStatus;
+        }
+    }
+
+    /**
+     * Transaksi JUAL pelanggan ini yang jatuh pada hari kalender LOKAL ini (lihat {@link #localDate}
+     * untuk normalisasi campuran UTC-ISO/lokal), diambil yang PALING BARU. Null bila belum ada JUAL
+     * untuk pelanggan ini hari ini. Dipakai gerbang "sudah order hari ini?" sebelum Transaksi Baru.
+     */
+    public TodayOrderInfo getTodayOrderInfo(long customerId) {
+        if (customerId <= 0) return null;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String sql = "SELECT " + DatabaseHelper.COL_TANGGAL + ", " + DatabaseHelper.COL_DELIVERY_STATUS +
+                " FROM " + DatabaseHelper.TABLE_TRANSACTIONS +
+                " WHERE type='JUAL' AND " + DatabaseHelper.COL_CUSTOMER_ID + "=?" +
+                " AND " + localDate(DatabaseHelper.COL_TANGGAL) + " = date('now','localtime')" +
+                " ORDER BY " + localDt(DatabaseHelper.COL_TANGGAL) + " DESC LIMIT 1";
+        try (Cursor c = db.rawQuery(sql, new String[]{String.valueOf(customerId)})) {
+            if (!c.moveToFirst()) return null;
+            return new TodayOrderInfo(getStr(c, DatabaseHelper.COL_TANGGAL), getStr(c, DatabaseHelper.COL_DELIVERY_STATUS));
         }
     }
 
@@ -620,11 +1118,70 @@ public class TransactionDao {
         return Math.max(0, total);
     }
 
-    /** Total pendapatan hari ini */
+    /**
+     * Nama produk (jumlah &gt; 0) dari pembelian (JUAL) TERAKHIR pelanggan ini — dipakai Transaksi
+     * Baru untuk mengedipkan baris produk yang sama begitu pelanggan dipilih (cermin fitur web
+     * "last item blink"; lihat CustomerController::lastPurchasedProductUuids). Transaksi Tertunda
+     * dilewati: kalau transaksi terakhirnya Tertunda, yang relevan tetap pembelian terakhir yang
+     * SUDAH terjadi. Dicocokkan lewat NAMA (bukan pid) oleh pemanggil — pid device-local, produk
+     * bisa direname sejak transaksi lama disimpan.
+     */
+    public List<String> getLastJualProductNames(long customerId) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String query = "SELECT items_json FROM transactions " +
+                "WHERE type='JUAL' AND customer_id=? " +
+                "AND (delivery_status IS NULL OR delivery_status != ?) " +
+                "ORDER BY tanggal DESC, _id DESC LIMIT 1";
+        Cursor cursor = db.rawQuery(query, new String[]{
+                String.valueOf(customerId), Transaction.DELIVERY_TERTUNDA});
+        List<String> names = new ArrayList<>();
+        if (cursor.moveToFirst()) {
+            String itemsJson = cursor.getString(0);
+            if (itemsJson != null) {
+                for (TransactionItem it : TransactionItem.listFromJson(itemsJson)) {
+                    if (it.jumlah > 0 && it.productName != null && !it.productName.isEmpty()) {
+                        names.add(it.productName);
+                    }
+                }
+            }
+        }
+        cursor.close();
+        return names;
+    }
+
+    /**
+     * Peta nama lokasi tujuan (delivery_dest_name persis) → jumlah transaksi JUAL yang dikirim ke
+     * sana, untuk badge "berapa kali" pada kartu/picker "Kirim ke" di Transaksi Baru. Transaksi
+     * tanpa nama tujuan tersimpan (transaksi lama sebelum multi-lokasi, atau non-antar) dihitung
+     * TERPISAH lewat kunci {@link #UNNAMED_DEST_KEY} — caller yang menambahkannya ke hitungan
+     * lokasi UTAMA (indeks 0), karena sebelum multi-lokasi ada, semua pengiriman memang ke sana.
+     */
+    public static final String UNNAMED_DEST_KEY = "";
+
+    public java.util.Map<String, Integer> countJualByDeliveryDestName(long customerId) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        java.util.Map<String, Integer> map = new java.util.HashMap<>();
+        String query = "SELECT COALESCE(delivery_dest_name,''), COUNT(*) FROM transactions " +
+                "WHERE type='JUAL' AND customer_id=? GROUP BY COALESCE(delivery_dest_name,'')";
+        Cursor cursor = db.rawQuery(query, new String[]{String.valueOf(customerId)});
+        while (cursor.moveToNext()) {
+            map.put(cursor.getString(0), cursor.getInt(1));
+        }
+        cursor.close();
+        return map;
+    }
+
+    /** JUAL yang SUDAH SELESAI (bukan masih menunggu diantar/PENDING atau diparkir/TERTUNDA) —
+     *  penjualan tunai di tempat (delivery_status NULL) atau pengiriman yang sudah DONE. */
+    private static final String WHERE_COMPLETED_JUAL =
+            "(delivery_status IS NULL OR delivery_status = 'DONE')";
+
+    /** Total pendapatan hari ini — hanya transaksi yang SUDAH SELESAI (belum diantar belum terjual). */
     public double getPendapatanHariIni() {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String query = "SELECT COALESCE(SUM(total_harga),0) FROM transactions " +
-                "WHERE type='JUAL' AND " + localDate("tanggal") + " = date('now','localtime')";
+                "WHERE type='JUAL' AND " + WHERE_COMPLETED_JUAL + " AND "
+                + localDate("tanggal") + " = date('now','localtime')";
         Cursor cursor = db.rawQuery(query, null);
         double total = 0;
         if (cursor.moveToFirst()) {
@@ -723,11 +1280,12 @@ public class TransactionDao {
         return count;
     }
 
-    /** Total galon terjual hari ini */
+    /** Total galon terjual hari ini — hanya transaksi yang SUDAH SELESAI (belum diantar belum terjual). */
     public int getGalonTerjualHariIni() {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String query = "SELECT COALESCE(SUM(jumlah_galon),0) FROM transactions " +
                 "WHERE type='JUAL' AND COALESCE(catatan,'') NOT LIKE '%[PENCAIRAN KOMISI]%' AND "
+                + WHERE_COMPLETED_JUAL + " AND "
                 + localDate("tanggal") + " = date('now','localtime')";
         Cursor cursor = db.rawQuery(query, null);
         int count = 0;
@@ -769,6 +1327,9 @@ public class TransactionDao {
             if (!Transaction.TYPE_JUAL.equals(t.getType())) continue;
             if (t.getCatatan() != null && (t.getCatatan().contains("[JUAL BOTOL KOSONG]")
                     || t.getCatatan().contains("[PENCAIRAN KOMISI]"))) continue;
+            // Belum diantar (PENDING) atau ditunda (TERTUNDA) → belum benar-benar "terjual".
+            String ds = t.getDeliveryStatus();
+            if (ds != null && !Transaction.DELIVERY_DONE.equals(ds)) continue;
             java.util.List<com.crowja.damiupos.model.TransactionItem> items = t.getItems();
             if (items != null && !items.isEmpty()) {
                 for (com.crowja.damiupos.model.TransactionItem it : items) {
@@ -783,7 +1344,8 @@ public class TransactionDao {
         return new double[]{galon, revenue};
     }
 
-    /** Summary for date range: [total_trx, total_galon_jual, total_galon_kembali, total_pendapatan] */
+    /** Summary for date range: [total_trx, total_galon_jual, total_galon_kembali, total_pendapatan]
+     *  — hanya transaksi yang SUDAH SELESAI (KEMBALI tak berdelivery_status jadi tak terpengaruh). */
     public double[] getSummaryByDateRange(String startDate, String endDate) {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String query = "SELECT COUNT(*), " +
@@ -791,7 +1353,8 @@ public class TransactionDao {
                 "COALESCE(SUM(CASE WHEN type='KEMBALI' THEN jumlah_galon ELSE 0 END),0), " +
                 "COALESCE(SUM(CASE WHEN type='JUAL' THEN total_harga ELSE 0 END),0) " +
                 "FROM transactions " +
-                "WHERE " + localDate("tanggal") + " >= ? AND " + localDate("tanggal") + " <= ?";
+                "WHERE " + WHERE_COMPLETED_JUAL + " AND "
+                + localDate("tanggal") + " >= ? AND " + localDate("tanggal") + " <= ?";
         Cursor cursor = db.rawQuery(query, new String[]{startDate, endDate});
         double[] result = new double[4];
         if (cursor.moveToFirst()) {
@@ -816,6 +1379,7 @@ public class TransactionDao {
                 "COALESCE(SUM(total_harga),0) AS total_pendapatan " +
                 "FROM transactions " +
                 "WHERE type='JUAL' AND COALESCE(catatan,'') NOT LIKE '%[PENCAIRAN KOMISI]%' AND "
+                + WHERE_COMPLETED_JUAL + " AND "
                 + localDate("tanggal") + " >= date('now','localtime','-" + months + " months') " +
                 "GROUP BY bulan " +
                 "ORDER BY bulan ASC";
@@ -840,6 +1404,7 @@ public class TransactionDao {
                 "COALESCE(SUM(total_harga),0) AS total_pendapatan " +
                 "FROM transactions " +
                 "WHERE type='JUAL' AND COALESCE(catatan,'') NOT LIKE '%[PENCAIRAN KOMISI]%' AND "
+                + WHERE_COMPLETED_JUAL + " AND "
                 + localMonth("tanggal") + " = strftime('%Y-%m', 'now','localtime') " +
                 "GROUP BY hari " +
                 "ORDER BY hari ASC";
@@ -902,6 +1467,8 @@ public class TransactionDao {
         int editedIdx = cursor.getColumnIndex(DatabaseHelper.COL_EDITED_AT);
         if (editedIdx >= 0) t.setEditedAt(cursor.getString(editedIdx));
         t.setCatatan(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_CATATAN)));
+        int receiptNoIdx = cursor.getColumnIndex(DatabaseHelper.COL_RECEIPT_NO);
+        if (receiptNoIdx >= 0) t.setReceiptNo(cursor.getString(receiptNoIdx));
         int nameIdx = cursor.getColumnIndex("customer_name");
         if (nameIdx >= 0) {
             t.setCustomerName(cursor.getString(nameIdx));

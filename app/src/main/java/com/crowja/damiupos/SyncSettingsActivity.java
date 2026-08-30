@@ -66,14 +66,12 @@ public class SyncSettingsActivity extends AppCompatActivity {
             qrLauncher.launch(options);
         });
 
+        // Pelacakan lokasi WAJIB aktif selama staff bekerja — tidak boleh dimatikan dari HP.
+        // Toggle disembunyikan & dipaksa ON (staf harus terpantau sepanjang sesi kerja login).
+        cfg.setLocationTrackingEnabled(true);
         com.google.android.material.checkbox.MaterialCheckBox cbLocation = findViewById(R.id.cbLocation);
-        cbLocation.setChecked(cfg.isLocationTrackingEnabled());
-        cbLocation.setOnCheckedChangeListener((b, checked) -> {
-            cfg.setLocationTrackingEnabled(checked);
-            // Disabling stops GPS immediately but KEEPS the service polling (sync stays
-            // on in the background); enabling takes effect on the next clock-in.
-            if (!checked) LocationService.pollOnly(getApplicationContext());
-        });
+        cbLocation.setChecked(true);
+        cbLocation.setVisibility(android.view.View.GONE);
         ((MaterialButton) findViewById(R.id.btnDisconnect)).setOnClickListener(v -> confirmDisconnect());
 
         refreshStatus();
@@ -90,6 +88,7 @@ public class SyncSettingsActivity extends AppCompatActivity {
         if (!cfg.isEnrolled()) {   // belum pernah terhubung → cukup bersihkan konfigurasi lokal
             cfg.clear();
             SyncScheduler.cancelAll(this);
+            com.crowja.damiupos.sync.ServiceRestartReceiver.cancel(this);
             refreshStatus();
             Toast.makeText(this, "Perangkat diputuskan", Toast.LENGTH_SHORT).show();
             return;
@@ -145,6 +144,7 @@ public class SyncSettingsActivity extends AppCompatActivity {
     private void finishDisconnect() {
         engine.settings().clear();
         SyncScheduler.cancelAll(this);
+        try { com.crowja.damiupos.sync.ServiceRestartReceiver.cancel(this); } catch (Throwable ignored) {}
         try { LocationService.stop(getApplicationContext()); } catch (Throwable ignored) {}
         refreshStatus();
     }
@@ -154,17 +154,42 @@ public class SyncSettingsActivity extends AppCompatActivity {
      * fields and connect. Falls back to treating the whole scanned text as the code.
      */
     private void handleScan(String contents) {
-        String url = "", code = "";
-        try {
-            org.json.JSONObject j = new org.json.JSONObject(contents);
-            url = j.optString("url", "");
-            code = j.optString("code", "");
-        } catch (org.json.JSONException ignored) {}
-        if (code.isEmpty()) code = contents;          // plain-text QR = the code itself
-        if (!url.isEmpty()) etBaseUrl.setText(url);
-        if (!code.isEmpty()) etProvisioningCode.setText(code);
-        Toast.makeText(this, "QR terbaca — menghubungkan…", Toast.LENGTH_SHORT).show();
-        doConnect();
+        com.crowja.damiupos.sync.ProvisioningQr qr =
+                com.crowja.damiupos.sync.ProvisioningQr.parse(contents);
+        if (qr == null) {
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle("QR tidak aman")
+                    .setMessage("QR ini mengarahkan aplikasi ke alamat yang bukan HTTPS. "
+                            + "Penyambungan dibatalkan.")
+                    .setPositiveButton("OK", null)
+                    .show();
+            return;
+        }
+        if (!qr.code.isEmpty()) etProvisioningCode.setText(qr.code);
+
+        // Server BAWAAN (atau QR tanpa url) → lanjut seperti biasa.
+        if (qr.trustedHost) {
+            if (!qr.url.isEmpty()) etBaseUrl.setText(qr.url);
+            Toast.makeText(this, "QR terbaca — menghubungkan…", Toast.LENGTH_SHORT).show();
+            doConnect();
+            return;
+        }
+
+        // Server ASING: WAJIB dikonfirmasi sambil menampilkan hostnya. QR bisa dicetak siapa pun
+        // dan ditempel di depot; menyambung diam-diam berarti seluruh isi basis data HP ini
+        // terdorong ke server orang itu pada sinkron pertama.
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("⚠ Server tidak dikenal")
+                .setMessage("QR ini menyuruh aplikasi terhubung ke:\n\n" + qr.host()
+                        + "\n\nBukan server resmi (" + com.crowja.damiupos.sync.ProvisioningQr.defaultHost()
+                        + "). Melanjutkan berarti SELURUH data di HP ini (pelanggan, transaksi, absensi) "
+                        + "akan dikirim ke sana.\n\nLanjutkan hanya jika Anda sendiri yang menyiapkan server itu.")
+                .setNegativeButton("Batal", null)
+                .setPositiveButton("Saya paham, lanjutkan", (d, w) -> {
+                    etBaseUrl.setText(qr.url);
+                    doConnect();
+                })
+                .show();
     }
 
     private void doConnect() {

@@ -101,12 +101,40 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
         return sb;
     }
 
+    /** "ProductA x2, ProductB x1" — rincian produk & qty per baris, untuk ditampilkan di
+     *  bawah {@link #buildItemDots} yang hanya titik warna + jumlah produk. Fallback ke
+     *  produk tunggal + total galon saat transaksi tidak punya items_json (skema lama). */
+    private static String buildItemsSummary(Transaction trx) {
+        List<TransactionItem> items = trx.getItems();
+        StringBuilder sb = new StringBuilder();
+        if (items != null && !items.isEmpty()) {
+            for (TransactionItem it : items) {
+                if (it == null) continue;
+                if (sb.length() > 0) sb.append(", ");
+                String name = it.productName != null && !it.productName.isEmpty() ? it.productName : "Produk";
+                sb.append(name).append(" x").append(it.jumlah);
+            }
+        } else {
+            String name = trx.getProductName() != null && !trx.getProductName().isEmpty()
+                    ? trx.getProductName() : "Produk";
+            sb.append(name).append(" x").append(trx.getJumlahGalon());
+        }
+        return sb.toString();
+    }
+
     private static void appendDot(SpannableStringBuilder sb, String productName) {
         int start = sb.length();
         sb.append("●"); // ●
         sb.setSpan(new ForegroundColorSpan(dotColor(productName)),
                 start, sb.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
         sb.append("  ");     // jarak antar titik / sebelum "N item"
+    }
+
+    /** Warna stabil per NAMA produk dari palet — dipakai bersama layar lain (mis. chip produk di
+     *  Antrian Delivery) supaya satu produk tampil warna yang sama di seluruh aplikasi saat master
+     *  produknya tak ketemu (nama beku di items_json sudah diganti/digabung setelah order dibuat). */
+    public static int paletteColor(String productName) {
+        return dotColor(productName);
     }
 
     private static int dotColor(String name) {
@@ -136,7 +164,7 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
 
     class ViewHolder extends RecyclerView.ViewHolder {
         View cardTransaction;
-        TextView tvTypeIcon, tvType, tvCustomerName, tvDate, tvGalonCount, tvHarga;
+        TextView tvTypeIcon, tvType, tvCustomerName, tvProductItems, tvDate, tvGalonCount, tvHarga;
 
         ViewHolder(@NonNull View itemView) {
             super(itemView);
@@ -144,6 +172,7 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
             tvTypeIcon = itemView.findViewById(R.id.tvTypeIcon);
             tvType = itemView.findViewById(R.id.tvType);
             tvCustomerName = itemView.findViewById(R.id.tvCustomerName);
+            tvProductItems = itemView.findViewById(R.id.tvProductItems);
             tvDate = itemView.findViewById(R.id.tvDate);
             tvGalonCount = itemView.findViewById(R.id.tvGalonCount);
             tvHarga = itemView.findViewById(R.id.tvHarga);
@@ -163,7 +192,10 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
                 tvType.setText(buildItemDots(trx));
                 tvType.setTextColor(colorPrimary);  // warna teks "N item"; titik pakai span warna sendiri
                 tvGalonCount.setTextColor(colorPrimary);
+                tvProductItems.setText(buildItemsSummary(trx));
+                tvProductItems.setVisibility(View.VISIBLE);
             } else {
+                tvProductItems.setVisibility(View.GONE);
                 boolean isGantiRugi = trx.getTotalHarga() > 0
                         || (trx.getCatatan() != null && trx.getCatatan().contains("[GANTI RUGI"));
                 if (isGantiRugi) {

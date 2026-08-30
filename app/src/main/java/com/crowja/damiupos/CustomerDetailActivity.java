@@ -1,5 +1,7 @@
 package com.crowja.damiupos;
 
+import com.crowja.damiupos.map.LiveDeviceOverlay;
+
 import android.annotation.SuppressLint;
 import android.content.Intent;
 import android.graphics.BitmapFactory;
@@ -39,6 +41,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
     private static final int MENU_SHARE_LINK = 11;
     /** Menu: tandai detail pelanggan bermasalah (nomor/koordinat/dll keliru) agar diperbaiki. */
     private static final int MENU_FLAG_PROBLEM = 12;
+    /** Menu: tandai pelanggan PRIORITAS (utamakan → naik ke atas antrian delivery & follow up). */
+    private static final int MENU_PRIORITY = 13;
 
     /** Kategori masalah: kunci tersinkron (cermin web) → label Indonesia. Urutan dijaga. */
     private static final String[] ISSUE_KEYS = {"phone", "coordinate", "photo", "address", "other"};
@@ -53,8 +57,14 @@ public class CustomerDetailActivity extends AppCompatActivity {
     private com.crowja.damiupos.db.SettingsDao settingsDao;
     private Customer currentCustomer;
 
-    private TextView tvNama, tvTelepon, tvAlamat, tvOrigin, tvAfiliasi, tvIssueBanner;
+    private TextView tvNama, tvTelepon, tvAlamat, tvCatatanOrder, tvOrigin, tvAfiliasi, tvIssueBanner;
     private TextView tvSaldoGalon;
+    private MaterialCardView cardHutang;
+    private TextView tvHutangSisa;
+    private TextView tvHutangRiwayat;
+    private com.google.android.material.button.MaterialButton btnBayarHutang;
+    private com.google.android.material.button.MaterialButton btnCatatHutang;
+    private com.crowja.damiupos.db.CustomerDebtDao debtDao;
     private TextView tvEmptyHistory, tvHistoryHeader, tvHistoryNote;
     private RecyclerView rvTransactions;
     private TransactionAdapter adapter;
@@ -62,6 +72,9 @@ public class CustomerDetailActivity extends AppCompatActivity {
     private MaterialCardView cardMap;
     private WebView webMap;
     private boolean mapLoaded;
+
+    /** Pin posisi LIVE perangkat lain — dipasang di semua peta aplikasi. */
+    private LiveDeviceOverlay liveDev;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -86,6 +99,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
         tvNama = findViewById(R.id.tvNama);
         tvTelepon = findViewById(R.id.tvTelepon);
         tvAlamat = findViewById(R.id.tvAlamat);
+        tvCatatanOrder = findViewById(R.id.tvCatatanOrder);
+        tvCatatanOrder.setOnClickListener(v -> showCatatanOrderDialog());
         tvOrigin = findViewById(R.id.tvOrigin);
         tvAfiliasi = findViewById(R.id.tvAfiliasi);
         tvIssueBanner = findViewById(R.id.tvIssueBanner);
@@ -96,6 +111,14 @@ public class CustomerDetailActivity extends AppCompatActivity {
         cardMap = findViewById(R.id.cardMap);
         webMap = findViewById(R.id.webMap);
         tvSaldoGalon = findViewById(R.id.tvSaldoGalon);
+        cardHutang = findViewById(R.id.cardHutang);
+        tvHutangSisa = findViewById(R.id.tvHutangSisa);
+        tvHutangRiwayat = findViewById(R.id.tvHutangRiwayat);
+        btnBayarHutang = findViewById(R.id.btnBayarHutang);
+        btnCatatHutang = findViewById(R.id.btnCatatHutang);
+        debtDao = new com.crowja.damiupos.db.CustomerDebtDao(DatabaseHelper.getInstance(this));
+        btnBayarHutang.setOnClickListener(v -> showDebtDialog(false));
+        btnCatatHutang.setOnClickListener(v -> showDebtDialog(true));
         tvEmptyHistory = findViewById(R.id.tvEmptyHistory);
         rvTransactions = findViewById(R.id.rvTransactions);
 
@@ -128,8 +151,10 @@ public class CustomerDetailActivity extends AppCompatActivity {
             startActivity(intent);
         });
 
-        // Delete button
-        findViewById(R.id.btnHapus).setOnClickListener(v -> confirmDelete());
+        // Delete button — HANYA Admin (& mode single-user/owner). Non-admin: sembunyikan.
+        View btnHapus = findViewById(R.id.btnHapus);
+        btnHapus.setOnClickListener(v -> confirmDelete());
+        btnHapus.setVisibility(canDeleteCustomer() ? View.VISIBLE : View.GONE);
 
         // FAB - new transaction for this customer
         findViewById(R.id.fabAddTransaction).setOnClickListener(v -> {
@@ -154,6 +179,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 .setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_NEVER);
         menu.add(0, MENU_FLAG_PROBLEM, 2, "⚠️ Tandai Bermasalah")
                 .setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_NEVER);
+        menu.add(0, MENU_PRIORITY, 3, "⭐ Jadikan Prioritas")
+                .setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_NEVER);
         return true;
     }
 
@@ -172,6 +199,11 @@ public class CustomerDetailActivity extends AppCompatActivity {
             boolean open = currentCustomer != null && currentCustomer.hasOpenIssue();
             flag.setTitle(open ? "⚠️ Ubah Laporan Masalah" : "⚠️ Tandai Bermasalah");
         }
+        android.view.MenuItem prio = menu.findItem(MENU_PRIORITY);
+        if (prio != null) {
+            boolean p = currentCustomer != null && currentCustomer.isPriority();
+            prio.setTitle(p ? "⭐ Batalkan Prioritas" : "⭐ Jadikan Prioritas");
+        }
         return super.onPrepareOptionsMenu(menu);
     }
 
@@ -187,6 +219,10 @@ public class CustomerDetailActivity extends AppCompatActivity {
         }
         if (item.getItemId() == MENU_FLAG_PROBLEM) {
             showFlagProblemDialog();
+            return true;
+        }
+        if (item.getItemId() == MENU_PRIORITY) {
+            showPriorityDialog();
             return true;
         }
         return super.onOptionsItemSelected(item);
@@ -247,6 +283,14 @@ public class CustomerDetailActivity extends AppCompatActivity {
      * tanpa login = boleh), sinkronisasi online aktif (serah-terima butuh server), pelanggan
      * bukan "Umum", dan belum pernah diserahterimakan.
      */
+    /** Boleh hapus pelanggan? Admin saja; mode single-user (uid<=0) = owner = boleh. */
+    private boolean canDeleteCustomer() {
+        long uid = settingsDao.getCurrentUserId();
+        if (uid <= 0) return true;
+        com.crowja.damiupos.model.User u = new com.crowja.damiupos.db.UserDao(dbHelper).getById(uid);
+        return u == null || u.canDeleteCustomer();
+    }
+
     private boolean canShowHandoff() {
         if (currentCustomer == null || currentCustomer.isHandedOver()) return false;
         if (CustomerDao.UMUM_NAME.equalsIgnoreCase(
@@ -330,6 +374,42 @@ public class CustomerDetailActivity extends AppCompatActivity {
         return key;
     }
 
+    /**
+     * Ubah Catatan Order (instruksi pengiriman tetap, mis. "titip satpam") — otomatis ditambahkan
+     * ke SETIAP transaksi baru pelanggan ini (cermin TransactionActivity.doSave / web storePending).
+     * Tersinkron dua-arah lewat customers.order_note.
+     */
+    private void showCatatanOrderDialog() {
+        if (currentCustomer == null) {
+            return;
+        }
+        final android.widget.EditText input = new android.widget.EditText(this);
+        input.setHint("mis. Titip satpam gerbang selatan");
+        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        input.setMaxLines(4);
+        if (currentCustomer.getOrderNote() != null) {
+            input.setText(currentCustomer.getOrderNote());
+            input.setSelection(input.getText().length());
+        }
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        input.setPadding(pad, pad / 2, pad, pad / 2);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Catatan Order")
+                .setMessage("Ditambahkan otomatis ke catatan tiap transaksi baru pelanggan ini.")
+                .setView(input)
+                .setNegativeButton("Batal", null)
+                .setPositiveButton("Simpan", (d, w) -> {
+                    String note = input.getText() != null ? input.getText().toString() : "";
+                    customerDao.updateOrderNote(customerId, note);
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                    loadData();
+                })
+                .show();
+    }
+
     private void showFlagProblemDialog() {
         if (currentCustomer == null) {
             return;
@@ -367,12 +447,10 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 .setNegativeButton("Batal", null)
                 .setPositiveButton("Simpan Laporan", null);   // override nanti agar validasi tak menutup dialog
         if (currentCustomer.hasOpenIssue()) {
-            b.setNeutralButton("✓ Sudah diperbaiki", (d, w) -> {
-                customerDao.markProblemResolved(customerId);
-                com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
-                Toast.makeText(this, "Masalah " + name + " ditandai sudah diperbaiki", Toast.LENGTH_LONG).show();
-                loadData();
-            });
+            // "Sudah diperbaiki" = ajukan penyelesaian + catatan → persetujuan owner via email laporan
+            // (perangkat standalone: ditandai selesai lokal). Bukan lagi penutupan langsung.
+            b.setNeutralButton("✓ Sudah diperbaiki", (d, w) ->
+                    IssueResolveDialog.show(this, currentCustomer, "detail", this::loadData));
         }
         final AlertDialog dlg = b.create();
         dlg.setOnShowListener(di -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
@@ -401,6 +479,158 @@ public class CustomerDetailActivity extends AppCompatActivity {
         dlg.show();
     }
 
+    /** Tandai/batalkan pelanggan PRIORITAS. Bila sudah prioritas → tawaran batalkan; selain itu
+     *  input alasan opsional + jadikan prioritas. Tersinkron dua-arah ke web & perangkat lain. */
+    private void showPriorityDialog() {
+        if (currentCustomer == null) {
+            return;
+        }
+        final String name = currentCustomer.getName() != null ? currentCustomer.getName() : "Pelanggan";
+
+        if (currentCustomer.isPriority()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Pelanggan Prioritas")
+                    .setMessage(currentCustomer.getPriorityReason() != null
+                            ? ("Alasan: " + currentCustomer.getPriorityReason())
+                            : "Pelanggan ini ditandai prioritas.")
+                    .setNegativeButton("Tutup", null)
+                    .setPositiveButton("Batalkan Prioritas", (d, w) -> {
+                        customerDao.clearPriority(customerId);
+                        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                        Toast.makeText(this, "Status prioritas " + name + " dibatalkan", Toast.LENGTH_LONG).show();
+                        loadData();
+                    })
+                    .show();
+            return;
+        }
+
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        final android.widget.EditText reason = new android.widget.EditText(this);
+        reason.setHint("Alasan (opsional): mis. langganan besar…");
+        reason.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        reason.setMaxLines(2);
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        box.setPadding(pad, pad / 2, pad, 0);
+        box.addView(reason);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Jadikan Prioritas")
+                .setMessage("Pelanggan prioritas naik ke atas antrian delivery & follow up.")
+                .setView(box)
+                .setNegativeButton("Batal", null)
+                .setPositiveButton("⭐ Jadikan Prioritas", (d, w) -> {
+                    String by = settingsDao.getCurrentUserName();
+                    if (by == null || by.isEmpty()) {
+                        by = "(perangkat)";
+                    }
+                    customerDao.markPriority(customerId, reason.getText().toString(), by);
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                    Toast.makeText(this, name + " ditandai PRIORITAS — dikirim ke dashboard & perangkat lain",
+                            Toast.LENGTH_LONG).show();
+                    loadData();
+                })
+                .show();
+    }
+
+    /**
+     * Kartu HUTANG: sisa + tiga baris riwayat terakhir. Kartu SELALU tampil (bukan hanya saat
+     * berhutang) supaya "+ Hutang" tetap terjangkau untuk mencatat kurang-bayar; tombol pelunasan
+     * yang disembunyikan saat tak ada hutang. Sisa dihitung dari buku besar, tak pernah disimpan
+     * sebagai kolom — lihat CustomerDebtDao.
+     */
+    private void renderHutang() {
+        double sisa = debtDao.balanceFor(customerId);
+        cardHutang.setVisibility(View.VISIBLE);
+        tvHutangSisa.setText(rupiah(sisa));
+        btnBayarHutang.setVisibility(sisa > 0 ? View.VISIBLE : View.GONE);
+
+        java.util.List<com.crowja.damiupos.db.CustomerDebtDao.Entry> riwayat = debtDao.historyFor(customerId, 3);
+        if (riwayat.isEmpty()) {
+            tvHutangRiwayat.setText("Belum pernah berhutang.");
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (com.crowja.damiupos.db.CustomerDebtDao.Entry e : riwayat) {
+            if (sb.length() > 0) sb.append("\n");
+            sb.append(e.isDebt() ? "+ " : "− ").append(rupiah(e.amount))
+              .append(e.isDebt() ? " berhutang" : " dibayar");
+            if (e.byName != null && !e.byName.isEmpty()) sb.append(" · ").append(e.byName);
+        }
+        tvHutangRiwayat.setText(sb.toString());
+    }
+
+    private String rupiah(double v) {
+        return "Rp " + java.text.NumberFormat.getNumberInstance(new java.util.Locale("in", "ID"))
+                .format(Math.round(v));
+    }
+
+    /**
+     * Dialog catat hutang ({@code tambah}) atau catat pembayaran. Pembayaran boleh DICICIL dan
+     * dipagari sisa hutang di DAO — nominal dari dialog tak dipercaya mentah. Nama pencatat ikut
+     * tersimpan supaya jelas siapa yang menerima uangnya.
+     */
+    private void showDebtDialog(boolean tambah) {
+        double sisa = debtDao.balanceFor(customerId);
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+
+        final android.widget.EditText nominal = new android.widget.EditText(this);
+        nominal.setHint("Nominal (Rp)");
+        nominal.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        if (!tambah && sisa > 0) nominal.setText(String.valueOf((long) Math.round(sisa)));
+
+        final android.widget.EditText alasan = new android.widget.EditText(this);
+        alasan.setHint(tambah ? "Alasan (opsional)" : "Catatan (opsional)");
+        alasan.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        alasan.setMaxLines(2);
+
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        box.setPadding(pad, pad / 2, pad, 0);
+        box.addView(nominal);
+        box.addView(alasan);
+
+        new AlertDialog.Builder(this)
+                .setTitle(tambah ? "Catat Hutang" : "Catat Pembayaran")
+                .setMessage(tambah
+                        ? "Hutang di luar penjualan (mis. kurang bayar)."
+                        : "Sisa hutang " + rupiah(sisa) + " — boleh dibayar sebagian.")
+                .setView(box)
+                .setNegativeButton("Batal", null)
+                .setPositiveButton("Simpan", (d, w) -> {
+                    double amt;
+                    try {
+                        amt = Double.parseDouble(nominal.getText().toString().trim());
+                    } catch (NumberFormatException ex) {
+                        amt = 0;
+                    }
+                    if (amt <= 0) {
+                        Toast.makeText(this, "Nominal belum diisi", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    String by = settingsDao.getCurrentUserName();
+                    if (by == null || by.isEmpty()) by = "(perangkat)";
+                    String note = alasan.getText().toString().trim();
+                    if (tambah) {
+                        debtDao.charge(customerId, amt, note.isEmpty() ? null : note, null, by);
+                        Toast.makeText(this, "Hutang dicatat: " + rupiah(amt), Toast.LENGTH_LONG).show();
+                    } else {
+                        double paid = debtDao.pay(customerId, amt, null, by, note.isEmpty() ? null : note);
+                        double after = debtDao.balanceFor(customerId);
+                        Toast.makeText(this, paid <= 0
+                                ? "Tidak ada sisa hutang"
+                                : "Pembayaran " + rupiah(paid)
+                                        + (after > 0 ? " — sisa " + rupiah(after) : " — LUNAS"),
+                                Toast.LENGTH_LONG).show();
+                    }
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                    loadData();
+                })
+                .show();
+    }
+
     private void loadData() {
         // Agregat GABUNGAN lintas-perangkat (jumlah transaksi/galon/konsumsi dijumlah dari semua
         // salinan orang ini) → angka SAMA seperti dashboard web & antar perangkat.
@@ -415,10 +645,17 @@ public class CustomerDetailActivity extends AppCompatActivity {
         // Nama gabungan lintas-perangkat ("NAMA1 / NAMA2") bila orang yang sama bernama beda;
         // getByIdMerged mengisinya lewat applyMergedAggregates. Fallback ke nama asli.
         tvNama.setText(customer.getDisplayName());
-        tvTelepon.setText(customer.getPhone() != null && !customer.getPhone().isEmpty()
-                ? customer.getPhone() : "-");
+        // Multi-nomor: tampilkan SEMUA nomor (utama dulu). Satu orang bisa punya beberapa nomor.
+        java.util.List<String> detailPhones = customer.getPhonesOrDefault();
+        tvTelepon.setText(detailPhones.isEmpty() ? "-" : android.text.TextUtils.join(", ", detailPhones));
         tvAlamat.setText(customer.getAddress() != null && !customer.getAddress().isEmpty()
                 ? customer.getAddress() : "-");
+
+        // Catatan Order: instruksi pengiriman tetap — ketuk teksnya untuk edit (placeholder = trigger).
+        boolean hasOrderNote = customer.getOrderNote() != null && !customer.getOrderNote().trim().isEmpty();
+        tvCatatanOrder.setText(hasOrderNote
+                ? "📝 " + customer.getOrderNote().trim()
+                : "📝 Ketuk untuk menambahkan Catatan Order");
 
         // Tag perangkat asal pelanggan (gabungan lintas salinan).
         java.util.List<String> origins = customer.getOriginLabels();
@@ -466,6 +703,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
 
         // Satu angka jelas: "Galon Dipinjam" = galon yang masih dipinjam pelanggan (belum kembali).
         tvSaldoGalon.setText(String.valueOf(customer.getSaldoGalon()));
+
+        renderHutang();
 
         // Jumlah transaksi GABUNGAN (lintas perangkat) di header histori.
         int mergedTrx = customer.getTotalTransaksi();
@@ -532,6 +771,12 @@ public class CustomerDetailActivity extends AppCompatActivity {
             final android.graphics.Bitmap b = f != null
                     ? com.crowja.damiupos.util.BitmapUtils.decodeSampled(f.getAbsolutePath(), 1024, 1024)
                     : null;
+            // File ter-cache tapi gagal decode (rusak/format tak didukung) → BUANG supaya pembukaan
+            // berikutnya mengunduh ulang, bukan macet di placeholder karena cache-hit file rusak.
+            if (f != null && b == null) {
+                f.delete();
+                android.util.Log.w("DAMIU", "customer photo decode failed, cache cleared: " + url);
+            }
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed() || b == null) return;
                 ivFoto.setImageBitmap(b);
@@ -560,6 +805,67 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT));
         iv.setOnClickListener(v -> dialog.dismiss());
         dialog.show();
+    }
+
+    /**
+     * "Lihat koleksi foto" per lokasi pelanggan: grid thumbnail (unduh+cache dari URL, sama seperti
+     * foto rumah) → ketuk salah satu untuk layar penuh. Koleksi hanya diunggah lewat web (maks
+     * {@value #MAX_LOCATION_PHOTOS_HINT} foto) — HP di sini murni PENAMPIL, bukan pengunggah.
+     */
+    private static final int MAX_LOCATION_PHOTOS_HINT = 5;
+
+    private int dp(int v) {
+        return Math.round(v * getResources().getDisplayMetrics().density);
+    }
+
+    private void showLocationPhotoCollection(String locLabel, java.util.List<String> photoUrls) {
+        int pad = dp(12);
+        android.widget.GridLayout grid = new android.widget.GridLayout(this);
+        grid.setColumnCount(3);
+        grid.setPadding(pad, pad, pad, pad);
+
+        int thumbSize = dp(96);
+        int thumbMargin = dp(4);
+        for (String url : photoUrls) {
+            android.widget.ImageView iv = new android.widget.ImageView(this);
+            android.widget.GridLayout.LayoutParams lp = new android.widget.GridLayout.LayoutParams();
+            lp.width = thumbSize;
+            lp.height = thumbSize;
+            lp.setMargins(thumbMargin, thumbMargin, thumbMargin, thumbMargin);
+            iv.setLayoutParams(lp);
+            iv.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+            iv.setImageResource(android.R.drawable.ic_menu_gallery);
+            iv.setBackgroundColor(0xFFECECEC);
+            grid.addView(iv);
+            loadLocationThumb(iv, url);
+        }
+
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(grid);
+
+        new AlertDialog.Builder(this)
+                .setTitle("📍 " + locLabel + " — Koleksi Foto")
+                .setView(scroll)
+                .setPositiveButton("Tutup", null)
+                .show();
+    }
+
+    /** Unduh (cache lokal) + tampilkan satu thumbnail koleksi; ketuk → layar penuh. */
+    private void loadLocationThumb(android.widget.ImageView iv, String url) {
+        final String name = "custloc_" + customerId + "_" + Integer.toHexString(url.hashCode()) + ".jpg";
+        new Thread(() -> {
+            final File f = com.crowja.damiupos.util.BitmapUtils.downloadToCache(
+                    getApplicationContext(), url, name);
+            final android.graphics.Bitmap b = f != null
+                    ? com.crowja.damiupos.util.BitmapUtils.decodeSampled(f.getAbsolutePath(), 300, 300)
+                    : null;
+            if (f != null && b == null) f.delete();
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed() || b == null) return;
+                iv.setImageBitmap(b);
+                iv.setOnClickListener(v -> showFullScreenPhoto(f.getAbsolutePath()));
+            });
+        }).start();
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -612,6 +918,15 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 wajib.setVisibility(l.wajibOngkir ? View.VISIBLE : View.GONE);
                 row.findViewById(R.id.btnLocNav).setOnClickListener(v ->
                         navigateTo(customer.getName(), l.name, l.lat, l.lng));
+                // Koleksi foto lokasi (maks 5, diunggah lewat web) — hanya muncul bila ada isinya.
+                com.google.android.material.button.MaterialButton btnPhotos = row.findViewById(R.id.btnLocPhotos);
+                java.util.List<String> photos = l.photos != null ? l.photos : java.util.Collections.emptyList();
+                if (!photos.isEmpty()) {
+                    btnPhotos.setVisibility(View.VISIBLE);
+                    btnPhotos.setText(photos.size() > 1 ? "Foto (" + photos.size() + ")" : "Foto");
+                    String locLabel = l.name != null && !l.name.isEmpty() ? l.name : Customer.DEFAULT_LOCATION_NAME;
+                    btnPhotos.setOnClickListener(v -> showLocationPhotoCollection(locLabel, photos));
+                }
                 list.addView(row);
             }
         }
@@ -657,6 +972,15 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 + markers
                 + view
                 + "</script></body></html>";
+        webMap.setWebViewClient(new android.webkit.WebViewClient() {
+            @Override
+            public void onPageFinished(android.webkit.WebView view, String url) {
+                if (liveDev == null) {
+                    liveDev = new LiveDeviceOverlay(CustomerDetailActivity.this, webMap);
+                }
+                liveDev.start();
+            }
+        });
         webMap.loadDataWithBaseURL("https://unpkg.com", html, "text/html", "utf-8", null);
     }
 
@@ -721,4 +1045,11 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 .setNegativeButton(R.string.batal, null)
                 .show();
     }
+
+    @Override
+    protected void onDestroy() {
+        if (liveDev != null) liveDev.stop();
+        super.onDestroy();
+    }
+
 }

@@ -196,6 +196,59 @@ public class OrderInboxDao {
         return o;
     }
 
+    // ---------------------------------------------------------- Penugasan perangkat
+    //
+    // Pengingat/pesanan HANYA boleh membunyikan notifikasi di perangkat YANG DITUGASKAN menangani
+    // pelanggannya. Server sudah mengarahkan tiap baris ke perangkat itu lewat origin (isolasi pull),
+    // TAPI ada jalur yang sengaja disiarkan ke semua perangkat ('web') — mis. saat penugasan tak bisa
+    // ditentukan di server, atau baris lama sebelum perbaikan routing. Saring sekali lagi di sini
+    // supaya HP lain tidak ikut berbunyi. Sumber kebenaran sama dgn filter "Pelanggan Wilayah Saya":
+    // override per-pelanggan MENGALAHKAN wilayah otomatis ({@link com.crowja.damiupos.Wilayah}).
+
+    /** Pesanan PENDING yang jadi tanggung jawab perangkat ini (lihat {@link #assignedHere}). */
+    public List<OrderInbox> getPendingForThisDevice() {
+        return assignedHere(getPending());
+    }
+
+    /** Jumlah PENDING untuk perangkat ini — dasar badge, alarm, & notifikasi Android. */
+    public int countPendingForThisDevice() {
+        return getPendingForThisDevice().size();
+    }
+
+    /** PENDING terbaru untuk perangkat ini (banner toolbar), atau null. */
+    public OrderInbox getLatestPendingForThisDevice() {
+        List<OrderInbox> list = getPendingForThisDevice();   // queryList sudah urut received_at DESC
+        return list.isEmpty() ? null : list.get(0);
+    }
+
+    /**
+     * Sisakan item yang penugasan pelanggannya = perangkat INI.
+     *
+     * <p>Bila penugasan TAK BISA ditentukan — item tanpa pelanggan tertaut, pelanggan tanpa
+     * koordinat, atau config wilayah belum diatur — item TETAP ditampilkan. Lebih baik beberapa
+     * perangkat melihat satu pengingat daripada pengingat itu hilang dari semua perangkat.
+     */
+    private List<OrderInbox> assignedHere(List<OrderInbox> src) {
+        com.crowja.damiupos.sync.SyncSettings cfg =
+                new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(dbHelper));
+        String myUuid = cfg.getDeviceUuid();
+        if (myUuid == null || myUuid.trim().isEmpty()) {
+            return src;   // belum provisioning → tak bisa menilai kepemilikan
+        }
+        String center = cfg.getBranchCenter(), zones = cfg.getWilayahZones();
+        CustomerDao custDao = new CustomerDao(dbHelper);
+        List<OrderInbox> out = new ArrayList<>();
+        for (OrderInbox o : src) {
+            if (o.getCustomerId() <= 0) { out.add(o); continue; }
+            com.crowja.damiupos.model.Customer c = custDao.getById(o.getCustomerId());
+            if (c == null) { out.add(o); continue; }
+            String dev = com.crowja.damiupos.Wilayah.effectiveDevice(
+                    c.getAssignedDeviceUuid(), center, zones, c.getLatitude(), c.getLongitude());
+            if (dev == null || dev.trim().isEmpty() || dev.equals(myUuid)) out.add(o);
+        }
+        return out;
+    }
+
     private List<OrderInbox> queryList(String where, String[] args) {
         List<OrderInbox> list = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();

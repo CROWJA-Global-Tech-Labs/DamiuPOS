@@ -132,18 +132,22 @@
                 android:text="Sinkronkan Sekarang"
                 android:textAllCaps="false" />
 
+            <!-- Toggle disembunyikan (dipaksa ON di SyncSettingsActivity): pelacakan lokasi wajib
+                 aktif selama staff bekerja, tidak boleh dimatikan dari HP. -->
             <com.google.android.material.checkbox.MaterialCheckBox
                 android:id="@+id/cbLocation"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
                 android:text="Lacak lokasi perangkat ini saat staff bekerja"
-                android:textSize="14sp" />
+                android:textSize="14sp"
+                android:visibility="gone" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Posisi hanya dibagikan ke admin selama shift (clock in s/d Pulang) dan ditampilkan di dashboard web."
+                android:layout_marginTop="12dp"
+                android:text="📍 Lokasi perangkat otomatis dilacak selama staff bekerja (clock in s/d Pulang) dan hanya dibagikan ke admin di dashboard web."
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
 

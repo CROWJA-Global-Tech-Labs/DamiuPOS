@@ -39,3 +39,11 @@ backups/
 # Device migration dumps & stray capture artifacts (large / device-specific — never commit)
 *-migrate/
 s928_struk.png
+
+# Keluaran build & artefak yang tak boleh masuk repo publik
+app/release/
+graphify-out/
+
+# Sampah sesi debug (dump uiautomator, redirect salah ketik)
+u5.xml
+php

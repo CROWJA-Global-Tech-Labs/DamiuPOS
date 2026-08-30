@@ -358,24 +358,138 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:padding="12dp">
+
+                    <!-- Preview foto lokasi tujuan terpilih (foto lokasi sendiri, atau foto rumah
+                         pelanggan untuk lokasi utama). Tap → foto layar penuh. -->
+                    <ImageView
+                        android:id="@+id/ivKirimKeThumb"
+                        android:layout_width="52dp"
+                        android:layout_height="52dp"
+                        android:layout_marginEnd="12dp"
+                        android:scaleType="centerCrop"
+                        android:background="@color/grey_light"
+                        android:src="@android:drawable/ic_menu_gallery"
+                        android:contentDescription="Foto lokasi tujuan" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvKirimKeLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Kirim ke"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical">
+
+                            <TextView
+                                android:id="@+id/tvSelectedKirimKe"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="—"
+                                android:textColor="@color/text_primary"
+                                android:textSize="15sp" />
+
+                            <!-- Berapa kali orderan sudah dikirim ke lokasi ini (lihat
+                                 TransactionActivity.deliveryCountFor / updateKirimKeCard). -->
+                            <TextView
+                                android:id="@+id/tvKirimKeCount"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="6dp"
+                                android:paddingStart="6dp"
+                                android:paddingEnd="6dp"
+                                android:paddingTop="1dp"
+                                android:paddingBottom="1dp"
+                                android:background="@drawable/bg_badge_wajib"
+                                android:textColor="#B45309"
+                                android:textSize="10sp"
+                                android:textStyle="bold"
+                                android:visibility="gone" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/tvKirimKeCoord"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="1dp"
+                            android:text="—"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvKirimKeGanti"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="Ganti ›"
+                        android:textColor="@color/primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Ringkasan order terakhir (isi + siapa yang mengantar + ke mana) — SATU baris padat,
+                 dari TransactionActivity.fetchOrderInsightsAsync (server, se-cabang). -->
+            <TextView
+                android:id="@+id/tvLastOrderLine"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text=""
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:visibility="gone" />
+
+            <!-- "Perangkat yang ditugaskan" — staf/marketing/SPV memilih perangkat mana yang menangani
+                 transaksi ini (default: perangkat ini). Transaksi muncul di antrian perangkat itu &
+                 kredit galon/komisi pindah ke stafnya. Tampil hanya untuk role staf/marketing/SPV pada
+                 JUAL (dikelola TransactionActivity.setupAssignDeviceCard). -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardAssignDevice"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:visibility="gone"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
                     android:orientation="vertical"
                     android:padding="12dp">
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Kirim ke"
+                        android:text="Perangkat yang ditugaskan"
                         android:textColor="@color/text_secondary"
                         android:textSize="12sp" />
 
-                    <TextView
-                        android:id="@+id/tvSelectedKirimKe"
+                    <Spinner
+                        android:id="@+id/spinnerAssignDevice"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="—"
-                        android:textColor="@color/text_primary"
-                        android:textSize="15sp" />
+                        android:layout_marginTop="4dp" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
@@ -1103,6 +1217,64 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- POTONG SALDO REFUND — uang yang pernah dikembalikan depot ke pelanggan ini.
+                 Berlaku untuk SEMUA pelanggan (bukan hanya reseller) dan tercentang OTOMATIS begitu
+                 pelanggan bersaldo dipilih; operator tetap bisa melepas/mengubah nominalnya. -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardUseRefund"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:visibility="gone"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <com.google.android.material.checkbox.MaterialCheckBox
+                        android:id="@+id/cbUseRefund"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Potong Saldo Refund"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvSaldoRefund"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="13sp" />
+
+                    <LinearLayout
+                        android:id="@+id/layoutRefundPotong"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:orientation="vertical"
+                        android:visibility="gone">
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="Jumlah dipotong dari refund (Rp)"
+                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+
+                            <com.google.android.material.textfield.TextInputEditText
+                                android:id="@+id/etRefundDipotong"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:inputType="number" />
+                        </com.google.android.material.textfield.TextInputLayout>
+                    </LinearLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
             <!-- Total -->
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/cardTotal"
@@ -1178,6 +1350,31 @@
                                 android:textSize="13sp" />
                         </LinearLayout>
 
+                        <!-- Baris potongan SALDO REFUND (tampil hanya bila benar-benar dipotong). -->
+                        <LinearLayout
+                            android:id="@+id/layoutRefundBreakdown"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="3dp"
+                            android:orientation="horizontal"
+                            android:visibility="gone">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Dipotong saldo refund"
+                                android:textColor="#D9FFFFFF"
+                                android:textSize="13sp" />
+
+                            <TextView
+                                android:id="@+id/tvDipotongRefund"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:textColor="#D9FFFFFF"
+                                android:textSize="13sp" />
+                        </LinearLayout>
+
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
@@ -1205,6 +1402,50 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- ⚡ Tandai Prioritas: order ini naik di antrean Delivery (⭐ pelanggan prioritas tetap
+                 di atas ⚡). Cermin DeliveryController::prioritize di web; sekali disimpan, hanya web
+                 yang boleh mengubah/membatalkannya. Berlaku untuk order langsung MAUPUN Tertunda. -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardPrioritas"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <com.google.android.material.checkbox.MaterialCheckBox
+                        android:id="@+id/cbPrioritas"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="⚡ Tandai sebagai Prioritas"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/layoutPriorityReason"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:hint="Alasan (opsional)"
+                        android:visibility="gone"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etPriorityReason"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:maxLength="255"
+                            android:inputType="textCapSentences" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnSimpan"
                 android:layout_width="match_parent"
@@ -1224,6 +1465,24 @@
                 app:iconSize="22dp"
                 app:iconTint="@color/white"
                 app:rippleColor="@color/white" />
+
+            <!-- Simpan sebagai Pesanan Tertunda: order diparkir di Antrian Tertunda (Delivery),
+                 lanjutkan nanti — cermin web (tombol "⏸ Pesanan Tertunda" di Transaksi Baru). -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnTertunda"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="10dp"
+                android:text="⏸ Pesanan Tertunda"
+                android:textAllCaps="false"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="#92400E"
+                app:backgroundTint="#FEF3C7"
+                app:cornerRadius="24dp"
+                app:elevation="0dp"
+                android:stateListAnimator="@null"
+                app:rippleColor="#FDE68A" />
 
         </LinearLayout>
     </ScrollView>

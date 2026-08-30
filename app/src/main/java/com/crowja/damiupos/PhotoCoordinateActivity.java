@@ -64,8 +64,16 @@ public class PhotoCoordinateActivity extends AppCompatActivity {
     public static final String EXTRA_LNG = "lng";
     public static final String EXTRA_ACCURACY = "accuracy";
 
-    /** Akurasi maksimal (meter) sebelum shutter diaktifkan. */
-    private static final float MAX_ACCURACY_M = 10f;
+    /** Target akurasi PRESISI (meter): shutter "hijau" hanya saat akurasi GPS ≤ ini. Disamakan
+     *  dengan jalur manual "Lokasi Saat Ini" (CustomerFormActivity) supaya koordinat pelanggan
+     *  yang ditangkap sama presisinya di kedua jalur. */
+    private static final float MAX_ACCURACY_M = 5f;
+    /** Batas akurasi cadangan: bila target 5m tak tercapai setelah {@link #FALLBACK_AFTER_MS},
+     *  shutter tetap dibuka (peringatan "amber") selama akurasi ≤ ini — supaya marketing (yang
+     *  WAJIB ambil foto+koordinat) tak terjebak bila lingkungan GPS-nya sulit. */
+    private static final float FALLBACK_ACCURACY_M = 15f;
+    /** Berapa lama menunggu target presisi sebelum mengizinkan cadangan. */
+    private static final long FALLBACK_AFTER_MS = 45_000L;
     private static final int REQ_PERMS = 911;
 
     private PreviewView previewView;
@@ -81,6 +89,9 @@ public class PhotoCoordinateActivity extends AppCompatActivity {
     private volatile Location lastLocation;
     private boolean capturing = false;
     private boolean shutterReady = false;
+    /** true setelah {@link #FALLBACK_AFTER_MS} lewat tanpa mencapai target presisi — mengizinkan
+     *  ambil dengan akurasi ≤ {@link #FALLBACK_ACCURACY_M} (mode "amber", kurang presisi). */
+    private boolean fallbackArmed = false;
 
     // Mini-map: throttle fetch (network) + hanya bila titik bergeser cukup jauh.
     private long lastMapFetchMs = 0;
@@ -177,6 +188,14 @@ public class PhotoCoordinateActivity extends AppCompatActivity {
         } catch (Throwable t) {
             android.util.Log.e("PhotoCoord", "requestLocationUpdates failed", t);
         }
+        // Setelah jeda, izinkan cadangan (≤15m) bila target presisi 5m tak tercapai — supaya
+        // marketing tak terjebak di lingkungan GPS sulit. handler dibersihkan di onDestroy.
+        handler.postDelayed(() -> {
+            fallbackArmed = true;
+            if (!shutterReady && lastLocation != null) {
+                onLocation(lastLocation);   // evaluasi ulang gate dengan cadangan aktif
+            }
+        }, FALLBACK_AFTER_MS);
     }
 
     /** Location baru → perbarui teks koordinat/akurasi, gate shutter, refresh mini-map (throttled). */
@@ -186,34 +205,37 @@ public class PhotoCoordinateActivity extends AppCompatActivity {
         float acc = loc.hasAccuracy() ? loc.getAccuracy() : Float.MAX_VALUE;
 
         tvCoord.setText(String.format(Locale.US, "%.6f, %.6f", lat, lng));
-        boolean ok = acc <= MAX_ACCURACY_M;
+        // Dua tingkat: PRESISI (≤5m, hijau) → shutter siap; atau CADANGAN (≤15m setelah timeout,
+        // amber) → shutter tetap boleh tapi dengan peringatan kurang presisi.
+        boolean precise = acc <= MAX_ACCURACY_M;
+        boolean fallbackOk = ! precise && fallbackArmed && acc <= FALLBACK_ACCURACY_M;
         tvAccuracy.setText("Akurasi: " + (acc == Float.MAX_VALUE ? "—" : Math.round(acc) + " m"));
-        tvAccuracy.setTextColor(ok ? Color.parseColor("#66BB6A") : Color.parseColor("#FFD54F"));
+        tvAccuracy.setTextColor(precise ? Color.parseColor("#66BB6A")
+                : (fallbackOk ? Color.parseColor("#FFB300") : Color.parseColor("#FFD54F")));
 
-        setShutterReady(ok, acc);
+        updateShutter(precise, fallbackOk, acc);
         maybeRefreshMiniMap(lat, lng);
     }
 
-    /** Shutter hanya terlihat saat akurasi cukup; sebelum itu tampilkan info kebutuhan akurasi. */
-    private void setShutterReady(boolean ready, float acc) {
-        if (ready == shutterReady) {
-            if (!ready) updateWaitingHint(acc);
-            return;
-        }
-        shutterReady = ready;
-        if (ready) {
-            btnShutter.setVisibility(View.VISIBLE);
-            tvGpsHint.setText("✓ Akurasi cukup — silakan ambil foto");
+    /** Shutter terlihat saat PRESISI (≤5m) atau CADANGAN (≤15m, setelah timeout); sebelum itu hint tunggu. */
+    private void updateShutter(boolean precise, boolean fallbackOk, float acc) {
+        shutterReady = precise;   // dipakai timer cadangan
+        btnShutter.setVisibility(precise || fallbackOk ? View.VISIBLE : View.GONE);
+        if (precise) {
+            tvGpsHint.setText("✓ Akurasi presisi (±" + Math.round(acc) + " m) — silakan ambil foto");
             tvGpsHint.setBackgroundColor(Color.parseColor("#B300695C"));
+        } else if (fallbackOk) {
+            tvGpsHint.setText("⚠ Akurasi terbaik ±" + Math.round(acc) + " m (target ≤" + (int) MAX_ACCURACY_M
+                    + " m). Bisa ambil, tapi KURANG presisi — pindah ke ruang terbuka untuk lebih presisi.");
+            tvGpsHint.setBackgroundColor(Color.parseColor("#B3B26A00"));
         } else {
-            btnShutter.setVisibility(View.GONE);
             updateWaitingHint(acc);
         }
     }
 
     private void updateWaitingHint(float acc) {
         String now = acc == Float.MAX_VALUE ? "mencari…" : Math.round(acc) + " m";
-        tvGpsHint.setText("Menunggu akurasi GPS (saat ini " + now + ", butuh ≤ "
+        tvGpsHint.setText("Menunggu akurasi GPS presisi (saat ini " + now + ", butuh ≤ "
                 + (int) MAX_ACCURACY_M + " m). Pastikan berada di luar ruangan.");
         tvGpsHint.setBackgroundColor(Color.parseColor("#99000000"));
     }
@@ -244,7 +266,11 @@ public class PhotoCoordinateActivity extends AppCompatActivity {
     private void capture() {
         if (capturing || controller == null) return;
         Location loc = lastLocation;
-        if (loc == null || !loc.hasAccuracy() || loc.getAccuracy() > MAX_ACCURACY_M) {
+        float acc = (loc != null && loc.hasAccuracy()) ? loc.getAccuracy() : Float.MAX_VALUE;
+        // Terima bila PRESISI (≤5m) atau — setelah timeout — CADANGAN (≤15m). Cegah komit koordinat
+        // kasar: di luar batas ini shutter tak akan terlihat, tapi jaga-jaga tetap divalidasi.
+        boolean ok = acc <= MAX_ACCURACY_M || (fallbackArmed && acc <= FALLBACK_ACCURACY_M);
+        if (loc == null || ! ok) {
             Toast.makeText(this, "Akurasi GPS belum cukup", Toast.LENGTH_SHORT).show();
             return;
         }
@@ -257,7 +283,7 @@ public class PhotoCoordinateActivity extends AppCompatActivity {
         String ts = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
         final File photoFile = new File(dir, "cust_" + ts + ".jpg");
         final double lat = loc.getLatitude(), lng = loc.getLongitude();
-        final float acc = loc.getAccuracy();
+        // acc dari atas (effectively-final) dipakai di callback — jangan deklarasi ulang.
 
         ImageCapture.OutputFileOptions opts =
                 new ImageCapture.OutputFileOptions.Builder(photoFile).build();

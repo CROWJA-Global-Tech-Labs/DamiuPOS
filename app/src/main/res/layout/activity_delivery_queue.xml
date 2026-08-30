@@ -47,32 +47,400 @@
             android:textSize="12sp" />
     </LinearLayout>
 
+    <!-- Tiga tab: Antrian Saya (default) / Perangkat Lain / Pesanan Terbuka — cermin pemisahan
+         sumber data (dao.getDeliveryQueue() difilter open_dispatch vs queue-all vs open_dispatch
+         saja), dikelola DeliveryQueueActivity.switchTab(). -->
+    <!-- clipChildren/clipToPadding=false: gelembung angka (BadgeDrawable) menempel di tepi ATAS-KANAN
+         label tab; dengan tinggi wrap_content + 3 label panjang pada tabMode=fixed, bagian atas
+         badge bisa terpotong batas TabLayout. Mematikan clip membiarkannya digambar utuh TANPA
+         menggeser tata letak (beda dari menambah padding). -->
+    <com.google.android.material.tabs.TabLayout
+        android:id="@+id/tabs"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/white"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        app:tabMode="fixed"
+        app:tabGravity="fill"
+        app:tabIndicatorColor="@color/primary"
+        app:tabSelectedTextColor="@color/primary"
+        app:tabTextColor="@color/grey_medium">
+
+        <com.google.android.material.tabs.TabItem
+            android:id="@+id/tabMine"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Antrian Saya" />
+
+        <com.google.android.material.tabs.TabItem
+            android:id="@+id/tabOther"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Perangkat Lain" />
+
+        <com.google.android.material.tabs.TabItem
+            android:id="@+id/tabOpen"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Pesanan Terbuka" />
+    </com.google.android.material.tabs.TabLayout>
+
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/rv"
+        <!-- ============================== TAB 1: ANTRIAN SAYA ============================== -->
+        <LinearLayout
+            android:id="@+id/tab1Container"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:padding="12dp"
-            android:clipToPadding="false" />
+            android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/tvEmpty"
+            <!-- STRATEGI PENGIRIMAN: rit berikutnya sesuai Muatan Max perangkat. Border BERKEDIP
+                 (animasi di DeliveryQueueActivity) karena ini instruksi kerja berikutnya. -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardStrategy"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="12dp"
+                android:layout_marginTop="10dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:visibility="gone"
+                app:cardCornerRadius="14dp"
+                app:cardElevation="2dp"
+                app:strokeWidth="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <LinearLayout
+                        android:id="@+id/strategyHeader"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/tvStrategyTitle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="🚚 Strategi Pengiriman"
+                            android:textColor="@color/text_primary"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+
+                        <!-- ▶ Jalankan RIT 1 sekaligus (seluruh pemberhentiannya) — tanpa harus
+                             memilih order satu per satu di daftar. Anak yang clickable di dalam
+                             strategyHeader: kliknya TIDAK ikut melipat kartu. -->
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnJalankanRit"
+                            android:layout_width="40dp"
+                            android:layout_height="40dp"
+                            android:layout_marginStart="8dp"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:insetLeft="0dp"
+                            android:insetRight="0dp"
+                            android:minWidth="0dp"
+                            android:minHeight="0dp"
+                            android:padding="0dp"
+                            app:cornerRadius="10dp"
+                            app:icon="@android:drawable/ic_media_play"
+                            app:iconGravity="textStart"
+                            app:iconPadding="0dp"
+                            app:iconSize="20dp" />
+
+                        <TextView
+                            android:id="@+id/tvStrategyChevron"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:text="▾"
+                            android:textColor="@color/primary"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/strategyBody"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvStrategySummary"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="13sp" />
+
+                        <TextView
+                            android:id="@+id/tvStrategyStops"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:textColor="@color/text_primary"
+                            android:textSize="13sp" />
+
+                        <TextView
+                            android:id="@+id/tvStrategyAll"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:background="?attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:paddingTop="4dp"
+                            android:paddingBottom="4dp"
+                            android:text="Ketuk untuk lihat seluruh rit →"
+                            android:textColor="@color/primary"
+                            android:textSize="12sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/rv"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:padding="12dp"
+                    android:clipToPadding="false" />
+
+                <TextView
+                    android:id="@+id/tvEmpty"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:gravity="center"
+                    android:padding="24dp"
+                    android:text="Antrian delivery kosong 🎉"
+                    android:textColor="@color/grey_medium"
+                    android:textSize="15sp"
+                    android:visibility="gone" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <!-- ============================== TAB 2: PERANGKAT LAIN ============================== -->
+        <LinearLayout
+            android:id="@+id/tab2Container"
             android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="12dp"
+                android:layout_marginTop="10dp"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                app:boxCornerRadiusBottomEnd="12dp"
+                app:boxCornerRadiusBottomStart="12dp"
+                app:boxCornerRadiusTopEnd="12dp"
+                app:boxCornerRadiusTopStart="12dp"
+                app:startIconDrawable="@android:drawable/ic_menu_search">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etSearchOther"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Cari nama / no. WA…"
+                    android:imeOptions="actionSearch"
+                    android:inputType="text"
+                    android:maxLines="1" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.button.MaterialButtonToggleGroup
+                android:id="@+id/sortGroupOther"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@color/white"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp"
+                app:selectionRequired="true"
+                app:singleSelection="true">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/sortOtherJarak"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="📍 Jarak"
+                    android:textAllCaps="false"
+                    android:textSize="13sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/sortOtherGalon"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="🛢 Jumlah Galon"
+                    android:textAllCaps="false"
+                    android:textSize="13sp" />
+            </com.google.android.material.button.MaterialButtonToggleGroup>
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/rvOtherDevices"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:padding="12dp"
+                    android:clipToPadding="false" />
+
+                <TextView
+                    android:id="@+id/tvOtherDevicesEmpty"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:gravity="center"
+                    android:padding="24dp"
+                    android:text="Tidak ada antrian di perangkat lain"
+                    android:textColor="@color/grey_medium"
+                    android:textSize="15sp"
+                    android:visibility="gone" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <!-- ============================== TAB 3: PESANAN TERBUKA ============================== -->
+        <LinearLayout
+            android:id="@+id/tab3Container"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <com.google.android.material.textfield.TextInputLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="12dp"
+                android:layout_marginTop="10dp"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                app:boxCornerRadiusBottomEnd="12dp"
+                app:boxCornerRadiusBottomStart="12dp"
+                app:boxCornerRadiusTopEnd="12dp"
+                app:boxCornerRadiusTopStart="12dp"
+                app:startIconDrawable="@android:drawable/ic_menu_search">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etSearchOpen"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Cari nama / no. WA…"
+                    android:imeOptions="actionSearch"
+                    android:inputType="text"
+                    android:maxLines="1" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.button.MaterialButtonToggleGroup
+                android:id="@+id/sortGroupOpen"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@color/white"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp"
+                app:selectionRequired="true"
+                app:singleSelection="true">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/sortOpenJarak"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="📍 Jarak"
+                    android:textAllCaps="false"
+                    android:textSize="13sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/sortOpenGalon"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="🛢 Jumlah Galon"
+                    android:textAllCaps="false"
+                    android:textSize="13sp" />
+            </com.google.android.material.button.MaterialButtonToggleGroup>
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/rvOpenDispatch"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:padding="12dp"
+                    android:clipToPadding="false" />
+
+                <TextView
+                    android:id="@+id/tvOpenDispatchEmpty"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:gravity="center"
+                    android:padding="24dp"
+                    android:text="🎲 Tidak ada Pesanan Terbuka saat ini"
+                    android:textColor="@color/grey_medium"
+                    android:textSize="15sp"
+                    android:visibility="gone" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <!-- 🧭 Navigasi rit AKTIF — mengambang pojok kanan-bawah, HANYA tampil saat mode kerja
+             (lihat DeliveryQueueActivity.applyRunModeChrome). Menggantikan ikon toolbar lama: satu
+             ketuk langsung membuka Google Maps memakai urutan kartu SAAT INI (bisa sudah disusun
+             ulang lewat tekan-tahan-geser) — TANPA popup "Prioritas Rute", karena urutannya sudah
+             ditentukan kurir sendiri di layar, bukan dihitung ulang. -->
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/fabNavigasiRit"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:gravity="center"
-            android:padding="24dp"
-            android:text="Antrian delivery kosong 🎉"
-            android:textColor="@color/grey_medium"
-            android:textSize="15sp"
-            android:visibility="gone" />
+            android:layout_gravity="bottom|end"
+            android:layout_margin="20dp"
+            android:contentDescription="Navigasi rit ini"
+            android:visibility="gone"
+            app:srcCompat="@android:drawable/ic_menu_directions"
+            app:maxImageSize="32dp"
+            app:backgroundTint="@color/primary"
+            app:tint="@color/white" />
     </FrameLayout>
 
-    <!-- Bar aksi mode-pilih: muncul saat memilih beberapa order untuk dibuatkan rute Google Maps. -->
+    <!-- Bar aksi mode-pilih: muncul saat memilih beberapa order untuk dibuatkan rute Google Maps
+         (Tab 1 saja). -->
     <LinearLayout
         android:id="@+id/barRute"
         android:layout_width="match_parent"
@@ -87,6 +455,16 @@
         android:paddingBottom="8dp"
         android:visibility="gone">
 
+        <!-- Pilih/batal SEMUA order di antrian sekaligus (dasar rute banyak tujuan). -->
+        <CheckBox
+            android:id="@+id/cbSelectAll"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="4dp"
+            android:text="Semua"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp" />
+
         <TextView
             android:id="@+id/tvSelCount"
             android:layout_width="0dp"
@@ -97,14 +475,19 @@
             android:textStyle="bold"
             android:textSize="14sp" />
 
+        <!-- ▶ Jalankan SEKALIGUS semua order terpilih sebagai SATU RIT: kurir memuat semuanya lalu
+             mengantar satu per satu (tiap kartu punya ✓ Selesai sendiri) tanpa kembali ke daftar. -->
         <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnBuatRute"
+            android:id="@+id/btnJalankanBanyak"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
             android:enabled="false"
-            android:text="Buat Rute"
+            android:text="Jalankan"
             android:textAllCaps="false"
-            app:icon="@android:drawable/ic_menu_directions"
-            app:iconGravity="textStart" />
+            android:textSize="13sp"
+            app:icon="@android:drawable/ic_media_play"
+            app:iconGravity="textStart"
+            app:iconPadding="4dp" />
     </LinearLayout>
 </LinearLayout>

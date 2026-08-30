@@ -21,21 +21,82 @@
             app:title="Struk Penjualan" />
     </com.google.android.material.appbar.AppBarLayout>
 
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/strukViewToggle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/white"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        app:selectionRequired="true"
+        app:singleSelection="true">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnStrukTeks"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="💬 Teks"
+            android:textAllCaps="false"
+            android:textSize="13sp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnStrukGambar"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="🖼️ Gambar"
+            android:textAllCaps="false"
+            android:textSize="13sp" />
+    </com.google.android.material.button.MaterialButtonToggleGroup>
+
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
         android:padding="16dp">
 
-        <!-- Struk gambar modern (di-capture jadi PNG untuk dibagikan). -->
-        <com.google.android.material.card.MaterialCardView
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            app:cardCornerRadius="14dp"
-            app:cardElevation="4dp">
+            android:orientation="vertical">
 
-            <include layout="@layout/receipt_image_card" />
-        </com.google.android.material.card.MaterialCardView>
+            <!-- Preview teks struk WA (default). -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardStrukTeks"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardCornerRadius="14dp"
+                app:cardElevation="4dp">
+
+                <TextView
+                    android:id="@+id/tvStrukTeks"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:padding="16dp"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/black"
+                    android:textIsSelectable="true"
+                    android:textSize="13sp" />
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Struk gambar modern (di-capture jadi PNG untuk dibagikan). -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardStrukGambar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:visibility="gone"
+                app:cardCornerRadius="14dp"
+                app:cardElevation="4dp">
+
+                <include layout="@layout/receipt_image_card" />
+            </com.google.android.material.card.MaterialCardView>
+        </LinearLayout>
     </ScrollView>
 
     <!-- Action buttons -->
