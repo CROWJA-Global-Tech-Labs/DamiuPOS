@@ -98,6 +98,11 @@ public class Transaction {
      *  antrian sama sekali lewat tombstone). */
     private String voidRequestPendingAt;
     private String deliveryDoneAt;
+    /** Nama kurir yang menekan "Selesai" — bisa BEDA dari pembuat order (lihat markDelivered). */
+    private String completedByName;
+    /** Foto bukti selesai: berkas lokal perangkat ini, dan/atau URL hasil unggah. */
+    private String proofPath;
+    private String proofUrl;
     private String deliveryToken;    // token link lacak publik (web /track/{token})
     // Lokasi tujuan pengiriman terpilih (multi-lokasi pelanggan). Persisted & disinkron.
     // 0/null = tidak dipilih → navigasi fallback ke koordinat pelanggan.
@@ -275,6 +280,15 @@ public class Transaction {
     public boolean isSelfOrder() {
         return catatan != null && catatan.contains(SELF_ORDER_MARKER);
     }
+
+    public String getCompletedByName() { return completedByName; }
+    public void setCompletedByName(String v) { this.completedByName = v; }
+
+    public String getProofPath() { return proofPath; }
+    public void setProofPath(String v) { this.proofPath = v; }
+
+    public String getProofUrl() { return proofUrl; }
+    public void setProofUrl(String v) { this.proofUrl = v; }
 
     public String getDeliveryDoneAt() { return deliveryDoneAt; }
     public void setDeliveryDoneAt(String v) { this.deliveryDoneAt = v; }

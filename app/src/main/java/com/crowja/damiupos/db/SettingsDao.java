@@ -170,6 +170,16 @@ public class SettingsDao {
      *  bila KEY_DELIVERY_PROOF_REQUIRED aktif — "wajib" selalu menang. Dashboard-authoritative. */
     public static final String KEY_DELIVERY_PROOF_OPTIONAL = "delivery_proof_optional";
 
+    /** Batas umur pesanan di antrean (MENIT) sebelum dianggap TERLAMBAT: kartunya berkedip merah,
+     *  badge umur naik ke tingkat BAHAYA, alarm berbunyi, dan pesanan naik ke puncak antrean.
+     *  Dashboard-authoritative (HP hanya baca); cermin App\Support\LateDeliveryGuard::KEY_MAX_AGE. */
+    public static final String KEY_DELIVERY_MAX_AGE_MINUTES = "delivery_max_age_minutes";
+
+    /** Setting cabang "jangan kreditkan poin galon staf bila pesanan diselesaikan setelah lewat
+     *  batas umur di atas". SERVER yang memutuskan saat laporan dibaca (App\Support\LateDeliveryGuard);
+     *  HP memakainya HANYA untuk memperingatkan kurir sebelum ia menandai Selesai. */
+    public static final String KEY_REVOKE_CREDIT_LATE_DELIVERY = "revoke_credit_late_delivery";
+
     /** Struk WA TANPA emoji (depot yang pelanggannya banyak memakai HP jadul).
      *  Dashboard-authoritative; harus cocok dgn key server. Cermin App\Support\StrukWa. */
     public static final String KEY_WA_STRUK_NO_EMOJI = "wa_struk_no_emoji";
@@ -198,6 +208,7 @@ public class SettingsDao {
             KEY_WA_REPLY_TEMPLATE, KEY_WA_AUTO_ARCHIVE_HOURS,
             KEY_REVOKE_CREDIT_INCOMPLETE, KEY_BLOCK_DELIVERY_ON_ISSUE,
             KEY_DELIVERY_PROOF_REQUIRED, KEY_DELIVERY_PROOF_OPTIONAL,
+            KEY_DELIVERY_MAX_AGE_MINUTES, KEY_REVOKE_CREDIT_LATE_DELIVERY,
             KEY_WA_STRUK_NO_EMOJI
     ));
 
@@ -340,6 +351,11 @@ public class SettingsDao {
     // -- Antrian Delivery: status tampilan layar (LOKAL saja, bukan SHAREABLE_KEYS → tak ikut sync) --
     /** Kartu "Strategi Pengiriman" sedang dilipat? Default TIDAK (terbuka saat pertama kali). */
     private static final String K_DLV_STRATEGY_COLLAPSED = "dlv_strategy_collapsed";
+    /** Kartu "Strategi Pengiriman" disembunyikan SELURUHNYA (judul ikut hilang) dari menu overflow
+     *  — beda dari K_DLV_STRATEGY_COLLAPSED, yang hanya melipat ISI kartu tapi tetap menyisakan
+     *  judul + chevron sebagai jalan cepat membuka lagi. Staf yang tak pernah pakai rit-banyak
+     *  boleh menyingkirkannya sama sekali dari layar. */
+    private static final String K_DLV_STRATEGY_HIDDEN = "dlv_strategy_hidden";
     /** Id LOKAL order yang sedang dijalankan kurir (mode kerja); "" / "0" = tidak ada. Dipakai supaya
      *  mode kerja tetap bertahan saat layar ditinggal sebentar (mis. buka Maps lalu balik). Sejak
      *  "jalankan bersamaan" nilainya CSV beberapa id (satu rit multi-order); nilai lama satu-angka
@@ -354,6 +370,10 @@ public class SettingsDao {
     public boolean isDeliveryStrategyCollapsed() { return "1".equals(get(K_DLV_STRATEGY_COLLAPSED, "0")); }
 
     public void setDeliveryStrategyCollapsed(boolean v) { set(K_DLV_STRATEGY_COLLAPSED, v ? "1" : "0"); }
+
+    public boolean isDeliveryStrategyHidden() { return "1".equals(get(K_DLV_STRATEGY_HIDDEN, "0")); }
+
+    public void setDeliveryStrategyHidden(boolean v) { set(K_DLV_STRATEGY_HIDDEN, v ? "1" : "0"); }
 
     /** Semua order yang sedang dijalankan, urut sesuai saat dijalankan. Kosong = tak ada. */
     public java.util.LinkedHashSet<Long> getDeliveryRunningTrxIds() {
@@ -774,8 +794,40 @@ public class SettingsDao {
         return "1".equals(get(KEY_DELIVERY_PROOF_REQUIRED, "0"));
     }
 
-    /** Foto bukti DITAWARKAN (boleh dilewati). "Wajib" menang bila keduanya aktif, jadi di sini
-     *  sengaja dikecualikan — supaya pemanggil tak perlu mengurutkan sendiri kedua flag itu. */
+    /**
+     * Batas umur antrean dalam MENIT. Kosong / tak masuk akal jatuh ke 180 (3 jam) -- angka bawaan
+     * yang SAMA dengan LateDeliveryGuard::DEFAULT_MAX_AGE_MINUTES, supaya HP dan server tak pernah
+     * memakai ambang berbeda untuk pesanan yang sama.
+     *
+     * <p>PENGECUALIAN PER PERANGKAT menang lebih dulu: {@code devices.delivery_max_age_minutes}
+     * yang diisi admin di dashboard turun lewat /api/me dan disimpan lokal. Kuncinya dibaca
+     * langsung (bukan lewat SyncSettings) supaya kelas ini tak balik bergantung pada pembungkusnya
+     * sendiri -- SyncSettings justru menulis lewat SettingsDao ini.
+     */
+    public int getDeliveryMaxAgeMinutes() {
+        try {
+            int perDevice = Integer.parseInt(
+                    get(com.crowja.damiupos.sync.SyncSettings.K_DEVICE_MAX_AGE_MINUTES, "0").trim());
+            if (perDevice > 0) {
+                return perDevice;
+            }
+        } catch (NumberFormatException ignored) {
+        }
+
+        String val = get(KEY_DELIVERY_MAX_AGE_MINUTES, "180");
+        try {
+            int v = Integer.parseInt(val.trim());
+            return v > 0 ? v : 180;
+        } catch (NumberFormatException e) {
+            return 180;
+        }
+    }
+
+    /** Setting cabang "poin galon dicabut bila pesanan selesai lewat batas umur" (default mati). */
+    public boolean isRevokeCreditLateEnabled() {
+        return "1".equals(get(KEY_REVOKE_CREDIT_LATE_DELIVERY, "0"));
+    }
+
     /**
      * Struk WA harus dikirim TANPA emoji? Setelan ini sudah lama ada di dashboard dan nilainya
      * pun sudah tersimpan di HP -- tapi dulu tak pernah ADA yang membacanya di sisi Android,
@@ -786,6 +838,10 @@ public class SettingsDao {
         return "1".equals(get(KEY_WA_STRUK_NO_EMOJI, "0"));
     }
 
+    /** Foto bukti DITAWARKAN (boleh dilewati; dashboard-authoritative, HP hanya baca). Default
+     *  NONAKTIF: dialog tawaran TIDAK muncul sampai admin mencentangnya. "Wajib" menang bila
+     *  keduanya aktif, jadi di sini sengaja dikecualikan — supaya pemanggil tak perlu mengurutkan
+     *  sendiri kedua flag itu. */
     public boolean isDeliveryProofOptional() {
         return !isDeliveryProofRequired() && "1".equals(get(KEY_DELIVERY_PROOF_OPTIONAL, "0"));
     }

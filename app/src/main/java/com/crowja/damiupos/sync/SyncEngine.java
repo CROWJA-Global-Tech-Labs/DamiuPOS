@@ -264,7 +264,7 @@ public class SyncEngine {
                     DatabaseHelper.COL_GIFT_ITEM_NAME, DatabaseHelper.COL_GIFT_QTY,
                     DatabaseHelper.COL_GIFT_REASON, DatabaseHelper.COL_GIFT_REDEEMED_AT,
                     DatabaseHelper.COL_GIFT_REDEEMED_TRX_UUID, DatabaseHelper.COL_GIFT_REDEEMED_BY,
-                    DatabaseHelper.COL_CREATED_AT,
+                    DatabaseHelper.COL_GIFT_PENDING_TRX_UUID, DatabaseHelper.COL_CREATED_AT,
             }, new Ref[]{
                     new Ref(DatabaseHelper.COL_GIFT_CUSTOMER_ID, "customer_uuid", DatabaseHelper.TABLE_CUSTOMERS),
             }),
@@ -1448,11 +1448,22 @@ public class SyncEngine {
                     sv.put(DatabaseHelper.COL_SRV_PROMO_PAID, obj.optInt("agg_promo_paid", 0));
                     sv.put(DatabaseHelper.COL_SRV_PROMO_PULLED, obj.optInt("agg_promo_pulled", 0));
                     sv.put(DatabaseHelper.COL_ORIGIN_LABEL, obj.optString("origin_label", ""));
+                    sv.put(DatabaseHelper.COL_QUICK_ORDER_LINK,
+                            obj.isNull("quick_order_link") ? null : obj.optString("quick_order_link", null));
                     sv.put(DatabaseHelper.COL_SRV_SALDO, obj.optDouble("agg_saldo", 0));
                     sv.put(DatabaseHelper.COL_SRV_PAID_JUAL_COUNT, obj.optInt("agg_paid_jual_count", 0));
                     // Desa/Kecamatan (reverse-geocode server) — pull-only, sama pola dgn origin_label.
                     sv.put(DatabaseHelper.COL_DESA, obj.isNull("desa") ? null : obj.optString("desa", null));
                     sv.put(DatabaseHelper.COL_KECAMATAN, obj.isNull("kecamatan") ? null : obj.optString("kecamatan", null));
+                    // Stempel "WA Perkenalan sudah dikirim" WAJIB ikut disegarkan di cabang ini.
+                    // Kolomnya server-authoritative & tak pernah di-push perangkat (SyncController::
+                    // fillColumns men-skip-nya), jadi aman persis seperti agregat di atas — tapi kalau
+                    // ditinggalkan di sini, pelanggan yang sudah disapa lewat WEB atau perangkat lain
+                    // TETAP menggantung di antrean WA Perkenalan perangkat ini selama masih ada edit
+                    // lokal yang belum ter-push (foto/koordinat pelanggan — justru yang paling sering
+                    // disunting petugas), dan petugas menyapa orang yang sama dua kali.
+                    sv.put(DatabaseHelper.COL_INTRO_WA_SENT_AT, obj.isNull(DatabaseHelper.COL_INTRO_WA_SENT_AT)
+                            ? null : obj.optString(DatabaseHelper.COL_INTRO_WA_SENT_AT, null));
                     db.update(s.table, sv, DatabaseHelper.COL_SYNC_UUID + "=?", new String[]{uuid});
                 }
                 continue;   // don't clobber a newer un-pushed local edit
@@ -1502,6 +1513,8 @@ public class SyncEngine {
                 v.put(DatabaseHelper.COL_SRV_PROMO_PAID, obj.optInt("agg_promo_paid", 0));
                 v.put(DatabaseHelper.COL_SRV_PROMO_PULLED, obj.optInt("agg_promo_pulled", 0));
                 v.put(DatabaseHelper.COL_ORIGIN_LABEL, obj.optString("origin_label", ""));
+                v.put(DatabaseHelper.COL_QUICK_ORDER_LINK,
+                        obj.isNull("quick_order_link") ? null : obj.optString("quick_order_link", null));
                 v.put(DatabaseHelper.COL_SRV_SALDO, obj.optDouble("agg_saldo", 0));
                 v.put(DatabaseHelper.COL_SRV_PAID_JUAL_COUNT, obj.optInt("agg_paid_jual_count", 0));
                 // Desa/Kecamatan (reverse-geocode server) — pull-only, sama pola dgn origin_label.

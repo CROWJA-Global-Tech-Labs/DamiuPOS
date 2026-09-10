@@ -360,6 +360,16 @@ public class SyncApi {
         return get(built.toString(), cfg.getToken());
     }
 
+    /**
+     * "Rekor Pengiriman": hari &amp; bulan TERBAIK tiap perangkat + capaian berjalan, se-cabang.
+     * Perakitnya di server SAMA dengan kartu di halaman Delivery web (App\Support\DeliveryRecord),
+     * jadi rekor yang dilihat kurir identik dengan yang dilihat owner. Tak ada parameter: rekor
+     * memang selalu se-cabang dan tidak mengikuti filter perangkat mana pun.
+     */
+    public JSONObject deliveryRecord() throws Exception {
+        return get(cfg.getBaseUrl() + "/api/delivery/record", cfg.getToken());
+    }
+
     /** Dashboard → device commands for this device newer than {@code sinceIso}. */
     public JSONObject commands(String sinceIso) throws Exception {
         okhttp3.HttpUrl built = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/commands")

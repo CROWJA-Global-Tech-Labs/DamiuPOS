@@ -128,7 +128,10 @@ public class PromoCustomersActivity extends AppCompatActivity {
      *  perkenalan (staf non-Marketing), atau buka detail. */
     private void showRowActions(CustomerDao.PromoRow r) {
         List<String> items = new ArrayList<>();
-        items.add(TarikGalon.menuLabel(this));
+        // true = MARKETING boleh sekalian menghapus di layar ini. Kohor promosi adalah hasil kerja
+        // marketing sendiri (galon gratis yang ia bagikan); menarik galonnya lalu membersihkan
+        // pelanggan yang tak pernah konversi adalah satu tindakan yang sama. {@see TarikGalon#canDelete}
+        items.add(TarikGalon.menuLabel(this, true));
         boolean showIntroWa = currentUserCanSendIntroWa();
         if (showIntroWa) {
             items.add(r.introWaSent ? "💬 Kirim Ulang WA Perkenalan" : "💬 Kirim WA Perkenalan");
@@ -140,7 +143,7 @@ public class PromoCustomersActivity extends AppCompatActivity {
                 .setItems(items.toArray(new String[0]), (d, which) -> {
                     String chosen = items.get(which);
                     if (chosen.startsWith("📥")) {
-                        TarikGalon.show(this, r.id, this::reloadCohort);
+                        TarikGalon.show(this, r.id, true, this::reloadCohort);
                     } else if (chosen.startsWith("💬")) {
                         sendIntroWa(r);
                     } else {
@@ -412,6 +415,46 @@ public class PromoCustomersActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Usia akuisisi dalam bahasa manusia — "5 hari", "2 pekan 3 hari", "3 bulan 1 pekan 2 hari".
+     *
+     * <p>Tanggalnya sendiri ("25 Jun 2026") menuntut pembacanya menghitung mundur di kepala untuk
+     * menjawab pertanyaan yang sebenarnya: pelanggan ini sudah dibiarkan berapa lama tanpa order
+     * ulang? Satuan dinaikkan bertahap supaya angkanya tetap kecil dan langsung terasa: hari untuk
+     * yang masih segar, pekan setelah seminggu, bulan setelah sebulan.</p>
+     *
+     * <p>Bulan dihitung KALENDER ({@link Period}), bukan pembagian 30 hari — "1 bulan" harus berarti
+     * tanggal yang sama bulan berikutnya, kalau tidak angkanya meleset di Februari & bulan 31 hari.
+     * Sisa hari di bawah sepekan ditulis apa adanya ("3 bulan 5 hari"); sepekan ke atas dipecah jadi
+     * pekan + hari ("3 bulan 1 pekan 2 hari"). Tanggal masa depan / tak terbaca → '' (baris tetap
+     * menampilkan tanggalnya saja, tanpa tanda kurung kosong).</p>
+     */
+    private static String elapsedLabel(String day) {
+        try {
+            java.time.LocalDate acq = java.time.LocalDate.parse(day);
+            java.time.LocalDate today = java.time.LocalDate.now();
+            if (acq.isAfter(today)) return "";
+            long totalDays = java.time.temporal.ChronoUnit.DAYS.between(acq, today);
+            if (totalDays == 0) return "hari ini";
+            if (totalDays < 7) return totalDays + " hari";
+
+            java.time.Period p = java.time.Period.between(acq, today);
+            int months = p.getYears() * 12 + p.getMonths();
+            if (months == 0) {
+                long w = totalDays / 7, d = totalDays % 7;
+                return d > 0 ? w + " pekan " + d + " hari" : w + " pekan";
+            }
+            int rem = p.getDays();
+            if (rem == 0) return months + " bulan";
+            if (rem < 7) return months + " bulan " + rem + " hari";
+            int w = rem / 7, d = rem % 7;
+            return d > 0 ? months + " bulan " + w + " pekan " + d + " hari"
+                    : months + " bulan " + w + " pekan";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     // ------------------------------------------------------------------ adapter
 
     private class PromoAdapter extends RecyclerView.Adapter<PromoAdapter.VH> {
@@ -447,7 +490,11 @@ public class PromoCustomersActivity extends AppCompatActivity {
             h.tvName.setText(r.name != null ? r.name : "—");
             h.tvPhone.setText(r.phone != null && !r.phone.isEmpty() ? r.phone : "");
             h.tvPhone.setVisibility(r.phone != null && !r.phone.isEmpty() ? View.VISIBLE : View.GONE);
+            // Usia akuisisi disematkan tepat SETELAH tanggalnya — "sudah 2 pekan 3 hari" jauh lebih
+            // cepat dibaca daripada tanggal mentah saat menilai pelanggan mana yang perlu disusul.
+            String umur = elapsedLabel(r.promoDay);
             h.tvPromo.setText("🎁 Akuisisi: " + displayDay(r.promoDay)
+                    + (umur.isEmpty() ? "" : " (" + umur + ")")
                     + " · " + r.galon + " galon");
             if (r.repeatDay != null) {
                 h.tvRepeat.setText("🔁 Order kembali: " + displayDay(r.repeatDay)

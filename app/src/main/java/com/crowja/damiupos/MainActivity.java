@@ -12,6 +12,8 @@ import android.media.Ringtone;
 import android.media.RingtoneManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
@@ -60,6 +62,19 @@ public class MainActivity extends AppCompatActivity {
     private TextView tvGalonBeredar, tvTotalPelanggan;
     private TextView tvPendapatanTrend, tvGalonTerjualTrend, tvTransaksiTrend;
     private TextView tvGalonBeredarTrend, tvTotalPelangganTrend;
+    private TextView tvPendapatanCaption, tvGalonTerjualCaption, tvKpiScopeNote;
+    // Kartu Pendapatan/Galon Terjual/TRX disegarkan lagi tiap {@link #SALES_CARDS_REFRESH_MS} SELAMA
+    // beranda tampil (mulai onResume, berhenti onPause) — sinkron periodik yang terasa oleh
+    // pengguna, terpisah dari SyncScheduler 15 menit di latar yang sudah ada (lihat
+    // refreshSalesCards untuk kenapa keduanya tak bisa saling menggantikan).
+    private static final long SALES_CARDS_REFRESH_MS = 60_000L;
+    private final Handler salesCardsHandler = new Handler(Looper.getMainLooper());
+    private final Runnable salesCardsTicker = new Runnable() {
+        @Override public void run() {
+            refreshSalesCards();
+            salesCardsHandler.postDelayed(this, SALES_CARDS_REFRESH_MS);
+        }
+    };
     private TextView tvEmptyRecent;
     private RecyclerView rvRecentTransactions;
     private TransactionAdapter adapter;
@@ -148,6 +163,9 @@ public class MainActivity extends AppCompatActivity {
         tvPendapatan = findViewById(R.id.tvPendapatan);
         tvGalonTerjual = findViewById(R.id.tvGalonTerjual);
         tvTransaksiHariIni = findViewById(R.id.tvTransaksiHariIni);
+        tvPendapatanCaption = findViewById(R.id.tvPendapatanCaption);
+        tvGalonTerjualCaption = findViewById(R.id.tvGalonTerjualCaption);
+        tvKpiScopeNote = findViewById(R.id.tvKpiScopeNote);
         tvGalonBeredar = findViewById(R.id.tvGalonBeredar);
         tvTotalPelanggan = findViewById(R.id.tvTotalPelanggan);
         tvPendapatanTrend = findViewById(R.id.tvPendapatanTrend);
@@ -191,6 +209,16 @@ public class MainActivity extends AppCompatActivity {
         View btnPromoCust = findViewById(R.id.btnPromoCustomers);
         if (btnPromoCust != null) btnPromoCust.setOnClickListener(v ->
                 startActivity(new Intent(this, PromoCustomersActivity.class)));
+
+        // Rekor Pengiriman: hari & bulan terbaik tiap perangkat (dihitung server).
+        View btnDeliveryRecord = findViewById(R.id.btnDeliveryRecord);
+        if (btnDeliveryRecord != null) btnDeliveryRecord.setOnClickListener(v ->
+                startActivity(new Intent(this, DeliveryRecordActivity.class)));
+
+        // WA Perkenalan: antrean pelanggan promosi yang belum disapa (Petugas WA Perkenalan).
+        View btnIntroWa = findViewById(R.id.btnIntroWa);
+        if (btnIntroWa != null) btnIntroWa.setOnClickListener(v ->
+                startActivity(new Intent(this, IntroWaActivity.class)));
 
         // Daftar Kunjungan: pedoman kunjungan lapangan (pelanggan paling lama tidak order dulu).
         View btnKunjungan = findViewById(R.id.btnKunjungan);
@@ -466,12 +494,16 @@ public class MainActivity extends AppCompatActivity {
         boolean isAdmin = false;
         boolean isViewer = false;
         boolean isMarketing = false;
+        // Kapabilitas layar dibaca dari predikat di model User, bukan disusun ulang di sini —
+        // dua sumber kebenaran untuk aturan peran yang sama pasti menyimpang cepat atau lambat.
+        boolean canSeeDeliveryRecord = false;
         if (show) {
             com.crowja.damiupos.model.User cur =
                     new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid);
             isAdmin = cur != null && cur.isAdmin();
             isViewer = cur != null && cur.isViewer();
             isMarketing = cur != null && cur.isMarketing();
+            canSeeDeliveryRecord = cur != null && cur.canViewDeliveryRecord();
         }
         boolean tracksAttendance = show && !isAdmin && !isViewer && !isMarketing; // hanya staf yang absen
 
@@ -496,22 +528,33 @@ public class MainActivity extends AppCompatActivity {
 
         // Pencapaian Penjualan: Admin & Marketing (User.canViewSalesAchievement) — peran yang
         // memantau capaian tim. Disembunyikan untuk peran lain: layarnya memuat omzet SE-CABANG.
+        // Visibilitas dipasang pada SEL grid (FrameLayout), bukan tombolnya — tombol yang GONE di
+        // dalam sel yang VISIBLE tetap memesan petak grid dan meninggalkan lubang.
+        View boxAchievement = findViewById(R.id.boxSalesAchievement);
         View btnAchievement = findViewById(R.id.btnSalesAchievement);
-        if (btnAchievement != null) {
+        if (boxAchievement != null) {
             boolean canSee = show && (isAdmin || isMarketing);
-            btnAchievement.setVisibility(canSee ? View.VISIBLE : View.GONE);
+            boxAchievement.setVisibility(canSee ? View.VISIBLE : View.GONE);
+        }
+        if (btnAchievement != null) {
             btnAchievement.setOnClickListener(v ->
                     startActivity(new Intent(this, SalesAchievementActivity.class)));
         }
 
+        // Rekor Pengiriman: Staf/SPV/Admin (User.canViewDeliveryRecord). Isinya hitungan ORDER
+        // SELESAI, bukan omzet — justru kurirlah yang paling berkepentingan melihat rekornya.
+        View boxDeliveryRecord = findViewById(R.id.boxDeliveryRecord);
+        if (boxDeliveryRecord != null) {
+            boxDeliveryRecord.setVisibility(show && canSeeDeliveryRecord ? View.VISIBLE : View.GONE);
+        }
+
         // Input Promosi Galon: Marketing & Admin selalu; staf lain bila promo_enabled (salary_config).
-        View btnPromosi = findViewById(R.id.btnPromosi);
-        if (btnPromosi != null) {
+        View boxPromosi = findViewById(R.id.boxPromosi);
+        if (boxPromosi != null) {
             boolean canPromosi = show
                     && new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).canPromosi(uid);
-            btnPromosi.setVisibility(canPromosi ? View.VISIBLE : View.GONE);
+            boxPromosi.setVisibility(canPromosi ? View.VISIBLE : View.GONE);
             // Pelanggan Promosi (daftar + statistik konversi) mengikuti gate yang sama.
-            // Visibilitas dipasang pada PEMBUNGKUS (FrameLayout badge WA Perkenalan), bukan tombolnya.
             View boxPromoCust = findViewById(R.id.boxPromoCustomers);
             if (boxPromoCust != null) boxPromoCust.setVisibility(canPromosi ? View.VISIBLE : View.GONE);
         }
@@ -523,6 +566,12 @@ public class MainActivity extends AppCompatActivity {
         if (wrapKunjungan != null) {
             wrapKunjungan.setVisibility(show && (isMarketing || isAdmin) ? View.VISIBLE : View.GONE);
         }
+
+        // Sel WA Perkenalan ikut ditentukan di updatePromoIntroBadge (gate-nya bukan peran, tapi
+        // centang "Petugas WA Perkenalan" di web) — panggil dulu supaya grid ditata setelah SEMUA
+        // sel tahu nasibnya, bukan setengah jalan.
+        updatePromoIntroBadge();   // menata ulang grid di ujungnya
+        expandLoneMenuButtons();   // menu bawah: yang tetangganya mati melebar sebaris penuh
 
         // Stok Galon & Reseller: khusus Admin. Non-admin (Staf/SPV/Marketing/Viewer) tak perlu
         // melihat angka stok gudang atau data reseller/komisi — sembunyikan tile & kartu statistiknya.
@@ -1026,6 +1075,11 @@ public class MainActivity extends AppCompatActivity {
         // operator perlu tahu (mis. HP lama offline / satu baris bermasalah) agar penjualan tak "hilang"
         // dari dashboard. Query di thread background; Toast di main thread (guard activity masih hidup).
         warnIfUnsyncedTransactions();
+        // Kartu Pendapatan/Galon Terjual/TRX tetap disegarkan berkala SELAMA beranda tampil — lihat
+        // refreshSalesCards untuk alasan admin/marketing/spv butuh panggilan server berulang, bukan
+        // cuma sinkron dua-arah 15 menit yang sudah berjalan di latar.
+        salesCardsHandler.removeCallbacks(salesCardsTicker);
+        salesCardsHandler.postDelayed(salesCardsTicker, SALES_CARDS_REFRESH_MS);
     }
 
     /** Peringatkan bila ada transaksi lama yang belum tersinkron (lihat TransactionDao.countUnsynced). */
@@ -1051,6 +1105,7 @@ public class MainActivity extends AppCompatActivity {
         super.onPause();
         try { unregisterReceiver(syncedReceiver); } catch (Exception ignored) {}
         try { unregisterReceiver(adminMsgReceiver); } catch (Exception ignored) {}
+        salesCardsHandler.removeCallbacks(salesCardsTicker);
     }
 
     /**
@@ -1177,23 +1232,106 @@ public class MainActivity extends AppCompatActivity {
      * ({@link IntroWaDuty#filterPending}); turun otomatis begitu perangkat MANA PUN mengirim
      * (stempel server tersinkron pull). Disegarkan bersama refreshDashboard (ACTION_SYNCED).
      */
+    /**
+     * Menu utama 2 kolom (Antrian Delivery … Pengaturan): pastikan tombol yang tetangganya mati
+     * benar-benar melebar sebaris penuh.
+     *
+     * <p>Baris-barisnya LinearLayout berbobot sama, jadi lebar itu sebenarnya dibagi ulang sendiri
+     * begitu satu sel GONE. Yang TIDAK tertangani: sel pembungkus (FrameLayout tempat badge
+     * menempel) yang tetap VISIBLE padahal tombol di dalamnya sudah disembunyikan — sel kosong itu
+     * masih menagih separuh baris, jadi tetangganya tetap setengah lebar dan di layar tampak ada
+     * lubang. Di sini sel seperti itu ikut di-GONE-kan supaya aturannya berlaku seragam, tak peduli
+     * menu tadi dimatikan lewat sel-nya atau lewat tombolnya.
+     */
+    private void expandLoneMenuButtons() {
+        View rows = findViewById(R.id.menuRows);
+        if (!(rows instanceof android.view.ViewGroup)) return;
+        android.view.ViewGroup rowsVg = (android.view.ViewGroup) rows;
+        for (int r = 0; r < rowsVg.getChildCount(); r++) {
+            if (!(rowsVg.getChildAt(r) instanceof android.view.ViewGroup)) continue;
+            android.view.ViewGroup row = (android.view.ViewGroup) rowsVg.getChildAt(r);
+            for (int i = 0; i < row.getChildCount(); i++) {
+                View cell = row.getChildAt(i);
+                if (!(cell instanceof android.view.ViewGroup)) continue;   // tombol telanjang: sudah beres
+                android.view.ViewGroup box = (android.view.ViewGroup) cell;
+                boolean anyVisible = false;
+                for (int j = 0; j < box.getChildCount(); j++) {
+                    if (box.getChildAt(j) instanceof com.google.android.material.button.MaterialButton
+                            && box.getChildAt(j).getVisibility() == View.VISIBLE) {
+                        anyVisible = true;
+                        break;
+                    }
+                }
+                if (!anyVisible && cell.getVisibility() == View.VISIBLE) cell.setVisibility(View.GONE);
+            }
+        }
+    }
+
+    /**
+     * Tata ulang grid menu marketing supaya sel yang TAMPIL selalu rapat berpasangan.
+     *
+     * <p>Perlu dilakukan sendiri karena GridLayout menempatkan anaknya berurutan TERMASUK yang
+     * GONE: sel yang disembunyikan tetap memesan petaknya, jadi grid berlubang begitu satu menu
+     * mati — dan kelima menu di sini punya aturan tampil yang berbeda-beda (peran staf untuk empat
+     * menu, centang "Petugas WA Perkenalan" untuk satu menu), sehingga kombinasinya banyak.
+     *
+     * <p>Sel terakhir dilebarkan dua kolom saat jumlah yang tampil ganjil — kalau tidak, baris
+     * penutup menyisakan satu tombol setengah lebar dengan ruang kosong di sebelahnya.
+     */
+    private void packQuickMenuGrid() {
+        androidx.gridlayout.widget.GridLayout grid = findViewById(R.id.gridQuickMenu);
+        if (grid == null) return;
+
+        java.util.List<View> visible = new java.util.ArrayList<>();
+        for (int i = 0; i < grid.getChildCount(); i++) {
+            View c = grid.getChildAt(i);
+            if (c.getVisibility() == View.VISIBLE) visible.add(c);
+        }
+        grid.setVisibility(visible.isEmpty() ? View.GONE : View.VISIBLE);
+
+        for (int i = 0; i < visible.size(); i++) {
+            View c = visible.get(i);
+            boolean lastAndOdd = (i == visible.size() - 1) && (visible.size() % 2 == 1);
+            int span = lastAndOdd ? 2 : 1;
+            androidx.gridlayout.widget.GridLayout.LayoutParams lp =
+                    (androidx.gridlayout.widget.GridLayout.LayoutParams) c.getLayoutParams();
+            lp.rowSpec = androidx.gridlayout.widget.GridLayout.spec(i / 2);
+            lp.columnSpec = androidx.gridlayout.widget.GridLayout.spec(
+                    i % 2, span, androidx.gridlayout.widget.GridLayout.FILL, span);
+            lp.width = 0;
+            c.setLayoutParams(lp);
+        }
+        grid.requestLayout();
+    }
+
     private void updatePromoIntroBadge() {
-        TextView badge = findViewById(R.id.tvPromoIntroBadge);
-        if (badge == null) return;
+        TextView badge = findViewById(R.id.tvIntroWaBadge);
+        View box = findViewById(R.id.boxIntroWa);
+        // Menu WA Perkenalan HANYA untuk perangkat petugas — perangkat lain tak perlu melihat
+        // antrean yang bukan tugasnya. Gate-nya dipasang di sini (bukan di applyRoleVisibility)
+        // supaya menu + badge selalu muncul dan hilang bersama, dari satu keputusan yang sama.
+        boolean isDuty = false;
         int count = 0;
         try {
             com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
                     new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this)));
-            if (cfg.isIntroWaDevice()) {
+            isDuty = cfg.isIntroWaDevice();
+            if (isDuty) {
                 count = IntroWaDuty.filterPending(customerDao.getPromoIntroPending(), cfg).size();
             }
         } catch (Exception ignored) {}
-        if (count > 0) {
-            badge.setText(String.valueOf(count));
-            badge.setVisibility(View.VISIBLE);
-        } else {
-            badge.setVisibility(View.GONE);
+        if (box != null) box.setVisibility(isDuty ? View.VISIBLE : View.GONE);
+        if (badge != null) {
+            if (count > 0) {
+                badge.setText(String.valueOf(count));
+                badge.setVisibility(View.VISIBLE);
+            } else {
+                badge.setVisibility(View.GONE);
+            }
         }
+        // Sel ini baru saja bisa muncul/hilang → petak grid harus ditata ulang, kalau tidak
+        // barisnya berlubang atau menyisakan tombol setengah lebar.
+        packQuickMenuGrid();
     }
 
     private void updateStockIndicator() {
@@ -1218,9 +1356,88 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void refreshDashboard() {
+    /**
+     * Kartu Pendapatan/Galon Terjual/TRX: sumber & cakupannya BEDA per peran, bukan sekadar query
+     * lokal seperti dulu — transaksi TIDAK branch-wide di lapisan sync (tiap HP cuma memegang
+     * barisnya sendiri, {@code config/sync.php} kunci {@code branch_wide}), jadi "lihat data
+     * se-depot" bagi admin/marketing/spv mustahil benar dari DB lokal betapa pun sering disinkron —
+     * harus dihitung di SERVER, memakai endpoint yang SAMA dengan "Pencapaian Penjualan"
+     * ({@link SalesAchievementActivity}) supaya angkanya tak pernah menyimpang dari layar itu.
+     * Peran lain (kurir/staf) melihat HANYA transaksi ATAS NAMANYA sendiri (created_by_name),
+     * bukan seluruh isi HP — satu perangkat delivery bisa dipakai bergantian oleh beberapa staf
+     * (multi-user, lihat SettingsDao#isMultiUserEnabled).
+     *
+     * <p>Dipanggil dari refreshDashboard() (sekali per buka layar / tiap sinkron masuk) DAN dari
+     * ticker berkala {@link #salesCardsTicker} selama beranda tampil, supaya kartu admin/marketing/
+     * spv benar-benar "hidup" tanpa perlu keluar-masuk layar untuk melihat angka terbaru.</p>
+     */
+    private void refreshSalesCards() {
         NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
 
+        com.crowja.damiupos.model.User cur = null;
+        if (settingsDao.isMultiUserEnabled() && settingsDao.getCurrentUserId() > 0) {
+            cur = new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this))
+                    .getById(settingsDao.getCurrentUserId());
+        }
+
+        if (cur != null && (cur.isAdmin() || cur.isMarketing() || cur.isSpv())) {
+            setSalesScopeCaption("se-depot");
+            com.crowja.damiupos.sync.SyncSettings cfg =
+                    new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+            if (!cfg.isEnrolled()) {
+                showSalesCardsLocal(nf, null);   // belum terhubung server -> jatuh ke angka lokal
+                return;
+            }
+            new Thread(() -> {
+                org.json.JSONObject totals = null;
+                try {
+                    org.json.JSONObject res = new com.crowja.damiupos.sync.SyncApi(cfg)
+                            .salesAchievement("today", null, null, null);
+                    totals = res.optJSONObject("totals");
+                } catch (Exception ignored) {
+                }
+                final org.json.JSONObject totalsF = totals;
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    if (totalsF != null) {
+                        tvPendapatan.setText("Rp " + nf.format(totalsF.optDouble("revenue", 0)));
+                        tvGalonTerjual.setText(String.valueOf(totalsF.optInt("galon", 0)));
+                        tvTransaksiHariIni.setText(String.valueOf(totalsF.optInt("trx", 0)));
+                    } else {
+                        // Server tak terjangkau (offline dsb) -> jangan biarkan kartu kosong;
+                        // tampilkan angka LOKAL sebagai cadangan, keterangan jujur bahwa itu
+                        // bukan angka se-depot supaya tak disalahartikan.
+                        setSalesScopeCaption("HP ini — offline");
+                        showSalesCardsLocal(nf, null);
+                    }
+                });
+            }).start();
+            return;
+        }
+
+        String staffName = cur != null ? settingsDao.getCurrentUserName() : null;
+        setSalesScopeCaption(staffName != null && !staffName.isEmpty() ? "milik Anda" : "HP ini");
+        showSalesCardsLocal(nf, staffName != null && !staffName.isEmpty() ? staffName : null);
+    }
+
+    private void showSalesCardsLocal(NumberFormat nf, String staffName) {
+        double pendapatan = transactionDao.getPendapatanHariIni(staffName);
+        tvPendapatan.setText("Rp " + nf.format(pendapatan));
+        int galonTerjual = transactionDao.getGalonTerjualHariIni(staffName);
+        tvGalonTerjual.setText(String.valueOf(galonTerjual));
+        int trxHariIni = transactionDao.getTransaksiHariIni(staffName);
+        tvTransaksiHariIni.setText(String.valueOf(trxHariIni));
+    }
+
+    private void setSalesScopeCaption(String scope) {
+        if (tvPendapatanCaption != null) tvPendapatanCaption.setText("Pendapatan Hari Ini · " + scope);
+        if (tvGalonTerjualCaption != null) tvGalonTerjualCaption.setText("Galon Terjual Hari Ini · " + scope);
+        if (tvKpiScopeNote != null) {
+            tvKpiScopeNote.setText("Pendapatan · Galon Terjual · TRX = " + scope + ". GLN & CUST = se-depot.");
+        }
+    }
+
+    private void refreshDashboard() {
         // Pro Temp chip — countdown ke expiry kalau user pakai rewarded ad
         TextView chipProTemp = findViewById(R.id.chipProTemp);
         if (chipProTemp != null) {
@@ -1240,14 +1457,7 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        double pendapatan = transactionDao.getPendapatanHariIni();
-        tvPendapatan.setText("Rp " + nf.format(pendapatan));
-
-        int galonTerjual = transactionDao.getGalonTerjualHariIni();
-        tvGalonTerjual.setText(String.valueOf(galonTerjual));
-
-        int trxHariIni = transactionDao.getTransaksiHariIni();
-        tvTransaksiHariIni.setText(String.valueOf(trxHariIni));
+        refreshSalesCards();
 
         int galonBeredar = customerDao.getTotalGalonBeredar();
         tvGalonBeredar.setText(String.valueOf(galonBeredar));

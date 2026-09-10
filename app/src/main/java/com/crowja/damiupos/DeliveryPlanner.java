@@ -47,21 +47,16 @@ public final class DeliveryPlanner {
     public static final double AGE_BONUS_KM_PER_HOUR = 1.5;
     public static final double AGE_BONUS_MAX_KM = 8.0;
 
-    private static final java.text.SimpleDateFormat TS =
-            new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US);
-
     /** Lama order menunggu di antrean, dalam JAM. 0 bila stempel tak ada/tak terbaca. */
     public static double waitedHours(Transaction t) {
         String q = t == null ? null : t.getDeliveryQueuedAt();
-        if (q == null || q.length() < 19) return 0;
-        try {
-            java.util.Date d = TS.parse(q.substring(0, 19));
-            if (d == null) return 0;
-            long ms = System.currentTimeMillis() - d.getTime();
-            return ms <= 0 ? 0 : ms / 3600000.0;
-        } catch (Exception e) {
-            return 0;
-        }
+        // Ts.millis, bukan TS.parse: delivery_queued_at berisi waktu LOKAL bila HP yang menulisnya
+        // tapi ISO-UTC bila barisnya ditarik dari server. Mengurainya tanpa zona waktu membuat order
+        // asal-web tampak 7 jam lebih tua dan mendapat potongan umur yang tak pernah ia usahakan.
+        long ts = com.crowja.damiupos.util.Ts.millis(q);
+        if (ts == Long.MAX_VALUE) return 0;
+        long ms = System.currentTimeMillis() - ts;
+        return ms <= 0 ? 0 : ms / 3600000.0;
     }
 
     /** Potongan jarak (km) yang didapat order karena sudah lama menunggu. */

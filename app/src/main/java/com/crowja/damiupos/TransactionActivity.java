@@ -1937,6 +1937,7 @@ public class TransactionActivity extends AppCompatActivity {
         serverGuardCustomerId = -1;
         lastOpenQueueWarnOrderId = -1;
         lastDuplicateWarnCustomerId = -1;
+        saveDupAcknowledged = false;   // persetujuan "tetap simpan" milik pelanggan LAMA
         maybeWarnIncompleteCustomer(c);
         maybeWarnPendingGift(c);
         maybeWarnDuplicateOrderToday(c);
@@ -2372,6 +2373,13 @@ public class TransactionActivity extends AppCompatActivity {
 
     /** ID pelanggan terakhir yang gift-nya sudah diberitahukan (anti-spam popup gift). */
     private long lastGiftWarnCustomerId = -1;
+    /** Gift PRODUK yang dikonfirmasi "Ya" di popup saat pelanggan dipilih — -1 = tak ada/ditolak.
+     *  Dibaca doSave() untuk menambahkan barisnya (Rp0) ke transaksi yang sedang disusun, lalu
+     *  diklaim/dilekatkan setelah transaksi tersimpan. Direset setiap kali pelanggan berganti. */
+    private long confirmedProductGiftId = -1;
+    /** Objek gift yang sama dengan {@link #confirmedProductGiftId} — dicache di sini supaya doSave()
+     *  tak perlu query ulang qty/nama itemnya. Null bila confirmedProductGiftId ≤ 0. */
+    private com.crowja.damiupos.db.CustomerGiftDao.Gift pendingConfirmedGift;
 
     /** Gerbang konfirmasi 2x-ketuk "sudah order hari ini": ID pelanggan yang sedang
      *  "diarmed" (ketukan pertama sudah terjadi) + waktunya, supaya ketukan kedua
@@ -2407,12 +2415,22 @@ public class TransactionActivity extends AppCompatActivity {
     }
 
     /**
-     * Popup informasi (🎁) saat pelanggan terpilih punya GIFT pending: karyawan diingatkan
-     * untuk MEMBERIKAN hadiahnya saat transaksi ini. Gift ditarik dari web (branch-wide) dan
-     * di-klaim otomatis oleh transaksi JUAL saat disimpan (lihat TransactionDao.insert). Bukan
-     * alarm — ini kabar baik; cukup dialog informatif. Pelanggan Umum/walk-in dilewati.
+     * Pelanggan terpilih punya GIFT pending. Dua bentuk:
+     *  - CUSTOM (gelas dll.) — tak berwujud item, tetap auto-klaim saat transaksi JUAL disimpan
+     *    (TransactionDao.insert) → dialog INFORMATIF saja (OK).
+     *  - PRODUK — berwujud baris item, jadi butuh KEPUTUSAN staf: dialog KONFIRMASI Ya/Tidak.
+     *    "Ya" menyimpan pilihannya di {@link #confirmedProductGiftId}, dibaca doSave() untuk
+     *    menambahkan barisnya (Rp0) ke transaksi yang SEDANG disusun — cermin popup yang sama di
+     *    web (Konfirmasi Ya di form transaksi baru, App\Support\Gifts::applyProductGift).
+     *    HANYA gift produk PERTAMA yang ditawarkan di sini; sisanya (bila >1) tetap ditawarkan lagi
+     *    lewat popup append/discount di layar struk setelah transaksi tersimpan
+     *    (ReceiptActivity#maybeOfferProductGift) — gift yang sudah dikonfirmasi di sini otomatis
+     *    tak ditawarkan ulang di sana (statusnya sudah berubah begitu barisnya tertulis).
+     *    Pelanggan Umum/walk-in dilewati.
      */
     private void maybeWarnPendingGift(Customer c) {
+        confirmedProductGiftId = -1;
+        pendingConfirmedGift = null;
         if (c == null || c.getId() <= 0 || isUmumCustomer()) return;
         if (c.getId() == lastGiftWarnCustomerId) return;
         java.util.List<com.crowja.damiupos.db.CustomerGiftDao.Gift> gifts =
@@ -2421,17 +2439,48 @@ public class TransactionActivity extends AppCompatActivity {
         if (gifts.isEmpty()) { lastGiftWarnCustomerId = -1; return; }
         lastGiftWarnCustomerId = c.getId();
 
-        StringBuilder sb = new StringBuilder();
+        com.crowja.damiupos.db.CustomerGiftDao.Gift firstProduct = null;
+        StringBuilder customSb = new StringBuilder();
         for (com.crowja.damiupos.db.CustomerGiftDao.Gift g : gifts) {
-            sb.append("• ").append(g.label());
-            if (g.reason != null && !g.reason.isEmpty()) sb.append(" — ").append(g.reason);
-            sb.append('\n');
+            if (g.isProduct()) {
+                if (firstProduct == null) firstProduct = g;
+                continue;
+            }
+            customSb.append("• ").append(g.label());
+            if (g.reason != null && !g.reason.isEmpty()) customSb.append(" — ").append(g.reason);
+            customSb.append('\n');
         }
+
+        if (firstProduct != null) {
+            final com.crowja.damiupos.db.CustomerGiftDao.Gift chosen = firstProduct;
+            StringBuilder msg = new StringBuilder();
+            msg.append(chosen.qty).append(" pcs ").append(chosen.itemName);
+            if (chosen.reason != null && !chosen.reason.isEmpty()) msg.append(" — ").append(chosen.reason);
+            msg.append("\n\nTambahkan sebagai baris gratis (Rp0) ke transaksi ini sekarang?");
+            if (customSb.length() > 0) {
+                msg.append("\n\nPelanggan ini juga punya gift lain (otomatis tercatat diberikan "
+                        + "saat transaksi JUAL disimpan):\n").append(customSb);
+            }
+            new AlertDialog.Builder(this)
+                    .setIcon(android.R.drawable.ic_dialog_info)
+                    .setTitle("🎁 Pelanggan Punya Gift")
+                    .setMessage(msg.toString())
+                    .setPositiveButton("Ya, Tambahkan", (d, w) -> {
+                        confirmedProductGiftId = chosen.localId;
+                        pendingConfirmedGift = chosen;
+                        Toast.makeText(this, "🎁 " + chosen.label() + " akan ditambahkan otomatis (Rp0) ke transaksi ini.",
+                                Toast.LENGTH_LONG).show();
+                    })
+                    .setNegativeButton("Nanti Saja", null)
+                    .show();
+            return;
+        }
+
         new AlertDialog.Builder(this)
                 .setIcon(android.R.drawable.ic_dialog_info)
                 .setTitle("🎁 Pelanggan Dapat Gift!")
                 .setMessage("Berikan hadiah berikut kepada \"" + c.getName() + "\" saat transaksi ini:\n\n"
-                        + sb + "\nGift akan otomatis tercatat diberikan saat transaksi JUAL disimpan.")
+                        + customSb + "\nGift akan otomatis tercatat diberikan saat transaksi JUAL disimpan.")
                 .setPositiveButton("OK", null)
                 .show();
     }
@@ -2715,6 +2764,9 @@ public class TransactionActivity extends AppCompatActivity {
     private void trySave() {
         // Ongkir tak cocok dgn status pelanggan → popup; simpan diteruskan dari dalam popup.
         if (!ongkirGate(this::trySave)) return;
+        // Order ganda: periksa ULANG ke server tepat sebelum menyimpan; simpan diteruskan dari
+        // dalam popup, pola yang sama dengan ongkirGate di atas.
+        if (!duplicateOrderSaveGate(this::trySave)) return;
 
         SettingsDao settingsCheck = new SettingsDao(DatabaseHelper.getInstance(this));
         if (settingsCheck.isProActive()) {
@@ -2729,6 +2781,125 @@ public class TransactionActivity extends AppCompatActivity {
         String reason = "Pengguna Gratis dibatasi " + BuildConfig.FREE_MAX_TRX_PER_MONTH
                 + " transaksi/bulan. Upgrade Pro untuk transaksi tanpa batas.";
         PaywallDialogFragment.show(getSupportFragmentManager(), reason, this::save);
+    }
+
+    /** Vonis order-ganda yang SUDAH disetujui operator pada percobaan simpan ini (lihat
+     *  {@link #duplicateOrderSaveGate}). Direset tiap kali pelanggan berganti. */
+    private boolean saveDupAcknowledged = false;
+
+    /**
+     * Gerbang order-ganda TEPAT SEBELUM SIMPAN — tanya ulang ke server, jangan percaya vonis lama.
+     *
+     * <p>Kenapa perlu: dua popup yang sudah ada ({@link #maybeWarnDuplicateOrderToday} dan
+     * {@link #maybeWarnOpenQueueOrder}) berjalan saat pelanggan DIPILIH, dan vonisnya diambil sekali
+     * lalu disimpan di memori. Kalau perangkat LAIN membuat order untuk pelanggan yang sama di
+     * antara "memilih" dan "menyimpan", vonis itu sudah basi dan tak ada yang memeriksanya lagi.
+     * Persis begitu order ganda "mas gandung" 31 Agt 2026 lolos: order pertama masuk server 11:48,
+     * form di perangkat kedua sudah terbuka sejak sebelum itu, lalu disimpan 11:53 tanpa
+     * pemeriksaan ulang. Web tak punya celah ini karena gerbangnya dicek saat submit.
+     *
+     * <p>Sifatnya tetap MEMPERINGATKAN, bukan memblokir — order kedua yang sah memang kadang perlu
+     * dibuat, jadi konfirmasinya ketuk-dua-kali seperti popup saudaranya.
+     *
+     * <p>Gagal menghubungi server = LANJUT menyimpan. Kurir di lapangan tak boleh kehilangan
+     * transaksi karena sinyal jelek; gerbang ini menambah lapisan, bukan menggantikan kerja offline.
+     *
+     * @return true bila boleh lanjut simpan sekarang; false bila ditahan (dilanjutkan dari popup)
+     */
+    private boolean duplicateOrderSaveGate(Runnable onProceed) {
+        if (saveDupAcknowledged) return true;
+        if (selectedCustomerId <= 0 || isUmumCustomer() || !isJualSelected()) return true;
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+        if (!cfg.isEnrolled()) return true;
+        final String uuid = customerDao.getSyncUuidById(selectedCustomerId);
+        if (uuid == null || uuid.isEmpty()) return true;
+
+        final long targetCustomerId = selectedCustomerId;
+        final android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
+        wait.setMessage("Memeriksa order ganda…");
+        wait.setCancelable(false);
+        wait.show();
+
+        new Thread(() -> {
+            OrderGuardVerdict v = null;
+            try {
+                org.json.JSONObject res = new com.crowja.damiupos.sync.SyncApi(cfg).orderInsights(uuid);
+                v = new OrderGuardVerdict();
+                org.json.JSONObject ot = res.optJSONObject("ordered_today");
+                if (ot != null) {
+                    v.todayStatus = ot.isNull("delivery_status") ? null : ot.optString("delivery_status");
+                    v.todayTanggal = ot.isNull("tanggal") ? null : ot.optString("tanggal");
+                }
+                org.json.JSONObject oo = res.optJSONObject("open_order");
+                if (oo != null) {
+                    v.openOrderId = oo.optLong("id", -1);
+                    v.openStatus = oo.isNull("delivery_status") ? null : oo.optString("delivery_status");
+                }
+            } catch (Exception ignored) {
+                v = null;   // offline / server lama → lanjut simpan
+            }
+            final OrderGuardVerdict verdict = v;
+            runOnUiThread(() -> {
+                try { wait.dismiss(); } catch (Throwable ignored) {}
+                if (isFinishing() || isDestroyed()) return;
+                // Pelanggan berganti selagi menunggu → biarkan operator menekan Simpan lagi.
+                if (selectedCustomerId != targetCustomerId) return;
+                boolean clash = verdict != null
+                        && (verdict.todayStatus != null || verdict.openOrderId > 0);
+                if (!clash) {
+                    saveDupAcknowledged = true;
+                    onProceed.run();
+                    return;
+                }
+                showDuplicateSaveWarning(verdict, onProceed);
+            });
+        }).start();
+
+        return false;
+    }
+
+    /** Popup gerbang simpan: jelaskan order yang sudah ada, minta ketuk-dua-kali untuk lanjut. */
+    private void showDuplicateSaveWarning(OrderGuardVerdict v, Runnable onProceed) {
+        StringBuilder detail = new StringBuilder();
+        if (v.todayStatus != null) {
+            String jam = (v.todayTanggal != null && v.todayTanggal.length() >= 16)
+                    ? " pukul " + v.todayTanggal.substring(11, 16) : "";
+            detail.append("• Sudah ada transaksi JUAL hari ini").append(jam);
+            if (Transaction.DELIVERY_DONE.equals(v.todayStatus)) detail.append(" (sudah SELESAI diantar)");
+            else if (Transaction.DELIVERY_PENDING.equals(v.todayStatus)) detail.append(" (masih DALAM ANTREAN)");
+            else if ("TERTUNDA".equals(v.todayStatus)) detail.append(" (TERTUNDA)");
+            detail.append('\n');
+        }
+        if (v.openOrderId > 0) {
+            detail.append("• Masih ada order yang BELUM diselesaikan");
+            if (v.openStatus != null) detail.append(" (").append(v.openStatus).append(')');
+            detail.append('\n');
+        }
+
+        final int[] clicks = {0};
+        AlertDialog dlg = new AlertDialog.Builder(this)
+                .setIcon(android.R.drawable.ic_dialog_alert)
+                .setCancelable(false)
+                .setTitle("⚠️ Cek Dulu — Kemungkinan Order Ganda")
+                .setMessage("Pelanggan ini sudah punya order di cabang (bisa dari perangkat lain "
+                        + "atau dashboard):\n\n" + detail
+                        + "\nSimpan transaksi BARU ini juga? Ketuk \"Tetap Simpan\" dua kali.")
+                .setNegativeButton("BATAL", null)
+                .setPositiveButton("Tetap Simpan", null)
+                .create();
+        dlg.setOnShowListener(d -> {
+            android.widget.Button go = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
+            go.setOnClickListener(v2 -> {
+                if (++clicks[0] < 2) {
+                    go.setText("KETUK SEKALI LAGI");
+                    return;
+                }
+                saveDupAcknowledged = true;
+                dlg.dismiss();
+                onProceed.run();
+            });
+        });
+        dlg.show();
     }
 
     /** Popup "pelanggan promosi kembali order" — dijalankan lalu meneruskan ke struk (onContinue). */
@@ -3388,16 +3559,6 @@ public class TransactionActivity extends AppCompatActivity {
         if (isJual && ownership != null && !isUmumCustomer()) {
             settingsDao.setLastGalonOwnership(ownership);
         }
-        if (isJual && jumlahKembali > 0) {
-            Transaction kembali = new Transaction();
-            kembali.setCustomerId(selectedCustomerId);
-            kembali.setType(Transaction.TYPE_KEMBALI);
-            kembali.setJumlahGalon(jumlahKembali);
-            kembali.setCatatan("Tukar botol galon");
-            if (selectedTrxDate != null) kembali.setTanggal(selectedTrxDate);
-            transactionDao.insert(kembali);
-        }
-
         // Promosi GRATIS = pemberian gratis di lokasi → SELALU Rp 0, apa pun status Wajib Ongkir
         // pelanggan. Invarian ditegakkan di TITIK SIMPAN (bukan hanya lewat toggle ongkir di UI,
         // yang bisa bocor karena urutan init) supaya tak ada ongkir yang menyusup ke riwayat
@@ -3470,7 +3631,20 @@ public class TransactionActivity extends AppCompatActivity {
                     }
                 }
             }
+            // 🎁 Gift PRODUK dikonfirmasi "Ya" saat pelanggan dipilih (maybeWarnPendingGift) →
+            // baris gratis (Rp0) MENAMBAH galon fisik keluar (beda dari bonus di atas, yang murni
+            // promosi) — cermin App\Support\Gifts::applyProductGift mode 'append' di web. Statusnya
+            // "sungguh diberikan" (bukan sekadar tertulis) ditentukan SETELAH insert, di bawah —
+            // lihat blok redeemOne setelah transactionDao.insert(trx).
+            if (confirmedProductGiftId > 0) {
+                com.crowja.damiupos.db.CustomerGiftDao.Gift g = pendingConfirmedGift;
+                if (g != null) {
+                    itemsToSave.add(new TransactionItem(0, g.itemName, g.qty, 0));
+                    totalJumlah += g.qty;
+                }
+            }
             trx.setItems(itemsToSave);
+            trx.setJumlahGalon(totalJumlah);
             // Backward-compat: put first item's product_id and price as primary
             if (!items.isEmpty()) {
                 TransactionItem first = items.get(0);
@@ -3566,7 +3740,42 @@ public class TransactionActivity extends AppCompatActivity {
             trx.setOrderPriorityReason("Order kembali pertama — otomatis diprioritaskan");
         }
         long newTrxId = transactionDao.insert(trx);
+
+        // Galon kembali (tukar botol) dipasangkan SETELAH JUAL-nya tersimpan, lewat
+        // applyReturnedGalon → syncPairedReturn, supaya baris KEMBALI mewarisi tanggal JUAL PERSIS.
+        //
+        // Dulu baris ini ditulis SEBELUM JUAL dan tanggalnya dibiarkan kosong kecuali staf memilih
+        // tanggal manual. Keduanya lalu jatuh ke DEFAULT kolom, datetime('now','localtime'), yang
+        // dievaluasi ULANG tiap INSERT dan hanya berpresisi DETIK — sementara di antara kedua insert
+        // itu ada penomoran struk plus beberapa query settings/user. Begitu keduanya melewati batas
+        // detik, tanggalnya berbeda dan pasangannya putus: getReturnedGalonForSale (cocok tanggal
+        // PERSIS) mengembalikan 0, sehingga dialog "Konfirmasi Galon Kembali" terbuka kosong padahal
+        // galonnya sudah dicatat. Lebih buruk lagi, mengkonfirmasi angka lain akan MENAMBAH baris
+        // KEMBALI baru alih-alih memperbarui baris yatim tadi — Galon Dipinjam pelanggan terhitung
+        // dua kali. Membaca ulang tanggal JUAL yang BENAR-BENAR tersimpan menutup celah itu tanpa
+        // mengubah format tanggal yang dipakai sisa aplikasi.
+        if (isJual && jumlahKembali > 0) {
+            transactionDao.applyReturnedGalon(newTrxId, jumlahKembali);
+        }
         ensureCustomerSavedInContacts();
+        // 🎁 Gift PRODUK dikonfirmasi "Ya" saat pelanggan dipilih: barisnya sudah tertulis (di atas,
+        // sebelum insert); sekarang KLAIM/LEKATKAN gift-nya — cermin App\Support\Gifts::
+        // applyProductGift di web. Order yang masih di antrean delivery (PENDING/TERTUNDA) belum
+        // sungguh sampai ke pelanggan → hanya DILEKATKAN, "sungguh diberikan" menunggu Selesai
+        // (TransactionDao.markDelivered → CustomerGiftDao.finalizeAttachedForTransaction).
+        if (confirmedProductGiftId > 0) {
+            String giftTrxUuid = transactionDao.getSyncUuidById(newTrxId);
+            if (giftTrxUuid != null && !giftTrxUuid.isEmpty()) {
+                com.crowja.damiupos.model.Transaction savedForGift = transactionDao.getById(newTrxId);
+                String gds = savedForGift != null ? savedForGift.getDeliveryStatus() : null;
+                boolean giftQueued = com.crowja.damiupos.model.Transaction.DELIVERY_PENDING.equals(gds)
+                        || com.crowja.damiupos.model.Transaction.DELIVERY_TERTUNDA.equals(gds);
+                new com.crowja.damiupos.db.CustomerGiftDao(DatabaseHelper.getInstance(this))
+                        .redeemOne(confirmedProductGiftId, giftTrxUuid, settingsDao.getCurrentUserName(), giftQueued);
+            }
+            confirmedProductGiftId = -1;
+            pendingConfirmedGift = null;
+        }
         // Catat buku besar bonus SETELAH baris ini benar-benar tersimpan (butuh _id-nya) — item
         // gratisnya sendiri sudah ikut items_json lewat trx.setItems(itemsToSave) di atas.
         if (!productBonusGranted.isEmpty()) {

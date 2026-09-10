@@ -44,13 +44,36 @@ public final class IntroWaDuty {
         return false;
     }
 
-    /** Saring kandidat badge ke wilayah tugas perangkat ini (lihat {@link #inMyZones}). */
+    /**
+     * Apakah pelanggan ini termasuk tanggung jawab perangkat ini?
+     *
+     * <p>ALOKASI EKSPLISIT MENANG. Bila pelanggan sudah dialokasikan ke sebuah perangkat
+     * ({@code assigned_device_uuid}, diatur marketing/SPV), hanya perangkat ITU yang menghitungnya —
+     * uji wilayah tak lagi relevan, karena alokasi adalah keputusan manusia yang lebih spesifik.
+     * Tanpa aturan ini, satu pelanggan yang sudah jelas jatah orang lain tetap ikut menggelembungkan
+     * angka lencana di perangkat lain yang wilayahnya kebetulan mencakup titik itu.
+     *
+     * <p>Belum dialokasikan → jatuh ke uji wilayah seperti sebelumnya (fail-open, lihat
+     * {@link #inMyZones}).
+     */
+    public static boolean isMyResponsibility(SyncSettings cfg, CustomerDao.IntroPendingRow r) {
+        if (r == null) return false;
+        String assigned = r.assignedDevice != null ? r.assignedDevice.trim() : "";
+        if (!assigned.isEmpty()) {
+            String me = cfg.getDeviceUuid();
+            return me != null && !me.isEmpty() && assigned.equals(me);
+        }
+
+        return inMyZones(cfg, r.lat, r.lng);
+    }
+
+    /** Saring kandidat badge ke tanggung jawab perangkat ini (lihat {@link #isMyResponsibility}). */
     public static List<CustomerDao.IntroPendingRow> filterPending(
             List<CustomerDao.IntroPendingRow> rows, SyncSettings cfg) {
         List<CustomerDao.IntroPendingRow> out = new ArrayList<>();
         if (rows == null) return out;
         for (CustomerDao.IntroPendingRow r : rows) {
-            if (r != null && inMyZones(cfg, r.lat, r.lng)) out.add(r);
+            if (isMyResponsibility(cfg, r)) out.add(r);
         }
         return out;
     }

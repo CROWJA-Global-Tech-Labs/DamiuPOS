@@ -1928,6 +1928,8 @@ public class CustomerDao {
         if (idxSrvFj >= 0 && !cursor.isNull(idxSrvFj)) c.setSrvFirstJual(cursor.getString(idxSrvFj));
         int idxOrigin = cursor.getColumnIndex(DatabaseHelper.COL_ORIGIN_LABEL);
         if (idxOrigin >= 0 && !cursor.isNull(idxOrigin)) c.setOriginLabel(cursor.getString(idxOrigin));
+        int idxQuickOrder = cursor.getColumnIndex(DatabaseHelper.COL_QUICK_ORDER_LINK);
+        if (idxQuickOrder >= 0 && !cursor.isNull(idxQuickOrder)) c.setQuickOrderLink(cursor.getString(idxQuickOrder));
         int idxDesa = cursor.getColumnIndex(DatabaseHelper.COL_DESA);
         if (idxDesa >= 0 && !cursor.isNull(idxDesa)) c.setDesa(cursor.getString(idxDesa));
         int idxKecamatan = cursor.getColumnIndex(DatabaseHelper.COL_KECAMATAN);
@@ -2230,6 +2232,16 @@ public class CustomerDao {
         public long id;
         public String name;
         public double lat, lng;
+        /** Dibutuhkan menu WA Perkenalan (badge hanya perlu id/koordinat). */
+        public String uuid;      // untuk endpoint server penyusun pesan
+        public String phone;
+        public String promoDay;  // tanggal akuisisi promo (token {tanggal}); null = pakai tgl daftar
+        public String createdAt;
+        /** Alokasi perangkat pelanggan ini (assigned_device_uuid); kosong = belum dialokasikan. */
+        public String assignedDevice;
+        /** Stempel "WA Perkenalan sudah dikirim" — kolom SERVER (promo_intro_wa_sent_at), sumber
+         *  yang SAMA dengan kolom "WA Perkenalan" di laporan Pelanggan Promosi web. Null = belum. */
+        public String introSentAt;
     }
 
     /**
@@ -2240,20 +2252,67 @@ public class CustomerDao {
      * tertunggak. Uji wilayah dilakukan pemanggil (butuh konfigurasi zona dari SyncSettings).
      */
     public java.util.List<IntroPendingRow> getPromoIntroPending() {
+        return introRows(true);
+    }
+
+    /**
+     * Kohort yang SAMA, tapi memuat yang SUDAH dikirim juga (stempel ikut terisi) — dipakai layar
+     * WA Perkenalan untuk menampilkan dua kelompok sekaligus.
+     *
+     * <p>SENGAJA method terpisah, bukan mengendurkan {@link #getPromoIntroPending}: method itu
+     * memberi makan angka LENCANA di dashboard dan notifikasi sync, yang keduanya harus tetap
+     * berarti "belum disapa". Melonggarkannya akan membuat lencana ikut menghitung pelanggan yang
+     * sudah disapa — persis yang tidak diinginkan.
+     */
+    public java.util.List<IntroPendingRow> getPromoIntroAll() {
+        return introRows(false);
+    }
+
+    private java.util.List<IntroPendingRow> introRows(boolean pendingOnly) {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String sql = "SELECT c." + DatabaseHelper.COL_ID + ", c." + DatabaseHelper.COL_NAME
                 + ", c." + DatabaseHelper.COL_LATITUDE + ", c." + DatabaseHelper.COL_LONGITUDE
+                + ", c." + DatabaseHelper.COL_SYNC_UUID + ", c." + DatabaseHelper.COL_PHONE
+                + ", c." + DatabaseHelper.COL_CREATED_AT
+                + ", c." + DatabaseHelper.COL_INTRO_WA_SENT_AT
+                + ", c." + DatabaseHelper.COL_CUST_ASSIGN_DEVICE
                 + ", substr(MIN(CASE WHEN t." + DatabaseHelper.COL_TOTAL_HARGA + "=0"
                 + "   AND substr(t." + DatabaseHelper.COL_TANGGAL + ",1,10)=substr(c." + DatabaseHelper.COL_CREATED_AT + ",1,10)"
                 + "   THEN t." + DatabaseHelper.COL_TANGGAL + " END),1,10) AS promo_day"
+                // ORDER KEMBALI (konversi) — definisi PERSIS sama dengan layar Pelanggan Promosi &
+                // laporan web: pembelian BERBAYAR pertama di hari LEBIH BARU dari hari daftar,
+                // TERTUNDA tak dihitung. Dipakai untuk mengeluarkan pelanggan yang sudah order ulang
+                // dari antrean perkenalan.
+                + ", MIN(CASE WHEN t." + DatabaseHelper.COL_TOTAL_HARGA + ">0"
+                + "   AND substr(t." + DatabaseHelper.COL_TANGGAL + ",1,10)>substr(c." + DatabaseHelper.COL_CREATED_AT + ",1,10)"
+                + "   AND COALESCE(t." + DatabaseHelper.COL_DELIVERY_STATUS + ",'')<>'TERTUNDA'"
+                + "   THEN substr(t." + DatabaseHelper.COL_TANGGAL + ",1,10) END) AS local_repeat"
                 + " FROM " + DatabaseHelper.TABLE_CUSTOMERS + " c"
                 + " LEFT JOIN " + DatabaseHelper.TABLE_TRANSACTIONS + " t ON t." + DatabaseHelper.COL_CUSTOMER_ID + "=c." + DatabaseHelper.COL_ID
                 + "   AND t." + DatabaseHelper.COL_TYPE + "='JUAL'"
                 + "   AND COALESCE(t." + DatabaseHelper.COL_CATATAN + ",'') NOT LIKE '%[PENCAIRAN KOMISI]%'"
-                + " WHERE c." + DatabaseHelper.COL_INTRO_WA_SENT_AT + " IS NULL"
+                + (pendingOnly ? " WHERE c." + DatabaseHelper.COL_INTRO_WA_SENT_AT + " IS NULL" : "")
                 + " GROUP BY c." + DatabaseHelper.COL_ID
                 + " HAVING (promo_day IS NOT NULL OR c." + DatabaseHelper.COL_SRV_PROMO_GALON + " > 0"
-                + "   OR c." + DatabaseHelper.COL_SRV_PROMO_PAID + " > 0)";
+                + "   OR c." + DatabaseHelper.COL_SRV_PROMO_PAID + " > 0)"
+                // Pelanggan yang SUDAH ORDER ULANG tak perlu disapa lagi — perkenalan itu untuk yang
+                // belum kembali. Hanya menyaring sisi "BELUM dikirim": yang sudah dikirim tetap
+                // tampil sebagai riwayat walau kemudian ia order ulang. Konversinya dilihat dari DUA
+                // sumber, sama seperti layar Pelanggan Promosi: transaksi berbayar LOKAL dan agregat
+                // server srv_first_paid (pembelian biasanya terjadi di HP depot, bukan di sini).
+                + " AND NOT (c." + DatabaseHelper.COL_INTRO_WA_SENT_AT + " IS NULL AND ("
+                + "     local_repeat IS NOT NULL"
+                + "     OR (c." + DatabaseHelper.COL_SRV_FIRST_PAID + " IS NOT NULL"
+                + "         AND substr(c." + DatabaseHelper.COL_SRV_FIRST_PAID + ",1,10)"
+                + "             > substr(c." + DatabaseHelper.COL_CREATED_AT + ",1,10))))"
+                // BELUM dikirim lebih dulu (yang paling lama menunggu di atas), lalu yang SUDAH
+                // (paling baru dikirim di atas) — urutan yang sama dipakai layar untuk memisahkan
+                // kedua kelompoknya, jadi tak ada penyortiran kedua di sisi Java.
+                + " ORDER BY (c." + DatabaseHelper.COL_INTRO_WA_SENT_AT + " IS NOT NULL) ASC,"
+                + " CASE WHEN c." + DatabaseHelper.COL_INTRO_WA_SENT_AT + " IS NULL"
+                + "   THEN COALESCE(promo_day, substr(c." + DatabaseHelper.COL_CREATED_AT + ",1,10)) END ASC,"
+                + " c." + DatabaseHelper.COL_INTRO_WA_SENT_AT + " DESC,"
+                + " c." + DatabaseHelper.COL_ID + " ASC";
         java.util.List<IntroPendingRow> out = new java.util.ArrayList<>();
         try (Cursor c = db.rawQuery(sql, null)) {
             while (c.moveToNext()) {
@@ -2262,6 +2321,12 @@ public class CustomerDao {
                 r.name = c.getString(1);
                 r.lat = c.isNull(2) ? 0 : c.getDouble(2);
                 r.lng = c.isNull(3) ? 0 : c.getDouble(3);
+                r.uuid = c.getString(4);
+                r.phone = c.getString(5);
+                r.createdAt = c.getString(6);
+                r.introSentAt = c.getString(7);
+                r.assignedDevice = c.getString(8);
+                r.promoDay = c.getString(9);
                 out.add(r);
             }
         }

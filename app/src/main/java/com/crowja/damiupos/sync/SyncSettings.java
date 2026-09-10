@@ -32,6 +32,12 @@ public class SyncSettings {
     /** Kode 3-karakter prefix ID transaksi struk perangkat ini (App\Support\ReceiptNumber di web)
      *  — datang dari /api/me. "" = belum diatur → cadangan "DEV" dipakai TransactionDao.insert. */
     private static final String K_RECEIPT_CODE = "sync_receipt_code";
+    /** Identitas ikon perangkat INI SENDIRI (App\Support\DeviceIcon) — datang dari /api/me, dipakai
+     *  pin "Posisi Anda" di panel Preview (peta+kompas+foto+detail gabungan) supaya perangkat ini
+     *  tampil dengan identitas yang SAMA di peta manapun (cermin LiveDeviceOverlay utk HP lain). */
+    private static final String K_DEVICE_ICON = "sync_device_icon";
+    private static final String K_DEVICE_COLOR = "sync_device_color";
+    private static final String K_DEVICE_VEHICLE = "sync_device_vehicle";
     /** Counter LOKAL (bukan kolom sinkron — key ini sengaja di luar SHAREABLE_KEYS) untuk urutan
      *  ID transaksi struk perangkat ini: "{DDMMYY}:{N}". Dipakai TransactionDao.insert() SENDIRI,
      *  offline — TIDAK boleh dihitung dari COUNT baris lokal transactions, karena tabel itu juga
@@ -70,6 +76,10 @@ public class SyncSettings {
     // ditugaskan" di layar buat transaksi (marketing/SPV). Cache lokal, disegarkan tiap heartbeat.
     private static final String K_DEVICE_ROSTER = "sync_device_roster";
     private static final String K_MAX_LOAD = "sync_max_load";
+    /** Batas "Pesanan Terlambat" khusus perangkat INI (menit) dari /api/me; 0 = ikut setelan cabang.
+     *  Dibaca SettingsDao.getDeliveryMaxAgeMinutes — kuncinya sengaja lokal (bukan SHAREABLE_KEYS)
+     *  supaya pengecualian satu perangkat tak pernah terdorong balik jadi angka cabang. */
+    public static final String K_DEVICE_MAX_AGE_MINUTES = "sync_delivery_max_age_minutes";
     // Wilayah penugasan (dari /api/me): pusat cabang {lat,lng} + sektor [{start,device,label}].
     // HP menghitung wilayah pelanggan → default perangkat saat buat trx + "Hanya Pelanggan Wilayah Saya".
     private static final String K_BRANCH_CENTER = "sync_branch_center";
@@ -132,6 +142,19 @@ public class SyncSettings {
 
     public void setMaxLoad(int v) { settings.set(K_MAX_LOAD, String.valueOf(Math.max(0, v))); }
 
+    /** Batas umur antrean khusus perangkat ini (menit) dari /api/me; 0 = tak ada pengecualian. */
+    public int getDeviceMaxAgeMinutes() {
+        try {
+            return Integer.parseInt(settings.get(K_DEVICE_MAX_AGE_MINUTES, "0"));
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    public void setDeviceMaxAgeMinutes(int v) {
+        settings.set(K_DEVICE_MAX_AGE_MINUTES, String.valueOf(Math.max(0, v)));
+    }
+
     /** Pusat cabang {lat,lng} (JSON) untuk hitung wilayah; "" bila belum diset. */
     public String getBranchCenter()       { return settings.get(K_BRANCH_CENTER, ""); }
     public void setBranchCenter(String v) { settings.set(K_BRANCH_CENTER, v != null ? v : ""); }
@@ -171,6 +194,13 @@ public class SyncSettings {
 
     public String getReceiptCode()       { return settings.get(K_RECEIPT_CODE, ""); }
     public void setReceiptCode(String v) { settings.set(K_RECEIPT_CODE, v != null ? v : ""); }
+
+    public String getDeviceIcon()        { return settings.get(K_DEVICE_ICON, ""); }
+    public void setDeviceIcon(String v)  { settings.set(K_DEVICE_ICON, v != null ? v : ""); }
+    public String getDeviceColor()       { return settings.get(K_DEVICE_COLOR, ""); }
+    public void setDeviceColor(String v) { settings.set(K_DEVICE_COLOR, v != null ? v : ""); }
+    public String getDeviceVehicle()       { return settings.get(K_DEVICE_VEHICLE, ""); }
+    public void setDeviceVehicle(String v) { settings.set(K_DEVICE_VEHICLE, v != null ? v : ""); }
 
     /**
      * Nomor urut LOKAL berikutnya untuk hari {@code dayKey} (format "ddMMyy") — dipakai menyusun

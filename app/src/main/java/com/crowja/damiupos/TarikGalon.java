@@ -48,9 +48,11 @@ import com.crowja.damiupos.sync.SyncScheduler;
  * pinjam-kembali di lapangan memang bisa tertinggal, dan memblokirnya akan memaksa staf
  * membatalkan penarikan yang sebenarnya sah.
  *
- * <p><b>Menghapus pelanggan HANYA untuk admin</b> (cermin {@code User.canDeleteCustomer()} yang
- * dipakai gerbang "Hapus" di Detail Pelanggan) — staf lapangan lain tetap bisa menarik galon tanpa
- * opsi hapus. Checkbox-nya default TAK TERCENTANG: menghapus pelanggan itu ireversibel (menghapus
+ * <p><b>Menghapus pelanggan: admin selalu, MARKETING hanya di layar tertentu.</b> Dasarnya tetap
+ * {@code User.canDeleteCustomer()} (gerbang "Hapus" di Detail Pelanggan), ditambah izin per-layar
+ * untuk marketing — sejauh ini "Pelanggan Promosi", karena kohor itu memang hasil kerjanya sendiri.
+ * Aturan lengkap & alasannya ada di {@link #canDelete}. Staf lapangan lain tetap bisa menarik galon
+ * tanpa opsi hapus. Checkbox-nya default TAK TERCENTANG: menghapus pelanggan itu ireversibel (menghapus
  * seluruh riwayat transaksi lokalnya juga — sama seperti peringatan di Detail Pelanggan), jadi
  * harus dipilih sengaja, bukan kebiasaan default.
  *
@@ -80,11 +82,43 @@ public final class TarikGalon {
      *  sejak dari menu, non-admin (yang tak akan pernah melihat checkbox-nya) tidak dijanjikan hal
      *  yang tak bisa mereka lakukan. */
     public static String menuLabel(Activity act) {
-        return UserDao.isCurrentUserAdmin(act) ? "📥 Tarik Galon & Hapus Pelanggan" : "📥 Tarik Galon";
+        return menuLabel(act, false);
+    }
+
+    /**
+     * @param marketingMayDelete layar ini mengizinkan MARKETING ikut menghapus (lihat
+     *                           {@link #canDelete}). Layar lain memanggil versi tanpa argumen.
+     */
+    public static String menuLabel(Activity act, boolean marketingMayDelete) {
+        return canDelete(act, marketingMayDelete) ? "📥 Tarik Galon & Hapus Pelanggan" : "📥 Tarik Galon";
+    }
+
+    /**
+     * Boleh menghapus pelanggan sekalian? Admin selalu boleh (cermin {@code User.canDeleteCustomer()}).
+     *
+     * <p>MARKETING boleh HANYA di layar yang menyerahkannya secara eksplisit — sejauh ini "Pelanggan
+     * Promosi". Kohor itu memang hasil kerja marketing sendiri: galon gratis yang ia bagikan dan
+     * pelanggan yang tak pernah konversi. Menariknya kembali lalu membersihkan barisnya adalah satu
+     * tindakan, dan memaksa marketing menunggu admin untuk langkah kedua meninggalkan pelanggan
+     * hantu di daftar semua orang.
+     *
+     * <p>SENGAJA tidak berlaku menyeluruh: di layar lain (mis. Daftar Kunjungan) marketing tetap
+     * hanya menarik galon. Ini juga membuat aturannya menyimpang dari web, yang masih admin-only —
+     * penghapusan dari HP tersinkron sebagai tombstone tanpa membawa peran, jadi gerbangnya memang
+     * hanya ada di sisi HP.
+     */
+    private static boolean canDelete(Activity act, boolean marketingMayDelete) {
+        return UserDao.isCurrentUserAdmin(act)
+                || (marketingMayDelete && UserDao.isCurrentUserMarketing(act));
     }
 
     /** Muat saldo + sisa promo pelanggan di background lalu tampilkan dialog penarikan. */
     public static void show(Activity act, long customerId, Runnable onSaved) {
+        show(act, customerId, false, onSaved);
+    }
+
+    /** @param marketingMayDelete lihat {@link #menuLabel(Activity, boolean)}. */
+    public static void show(Activity act, long customerId, boolean marketingMayDelete, Runnable onSaved) {
         DatabaseHelper dbh = DatabaseHelper.getInstance(act);
         TransactionDao tdao = new TransactionDao(dbh);
         CustomerDao cdao = new CustomerDao(dbh);
@@ -94,7 +128,7 @@ public final class TarikGalon {
             // penarikannya bisa dari perangkat lain — hitungan lokal saja membuat sisa promo salah.
             int promo = cdao.mergedPromoGalon(customerId);
             int pulled = cdao.mergedPromoPulledGalon(customerId);
-            boolean canDelete = UserDao.isCurrentUserAdmin(act);
+            boolean canDelete = canDelete(act, marketingMayDelete);
             act.runOnUiThread(() -> {
                 if (act.isFinishing() || act.isDestroyed()) return;
                 render(act, tdao, cdao, cust, Math.max(0, promo - pulled), canDelete, onSaved);
@@ -182,8 +216,11 @@ public final class TarikGalon {
                         etQty.setError("Angka tidak valid");
                         return;
                     }
-                    if (qty < 1) { etQty.setError("Minimal 1 galon"); return; }
                     boolean deleteAfter = cbDelete != null && cbDelete.isChecked();
+                    // 0 galon hanya masuk akal kalau sekalian menghapus pelanggan — kalau tidak,
+                    // tak ada yang terjadi sama sekali dan itu memang harus diblokir.
+                    if (qty < 1 && !deleteAfter) { etQty.setError("Minimal 1 galon"); return; }
+                    if (qty < 0) { etQty.setError("Angka tidak valid"); return; }
                     // Lebih-tarik hanya DIKONFIRMASI, tidak diblokir — lihat alasannya di docblock.
                     if (saldo > 0 && qty > saldo) {
                         new AlertDialog.Builder(act)
@@ -247,7 +284,9 @@ public final class TarikGalon {
                         MARKER + " " + plainPart + " galon ditarik dari pelanggan") ? plainPart : 0;
             }
 
-            if (written <= 0) {
+            // qty 0 memang tak menulis transaksi apa pun — sah selama sekalian menghapus
+            // pelanggan (satu-satunya alasan UI mengizinkan 0 lolos validasi di atas).
+            if (written <= 0 && !(qty == 0 && deleteAfter)) {
                 act.runOnUiThread(() -> {
                     if (act.isFinishing() || act.isDestroyed()) return;
                     Toast.makeText(act, "Gagal menyimpan penarikan galon", Toast.LENGTH_SHORT).show();
@@ -256,10 +295,12 @@ public final class TarikGalon {
             }
 
             String who = cust.getName() != null ? cust.getName() : "pelanggan";
-            String pullMsg = promoPart > 0 && plainPart > 0
-                    ? "📥 " + written + " galon ditarik dari " + who
-                      + " (" + promoPart + " promosi + " + plainPart + " biasa)"
-                    : "📥 " + written + " galon ditarik dari " + who;
+            String pullMsg = written <= 0
+                    ? "Tidak ada galon ditarik dari " + who
+                    : (promoPart > 0 && plainPart > 0
+                        ? "📥 " + written + " galon ditarik dari " + who
+                          + " (" + promoPart + " promosi + " + plainPart + " biasa)"
+                        : "📥 " + written + " galon ditarik dari " + who);
 
             if (!deleteAfter) {
                 SyncScheduler.syncNow(act.getApplicationContext());

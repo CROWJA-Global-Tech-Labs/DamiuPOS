@@ -8,7 +8,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.ArrayAdapter;
-import android.widget.Spinner;
+import android.widget.AutoCompleteTextView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -42,8 +42,8 @@ public class LoginActivity extends AppCompatActivity {
     private SettingsDao settingsDao;
     private List<User> users;
     private User pendingUser; // user yang sudah lolos PIN, menunggu selfie
-    private Spinner spUser;
-    private ArrayAdapter<User> userAdapter;
+    private AutoCompleteTextView etUser;
+    private ArrayAdapter<String> userAdapter;
     private TextView tvSyncStatus;
 
     /** Segarkan daftar staf saat sinkron membawa data baru (mis. karyawan baru
@@ -116,17 +116,24 @@ public class LoginActivity extends AppCompatActivity {
             }
         }
 
-        spUser = findViewById(R.id.spUser);
+        etUser = findViewById(R.id.etUser);
         userAdapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, new java.util.ArrayList<>(users));
-        userAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        spUser.setAdapter(userAdapter);
+                android.R.layout.simple_dropdown_item_1line, namesOf(users));
+        etUser.setAdapter(userAdapter);
 
         TextInputEditText etPin = findViewById(R.id.etPin);
         findViewById(R.id.btnLogin).setOnClickListener(v -> {
-            User selected = (User) spUser.getSelectedItem();
+            String typed = etUser.getText() != null ? etUser.getText().toString().trim() : "";
+            if (typed.isEmpty()) {
+                etUser.setError("Ketik nama pengguna");
+                return;
+            }
+            User selected = this.resolveTypedUser(typed);
+            if (selected == null) {
+                etUser.setError("Pengguna tidak ditemukan");
+                return;
+            }
             String pin = etPin.getText() != null ? etPin.getText().toString().trim() : "";
-            if (selected == null) return;
             if (pin.isEmpty()) {
                 etPin.setError("Masukkan PIN");
                 return;
@@ -197,24 +204,34 @@ public class LoginActivity extends AppCompatActivity {
         try { unregisterReceiver(syncReceiver); } catch (Exception ignored) {}
     }
 
-    /** Muat ulang daftar staf aktif ke spinner, mempertahankan pilihan saat ini. */
+    /** Muat ulang daftar saran nama staf aktif — apa yang sudah diketik user dibiarkan apa adanya. */
     private void reloadUsers() {
-        if (userDao == null || userAdapter == null || spUser == null) return;
-        Object sel = spUser.getSelectedItem();
-        long selId = sel instanceof User ? ((User) sel).getId() : -1;
+        if (userDao == null || userAdapter == null || etUser == null) return;
         // Hormati whitelist "boleh login" perangkat ini (sama seperti onCreate) — jangan
         // memunculkan kembali staf yang tak diizinkan saat sinkron membawa data baru.
         List<User> fresh = userDao.getActiveForLogin(
                 new com.crowja.damiupos.sync.SyncSettings(settingsDao).getDeviceUuid());
         users = fresh;
         userAdapter.clear();
-        userAdapter.addAll(fresh);
+        userAdapter.addAll(namesOf(fresh));
         userAdapter.notifyDataSetChanged();
-        if (selId > 0) {
-            for (int i = 0; i < fresh.size(); i++) {
-                if (fresh.get(i).getId() == selId) { spUser.setSelection(i); break; }
-            }
+    }
+
+    private static java.util.List<String> namesOf(List<User> list) {
+        java.util.List<String> names = new java.util.ArrayList<>(list.size());
+        for (User u : list) names.add(u.getName());
+        return names;
+    }
+
+    /** Nama yang diketik → User whitelist ini (cocok persis, tanpa besar-kecil huruf/spasi tepi);
+     *  null bila tak ada yang cocok. Beberapa staf boleh berbagi nama sama di dunia nyata — yang
+     *  pertama dalam daftar whitelist menang, cukup untuk kasus umum satu perangkat per staf. */
+    private User resolveTypedUser(String typed) {
+        if (users == null) return null;
+        for (User u : users) {
+            if (u.getName() != null && u.getName().trim().equalsIgnoreCase(typed)) return u;
         }
+        return null;
     }
 
     /** Tampilkan status koneksi server di footer login + sesuaikan label tombol. */

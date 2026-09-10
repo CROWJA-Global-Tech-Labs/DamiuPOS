@@ -774,11 +774,18 @@ public class ReceiptActivity extends AppCompatActivity {
                         galon += gift.qty;
                     }
 
-                    new TransactionDao(DatabaseHelper.getInstance(this))
-                            .applyGiftItems(trxId, items, total, galon);
+                    TransactionDao tdaoGift = new TransactionDao(DatabaseHelper.getInstance(this));
+                    tdaoGift.applyGiftItems(trxId, items, total, galon);
+                    // Order yang masih di antrean delivery (PENDING/TERTUNDA) belum sungguh sampai
+                    // ke pelanggan — gift-nya baru DILEKATKAN, "sungguh diberikan" menunggu Selesai
+                    // (TransactionDao.markDelivered → CustomerGiftDao.finalizeAttachedForTransaction).
+                    com.crowja.damiupos.model.Transaction freshTrx = tdaoGift.getById(trxId);
+                    String ds = freshTrx != null ? freshTrx.getDeliveryStatus() : null;
+                    boolean queued = com.crowja.damiupos.model.Transaction.DELIVERY_PENDING.equals(ds)
+                            || com.crowja.damiupos.model.Transaction.DELIVERY_TERTUNDA.equals(ds);
                     giftDao.redeemOne(gift.localId, trxUuid,
                             new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this))
-                                    .getCurrentUserName());
+                                    .getCurrentUserName(), queued);
 
                     // Struk digambar ulang dari extras → perbarui dulu, lalu susun ulang layar ini.
                     getIntent().putExtra(EXTRA_ITEMS_JSON, TransactionItem.listToJson(items));

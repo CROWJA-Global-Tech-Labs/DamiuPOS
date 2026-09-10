@@ -100,6 +100,12 @@ public class User {
      *  hanya perlu antrian & transaksinya sendiri, dan layar ini memuat omzet seluruh cabang. */
     public boolean canViewSalesAchievement() { return isAdmin() || isMarketing(); }
 
+    /** Layar "Rekor Pengiriman" (hari &amp; bulan terbaik tiap perangkat): Staf, SPV, dan Admin.
+     *  Beda dari {@link #canViewSalesAchievement()} yang menutup pintu bagi Staf — layar itu memuat
+     *  OMZET se-cabang, sedangkan yang ini cuma hitungan order selesai, dan justru kurirlah yang
+     *  paling berkepentingan melihat rekornya sendiri. Marketing/Viewer tak mengantar. */
+    public boolean canViewDeliveryRecord() { return isStaf() || isSpv() || isAdmin(); }
+
     /** @deprecated pakai {@link #canGiveFree()} — dipertahankan untuk pemanggil lama. */
     public boolean canPromote() { return canGiveFree(); }
 

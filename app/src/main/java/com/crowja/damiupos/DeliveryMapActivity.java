@@ -603,7 +603,15 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  else{meMarker.setLatLng([lat,lng]);}\n" +
                 "  redrawOpenDispatchLines();\n" +
                 "}\n" +
-                "function goMe(){if(meMarker){map.setView(meMarker.getLatLng(),16);}}\n" +
+                // Belum ada fix GPS live di HP ini (baru buka peta, sinyal lemah, dll) → pakai
+                // posisi terakhir perangkat ini yang sudah tersimpan di server, sama seperti
+                // yang dipakai untuk melacak perangkat lain lewat legenda.
+                "function goMe(){\n" +
+                "  if(meMarker){ map.setView(meMarker.getLatLng(),16); return; }\n" +
+                "  var ll=myUuid?deviceLatLng(myUuid):null;\n" +
+                "  if(ll){ map.setView(ll,16); }\n" +
+                "  else { toast('Posisi GPS belum didapat, tunggu sebentar lalu coba lagi.'); }\n" +
+                "}\n" +
                 "</script></body></html>";
     }
 }

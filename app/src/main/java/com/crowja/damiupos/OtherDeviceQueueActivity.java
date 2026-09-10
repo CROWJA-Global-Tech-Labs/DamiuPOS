@@ -77,6 +77,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        lateMs = (long) new SettingsDao(DatabaseHelper.getInstance(this)).getDeliveryMaxAgeMinutes() * 60000L;
         setContentView(R.layout.activity_other_device_queue);
 
         String deviceUuid = getIntent().getStringExtra(EXTRA_DEVICE_UUID);
@@ -192,18 +193,24 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
     /** Ambang peringatan lama menunggu — sama dengan Antrian Saya & dashboard web. */
     private static final long QUEUE_WARN_MS = 60L * 60 * 1000;       // 1 jam → kuning berkedip
     private static final long QUEUE_LATE_MS = 2L * 60 * 60 * 1000;   // 2 jam → merah berkedip lebih cepat
+    /** Batas umur "TERLAMBAT" cabang (delivery_max_age_minutes) dalam ms; 0 = fitur mati. Dibaca
+     *  sekali di onCreate -- cermin field yang sama di DeliveryQueueActivity. */
+    private static long lateMs = 0L;
 
     /** Warnai + kedipkan badge umur pesanan: &lt;1 jam HIJAU diam, ≥1 jam KUNING berkedip, ≥2 jam
-     *  MERAH berkedip lebih cepat. Cermin PERSIS DeliveryQueueActivity.applyQueueTimerState (beda
+     *  MERAH berkedip lebih cepat, dan >= batas umur cabang MERAH TUA = TERLAMBAT.
+     *  Cermin PERSIS DeliveryQueueActivity.applyQueueTimerState (beda
      *  hanya warna netral: hijau di sini vs abu-abu di Antrian Saya — layar ini tak punya makna
      *  "baru masuk, belum perlu perhatian" netral yang sama, jadi hijau eksplisit lebih jelas). */
     private static void applyQueueTimerState(TextView tv, long elapsedMs) {
-        final int level = elapsedMs >= QUEUE_LATE_MS ? 2 : (elapsedMs >= QUEUE_WARN_MS ? 1 : 0);
+        final int level = lateMs > 0 && elapsedMs >= lateMs ? 3
+                : elapsedMs >= QUEUE_LATE_MS ? 2 : (elapsedMs >= QUEUE_WARN_MS ? 1 : 0);
         Object prev = tv.getTag(R.id.tvQueued);
         boolean changed = !(prev instanceof Integer) || (Integer) prev != level;
         if (changed) {
             tv.setTag(R.id.tvQueued, level);
-            tv.setBackgroundResource(level == 2 ? R.drawable.bg_pending_badge
+            tv.setBackgroundResource(level == 3 ? R.drawable.bg_queue_timer_danger
+                    : level == 2 ? R.drawable.bg_pending_badge
                     : level == 1 ? R.drawable.bg_queue_timer_warn
                     : R.drawable.bg_queue_timer_ok_green);
         }
@@ -214,8 +221,8 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         }
         if (!changed && tv.getAnimation() != null) return;   // sudah berkedip pada tingkat yang sama
         android.view.animation.AlphaAnimation blink =
-                new android.view.animation.AlphaAnimation(1f, level == 2 ? 0.2f : 0.35f);
-        blink.setDuration(level == 2 ? 350 : 650);
+                new android.view.animation.AlphaAnimation(1f, level >= 3 ? 0.15f : level == 2 ? 0.2f : 0.35f);
+        blink.setDuration(level >= 3 ? 250 : level == 2 ? 350 : 650);
         blink.setRepeatMode(android.view.animation.Animation.REVERSE);
         blink.setRepeatCount(android.view.animation.Animation.INFINITE);
         tv.startAnimation(blink);
@@ -427,7 +434,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
                 int pos = vh.getAdapterPosition();
                 if (pos >= 0 && pos < data.size() && vh instanceof VH) {
                     long ms = elapsedMillis(data.get(pos).optString("queued_at", null));
-                    ((VH) vh).tvQueued.setText("⏱ " + formatElapsedBadge(ms));
+                    ((VH) vh).tvQueued.setText((lateMs > 0 && ms >= lateMs ? "🚨 " : "⏱ ") + formatElapsedBadge(ms));
                     applyQueueTimerState(((VH) vh).tvQueued, ms);
                 }
             }
@@ -495,7 +502,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
             }
 
             long queuedMs = elapsedMillis(q.optString("queued_at", null));
-            h.tvQueued.setText("⏱ " + formatElapsedBadge(queuedMs));
+            h.tvQueued.setText((lateMs > 0 && queuedMs >= lateMs ? "🚨 " : "⏱ ") + formatElapsedBadge(queuedMs));
             applyQueueTimerState(h.tvQueued, queuedMs);
 
             // Jarak dari posisi kurir ini ke titik antar order.

@@ -74,21 +74,36 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Pilih Pengguna"
+                    android:text="Nama Pengguna"
                     android:textColor="@color/text_primary"
                     android:textSize="14sp"
                     android:textStyle="bold" />
 
-                <Spinner
-                    android:id="@+id/spUser"
+                <!-- Diketik, bukan dipilih dari daftar turun — AutoCompleteTextView tetap
+                     menyarankan nama yang cocok sambil mengetik (mengurangi typo terhadap nama
+                     staf yang sebenarnya), lihat LoginActivity#resolveTypedUser. -->
+                <com.google.android.material.textfield.TextInputLayout
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:layout_marginTop="6dp" />
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    android:hint="Ketik nama pengguna">
+
+                    <AutoCompleteTextView
+                        android:id="@+id/etUser"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="56dp"
+                        android:inputType="textPersonName"
+                        android:textSize="16sp"
+                        android:completionThreshold="1" />
+                </com.google.android.material.textfield.TextInputLayout>
 
                 <com.google.android.material.textfield.TextInputLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                     android:hint="PIN"
                     app:passwordToggleEnabled="true">
 
@@ -96,7 +111,9 @@
                         android:id="@+id/etPin"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
+                        android:minHeight="56dp"
                         android:inputType="numberPassword"
+                        android:textSize="16sp"
                         android:maxLength="8" />
                 </com.google.android.material.textfield.TextInputLayout>
 

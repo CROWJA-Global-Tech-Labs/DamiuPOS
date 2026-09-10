@@ -46,6 +46,13 @@ public final class LiveDeviceOverlay {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean running;
 
+    /**
+     * Perangkat yang HALAMANNYA sudah menggambar sendiri (lihat {@link #excluding}). Disaring saat
+     * RENDER, bukan saat fetch: {@link #cachedJson} dibagi ke semua layar, jadi menyaringnya di
+     * fetch akan membuat satu layar mencuri pin milik layar lain.
+     */
+    private String excludeUuid = "";
+
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             if (!running) {
@@ -59,6 +66,20 @@ public final class LiveDeviceOverlay {
     public LiveDeviceOverlay(Activity act, WebView web) {
         this.act = act;
         this.web = web;
+    }
+
+    /**
+     * Jangan gambar perangkat ini -- halamannya sudah punya pin sendiri untuknya.
+     *
+     * <p>Tanpa ini, peta yang menggambar pin "konteks"-nya sendiri (mis. panel Preview antrean
+     * perangkat lain, yang memberi pin kurir pemegang order sebuah kedipan + garis putus-putus ke
+     * tujuan) berakhir dengan DUA ikon kendaraan untuk kurir yang sama: satu berkedip, satu tidak.
+     * Bukan sekadar jelek -- anti-tumpuk lalu menyebar keduanya, jadi tampak seperti dua kurir.
+     */
+    public LiveDeviceOverlay excluding(String deviceUuid) {
+        this.excludeUuid = deviceUuid == null ? "" : deviceUuid.trim();
+
+        return this;
     }
 
     /** Panggil dari {@code onPageFinished} peta mana pun. Aman dipanggil berkali-kali. */
@@ -131,7 +152,13 @@ public final class LiveDeviceOverlay {
     }
 
     private void render(String json) {
-        eval("window.__liveDev&&window.__liveDev.render(" + json + ");");
+        eval("window.__liveDev&&window.__liveDev.render(" + json + ",\'" + safeUuid(excludeUuid) + "\');");
+    }
+
+    /** Uuid disisipkan ke dalam literal JS, jadi sisakan hanya karakter yang memang bisa muncul
+     *  pada uuid -- tak ada kutip yang bisa lolos dan mematahkan skripnya. */
+    private static String safeUuid(String s) {
+        return s == null ? "" : s.replaceAll("[^A-Za-z0-9-]", "");
     }
 
     private void eval(String js) {
@@ -216,13 +243,15 @@ public final class LiveDeviceOverlay {
             + "    });\n"
             + "  });\n"
             + "}\n"
-            + "function render(list){\n"
+            + "function render(list,skip){\n"
             + "  if(typeof map==='undefined'||!map||!window.L) return;\n"
             + "  if(!layer) layer=L.layerGroup().addTo(map);\n"
             + "  last=list||[];\n"
             + "  var seen={};\n"
             + "  last.forEach(function(p){\n"
             + "    if(!p||typeof p.lat!=='number'||typeof p.lng!=='number') return;\n"
+            // Halaman ini sudah menggambar pin untuk perangkat itu (LiveDeviceOverlay.excluding).
+            + "    if(skip&&p.device_uuid===skip) return;\n"
             + "    seen[p.device_uuid]=1;\n"
             + "    var html='<div class=\"ldevpin\" style=\"background:'+(p.color||'#475569')+'\">'"
             + "+(p.vehicle||p.icon||'🛵')+'</div>';\n"

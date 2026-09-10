@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 92;
+    private static final int DATABASE_VERSION = 95;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -105,6 +105,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_VISITED_AT = "visited_at";
     /** Label perangkat asal pelanggan (nama device, atau "Web") — untuk tag di daftar mobile. */
     public static final String COL_ORIGIN_LABEL = "origin_label";
+    /** "Pesan Cepat" — link publik satu-produk (App\Support\QuickOrder di web), NULL bila riwayat
+     *  pelanggan ini belum layak (bukan satu produk, atau belum ≥3 order). Server-authoritative,
+     *  pull-only — sama pola dengan origin_label/desa. Ditempel WhatsAppFollowUp ke pesan follow-up. */
+    public static final String COL_QUICK_ORDER_LINK = "quick_order_link";
     // Desa/Kecamatan hasil reverse-geocode koordinat (server-authoritative, pull-only — lihat
     // App\Console\Commands\GeocodeCustomers di web). Dusun sengaja tak ada — bukan level
     // administratif resmi Indonesia, tak ada sumber data yang bisa diandalkan.
@@ -521,6 +525,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_SRV_PROMO_PAID + " INTEGER DEFAULT 0, " +
                     COL_VISITED_AT + " TEXT, " +
                     COL_ORIGIN_LABEL + " TEXT, " +
+                    COL_QUICK_ORDER_LINK + " TEXT, " +
                     COL_SRV_SALDO + " REAL DEFAULT 0, " +
                     COL_SRV_PAID_JUAL_COUNT + " INTEGER DEFAULT 0, " +
                     COL_FOLLOWUP_EXCLUDED_AT + " TEXT, " +
@@ -881,6 +886,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String TABLE_CUSTOMER_GIFTS = "customer_gifts";
     public static final String COL_GIFT_CUSTOMER_ID = "customer_id";   // local ref → customers._id (→ customer_uuid)
     public static final String COL_GIFT_ITEM_TYPE = "item_type";        // product | custom
+    /** Dilekatkan ke transaksi ini (struk sudah menjanjikannya) tapi BELUM Selesai — beda dari
+     *  {@link #COL_GIFT_REDEEMED_AT} (sungguh diberikan). Null = belum dilekatkan ke mana pun.
+     *  Cermin App\Support\Gifts::finalizeAttachedForTransaction di web. */
+    public static final String COL_GIFT_PENDING_TRX_UUID = "pending_transaction_uuid";
     public static final String COL_GIFT_PRODUCT_UUID = "product_uuid";  // raw (tak di-resolve lokal)
     public static final String COL_GIFT_ITEM_NAME = "item_name";        // snapshot nama item
     public static final String COL_GIFT_QTY = "qty";
@@ -901,6 +910,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_GIFT_REDEEMED_AT + " TEXT, " +
                     COL_GIFT_REDEEMED_TRX_UUID + " TEXT, " +
                     COL_GIFT_REDEEMED_BY + " TEXT, " +
+                    COL_GIFT_PENDING_TRX_UUID + " TEXT, " +
                     COL_CREATED_AT + " TEXT, " +
                     COL_SYNC_UUID + " TEXT, " +
                     COL_EDITED_AT + " TEXT, " +
@@ -1673,6 +1683,23 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             tryExec(db, "ALTER TABLE " + TABLE_ATTENDANCE + " ADD COLUMN " + COL_ATT_DISTANCE_M + " INTEGER");
             tryExec(db, "ALTER TABLE " + TABLE_ATTENDANCE + " ADD COLUMN " + COL_ATT_RADIUS_REASON + " TEXT");
         }
+        if (oldVersion < 93) {
+            // Layar "Riwayat Pengiriman" mengurutkan ribuan baris DONE per delivery_done_at; tanpa
+            // indeks ini daftarnya memindai seluruh tabel tiap dibuka. DITULIS INLINE, bukan lewat
+            // createIndexes(): metode itu hanya jalan dari onCreate + blok oldVersion<46, jadi
+            // perangkat yang UPGRADE tak akan pernah menjalankannya (lihat catatan di sana).
+            tryExec(db, "CREATE INDEX IF NOT EXISTS idx_trx_delivery_done ON " + TABLE_TRANSACTIONS
+                + "(" + COL_DELIVERY_DONE_AT + ") WHERE " + COL_DELIVERY_DONE_AT + " IS NOT NULL");
+        }
+        if (oldVersion < 94) {
+            // "Pesan Cepat" — link satu-produk (App\Support\QuickOrder di web), server-authoritative
+            // & pull-only, sama pola dengan origin_label/desa. Aditif, aman perangkat live.
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_QUICK_ORDER_LINK + " TEXT");
+        }
+        if (oldVersion < 95) {
+            // Gift "dilekatkan tapi belum Selesai" — cermin App\Support\Gifts pending_transaction_uuid.
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMER_GIFTS + " ADD COLUMN " + COL_GIFT_PENDING_TRX_UUID + " TEXT");
+        }
     }
 
     /** @see #onUpgrade — dipanggil sekali saat naik ke versi 81. */
@@ -1797,6 +1824,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         tryExec(db, "CREATE INDEX IF NOT EXISTS idx_att_dirty ON " + TABLE_ATTENDANCE + "(" + COL_SYNCED + ") WHERE " + COL_SYNCED + "=0");
         tryExec(db, "CREATE INDEX IF NOT EXISTS idx_inbox_dirty ON " + TABLE_ORDER_INBOX + "(" + COL_SYNCED + ") WHERE " + COL_SYNCED + "=0");
         tryExec(db, "CREATE INDEX IF NOT EXISTS idx_trx_delivery ON " + TABLE_TRANSACTIONS + "(" + COL_DELIVERY_STATUS + ") WHERE " + COL_DELIVERY_STATUS + " IS NOT NULL");
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_trx_delivery_done ON " + TABLE_TRANSACTIONS
+                + "(" + COL_DELIVERY_DONE_AT + ") WHERE " + COL_DELIVERY_DONE_AT + " IS NOT NULL");
         // attendance(user_id, ts) — tiap insert transaksi cek hasInToday + semua query shift.
         tryExec(db, "CREATE INDEX IF NOT EXISTS idx_att_user_ts ON " + TABLE_ATTENDANCE + "(" + COL_ATT_USER_ID + "," + COL_ATT_TS + ")");
         // order_inbox.status / expenses.category / salary_items.user_id.

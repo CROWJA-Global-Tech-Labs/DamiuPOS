@@ -172,7 +172,11 @@ public class TransactionDao {
                     DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(id)}, null, null, null)) {
                 if (uc.moveToFirst()) trxUuid = uc.getString(0);
             }
-            new CustomerGiftDao(dbHelper).redeemForTransaction(db, trx.getCustomerId(), trxUuid, operator);
+            // Order yang masih masuk antrean delivery (PENDING/TERTUNDA) belum sungguh sampai ke
+            // pelanggan — gift-nya baru DILEKATKAN, bukan "sungguh diberikan" (lihat CustomerGiftDao).
+            boolean queued = Transaction.DELIVERY_PENDING.equals(trx.getDeliveryStatus())
+                    || Transaction.DELIVERY_TERTUNDA.equals(trx.getDeliveryStatus());
+            new CustomerGiftDao(dbHelper).redeemForTransaction(db, trx.getCustomerId(), trxUuid, operator, queued);
         }
         // Jaring pengaman integritas: kalau pelanggan ini belum ada di web dashboard
         // (synced=0 → belum terkonfirmasi terkirim), dorong SELURUH riwayat transaksi
@@ -360,9 +364,88 @@ public class TransactionDao {
      * Antrian delivery (JUAL PENDING) terlama dulu, lengkap dengan data pelanggan
      * (nama/telepon/koordinat) untuk navigasi. Item terisi dari items_json.
      */
+    /**
+     * "Riwayat Pengiriman": order yang SUDAH ditandai Selesai, terbaru dulu.
+     *
+     * <p>Cakupannya PERANGKAT INI saja — transaksi sengaja terisolasi per-perangkat di lapisan sync
+     * ({@see com.crowja.damiupos.sync.SyncEngine}), jadi HP ini memang tak pernah memegang baris
+     * milik perangkat lain. Layarnya menyatakan batasan itu terang-terangan, bukan menyamarkannya.
+     *
+     * <p>Dua hal yang beda dari {@link #getDeliveryQueue()} dan disengaja:
+     * <ul>
+     *   <li>Dedup salinan memakai GROUP BY sekali-jalan, bukan subquery berkorelasi. Di antrian
+     *       subquery itu murah (baris PENDING sedikit); di riwayat barisnya bisa ribuan dan
+     *       subquery-per-baris terasa berat di HP lama. MIN(_id) membuat SQLite mengambil kolom
+     *       polos dari baris yang menang, jadi hasilnya sama.</li>
+     *   <li>Urutan memakai {@link Ts#localExpr} atas delivery_done_at. Kolom itu campur bentuk:
+     *       ditulis HP sebagai waktu lokal, dan datang dari server sebagai ISO-UTC berakhiran Z.
+     *       Mengurutkan teks mentahnya akan mengacak baris asal-HP dengan baris asal-web.</li>
+     * </ul>
+     *
+     * <p>Foto bukti diberi alias eksplisit (proof_path/proof_url): nama kolom photo_path/photo_url
+     * dipakai bersama tabel customers, dan tanpa alias getColumnIndex() bisa mengambil milik
+     * pelanggan alih-alih milik transaksi.
+     *
+     * @param limit jumlah maksimum baris (0 / negatif = tanpa batas)
+     */
+    public List<Transaction> getDeliveryHistory(int limit) {
+        List<Transaction> list = new ArrayList<>();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String doneLocal = Ts.localExpr("t." + DatabaseHelper.COL_DELIVERY_DONE_AT);
+        String sql = "SELECT t.*, MIN(t." + DatabaseHelper.COL_TRX_ID + ") AS pick_id, "
+                + "c." + DatabaseHelper.COL_NAME + " AS cust_name, "
+                + "c." + DatabaseHelper.COL_PHONE + " AS cust_phone, "
+                + "c." + DatabaseHelper.COL_ADDRESS + " AS cust_addr, "
+                + "c." + DatabaseHelper.COL_LATITUDE + " AS cust_lat, "
+                + "c." + DatabaseHelper.COL_LONGITUDE + " AS cust_lng, "
+                + "t." + DatabaseHelper.COL_PHOTO_PATH + " AS proof_path, "
+                + "t." + DatabaseHelper.COL_PHOTO_URL + " AS proof_url "
+                + "FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t "
+                + "LEFT JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c ON c."
+                + DatabaseHelper.COL_ID + " = t." + DatabaseHelper.COL_CUSTOMER_ID + " "
+                + "WHERE t." + DatabaseHelper.COL_DELIVERY_STATUS + " = ? "
+                + "GROUP BY COALESCE(t." + DatabaseHelper.COL_SYNC_UUID + ", t." + DatabaseHelper.COL_DELIVERY_TOKEN
+                + ", CAST(t." + DatabaseHelper.COL_TRX_ID + " AS TEXT)) "
+                + "ORDER BY " + doneLocal + " DESC, t." + DatabaseHelper.COL_TRX_ID + " DESC"
+                + (limit > 0 ? " LIMIT " + limit : "");
+        try (Cursor c = db.rawQuery(sql, new String[]{Transaction.DELIVERY_DONE})) {
+            while (c.moveToNext()) {
+                Transaction t = new Transaction();
+                t.setId(getLong(c, DatabaseHelper.COL_TRX_ID));
+                t.setCustomerId(getLong(c, DatabaseHelper.COL_CUSTOMER_ID));
+                t.setType(getStr(c, DatabaseHelper.COL_TYPE));
+                t.setJumlahGalon((int) getLong(c, DatabaseHelper.COL_JUMLAH_GALON));
+                t.setTotalHarga(getDouble(c, DatabaseHelper.COL_TOTAL_HARGA));
+                t.setOngkir(getDouble(c, DatabaseHelper.COL_ONGKIR));
+                t.setTanggal(getStr(c, DatabaseHelper.COL_TANGGAL));
+                t.setCatatan(getStr(c, DatabaseHelper.COL_CATATAN));
+                t.setDeliveryStatus(getStr(c, DatabaseHelper.COL_DELIVERY_STATUS));
+                t.setDeliveryQueuedAt(getStr(c, DatabaseHelper.COL_DELIVERY_QUEUED_AT));
+                t.setDeliveryDoneAt(getStr(c, DatabaseHelper.COL_DELIVERY_DONE_AT));
+                t.setDeliveryToken(getStr(c, DatabaseHelper.COL_DELIVERY_TOKEN));
+                t.setCompletedByName(getStr(c, DatabaseHelper.COL_COMPLETED_BY_NAME));
+                t.setProofPath(getStr(c, "proof_path"));
+                t.setProofUrl(getStr(c, "proof_url"));
+                t.setCustomerName(getStr(c, "cust_name"));
+                t.setCustomerPhone(getStr(c, "cust_phone"));
+                t.setCustomerAddress(getStr(c, "cust_addr"));
+                t.setCustomerLat(getDouble(c, "cust_lat"));
+                t.setCustomerLng(getDouble(c, "cust_lng"));
+                list.add(t);
+            }
+        } catch (Exception ignored) {
+            // Riwayat bersifat informatif; kegagalan baca tak boleh menjatuhkan layar.
+        }
+
+        return list;
+    }
+
     public List<Transaction> getDeliveryQueue() {
         List<Transaction> list = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
+        // Batas umur antrean cabang (menit). Disisipkan sebagai literal karena ia bagian dari
+        // ekspresi datetime(), bukan nilai yang bisa di-bind sebagai argumen.
+        int lateMinutes = new SettingsDao(dbHelper).getDeliveryMaxAgeMinutes();
         String sql = "SELECT t.*, c." + DatabaseHelper.COL_NAME + " AS cust_name, "
                 + "c." + DatabaseHelper.COL_PHONE + " AS cust_phone, "
                 + "c." + DatabaseHelper.COL_ADDRESS + " AS cust_addr, "
@@ -381,7 +464,13 @@ public class TransactionDao {
                 + ") THEN 1 ELSE 0 END) AS cust_priority, "
                 // ⚡ Prioritas PENGIRIMAN ini saja (ditandai operator web) — turunan untuk ORDER BY.
                 + "(CASE WHEN t." + DatabaseHelper.COL_DELIVERY_PRIORITY_AT + " IS NOT NULL AND t."
-                + DatabaseHelper.COL_DELIVERY_PRIORITY_AT + " <> '' THEN 1 ELSE 0 END) AS ord_priority "
+                + DatabaseHelper.COL_DELIVERY_PRIORITY_AT + " <> '' THEN 1 ELSE 0 END) AS ord_priority, "
+                // TERLAMBAT: sudah lebih tua dari batas umur cabang. Turunan MURNI dari
+                // delivery_queued_at -- lihat DeliveryQueueActivity.isLate untuk alasan kenapa umur
+                // tak pernah ditulis ke kolom prioritas.
+                + "(CASE WHEN t." + DatabaseHelper.COL_DELIVERY_QUEUED_AT + " IS NOT NULL AND "
+                + Ts.localExpr("t." + DatabaseHelper.COL_DELIVERY_QUEUED_AT)
+                + " < datetime('now','localtime','-" + lateMinutes + " minutes') THEN 1 ELSE 0 END) AS ord_late "
                 + "FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t "
                 + "LEFT JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c ON c."
                 + DatabaseHelper.COL_ID + " = t." + DatabaseHelper.COL_CUSTOMER_ID + " "
@@ -406,11 +495,14 @@ public class TransactionDao {
                 //  1) order "AMBIL GALON SAJA" (transaksi KEMBALI dijemput kurir) SELALU paling bawah —
                 //     tak ada barang yang diantar, jadi ia tak boleh menyerobot pelanggan yang menunggu
                 //     air; ini mengalahkan KEDUA jenis prioritas;
-                //  2) ⭐ pelanggan prioritas — sengaja DI ATAS ⚡ (keputusan owner 2026-07-27);
-                //  3) ⚡ prioritas pengiriman yang ditandai operator di web;
-                //  4) di dalam tiap grup, urutan antrian (FIFO) dijaga.
+                //  2) TERLAMBAT (lebih tua dari batas umur cabang) -- SLA yang sudah jebol
+                //     mengalahkan preferensi; bila keduanya terlambat kunci di bawah ini yang
+                //     memutuskan, jadi pelanggan prioritas tak dirugikan;
+                //  3) ⭐ pelanggan prioritas — sengaja DI ATAS ⚡ (keputusan owner 2026-07-27);
+                //  4) ⚡ prioritas pengiriman yang ditandai operator di web;
+                //  5) di dalam tiap grup, urutan antrian (FIFO) dijaga.
                 + "ORDER BY (CASE WHEN t." + DatabaseHelper.COL_TYPE + "='" + Transaction.TYPE_KEMBALI
-                + "' THEN 1 ELSE 0 END) ASC, cust_priority DESC, ord_priority DESC, t."
+                + "' THEN 1 ELSE 0 END) ASC, ord_late DESC, cust_priority DESC, ord_priority DESC, t."
                 + DatabaseHelper.COL_DELIVERY_QUEUED_AT + " ASC";
         try (Cursor c = db.rawQuery(sql, new String[]{Transaction.DELIVERY_PENDING})) {
             while (c.moveToNext()) {
@@ -535,6 +627,14 @@ public class TransactionDao {
         v.put(DatabaseHelper.COL_DELIVERY_STARTED_CLEARED_AT, DatabaseHelper.nowIso());
         dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
                 DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
+
+        // Gift yang dilekatkan ke order ini (lihat CustomerGiftDao) baru SUNGGUH diberikan sekarang —
+        // galonnya baru benar-benar sampai ke tangan pelanggan di titik ini, bukan saat ordernya
+        // sekadar dibuat/diantre. Cermin App\Support\DeliveryComplete::apply di web.
+        String doneTrxUuid = getSyncUuidById(trxId);
+        if (doneTrxUuid != null && !doneTrxUuid.isEmpty()) {
+            new CustomerGiftDao(dbHelper).finalizeAttachedForTransaction(doneTrxUuid);
+        }
     }
 
     /**
@@ -780,6 +880,20 @@ public class TransactionDao {
             debtDao.syncForTransaction(t.getCustomerId(), trxUuid, payment, total, byName);
         }
         return n;
+    }
+
+    /**
+     * Setel HANYA galon kembali berpasangan sebuah JUAL — item, pembayaran, dan hutangnya tak
+     * disentuh sama sekali. Dipakai konfirmasi "Galon Kembali" saat order ditandai Selesai, yang
+     * cuma menanyakan satu angka; memakai {@link #applyDeliveryAdjustment} untuk itu akan ikut
+     * menghitung ulang total & piutang dari isian dialog yang tidak ada di situ.
+     */
+    public int applyReturnedGalon(long trxId, int returnQty) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        Transaction t = getById(trxId);
+        if (t == null) return 0;
+        syncPairedReturn(db, t, returnQty);
+        return 1;
     }
 
     /** Penanda catatan Cash Bon — harus sama persis dgn App\Support\DeliveryFinalize di server. */
@@ -1176,13 +1290,20 @@ public class TransactionDao {
     private static final String WHERE_COMPLETED_JUAL =
             "(delivery_status IS NULL OR delivery_status = 'DONE')";
 
-    /** Total pendapatan hari ini — hanya transaksi yang SUDAH SELESAI (belum diantar belum terjual). */
-    public double getPendapatanHariIni() {
+    /**
+     * Total pendapatan hari ini — hanya transaksi yang SUDAH SELESAI (belum diantar belum terjual).
+     *
+     * @param staffName bila diisi, HANYA transaksi berstempel {@code created_by_name} sama persis
+     *                  (dashboard beranda pada perangkat multi-user, role selain admin/marketing/spv
+     *                  — lihat MainActivity#refreshSalesCards); null = semua baris lokal ("HP ini").
+     */
+    public double getPendapatanHariIni(String staffName) {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String query = "SELECT COALESCE(SUM(total_harga),0) FROM transactions " +
                 "WHERE type='JUAL' AND " + WHERE_COMPLETED_JUAL + " AND "
-                + localDate("tanggal") + " = date('now','localtime')";
-        Cursor cursor = db.rawQuery(query, null);
+                + localDate("tanggal") + " = date('now','localtime')"
+                + (staffName != null ? " AND created_by_name = ?" : "");
+        Cursor cursor = db.rawQuery(query, staffName != null ? new String[]{staffName} : null);
         double total = 0;
         if (cursor.moveToFirst()) {
             total = cursor.getDouble(0);
@@ -1191,13 +1312,14 @@ public class TransactionDao {
         return total;
     }
 
-    /** Total transaksi hari ini */
-    public int getTransaksiHariIni() {
+    /** Total transaksi hari ini — lihat {@link #getPendapatanHariIni(String)} untuk arti staffName. */
+    public int getTransaksiHariIni(String staffName) {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String query = "SELECT COUNT(*) FROM transactions " +
                 "WHERE COALESCE(catatan,'') NOT LIKE '%[PENCAIRAN KOMISI]%' AND "
-                + localDate("tanggal") + " = date('now','localtime')";
-        Cursor cursor = db.rawQuery(query, null);
+                + localDate("tanggal") + " = date('now','localtime')"
+                + (staffName != null ? " AND created_by_name = ?" : "");
+        Cursor cursor = db.rawQuery(query, staffName != null ? new String[]{staffName} : null);
         int count = 0;
         if (cursor.moveToFirst()) {
             count = cursor.getInt(0);
@@ -1280,14 +1402,15 @@ public class TransactionDao {
         return count;
     }
 
-    /** Total galon terjual hari ini — hanya transaksi yang SUDAH SELESAI (belum diantar belum terjual). */
-    public int getGalonTerjualHariIni() {
+    /** Total galon terjual hari ini — lihat {@link #getPendapatanHariIni(String)} untuk arti staffName. */
+    public int getGalonTerjualHariIni(String staffName) {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String query = "SELECT COALESCE(SUM(jumlah_galon),0) FROM transactions " +
                 "WHERE type='JUAL' AND COALESCE(catatan,'') NOT LIKE '%[PENCAIRAN KOMISI]%' AND "
                 + WHERE_COMPLETED_JUAL + " AND "
-                + localDate("tanggal") + " = date('now','localtime')";
-        Cursor cursor = db.rawQuery(query, null);
+                + localDate("tanggal") + " = date('now','localtime')"
+                + (staffName != null ? " AND created_by_name = ?" : "");
+        Cursor cursor = db.rawQuery(query, staffName != null ? new String[]{staffName} : null);
         int count = 0;
         if (cursor.moveToFirst()) {
             count = cursor.getInt(0);

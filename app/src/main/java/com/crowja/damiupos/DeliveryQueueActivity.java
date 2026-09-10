@@ -1,6 +1,8 @@
 package com.crowja.damiupos;
 
+import android.Manifest;
 import android.animation.ValueAnimator;
+import android.annotation.SuppressLint;
 import android.app.DatePickerDialog;
 import android.app.Dialog;
 import android.app.ProgressDialog;
@@ -10,9 +12,17 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
 import android.media.RingtoneManager;
@@ -28,6 +38,7 @@ import android.text.TextUtils.TruncateAt;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.Surface;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.AlphaAnimation;
@@ -66,6 +77,7 @@ import com.crowja.damiupos.R.menu;
 import com.crowja.damiupos.adapter.TransactionAdapter;
 import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.CustomerDebtDao;
+import com.crowja.damiupos.db.CustomerRefundDao;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.ProductDao;
 import com.crowja.damiupos.db.SettingsDao;
@@ -81,6 +93,8 @@ import com.crowja.damiupos.sync.SyncApi;
 import com.crowja.damiupos.sync.SyncScheduler;
 import com.crowja.damiupos.sync.SyncSettings;
 import com.crowja.damiupos.util.BitmapUtils;
+import com.crowja.damiupos.util.CompassArrowView;
+import com.crowja.damiupos.util.Ts;
 import com.crowja.damiupos.wa.WaContactEnsure;
 import com.crowja.damiupos.wa.WaShare;
 import com.google.android.material.badge.BadgeDrawable;
@@ -123,6 +137,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private QueueAdapter adapter;
    private boolean selectionMode = false;
    private final LinkedHashSet<Long> selectedIds = new LinkedHashSet<>();
+   // Mode pilih-banyak "Ambil Alih" untuk Tab 2 (Perangkat Lain) & Tab 3 (Pesanan Terbuka).
+   // Dipisah per tab, bukan satu himpunan bersama: keduanya memakai kunci yang berbeda (uuid
+   // transaksi dari server vs id lokal) DAN aturan klaim yang berbeda (order perangkat lain harus
+   // menyebut pemilik saat ini sebagai syarat, Pesanan Terbuka tidak bertuan).
+   private boolean claimSelectOther, claimSelectOpen;
+   private final LinkedHashSet<String> claimSelectedOther = new LinkedHashSet<>();
+   private final LinkedHashSet<Long> claimSelectedOpen = new LinkedHashSet<>();
+   private View barClaimOther, barClaimOpen;
+   private TextView tvClaimOtherCount, tvClaimOpenCount, tvOtherSummary, tvOpenSummary;
    private View barRute;
    private TextView tvSelCount;
    private MaterialButton btnJalankanBanyak;
@@ -152,15 +175,42 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private OpenDispatchAdapter openDispatchAdapter;
    private TextInputEditText etSearchOpen;
    private String searchOpenQuery = "";
+   private TextInputEditText etSearchMine;
+   private String searchMineQuery = "";
    private static final int SORT_OPEN_DISTANCE = 0;
    private static final int SORT_OPEN_GALON = 1;
+   private static final int SORT_OPEN_AGE = 2;
    private int sortOpenMode = 0;
    private List<DeliveryPlanner.Trip> strategyTrips;
    private ValueAnimator strategyBlink;
    private boolean strategyCollapsed = false;
+   /** Kartu Strategi Pengiriman disembunyikan SELURUHNYA lewat menu overflow — beda dari
+    *  strategyCollapsed (hanya melipat isinya). Lihat SettingsDao#isDeliveryStrategyHidden. */
+   private boolean strategyHidden = false;
    private final LinkedHashSet<Long> runningIds = new LinkedHashSet<>();
    private double myLat = (double)0.0F;
    private double myLng = (double)0.0F;
+
+   // ---------------------------------------------------------------- Preview: kompas live "arah ke tujuan"
+   // Kode permintaan izin lokasi khusus panel kompas (7404) - TERPISAH dari myLat/myLng di atas,
+   // yang cuma sekali-ambil saat antrean dimuat (loadData/LocationService.lastLocation) untuk
+   // mengurutkan kartu; kompas butuh posisi yang benar-benar BERJALAN selama dialog Preview terbuka.
+   private static final int REQ_COMPASS_LOCATION = 7404;
+   private SensorManager compassSensorManager;
+   private Sensor compassRotationSensor;
+   private Sensor compassAccelSensor, compassMagnetSensor;
+   private LocationManager compassLocationManager;
+   private LocationListener compassLocationListener;
+   private SensorEventListener compassSensorListener;
+   private float compassAzimuthDeg = Float.NaN;      // heading perangkat, 0=Utara
+   private double compassMyLat = Double.NaN, compassMyLng = Double.NaN;
+   private double compassDestLat, compassDestLng;    // tujuan aktif selama panel Preview terbuka
+   private CompassArrowView compassArrow;
+   private TextView tvCompassLabel, tvCompassDist;
+   // Peta Preview yang sedang terbuka (null bila tak ada) - dituju oleh pushMyPosToMap() setiap
+   // fix GPS baru datang, supaya pin "Posisi Anda" & zoom peta ikut hidup bersama kompas.
+   private WebView previewMapWebView;
+
    private final Handler tick = new Handler(Looper.getMainLooper());
    private final Runnable ticker = new Runnable() {
       public void run() {
@@ -173,6 +223,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             DeliveryQueueActivity.this.otherDevicesAdapter.refreshTimers();
          }
 
+         DeliveryQueueActivity.this.maybeRaiseLateAlarm();
          DeliveryQueueActivity.this.tick.postDelayed(this, 1000L);
       }
    };
@@ -195,6 +246,29 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private static final int MAX_CHIPS = 4;
    private static final long QUEUE_WARN_MS = 3600000L;
    private static final long QUEUE_LATE_MS = 7200000L;
+   /**
+    * Batas umur "TERLAMBAT" dalam ms (setelan cabang delivery_max_age_minutes); 0 = fitur mati.
+    * Dibaca SEKALI di onResume -- jangan menyentuh SettingsDao dari dalam ticker 1 detik. Static
+    * karena pembacanya (sortByDistance, isLate, bindElapsedBadge) memang statik dan layar antrean
+    * hanya pernah ada satu di layar.
+    */
+   private static long lateMs = 0L;
+   /** Cermin lokal setelan revoke_credit_late_delivery -- HANYA untuk kalimat peringatan di HP. */
+   private boolean revokeLateCredit = false;
+   /** Id order yang sudah pernah membunyikan alarm; alarm hanya SEKALI untuk tiap order. Urutan
+    *  penyisipan dipertahankan supaya pemangkasan di {@link #rememberAlarmedLate} membuang yang
+    *  paling lama, bukan sembarang id. */
+   private final Set<Long> alarmedLateIds = new LinkedHashSet();
+   /** Kunci LOKAL (bukan SHAREABLE_KEYS) tempat {@link #alarmedLateIds} bertahan antar sesi —
+    *  tanpa ini, menutup lalu membuka layar antrean membunyikan alarm yang sama lagi. */
+   private static final String KEY_ALARMED_LATE_IDS = "late_alarm_shown_ids";
+   /** Batas id tersimpan. Order lama tak pernah kembali terlambat, jadi yang tertua boleh dibuang;
+    *  batasnya cuma menjaga baris setelan ini tak tumbuh selamanya. */
+   private static final int ALARMED_LATE_IDS_MAX = 300;
+   private long lateAlarmSnoozeUntilMs = 0L;
+   private AlertDialog lateDialog;
+   private static final long LATE_ALARM_COOLDOWN_MS = 600000L;
+   private static final long LATE_ALARM_SNOOZE_MS = 900000L;
 
    public DeliveryQueueActivity() {
       super();
@@ -214,6 +288,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       toolbar.setNavigationOnClickListener((v) -> this.finish());
       this.dao = new TransactionDao(DatabaseHelper.getInstance(this));
       this.customerDao = new CustomerDao(DatabaseHelper.getInstance(this));
+      this.restoreAlarmedLate();
       this.productDao = new ProductDao(DatabaseHelper.getInstance(this));
       this.rv = (RecyclerView)this.findViewById(id.rv);
       this.tvEmpty = (TextView)this.findViewById(id.tvEmpty);
@@ -222,6 +297,19 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.rv.setLayoutManager(new LinearLayoutManager(this));
       this.rv.setHasFixedSize(true);
       this.rv.setAdapter(this.adapter);
+      this.etSearchMine = (TextInputEditText)this.findViewById(id.etSearchMine);
+      this.etSearchMine.addTextChangedListener(new TextWatcher() {
+         public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+         }
+
+         public void onTextChanged(CharSequence s, int a, int b, int c) {
+            DeliveryQueueActivity.this.searchMineQuery = s == null ? "" : s.toString().trim();
+            DeliveryQueueActivity.this.adapter.applyFilter();
+         }
+
+         public void afterTextChanged(Editable s) {
+         }
+      });
       (new ItemTouchHelper(new ItemTouchHelper.SimpleCallback(0, 0) {
          public boolean isLongPressDragEnabled() {
             return DeliveryQueueActivity.this.isRunning();
@@ -303,21 +391,33 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
       });
       MaterialButtonToggleGroup sortGroupOther = (MaterialButtonToggleGroup)this.findViewById(id.sortGroupOther);
-      sortGroupOther.check(this.sortOtherMode == 0 ? id.sortOtherJarak : id.sortOtherGalon);
+      sortGroupOther.check(this.sortOtherMode == 1 ? id.sortOtherGalon : (this.sortOtherMode == 2 ? id.sortOtherAge : id.sortOtherJarak));
       sortGroupOther.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
          if (isChecked) {
-            int newMode = checkedId == id.sortOtherJarak ? 0 : 1;
+            int newMode = checkedId == id.sortOtherGalon ? 1 : (checkedId == id.sortOtherAge ? 2 : 0);
             if (newMode != this.sortOtherMode) {
                this.sortOtherMode = newMode;
                this.otherDevicesAdapter.applyFilterSort();
             }
          }
       });
+      this.tvOtherSummary = (TextView)this.findViewById(id.tvOtherSummary);
+      this.barClaimOther = this.findViewById(id.barClaimOther);
+      this.tvClaimOtherCount = (TextView)this.findViewById(id.tvClaimOtherCount);
+      this.findViewById(id.btnClaimOtherCancel).setOnClickListener((v) -> this.exitClaimSelect(false));
+      this.findViewById(id.btnClaimOtherGo).setOnClickListener((v) -> this.confirmBulkClaimOther());
+
       this.rvOpenDispatch = (RecyclerView)this.findViewById(id.rvOpenDispatch);
       this.tvOpenDispatchEmpty = (TextView)this.findViewById(id.tvOpenDispatchEmpty);
       this.rvOpenDispatch.setLayoutManager(new LinearLayoutManager(this));
       this.openDispatchAdapter = new OpenDispatchAdapter();
       this.rvOpenDispatch.setAdapter(this.openDispatchAdapter);
+      this.tvOpenSummary = (TextView)this.findViewById(id.tvOpenSummary);
+      this.barClaimOpen = this.findViewById(id.barClaimOpen);
+      this.tvClaimOpenCount = (TextView)this.findViewById(id.tvClaimOpenCount);
+      this.findViewById(id.btnClaimOpenCancel).setOnClickListener((v) -> this.exitClaimSelect(true));
+      this.findViewById(id.btnClaimOpenGo).setOnClickListener((v) -> this.confirmBulkClaimOpen());
+
       this.etSearchOpen = (TextInputEditText)this.findViewById(id.etSearchOpen);
       this.etSearchOpen.addTextChangedListener(new TextWatcher() {
          public void beforeTextChanged(CharSequence s, int a, int b, int c) {
@@ -332,10 +432,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
       });
       MaterialButtonToggleGroup sortGroupOpen = (MaterialButtonToggleGroup)this.findViewById(id.sortGroupOpen);
-      sortGroupOpen.check(this.sortOpenMode == 0 ? id.sortOpenJarak : id.sortOpenGalon);
+      sortGroupOpen.check(this.sortOpenMode == 1 ? id.sortOpenGalon : (this.sortOpenMode == 2 ? id.sortOpenAge : id.sortOpenJarak));
       sortGroupOpen.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
          if (isChecked) {
-            int newMode = checkedId == id.sortOpenJarak ? 0 : 1;
+            int newMode = checkedId == id.sortOpenGalon ? 1 : (checkedId == id.sortOpenAge ? 2 : 0);
             if (newMode != this.sortOpenMode) {
                this.sortOpenMode = newMode;
                this.openDispatchAdapter.applyFilterSort();
@@ -344,6 +444,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       });
       SettingsDao sdao = new SettingsDao(DatabaseHelper.getInstance(this));
       this.strategyCollapsed = sdao.isDeliveryStrategyCollapsed();
+      this.strategyHidden = sdao.isDeliveryStrategyHidden();
       this.runningIds.clear();
       this.runningIds.addAll(sdao.getDeliveryRunningTrxIds());
       View strategyHeader = this.findViewById(id.strategyHeader);
@@ -385,6 +486,18 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.applyStrategyCollapsed();
    }
 
+   /** Menu overflow "Sembunyikan/Tampilkan Strategi Pengiriman" — kartu HILANG SELURUHNYA (judul
+    *  ikut), beda dari toggleStrategyCollapsed yang cuma melipat isinya. Re-render langsung dari
+    *  daftar antrean yang sudah dimuat, bukan query DB baru — kartu ini murni derivasi tampilan. */
+   private void toggleStrategyHidden() {
+      this.strategyHidden = !this.strategyHidden;
+      (new SettingsDao(DatabaseHelper.getInstance(this))).setDeliveryStrategyHidden(this.strategyHidden);
+      Toast.makeText(this, this.strategyHidden ? "Strategi Pengiriman disembunyikan" : "Strategi Pengiriman ditampilkan", 0).show();
+      if (this.adapter != null) {
+         this.renderStrategy(this.adapter.data);
+      }
+   }
+
    private void applyStrategyCollapsed() {
       View body = this.findViewById(id.strategyBody);
       if (body != null) {
@@ -409,6 +522,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          it.setVisible(this.activeTab == 0);
       }
 
+      MenuItem toggleStrategy = menu.findItem(id.action_toggle_strategy);
+      if (toggleStrategy != null) {
+         toggleStrategy.setVisible(false);
+      }
+
       return super.onPrepareOptionsMenu(menu);
    }
 
@@ -421,6 +539,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          return true;
       } else if (item.getItemId() == id.action_report_obstacle) {
          this.openObstacleReport();
+         return true;
+      } else if (item.getItemId() == id.action_delivery_history) {
+         this.startActivity(new Intent(this, DeliveryHistoryActivity.class));
+         return true;
+      } else if (item.getItemId() == id.action_toggle_strategy) {
+         this.toggleStrategyHidden();
          return true;
       } else {
          return super.onOptionsItemSelected(item);
@@ -477,7 +601,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    public void onBackPressed() {
-      if (this.selectionMode) {
+      // Mode pilih-banyak Tab 2/3 keluar lebih dulu, sama seperti mode-pilih Tab 1 — kalau tidak,
+      // bar aksinya tertinggal di layar sementara pilihannya sudah tak terlihat lagi.
+      if (this.claimSelectOther) {
+         this.exitClaimSelect(false);
+      } else if (this.claimSelectOpen) {
+         this.exitClaimSelect(true);
+      } else if (this.selectionMode) {
          this.exitSelectionMode();
       } else if (this.isRunning()) {
          this.confirmStopRun();
@@ -665,6 +795,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    protected void onResume() {
       super.onResume();
+      SettingsDao lateCfg = new SettingsDao(DatabaseHelper.getInstance(this));
+      lateMs = (long)lateCfg.getDeliveryMaxAgeMinutes() * 60000L;
+      this.revokeLateCredit = lateCfg.isRevokeCreditLateEnabled();
       this.loadData();
       this.loadOtherDevices();
       this.tick.postDelayed(this.ticker, 1000L);
@@ -777,6 +910,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
    }
 
+   /** Cermin updateOpenEmptyState, untuk kolom cari di Antrean Saya (tab 0). */
+   private void updateMineEmptyState() {
+      if (this.tvEmpty != null && this.rv != null && this.adapter != null) {
+         boolean empty = this.adapter.getItemCount() == 0;
+         this.tvEmpty.setText(this.searchMineQuery.isEmpty() ? "Antrian delivery kosong 🎉" : "Tidak ditemukan");
+         this.tvEmpty.setVisibility(empty ? View.VISIBLE : View.GONE);
+         this.rv.setVisibility(empty ? View.GONE : View.VISIBLE);
+      }
+   }
+
    private void updateOpenEmptyState() {
       if (this.tvOpenDispatchEmpty != null && this.rvOpenDispatch != null && this.openDispatchAdapter != null) {
          boolean empty = this.openDispatchAdapter.getItemCount() == 0;
@@ -784,6 +927,43 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.tvOpenDispatchEmpty.setVisibility(empty ? 0 : 8);
          this.rvOpenDispatch.setVisibility(empty ? 8 : 0);
       }
+   }
+
+   /** Total galon sebuah daftar order lokal (Antrian Saya / Pesanan Terbuka). */
+   private static int totalGalonOf(List<Transaction> list) {
+      int n = 0;
+      if (list != null) {
+         for (Transaction t : list) {
+            n += Math.max(0, t.getJumlahGalon());
+         }
+      }
+      return n;
+   }
+
+   /** " · 34 galon" — dikosongkan bila nol supaya tak menambah derau pada antrian kosong. */
+   private static String galonSuffix(int galon) {
+      return galon > 0 ? "  ·  " + galon + " galon" : "";
+   }
+
+   /**
+    * Baris ringkasan Tab 2 & 3.
+    *
+    * <p>Angkanya sengaja mengikuti yang SEDANG TAMPIL, bukan seluruh data mentah — supaya kurir
+    * bisa memverifikasinya dengan menghitung kartu di layar. Saat pencarian menyaring daftar,
+    * pembaginya ikut ditulis ("8 dari 12 order") sehingga selisih dengan angka lencana tab, yang
+    * memang menghitung data mentah, tidak terbaca sebagai ketidakcocokan.
+    */
+   private void setTabSummary(TextView tv, int shown, int raw, int galon) {
+      if (tv == null) {
+         return;
+      }
+      if (raw <= 0) {
+         tv.setVisibility(8);
+         return;
+      }
+      tv.setVisibility(0);
+      String head = shown < raw ? (shown + " dari " + raw + " order") : (raw + " order");
+      tv.setText(head + galonSuffix(galon));
    }
 
    private void setTabCount(int index, int count) {
@@ -921,18 +1101,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       double lat = q.optDouble("latitude", (double)0.0F);
       double lng = q.optDouble("longitude", (double)0.0F);
       String jarakSuffix = Double.isNaN(this.otherLat) || Double.isNaN(this.otherLng) || lat == (double)0.0F && lng == (double)0.0F ? "" : " (" + formatJarak(haversineKmOtherDevices(this.otherLat, this.otherLng, lat, lng)) + ")";
-      menu.getMenu().add(0, 1, 0, "\ud83d\udccd Preview Peta" + jarakSuffix);
-      menu.getMenu().add(0, 2, 1, "\ud83d\uddbc Foto");
-      menu.getMenu().add(0, 3, 2, "\ud83d\udd52 Jadwalkan Ulang");
+      menu.getMenu().add(0, 1, 0, "\ud83d\udd0d Preview" + jarakSuffix);
+      menu.getMenu().add(0, 2, 1, "\ud83d\udd52 Jadwalkan Ulang");
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
             case 1:
-               this.showOtherDeviceMapPreview(q);
+               this.showOtherDevicePreview(q);
                return true;
             case 2:
-               this.showOtherDevicePhotoPreview(q);
-               return true;
-            case 3:
                this.showPostponeSchedulePickerOther(q);
                return true;
             default:
@@ -940,51 +1116,6 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
       });
       menu.show();
-   }
-
-   private void showOtherDevicePhotoPreview(JSONObject q) {
-      String custUuid = q.optString("customer_uuid", "");
-      Customer c = !custUuid.isEmpty() && !custUuid.equals("null") ? this.customerDao.getBySyncUuid(custUuid) : null;
-      String destName = q.optString("dest_name", "");
-      String destPhotoUrl = null;
-      if (c != null && !destName.isEmpty() && !destName.equals("null") && c.getLocations() != null) {
-         for(Customer.Location l : c.getLocations()) {
-            if (destName.trim().equalsIgnoreCase(safe(l.name)) && l.photo != null && !l.photo.trim().isEmpty()) {
-               destPhotoUrl = l.photo.trim();
-               break;
-            }
-         }
-      }
-
-      if (destPhotoUrl != null || c != null && c.hasPhoto()) {
-         String path = destPhotoUrl == null && c != null ? c.getPhotoPath() : null;
-         if (path != null && !path.isEmpty() && (new File(path)).exists()) {
-            this.showFullScreenPhotoQueue(path);
-         } else {
-            String url = destPhotoUrl != null ? destPhotoUrl : (c != null ? c.getPhotoUrl() : null);
-            if (url != null && !url.isEmpty()) {
-               ProgressDialog progress = ProgressDialog.show(this, (CharSequence)null, "Memuat foto…", true, false);
-               String name = "otherdev_" + (c != null ? c.getId() : 0L) + "_" + Integer.toHexString(url.hashCode()) + ".jpg";
-               (new Thread(() -> {
-                  File f = BitmapUtils.downloadToCache(this.getApplicationContext(), url, name);
-                  this.runOnUiThread(() -> {
-                     progress.dismiss();
-                     if (!this.isFinishing() && !this.isDestroyed()) {
-                        if (f == null) {
-                           Toast.makeText(this, "Gagal memuat foto.", 0).show();
-                        } else {
-                           this.showFullScreenPhotoQueue(f.getAbsolutePath());
-                        }
-                     }
-                  });
-               })).start();
-            } else {
-               Toast.makeText(this, "Foto rumah belum ada.", 0).show();
-            }
-         }
-      } else {
-         Toast.makeText(this, "Foto rumah belum ada.", 0).show();
-      }
    }
 
    private void updateOtherEmptyState() {
@@ -1122,8 +1253,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
    }
 
-   private void showOtherDeviceOrderDetail(JSONObject q) {
-      String name = q.optString("name", "Pelanggan");
+   /**
+    * Ringkasan order antrean PERANGKAT LAIN dari JSONObject ringkas server (bukan Transaction lokal
+    * - beda dari {@link #orderDetailText}) - dipakai dialog "Detail Order" berdiri sendiri DAN
+    * kartu "Detail Transaksi" di panel Preview gabungan ({@link #showOtherDevicePreview}), supaya
+    * keduanya tak bisa saling menyimpang.
+    */
+   private String otherDeviceOrderDetailText(JSONObject q) {
       StringBuilder sb = new StringBuilder();
       String phone = q.optString("phone", "");
       if (!phone.isEmpty() && !phone.equals("null")) {
@@ -1148,7 +1284,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          sb.append('\n');
       }
 
-      sb.append(q.optInt("galon", 0)).append(" galon · Rp ").append(String.format(Locale.US, "%,.0f", q.optDouble("total", (double)0.0F)).replace(',', '.')).append('\n');
+      sb.append(q.optInt("galon", 0)).append(" galon \u00b7 Rp ").append(String.format(Locale.US, "%,.0f", q.optDouble("total", (double)0.0F)).replace(',', '.')).append('\n');
       String items = q.optString("items", "");
       if (!items.isEmpty() && !items.equals("null")) {
          sb.append(items).append('\n');
@@ -1156,23 +1292,27 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       if (q.optBoolean("order_priority", false)) {
          String why = q.optString("order_priority_reason", "");
-         sb.append("\n⚡ PRIORITAS").append(!why.isEmpty() && !why.equals("null") ? ": " + why : "").append('\n');
+         sb.append("\n\u26a1 PRIORITAS").append(!why.isEmpty() && !why.equals("null") ? ": " + why : "").append('\n');
       }
 
       String ago = queuedAgoOtherDevices(q.optString("queued_at", (String)null));
       if (!ago.isEmpty()) {
          sb.append('\n').append(ago);
       }
-
-      (new AlertDialog.Builder(this)).setTitle("Detail Order — " + name).setMessage(sb.toString()).setPositiveButton("\ud83d\udce5 Ambil Alih", (d, w) -> this.confirmTakeOverOtherDevices(q)).setNegativeButton("Kembali", (DialogInterface.OnClickListener)null).show();
+      return sb.toString();
    }
 
-   private void showOtherDeviceMapPreview(JSONObject q) {
+   private void showOtherDeviceOrderDetail(JSONObject q) {
+      String name = q.optString("name", "Pelanggan");
+      (new AlertDialog.Builder(this)).setTitle("Detail Order \u2014 " + name).setMessage(this.otherDeviceOrderDetailText(q)).setPositiveButton("\ud83d\udce5 Ambil Alih", (d, w) -> this.confirmTakeOverOtherDevices(q)).setNeutralButton("\ud83d\udd0d Preview", (d, w) -> this.showOtherDevicePreview(q)).setNegativeButton("Kembali", (DialogInterface.OnClickListener)null).show();
+   }
+
+   private void showOtherDevicePreview(JSONObject q) {
       SyncSettings cfg = this.syncCfg();
       if (!cfg.isEnrolled()) {
          Toast.makeText(this, "Perangkat belum terhubung ke server.", 0).show();
       } else {
-         ProgressDialog progress = ProgressDialog.show(this, (CharSequence)null, "Memuat peta…", true, false);
+         ProgressDialog progress = ProgressDialog.show(this, (CharSequence)null, "Memuat peta\u2026", true, false);
          (new Thread(() -> {
             JSONObject data = null;
 
@@ -1186,9 +1326,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                if (!this.isFinishing() && !this.isDestroyed()) {
                   progress.dismiss();
                   if (dataF == null) {
-                     Toast.makeText(this, "Gagal memuat peta — periksa koneksi internet.", 1).show();
+                     Toast.makeText(this, "Gagal memuat peta \u2014 periksa koneksi internet.", 1).show();
                   } else {
-                     this.renderOtherDeviceMapPreview(dataF, q);
+                     this.buildOtherDevicePreview(dataF, q);
                   }
                }
             });
@@ -1196,7 +1336,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
    }
 
-   private void renderOtherDeviceMapPreview(JSONObject mapData, JSONObject q) {
+   /**
+    * Menyusun {@link PreviewData} dari data "peta antrean perangkat lain" (posisi tujuan +
+    * posisi kurir pemegang order) DAN dari JSONObject ringkas order (foto lokasi + detail
+    * transaksi) - dua sumber sekaligus karena satu-satunya endpoint peta tak membawa foto/detail,
+    * dan JSON antrean ringkas tak membawa koordinat perangkat pemegangnya.
+    */
+   private void buildOtherDevicePreview(JSONObject mapData, JSONObject q) {
       String uuid = q.optString("uuid", "");
       String devUuid = q.optString("device_group_uuid", "");
       JSONArray queue = mapData.optJSONArray("queue");
@@ -1226,6 +1372,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       double devLat = (double)0.0F;
       double devLng = (double)0.0F;
       String devName = q.optString("device_group_label", "Perangkat");
+      String devVehicle = null, devColor = null;
+      String devPinUuid = "";
       boolean hasDevPos = false;
       if (positions != null && !devUuid.isEmpty()) {
          for(int i = 0; i < positions.length(); ++i) {
@@ -1234,6 +1382,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                devLat = p.optDouble("lat", (double)0.0F);
                devLng = p.optDouble("lng", (double)0.0F);
                hasDevPos = devLat != (double)0.0F || devLng != (double)0.0F;
+               // Identitas kendaraan kurir itu — sama persis dengan pin posisi live-nya di peta lain
+               // manapun (App\Support\DeviceIcon::vehicleFor, {@see LiveDeviceOverlay}).
+               devVehicle = p.optString("vehicle", "");
+               devColor = p.optString("color", "");
+               devPinUuid = p.optString("device_uuid", "");
                break;
             }
          }
@@ -1241,75 +1394,200 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       if (!hasDest && !hasDevPos) {
          Toast.makeText(this, "Belum ada data koordinat untuk order/perangkat ini.", 1).show();
-      } else {
-         WebView webView = new WebView(this);
-         LiveDeviceOverlay[] overlayRef = new LiveDeviceOverlay[1];
-         WebSettings ws = webView.getSettings();
-         ws.setJavaScriptEnabled(true);
-         ws.setDomStorageEnabled(true);
-         ws.setUserAgentString(MapTiles.userAgent());
-         int sizeDp = Math.round(320.0F * this.getResources().getDisplayMetrics().density);
-         webView.setLayoutParams(new LinearLayout.LayoutParams(-1, sizeDp));
-         webView.setBackgroundColor(-1);
-         String html = buildMiniMapHtml(hasDevPos, devLat, devLng, devName, hasDest, destLat, destLng, destName);
-         LinearLayout content = new LinearLayout(this);
-         content.setOrientation(1);
-         content.addView(webView);
-         String custUuid = q.optString("customer_uuid", "");
-         Customer custFooter = !custUuid.isEmpty() && !custUuid.equals("null") ? this.customerDao.getBySyncUuid(custUuid) : null;
-         String destLocName = strJson(q, "dest_name");
-         String adminArea = custFooter != null ? custFooter.getAdminArea() : "";
-         String areaSuffix = !adminArea.isEmpty() ? " (" + adminArea + ")" : "";
-         String custAddress = custFooter != null && custFooter.getAddress() != null ? custFooter.getAddress().trim() : "";
-         String address = !destLocName.trim().isEmpty() ? "Kirim Ke: " + destLocName.trim() + areaSuffix : (!custAddress.isEmpty() ? custAddress + areaSuffix : "");
-         if (!address.isEmpty()) {
-            TextView tvDialogAddress = new TextView(this);
-            tvDialogAddress.setText("\ud83d\udccd " + address);
-            tvDialogAddress.setTextSize(13.0F);
-            int padDp = Math.round(16.0F * this.getResources().getDisplayMetrics().density);
-            int padTopDp = Math.round(8.0F * this.getResources().getDisplayMetrics().density);
-            tvDialogAddress.setPadding(padDp, padTopDp, padDp, 0);
-            content.addView(tvDialogAddress);
-         }
-
-         AlertDialog.Builder builder = (new AlertDialog.Builder(this)).setTitle("\ud83d\uddfa️ Preview Peta").setView(content).setPositiveButton("Tutup", (DialogInterface.OnClickListener)null);
-         if (hasDest) {
-            final double destLatF = destLat;
-            final double destLngF = destLng;
-            builder.setNeutralButton("\ud83e\udded Navigasi", (dlg, w) -> this.openMapsNavigation(destLatF, destLngF));
-         }
-
-         AlertDialog dialog = builder.create();
-         dialog.setOnShowListener((d) -> {
-            webView.setLayoutParams(new LinearLayout.LayoutParams(-1, sizeDp));
-            dialog.getWindow().setLayout(-1, -2);
-            webView.post(() -> {
-               webView.onResume();
-               webView.setWebViewClient(new WebViewClient() {
-                  public void onPageFinished(WebView view, String url) {
-                     overlayRef[0] = new LiveDeviceOverlay(DeliveryQueueActivity.this, webView);
-                     overlayRef[0].start();
-                  }
-               });
-               webView.loadDataWithBaseURL("https://unpkg.com", html, "text/html", "UTF-8", (String)null);
-            });
-         });
-         dialog.setOnDismissListener((d) -> {
-            if (overlayRef[0] != null) {
-               overlayRef[0].stop();
-            }
-
-            webView.stopLoading();
-            webView.destroy();
-         });
-         dialog.show();
+         return;
       }
+
+      String custUuid = q.optString("customer_uuid", "");
+      Customer c = !custUuid.isEmpty() && !custUuid.equals("null") ? this.customerDao.getBySyncUuid(custUuid) : null;
+      String destLocName = strJson(q, "dest_name");
+      String adminArea = c != null ? c.getAdminArea() : "";
+      String areaSuffix = !adminArea.isEmpty() ? " (" + adminArea + ")" : "";
+      String custAddress = c != null && c.getAddress() != null ? c.getAddress().trim() : "";
+      String address = !destLocName.trim().isEmpty() ? "Kirim Ke: " + destLocName.trim() + areaSuffix : (!custAddress.isEmpty() ? custAddress + areaSuffix : "");
+
+      // Foto lokasi: nama lokasi cocok persis (kalau ada) menang atas foto default pelanggan -
+      // cermin showQueuePreview di antrean sendiri.
+      String destPhotoUrl = null;
+      if (c != null && !destLocName.trim().isEmpty() && c.getLocations() != null) {
+         for (Customer.Location l : c.getLocations()) {
+            if (destLocName.trim().equalsIgnoreCase(safe(l.name)) && l.photo != null && !l.photo.trim().isEmpty()) {
+               destPhotoUrl = l.photo.trim();
+               break;
+            }
+         }
+      }
+
+      PreviewData d = new PreviewData();
+      d.title = safe(q.optString("name", "Pelanggan"));
+      d.hasDev = hasDevPos;
+      d.devLat = devLat;
+      d.devLng = devLng;
+      d.devName = devName;
+      d.devVehicle = devVehicle;
+      d.devColor = devColor;
+      d.devUuid = devPinUuid;
+      // Pesanan Terbuka (belum ditugaskan) -> tak ada gunanya menyorot devUuid (kalau toh ada
+      // posisi tersisa di peta, itu cuma perangkat terakhir yang PERNAH memegangnya) -> kedipkan
+      // posisi saya sendiri, bukan pin konteks.
+      d.blinkAssigned = !q.optBoolean("open_dispatch", false);
+      d.hasDest = hasDest;
+      d.destLat = destLat;
+      d.destLng = destLng;
+      d.destName = destName;
+      d.address = address;
+      d.detailChips = this.buildOtherDeviceDetailChips(q);
+      d.detailExtra = this.otherDevicePreviewExtra(q);
+      d.photoLocalPath = destPhotoUrl == null && c != null ? c.getPhotoPath() : null;
+      d.photoUrl = destPhotoUrl != null ? destPhotoUrl : (c != null ? c.getPhotoUrl() : null);
+      this.showPreviewDialog(d);
    }
 
-   private static String buildMiniMapHtml(boolean hasDev, double devLat, double devLng, String devName, boolean hasDest, double destLat, double destLng, String destName) {
+   /**
+    * Badge "Detail Transaksi" untuk antrean PERANGKAT LAIN — dari {@code items} yang server sudah
+    * rakit jadi teks ringkas ("Nama Qty×", App\Support\Reports::orderItemsLabel), bukan
+    * TransactionItem penuh (transaksi device-isolated di lapisan sync, HP ini tak memegang
+    * barisnya). Slug+warna tetap dicoba lewat {@code productByName} lokal (cocok by NAMA — cukup
+    * untuk mayoritas produk, meski nama panjang bisa terpotong oleh Str::limit di server).
+    *
+    * <p>Tanpa "Kembali"/metode bayar: {@code q} memang tak membawa keduanya (lihat
+    * {@link #otherDeviceOrderDetailText} — tak pernah ada baris itu di sana juga).</p>
+    */
+   private List<Chip> buildOtherDeviceDetailChips(JSONObject q) {
+      List<Chip> chips = new ArrayList<>();
+      String itemsStr = q.optString("items", "");
+      if (!itemsStr.isEmpty() && !itemsStr.equals("null")) {
+         for (String part : itemsStr.split(",")) {
+            String p = part.trim();
+            if (p.isEmpty()) continue;
+            int xi = p.lastIndexOf('×');
+            String namedQty = xi > 0 ? p.substring(0, xi).trim() : p;
+            String num = xi > 0 ? p.substring(xi + 1).trim() : "";
+            int sp = namedQty.lastIndexOf(' ');
+            String name = sp > 0 ? namedQty.substring(0, sp).trim() : namedQty;
+            Product prod = this.productByName.get(normProductName(name));
+            String slug = prod != null ? prod.getSlug() : null;
+            String label = slug != null && !slug.trim().isEmpty() ? slug.trim()
+                  : (name.length() <= 10 ? name : name.substring(0, 10).trim() + "…");
+            int bg = TransactionAdapter.paletteColor(name);
+            if (prod != null && prod.getColor() != null && !prod.getColor().trim().isEmpty()) {
+               try {
+                  bg = Color.parseColor(prod.getColor().trim());
+               } catch (IllegalArgumentException ignored) {
+               }
+            }
+            chips.add(new Chip(label + (num.isEmpty() ? "" : " ×" + num), bg));
+         }
+      }
+      chips.add(new Chip("TOTAL " + this.rp(q.optDouble("total", (double) 0.0F)), 0xFF0369A1));
+      return chips;
+   }
+
+   /** Sisa "Detail Order" antrean perangkat lain yang tak cocok jadi badge — prioritas + lama antre. */
+   private String otherDevicePreviewExtra(JSONObject q) {
+      StringBuilder sb = new StringBuilder();
+      if (q.optBoolean("order_priority", false)) {
+         String why = q.optString("order_priority_reason", "");
+         sb.append("⚡ PRIORITAS").append(!why.isEmpty() && !why.equals("null") ? ": " + why : "");
+      }
+      String ago = queuedAgoOtherDevices(q.optString("queued_at", (String) null));
+      if (!ago.isEmpty()) {
+         if (sb.length() > 0) sb.append('\n');
+         sb.append(ago);
+      }
+      return sb.length() > 0 ? sb.toString() : null;
+   }
+
+   /**
+    * @param hasDev/devLat/devLng/devName/devVehicle/devColor pin KONTEKS opsional - kurir lain yang
+    *        memegang order ini (antrean perangkat lain); kosong untuk antrean sendiri.
+    * @param myVehicle/myColor identitas kendaraan PERANGKAT INI (App\Support\DeviceIcon, dicache dari
+    *        /api/me) - dipakai pin "Posisi Anda" yang HANYA muncul lewat {@code updateMyPos(lat,lng)},
+    *        dipanggil dari kompas setiap fix GPS baru datang (lihat pushMyPosToMap). Tanpa fix belum
+    *        ada pin sama sekali - peta tak berbohong soal posisi yang belum benar-benar diketahui.
+    */
+   /**
+    * @param blinkAssigned Pin yang KEDIP: perangkat yang DITUGASKAN (context/devVehicle) bila order
+    *        ini punya penanggung jawab, atau posisi SAYA bila order ini Pesanan Terbuka (belum
+    *        ada yang ditugaskan — tak masuk akal menyoroti perangkat yang tak ditugaskan). Hanya
+    *        benar-benar berlaku bila hasDev juga true; tanpa pin konteks, posisi saya yang kedip
+    *        apa pun nilai parameter ini (tak ada yang lain untuk disorot).
+    */
+   private static String buildMiniMapHtml(boolean hasDev, double devLat, double devLng, String devName, String devVehicle, String devColor, boolean hasDest, double destLat, double destLng, String destName, String myVehicle, String myColor, boolean blinkAssigned) {
       double centerLat = hasDest ? destLat : devLat;
       double centerLng = hasDest ? destLng : devLng;
-      return "<!DOCTYPE html>\n<html><head>\n<meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>\n<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'/>\n<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>\n<style>html,body{margin:0;padding:0;height:100%;}#map{width:100%;height:100%;}\n.pin{position:relative;width:26px;height:33px;}.pin svg{position:absolute;top:0;left:0;}\n.pin .em{position:absolute;top:2px;left:0;width:26px;text-align:center;font-size:13px;line-height:18px;}\n.pin.blink{animation:pinblink 1s infinite;}\n@keyframes pinblink{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.55;transform:scale(1.18);}}\n</style>\n</head><body>\n<div id='map'></div>\n<script>\nfunction escHtml(s){return String(s==null?'':s).replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c];});}\nfunction pinIcon(color,emoji,blink){\n  var svg='<svg width=\"26\" height=\"33\" viewBox=\"0 0 26 33\" xmlns=\"http://www.w3.org/2000/svg\">'+\n    '<path d=\"M13 0C5.8 0 0 5.8 0 13c0 8.7 13 20 13 20s13-11.3 13-20C26 5.8 20.2 0 13 0z\" fill=\"'+color+'\"/>'+\n    '<circle cx=\"13\" cy=\"12\" r=\"9\" fill=\"#fff\"/></svg>';\n  return L.divIcon({className:'',html:'<div class=\"pin'+(blink?' blink':'')+'\">'+svg+'<div class=\"em\">'+emoji+'</div></div>',iconSize:[26,33],iconAnchor:[13,33],popupAnchor:[0,-30]});\n}\nvar map = L.map('map',{zoomControl:true}).setView([" + centerLat + "," + centerLng + "], 14);\nL.tileLayer('" + "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}" + "',{subdomains:'" + "" + "',maxZoom:19,attribution:'" + "Tiles &copy; Esri &mdash; Source: Esri, HERE, Garmin, USGS, NGA, NOAA" + "'}).addTo(map);\nvar pts=[];\n" + (hasDev ? "L.marker([" + devLat + "," + devLng + "],{icon:pinIcon('#F9A825','\ud83c\udfcd️',false)}).addTo(map).bindPopup(escHtml('" + escJs(devName) + "'));\npts.push([" + devLat + "," + devLng + "]);\n" : "") + (hasDest ? "L.marker([" + destLat + "," + destLng + "],{icon:pinIcon('#C62828','\ud83d\udccd',true)}).addTo(map).bindPopup(escHtml('" + escJs(destName) + "'));\npts.push([" + destLat + "," + destLng + "]);\n" : "") + (hasDev && hasDest ? "L.polyline(pts,{color:'#F9A825',weight:3,opacity:.85,dashArray:'6,6'}).addTo(map);\n" : "") + "function fit(){ map.invalidateSize();\n  if(pts.length>1){ map.fitBounds(pts,{padding:[36,36],maxZoom:16}); }\n  else if(pts.length===1){ map.setView(pts[0],16); } }\nwindow.addEventListener('load',function(){ fit(); setTimeout(fit,250); setTimeout(fit,800); });\nsetTimeout(fit,120);\n</script></body></html>";
+      boolean devBlinks = hasDev && blinkAssigned;
+      String devVehicleSafe = devVehicle != null && !devVehicle.isEmpty() ? devVehicle : "\ud83c\udfcd\ufe0f";
+      String devColorSafe = devColor != null && !devColor.isEmpty() ? devColor : "#F9A825";
+      String myVehicleSafe = myVehicle != null && !myVehicle.isEmpty() ? myVehicle : "\ud83d\udef5";
+      String myColorSafe = myColor != null && !myColor.isEmpty() ? myColor : "#0369A1";
+      StringBuilder js = new StringBuilder();
+      js.append("<!DOCTYPE html>\n<html><head>\n");
+      js.append("<meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'>\n");
+      js.append("<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'/>\n");
+      js.append("<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>\n");
+      js.append("<style>html,body{margin:0;padding:0;height:100%;}#map{width:100%;height:100%;}\n");
+      js.append(".pin{position:relative;width:26px;height:33px;}.pin svg{position:absolute;top:0;left:0;}\n");
+      js.append(".pin .em{position:absolute;top:2px;left:0;width:26px;text-align:center;font-size:13px;line-height:18px;}\n");
+      js.append(".pin.blink{animation:pinblink 1s infinite;}\n");
+      js.append("@keyframes pinblink{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.55;transform:scale(1.18);}}\n");
+      // .vpin: pin KENDARAAN (lingkaran + emoji) - cermin gaya .ldevpin milik LiveDeviceOverlay,
+      // supaya identitas perangkat terlihat SAMA di peta manapun di app ini.
+      js.append(".vpin{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45);}\n");
+      js.append(".vpin.blink{animation:pinblink 1s infinite;}\n");
+      js.append("</style>\n</head><body>\n<div id='map'></div>\n<script>\n");
+      js.append("function escHtml(s){return String(s==null?'':s).replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c];});}\n");
+      js.append("function pinIcon(color,emoji,blink){\n");
+      js.append("  var svg='<svg width=\"26\" height=\"33\" viewBox=\"0 0 26 33\" xmlns=\"http://www.w3.org/2000/svg\">'+\n");
+      js.append("    '<path d=\"M13 0C5.8 0 0 5.8 0 13c0 8.7 13 20 13 20s13-11.3 13-20C26 5.8 20.2 0 13 0z\" fill=\"'+color+'\"/>'+\n");
+      js.append("    '<circle cx=\"13\" cy=\"12\" r=\"9\" fill=\"#fff\"/></svg>';\n");
+      js.append("  return L.divIcon({className:'',html:'<div class=\"pin'+(blink?' blink':'')+'\">'+svg+'<div class=\"em\">'+emoji+'</div></div>',iconSize:[26,33],iconAnchor:[13,33],popupAnchor:[0,-30]});\n");
+      js.append("}\n");
+      js.append("function vehicleIcon(color,vehicle,blink){\n");
+      js.append("  var html='<div class=\"vpin'+(blink?' blink':'')+'\" style=\"background:'+color+'\">'+vehicle+'</div>';\n");
+      js.append("  return L.divIcon({className:'',html:html,iconSize:[28,28],iconAnchor:[14,14],popupAnchor:[0,-16]});\n");
+      js.append("}\n");
+      js.append("var map = L.map('map',{zoomControl:true}).setView([").append(centerLat).append(",").append(centerLng).append("], 14);\n");
+      js.append("L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Tiles &copy; Esri &mdash; Source: Esri, HERE, Garmin, USGS, NGA, NOAA'}).addTo(map);\n");
+      // fixedPts: titik-titik TETAP (konteks + tujuan) - TIDAK termasuk posisi saya, yang
+      // ditambahkan live oleh updateMyPos() supaya zoom ikut menyesuaikan tiap kali jaraknya berubah.
+      js.append("var fixedPts=[];\n");
+      if (hasDev) {
+         js.append("L.marker([").append(devLat).append(",").append(devLng)
+               .append("],{icon:vehicleIcon('").append(devColorSafe).append("','").append(devVehicleSafe).append("',").append(devBlinks).append(")})")
+               .append(".addTo(map).bindPopup(escHtml('").append(escJs(devName)).append("'));\n");
+         js.append("fixedPts.push([").append(devLat).append(",").append(devLng).append("]);\n");
+      }
+      if (hasDest) {
+         js.append("L.marker([").append(destLat).append(",").append(destLng)
+               .append("],{icon:pinIcon('#C62828','\ud83d\udccd',true)})")
+               .append(".addTo(map).bindPopup(escHtml('").append(escJs(destName)).append("'));\n");
+         js.append("fixedPts.push([").append(destLat).append(",").append(destLng).append("]);\n");
+      }
+      if (hasDev && hasDest) {
+         js.append("L.polyline(fixedPts,{color:'").append(devColorSafe).append("',weight:3,opacity:.85,dashArray:'6,6'}).addTo(map);\n");
+      }
+      js.append("var myMarker=null;\n");
+      js.append("function currentPts(){ var pts=fixedPts.slice(); if(myMarker) pts.push(myMarker.getLatLng()); return pts; }\n");
+      js.append("function fit(){ map.invalidateSize();\n");
+      js.append("  var pts=currentPts();\n");
+      // fitBounds memilih zoom sendiri agar semua titik pas dalam bingkai - makin dekat jaraknya,
+      // makin dekat zoom-nya, TANPA perlu logika zoom manual. Inilah "zoom otomatis berdasarkan
+      // jarak" yang diminta: setiap kali posisi saya berubah, pts berubah, dan fit() dipanggil lagi.
+      js.append("  if(pts.length>1){ map.fitBounds(pts,{padding:[36,36],maxZoom:16}); }\n");
+      js.append("  else if(pts.length===1){ map.setView(pts[0],16); } }\n");
+      js.append("window.updateMyPos=function(lat,lng){\n");
+      js.append("  var ll=[lat,lng];\n");
+      js.append("  if(myMarker){ myMarker.setLatLng(ll); }\n");
+      // Pin "Posisi Anda" kedip HANYA bila pin konteks (perangkat yang ditugaskan) TIDAK kedip —
+      // satu pin kedip pada satu waktu, supaya mata langsung tertuju ke yang paling relevan:
+      // perangkat yang ditugaskan bila ada, atau posisi saya sendiri bila order ini belum bertuan.
+      js.append("  else { myMarker=L.marker(ll,{icon:vehicleIcon('").append(myColorSafe).append("','").append(myVehicleSafe).append("',").append(!devBlinks).append(")}).addTo(map).bindPopup('Posisi Anda'); }\n");
+      js.append("  fit();\n");
+      js.append("};\n");
+      js.append("window.addEventListener('load',function(){ fit(); setTimeout(fit,250); setTimeout(fit,800); });\n");
+      js.append("setTimeout(fit,120);\n");
+      js.append("</script></body></html>");
+      return js.toString();
    }
 
    private static String escJs(String s) {
@@ -1352,9 +1630,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
                ((TextView)this.findViewById(id.tvStrategySummary)).setText(muat);
                ((TextView)this.findViewById(id.tvStrategyStops)).setText(this.tripLines(first, 4));
-               card.setVisibility(0);
+               card.setVisibility(this.strategyHidden ? 8 : 0);
                this.applyStrategyCollapsed();
-               this.startStrategyBlink(card);
+               if (this.strategyHidden) {
+                  this.stopStrategyBlink();
+               } else {
+                  this.startStrategyBlink(card);
+               }
             }
          }
       }
@@ -1467,8 +1749,6 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.adapter.setData(ordered);
       this.renderStrategy(ordered);
       this.applyRunModeChrome(list);
-      this.tvEmpty.setVisibility(list.isEmpty() ? 0 : 8);
-      this.rv.setVisibility(list.isEmpty() ? 8 : 0);
       this.setTabCount(0, list.size());
       if (this.selectionMode) {
          if (list.isEmpty()) {
@@ -1579,6 +1859,29 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       } else {
          box.setVisibility(8);
       }
+   }
+
+   /** Badge "Detail Transaksi" Preview — cermin PERSIS chipAt() (kapsul produk kartu Antrean
+    *  Delivery), bukan Material Chip: satu-satunya cara dua badge yang mestinya kembar ("MIN ×1" di
+    *  kartu, "MIN ×1" di Preview) benar-benar terlihat identik ukurannya. */
+   private TextView makeDetailBadge(String label, int bg) {
+      TextView chip = new TextView(this);
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+      lp.setMarginEnd(this.dp(6f));
+      chip.setLayoutParams(lp);
+      chip.setTextSize(11f);
+      chip.setTypeface(chip.getTypeface(), 1);
+      chip.setPadding(this.dp(8f), this.dp(3f), this.dp(8f), this.dp(3f));
+      chip.setMaxLines(1);
+      chip.setEllipsize(TruncateAt.END);
+      GradientDrawable bgDrawable = new GradientDrawable();
+      bgDrawable.setShape(0);
+      bgDrawable.setCornerRadius(this.dp(10f));
+      bgDrawable.setColor(bg);
+      chip.setBackground(bgDrawable);
+      chip.setText(label);
+      chip.setTextColor(chipTextColor(bg));
+      return chip;
    }
 
    private TextView chipAt(LinearLayout box, int i) {
@@ -1792,22 +2095,18 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private void showRunningMoreMenu(View anchor, Transaction t, String jarakLabel) {
       PopupMenu menu = new PopupMenu(this, anchor);
-      menu.getMenu().add(0, 1, 0, "← Kembali");
-      menu.getMenu().add(0, 2, 1, "\ud83d\uddbc Foto");
-      menu.getMenu().add(0, 3, 2, jarakLabel != null ? "\ud83d\udccd " + jarakLabel + " · Preview Peta" : "\ud83d\udccd Preview Peta");
-      menu.getMenu().add(0, 4, 3, "\ud83d\udcac Chat WA");
+      menu.getMenu().add(0, 1, 0, "\u2190 Kembali");
+      menu.getMenu().add(0, 2, 1, jarakLabel != null ? "\ud83d\udd0d " + jarakLabel + " \u00b7 Preview" : "\ud83d\udd0d Preview");
+      menu.getMenu().add(0, 3, 2, "\ud83d\udcac Chat WA");
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
             case 1:
                this.confirmStopRun();
                return true;
             case 2:
-               this.showQueuePhotoPreview(t);
+               this.showQueuePreview(t);
                return true;
             case 3:
-               this.showQueueMapPreview(t);
-               return true;
-            case 4:
                this.sendTrackLink(t);
                return true;
             default:
@@ -1819,19 +2118,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private void showCompactMoreMenu(View anchor, Transaction t, String jarakLabel) {
       PopupMenu menu = new PopupMenu(this, anchor);
-      menu.getMenu().add(0, 1, 0, t.isOrderPriority() ? "⚡ Sudah Prioritas — ubah alasan" : "⚡ Jadikan Prioritas");
-      menu.getMenu().add(0, 2, 1, "\ud83d\uddbc Foto");
-      menu.getMenu().add(0, 3, 2, jarakLabel != null ? "\ud83d\udccd " + jarakLabel + " · Preview Peta" : "\ud83d\udccd Preview Peta");
+      menu.getMenu().add(0, 1, 0, t.isOrderPriority() ? "\u26a1 Sudah Prioritas \u2014 ubah alasan" : "\u26a1 Jadikan Prioritas");
+      menu.getMenu().add(0, 2, 1, jarakLabel != null ? "\ud83d\udd0d " + jarakLabel + " \u00b7 Preview" : "\ud83d\udd0d Preview");
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
             case 1:
                this.promptMarkPriority(t);
                return true;
             case 2:
-               this.showQueuePhotoPreview(t);
-               return true;
-            case 3:
-               this.showQueueMapPreview(t);
+               this.showQueuePreview(t);
                return true;
             default:
                return false;
@@ -1975,7 +2270,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       } else if (stops.size() > 1) {
          this.tvSummary.setText("\ud83d\ude9a Mengantar " + stops.size() + " order (1 rit)  ·  " + Math.max(0, n - stops.size()) + " order menunggu");
       } else {
-         this.tvSummary.setText(n + " order menunggu diproses");
+         this.tvSummary.setText(n + " order menunggu diproses" + galonSuffix(totalGalonOf(list)));
       }
 
       Transaction run = stops.isEmpty() ? null : (Transaction)stops.get(0);
@@ -2004,6 +2299,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       Collections.sort(out, (a, b) -> {
          if (isPickupOnly(a) != isPickupOnly(b)) {
             return isPickupOnly(a) ? 1 : -1;
+         } else if (isLate(a) != isLate(b)) {
+            // SLA yang sudah jebol mengalahkan preferensi: pesanan TERLAMBAT naik di atas pelanggan
+            // prioritas. Bila keduanya terlambat, kunci berikutnya (prioritas lalu FIFO) yang
+            // memutuskan, jadi pelanggan bintang tak dirugikan. Kunci yang SAMA disisipkan di posisi
+            // yang SAMA pada ORDER BY SQL (TransactionDao.getDeliveryQueue) -- kalau hanya salah satu
+            // diubah, urutan kartu melompat begitu fix GPS pertama datang.
+            return isLate(a) ? -1 : 1;
          } else if (a.isCustomerPriority() != b.isCustomerPriority()) {
             return a.isCustomerPriority() ? -1 : 1;
          } else if (a.isOrderPriority() != b.isOrderPriority()) {
@@ -2158,6 +2460,162 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    }
 
+   /**
+    * Pindai antrean untuk pesanan yang sudah melewati batas umur cabang, lalu bunyikan alarm +
+    * popup keras SEKALI SAJA untuk tiap order. Dipanggil dari ticker 1 detik, jadi semua pembacaan
+    * setelan sudah dipindahkan ke onResume.
+    *
+    * <p>Anti-spam tiga lapis: (a) hanya id yang BELUM pernah membunyikan yang memicu — dan daftar
+    * id itu BERTAHAN antar sesi ({@link #KEY_ALARMED_LATE_IDS}), jadi order yang sama tak
+    * membunyikan alarm lagi tiap kali layar antrean dibuka ulang, (b) jeda 10 menit antar bunyi dan
+    * 15 menit bila kurir menekan "TUNDA", (c) satu dialog per layar. Yang dibungkam HANYA bunyi +
+    * popup -- kedip merah, badge sirene, dan posisi puncak antrean tetap jalan, jadi pesanan gawat
+    * tetap terlihat sepanjang ia masih di antrean.
+    */
+   private void maybeRaiseLateAlarm() {
+      if (lateMs <= 0L || this.selectionMode || this.claimSelectOpen || this.claimSelectOther) {
+         return;
+      }
+
+      List<Transaction> late = new ArrayList();
+      this.collectLate(this.adapter != null ? this.adapter.shown() : null, late);
+      this.collectLate(this.openDispatchAdapter != null ? this.openDispatchAdapter.data : null, late);
+      if (late.isEmpty()) {
+         return;
+      }
+
+      boolean fresh = false;
+
+      for(Transaction t : late) {
+         if (!this.alarmedLateIds.contains(t.getId())) {
+            fresh = true;
+            break;
+         }
+      }
+
+      long now = System.currentTimeMillis();
+      if (!fresh || now < this.lateAlarmSnoozeUntilMs) {
+         return;
+      }
+
+      for(Transaction t : late) {
+         this.alarmedLateIds.add(t.getId());
+      }
+
+      this.rememberAlarmedLate();
+      this.lateAlarmSnoozeUntilMs = now + LATE_ALARM_COOLDOWN_MS;
+      this.showLateAlarmDialog(late);
+   }
+
+   /** Baca kembali id yang sudah pernah membunyikan alarm. Id yang tak terbaca dilewati diam-diam:
+    *  gagal memuat daftar ini paling buruk cuma membunyikan alarm sekali lagi, tak pantas
+    *  menggagalkan pembukaan layar antrean. */
+   private void restoreAlarmedLate() {
+      String raw = (new SettingsDao(DatabaseHelper.getInstance(this))).get(KEY_ALARMED_LATE_IDS, "");
+      if (raw != null && !raw.isEmpty()) {
+         for(String part : raw.split(",")) {
+            try {
+               this.alarmedLateIds.add(Long.valueOf(part.trim()));
+            } catch (Exception var6) {
+            }
+         }
+
+      }
+   }
+
+   private void rememberAlarmedLate() {
+      // Buang yang tertua dulu supaya daftarnya tak tumbuh selamanya (LinkedHashSet = urut sisip).
+      while(this.alarmedLateIds.size() > ALARMED_LATE_IDS_MAX) {
+         java.util.Iterator<Long> it = this.alarmedLateIds.iterator();
+         it.next();
+         it.remove();
+      }
+
+      StringBuilder sb = new StringBuilder();
+
+      for(Long id : this.alarmedLateIds) {
+         if (sb.length() > 0) {
+            sb.append(',');
+         }
+
+         sb.append(id);
+      }
+
+      (new SettingsDao(DatabaseHelper.getInstance(this))).set(KEY_ALARMED_LATE_IDS, sb.toString());
+   }
+
+   private void collectLate(List<Transaction> src, List<Transaction> out) {
+      if (src != null) {
+         for(Transaction t : src) {
+            // Order yang VOID-nya sedang diajukan tak bisa dikirim lagi -- membunyikan alarm untuknya
+            // hanya melatih kurir mengabaikan alarm.
+            if (t != null && t.getVoidRequestPendingAt() == null && isLate(t)) {
+               out.add(t);
+            }
+         }
+
+      }
+   }
+
+   private void showLateAlarmDialog(List<Transaction> late) {
+      if (!this.isFinishing() && !this.isDestroyed() && (this.lateDialog == null || !this.lateDialog.isShowing())) {
+         List<Transaction> sorted = new ArrayList(late);
+         Collections.sort(sorted, (a, b) -> Long.compare(elapsedMillis(b.getDeliveryQueuedAt()), elapsedMillis(a.getDeliveryQueuedAt())));
+         StringBuilder sb = new StringBuilder();
+         sb.append(sorted.size()).append(" pesanan sudah melewati batas ").append(formatDuration(lateMs)).append(" di antrean:\n\n");
+
+         for(int i = 0; i < sorted.size() && i < 5; ++i) {
+            Transaction t = (Transaction)sorted.get(i);
+            sb.append("• ").append(safe(t.getCustomerName())).append(" — ⏱ ").append(formatDuration(elapsedMillis(t.getDeliveryQueuedAt()))).append("\n");
+         }
+
+         if (sorted.size() > 5) {
+            sb.append("…dan ").append(sorted.size() - 5).append(" lainnya\n");
+         }
+
+         sb.append("\nSegera kirim, atau tandai TERTUNDA bila memang belum bisa diantar hari ini.");
+         if (this.revokeLateCredit) {
+            sb.append("\n\nPOIN GALON TIDAK akan dikreditkan untuk pesanan yang diselesaikan setelah lewat batas.");
+         }
+
+         Transaction oldest = (Transaction)sorted.get(0);
+         this.playIncompleteAlertSound();
+         // Sengaja TIDAK setCancelable(false): layar ini dibuka kurir yang mungkin sedang di jalan,
+         // gerbang keras yang tak bisa ditutup di situ berbahaya. Gerbang keras hanya untuk keputusan
+         // (pelanggan Umum, order ganda), bukan untuk pengingat.
+         this.lateDialog = (new AlertDialog.Builder(this)).setIcon(17301543).setTitle("🚨 PESANAN TERLAMBAT — SEGERA KIRIM!").setMessage(sb.toString()).setPositiveButton("KIRIM SEKARANG", (d, w) -> this.scrollToOrder(oldest)).setNegativeButton("TUNDA & BERITAHU PELANGGAN", (d, w) -> this.snoozeLateAlarmAndNotify(oldest)).create();
+         this.lateDialog.setOnDismissListener((d) -> this.lateDialog = null);
+         this.lateDialog.show();
+      }
+   }
+
+   /** "TUNDA & BERITAHU PELANGGAN" pada alarm terlambat: snooze alarmnya (sama seperti dulu) DAN
+    *  buka WA ke pelanggan supaya kurir tinggal kirim, bukan menunda diam-diam tanpa pelanggan tahu. */
+   private void snoozeLateAlarmAndNotify(Transaction t) {
+      this.lateAlarmSnoozeUntilMs = System.currentTimeMillis() + LATE_ALARM_SNOOZE_MS;
+      String phone = t != null ? t.getCustomerPhone() : null;
+      if (phone == null || phone.trim().isEmpty()) {
+         Toast.makeText(this, "Pesanan ditunda 15 menit — pelanggan tak punya nomor WA tersimpan", Toast.LENGTH_LONG).show();
+         return;
+      }
+      this.openWhatsApp(phone, "Assalamualaikum, Pelanggan Yth.\n\nMohon maaf, pesanan air minum Anda "
+            + "sedikit tertunda dari perkiraan. Kami akan segera mengantarnya. Terima kasih atas kesabarannya 🙏");
+   }
+
+   private void scrollToOrder(Transaction t) {
+      if (this.adapter != null && t != null) {
+         List<Transaction> shown = this.adapter.shown();
+
+         for(int i = 0; i < shown.size(); ++i) {
+            if (((Transaction)shown.get(i)).getId() == t.getId()) {
+               this.rv.smoothScrollToPosition(i);
+               return;
+            }
+         }
+
+      }
+   }
+
    private void showIssueBlockThenComplete(Transaction t, Customer c) {
       StringBuilder cats = new StringBuilder();
 
@@ -2170,7 +2628,23 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       (new AlertDialog.Builder(this)).setIcon(17301543).setTitle("⚠️ Pelanggan Bermasalah — Perbaiki Dulu").setMessage("Detail pelanggan \"" + c.getName() + "\" ditandai BERMASALAH dan belum diperbaiki:\n\n" + cats + note + "\nPerbaiki dulu, lalu tandai \"sudah diperbaiki\" (butuh persetujuan owner) sebelum menyelesaikan delivery ini.").setPositiveButton("Sudah Diperbaiki…", (d, w) -> IssueResolveDialog.show(this, c, "delivery", () -> this.doComplete(t, false))).setNeutralButton("Perbaiki Data", (d, w) -> this.startActivity((new Intent(this, CustomerFormActivity.class)).putExtra("customer_id", c.getId()))).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).show();
    }
 
+   /**
+    * Gerbang informatif sebelum konfirmasi Selesai: bila cabang mengaktifkan pencabutan poin untuk
+    * pesanan terlambat DAN pesanan ini memang sudah lewat batas, beri tahu kurir dulu. HP TIDAK
+    * menulis kolom apa pun di sini -- server yang memutuskan saat laporan dibaca
+    * (App\Support\LateDeliveryGuard), supaya ambangnya tak pernah terduplikasi di dua repo.
+    */
    private void complete(Transaction t, boolean revokeCredit) {
+      if (this.revokeLateCredit && isLate(t)) {
+         long lateBy = elapsedMillis(t.getDeliveryQueuedAt());
+         this.playIncompleteAlertSound();
+         (new AlertDialog.Builder(this)).setIcon(17301543).setTitle("⚠️ Order Terlambat — Poin Tidak Dikreditkan").setMessage("Order \"" + safe(t.getCustomerName()) + "\" sudah menunggu " + formatDuration(lateBy) + " di antrean, melewati batas " + formatDuration(lateMs) + " yang ditetapkan depot.\n\nBila diselesaikan sekarang, POIN GALON order ini tidak akan dikreditkan ke siapa pun.").setPositiveButton("SELESAIKAN TANPA POIN", (d, w) -> this.completeConfirm(t, revokeCredit)).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).show();
+      } else {
+         this.completeConfirm(t, revokeCredit);
+      }
+   }
+
+   private void completeConfirm(Transaction t, boolean revokeCredit) {
       long ms = elapsedMillis(t.getDeliveryQueuedAt());
       boolean isPickup = "KEMBALI".equals(t.getType());
       String msg = (isPickup ? "Galon kembali dari \"" + safe(t.getCustomerName()) + "\" sudah diambil (pickup)?" : "Order \"" + safe(t.getCustomerName()) + "\" sudah selesai diantar?") + "\n\nLama proses: " + formatDuration(ms);
@@ -2184,7 +2658,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          msg = msg + "\n\nAlokasi Poin: " + (staffName != null && !staffName.isEmpty() ? staffName : "kamu") + " (" + t.getJumlahGalon() + " galon)";
       }
 
-      AlertDialog.Builder b = (new AlertDialog.Builder(this)).setTitle(isPickup ? "Tandai Selesai (Pickup)" : "Tandai Selesai").setMessage(msg).setPositiveButton("Selesai", (d, w) -> this.doComplete(t, revokeCredit)).setNegativeButton("Batal", (DialogInterface.OnClickListener)null);
+      AlertDialog.Builder b = (new AlertDialog.Builder(this)).setTitle(isPickup ? "Tandai Selesai (Pickup)" : "Tandai Selesai").setMessage(msg).setPositiveButton("Selesai", (d, w) -> this.confirmReturnedGalonThenComplete(t, revokeCredit)).setNegativeButton("Batal", (DialogInterface.OnClickListener)null);
       if (!isPickup) {
          b.setNeutralButton("Ubah…", (d, w) -> this.showAdjustDialog(t, revokeCredit));
       } else if (allocatable) {
@@ -2192,6 +2666,112 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
 
       b.show();
+   }
+
+   /**
+    * Gerbang terakhir sebelum order ditandai Selesai: KONFIRMASI GALON KEMBALI. Nilai awalnya =
+    * yang sudah tercatat saat transaksi dibuat (baris KEMBALI berpasangan), jadi kurir yang tak
+    * menemukan perubahan cukup mengetuk dua kali tanpa mengetik apa pun.
+    *
+    * <p>Sengaja DUA KETUKAN: angka ini menggerakkan dua buku sekaligus — "Galon Dipinjam" milik
+    * pelanggan dan stok fisik depot. Salahnya tidak kelihatan hari itu juga, baru ketahuan
+    * berhari-hari kemudian ketika saldo pelanggan dipersoalkan, saat sudah tak ada yang ingat
+    * berapa galon yang sebenarnya diterima. Ketukan kedua juga menahan kebiasaan "Selesai" beruntun
+    * yang membuat isian default lolos tanpa pernah benar-benar dibaca.
+    *
+    * <p>Pickup (transaksi KEMBALI) dilewati: galon yang dibawa pulang ADALAH transaksi itu sendiri,
+    * jadi menanyakannya lagi di sini justru menyiratkan ada angka kedua yang tidak pernah ada.
+    */
+   private void confirmReturnedGalonThenComplete(Transaction t, boolean revokeCredit) {
+      if (!"JUAL".equals(t.getType())) {
+         this.doComplete(t, revokeCredit);
+         return;
+      }
+
+      int seeded = this.dao.getReturnedGalonForSale(t.getCustomerId(), t.getTanggal());
+      float density = this.getResources().getDisplayMetrics().density;
+      int pad = (int)(20.0F * density);
+      int gap = (int)(8.0F * density);
+
+      EditText qtyIn = new EditText(this);
+      qtyIn.setInputType(2);
+      qtyIn.setText(String.valueOf(seeded));
+      qtyIn.setSelection(qtyIn.getText().length());
+      qtyIn.setHint("Jumlah galon kosong diterima");
+
+      TextView hint = new TextView(this);
+      hint.setText("Terisi otomatis dari transaksi saat dibuat. Ubah bila galon yang benar-benar "
+            + "diterima berbeda.");
+      hint.setTextSize(12.0F);
+      hint.setTextColor(-8355712);
+      hint.setPadding(0, gap, 0, 0);
+
+      LinearLayout box = new LinearLayout(this);
+      box.setOrientation(1);
+      box.setPadding(pad, gap, pad, 0);
+      box.addView(qtyIn);
+      box.addView(hint);
+
+      AlertDialog dlg = (new AlertDialog.Builder(this))
+            .setIcon(17301543)
+            .setTitle("❗ Konfirmasi Galon Kembali")
+            .setMessage("Berapa galon KOSONG yang diterima dari \"" + safe(t.getCustomerName()) + "\"?")
+            .setView(box)
+            .setPositiveButton("KONFIRMASI", (DialogInterface.OnClickListener)null)
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener)null)
+            .create();
+
+      // Ketukan PERTAMA cuma mengokang tombolnya, ketukan KEDUA yang menyelesaikan. Listener
+      // dipasang lewat setOnShowListener karena listener bawaan setPositiveButton selalu menutup
+      // dialog, sehingga ketukan pertama akan langsung meloloskan order.
+      dlg.setOnShowListener((shown) -> {
+         android.widget.Button ok = dlg.getButton(-1);
+         boolean[] armed = new boolean[1];
+         // Mengubah angkanya membatalkan kokangan: yang dikonfirmasi harus angka yang benar-benar
+         // dilihat kurir pada ketukan terakhir, bukan angka sebelum ia mengetik ulang.
+         qtyIn.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void afterTextChanged(Editable e) {
+               if (armed[0]) {
+                  armed[0] = false;
+                  ok.setText("KONFIRMASI");
+               }
+
+            }
+         });
+         ok.setOnClickListener((btn) -> {
+            int qty;
+            try {
+               qty = Integer.parseInt(qtyIn.getText().toString().trim());
+            } catch (Exception var6) {
+               qtyIn.setError("Angka tidak valid");
+               return;
+            }
+
+            if (qty < 0) {
+               qtyIn.setError("Tidak boleh minus");
+            } else if (!armed[0]) {
+               armed[0] = true;
+               ok.setText("YAKIN? KETUK LAGI");
+            } else {
+               // Hanya ditulis bila memang berubah — menulis ulang angka yang sama tetap membuat
+               // baris KEMBALI ikut terkirim lagi sebagai "diedit" ke dashboard tanpa sebab.
+               if (qty != seeded) {
+                  this.dao.applyReturnedGalon(t.getId(), qty);
+               }
+
+               dlg.dismiss();
+               Transaction fresh = this.dao.getById(t.getId());
+               this.doComplete(fresh != null ? fresh : t, revokeCredit);
+            }
+         });
+      });
+      dlg.show();
    }
 
    private String rp(double v) {
@@ -2217,6 +2797,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       boolean bon = t.getCatatan() != null && t.getCatatan().contains("[CASH BON]");
       sb.append("Pembayaran: ").append(bon ? "Cash Bon (hutang)" : (pay.isEmpty() ? "—" : pay)).append("\n");
       sb.append("Total: ").append(this.rp(t.getTotalHarga()));
+      sb.append(this.refundSummaryText(t));
       sb.append(this.debtSummaryText(t));
       return sb.toString();
    }
@@ -2246,6 +2827,30 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                ? ""
                : "\nHutang sebelumnya: " + this.rp(prior)
                      + "\nTotal harus diterima: " + this.rp(t.getTotalHarga() + prior);
+      }
+   }
+
+   /**
+    * Baris "Dari saldo refund" + "Total setelah refund" untuk popup "Tandai Selesai" & "Detail
+    * Order": order ini dibayar SEBAGIAN dari saldo refund pelanggan, jadi Total harga jual sendirian
+    * membesar-besarkan apa yang sebenarnya masih harus diterima kurir.
+    *
+    * <p>Dibaca dari buku besar {@code customer_refunds} lewat uuid transaksi — sama dengan yang
+    * dipakai struk (ReceiptActivity) — BUKAN dari penanda pada catatan, karena penanda bisa hilang
+    * bila catatan diedit sedangkan baris buku besar adalah uangnya sendiri.</p>
+    *
+    * <p>Tak ada pemakaian refund → '' (dialognya tetap ringkas untuk mayoritas order tunai biasa).</p>
+    */
+   private String refundSummaryText(Transaction t) {
+      if (t == null || t.getId() <= 0L) {
+         return "";
+      } else {
+         String trxUuid = (new TransactionDao(DatabaseHelper.getInstance(this))).getSyncUuidById(t.getId());
+         double used = (new CustomerRefundDao(DatabaseHelper.getInstance(this))).usedForTransaction(trxUuid);
+         return used <= (double)0.0F
+               ? ""
+               : "\nDari saldo refund: " + this.rp(used)
+                     + "\nTotal setelah refund: " + this.rp(Math.max((double)0.0F, t.getTotalHarga() - used));
       }
    }
 
@@ -3067,6 +3672,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          sb.append("Pembayaran: ").append(pay).append('\n');
       }
 
+      // Dari saldo refund + Total setelah refund — sama persis dengan yang tampil di popup Tandai Selesai.
+      String refundLines = this.refundSummaryText(t);
+      if (!refundLines.isEmpty()) {
+         sb.append(refundLines.startsWith("\n") ? refundLines.substring(1) : refundLines).append('\n');
+      }
+
       // Hutang lama + tagihan di pintu — sama persis dengan yang tampil di popup Tandai Selesai.
       String debtLines = this.debtSummaryText(t);
       if (!debtLines.isEmpty()) {
@@ -3122,6 +3733,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       GridLayout actionsGrid = new GridLayout(this);
       actionsGrid.setColumnCount(2);
       actionsGrid.setPadding(0, Math.round(8.0F * this.getResources().getDisplayMetrics().density), 0, 0);
+      Button btnPreview = new Button(this);
+      btnPreview.setText("🔍 Preview");
+      btnPreview.setAllCaps(false);
+      btnPreview.setOnClickListener((v) -> {
+         dialog.dismiss();
+         this.showQueuePreview(t);
+      });
+      this.addGridAction(actionsGrid, btnPreview);
       if (this.currentUserCanRequestTrxChange() && !voidPending) {
          Button btnUbah = new Button(this);
          btnUbah.setText("✏️ Ubah");
@@ -3699,21 +4318,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private static long elapsedMillis(String queuedAt) {
-      if (queuedAt != null && queuedAt.length() >= 19) {
-         try {
-            Date d = SDF_PARSE.parse(queuedAt.substring(0, 19));
-            if (d == null) {
-               return 0L;
-            } else {
-               long ms = System.currentTimeMillis() - d.getTime();
-               return Math.max(0L, ms);
-            }
-         } catch (Exception var4) {
-            return 0L;
-         }
-      } else {
-         return 0L;
+      // Ts.millis = satu-satunya pengurai yang tahan CAMPURAN bentuk. Kolom delivery_queued_at
+      // berisi waktu LOKAL bila HP yang menulisnya, tapi ISO-UTC ("...Z") bila barisnya datang dari
+      // server (tab "Perangkat Lain"). SDF_PARSE lama tak menyetel zona waktu, jadi baris asal-server
+      // meleset 7 jam dan seluruh kartunya langsung terbaca "sudah tua".
+      long t = Ts.millis(queuedAt);
+      if (t == Long.MAX_VALUE) {
+         return 0L;   // tak terurai -> anggap baru masuk, jangan memicu alarm palsu
       }
+
+      return Math.max(0L, System.currentTimeMillis() - t);
    }
 
    private static String formatDuration(long ms) {
@@ -3743,25 +4357,58 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
    }
 
-   private static void applyQueueTimerState(TextView tv, long elapsedMs) {
-      int level = elapsedMs >= 7200000L ? 2 : (elapsedMs >= 3600000L ? 1 : 0);
+   /**
+    * Warnai + kedipkan badge umur. Tiga tingkat: >= 1 jam KUNING, >= 2 jam MERAH, dan >= batas umur
+    * cabang (setelan delivery_max_age_minutes, diteruskan lewat {@code lateMs}) MERAH TUA berkedip
+    * paling cepat = TERLAMBAT. {@code lateMs <= 0} mematikan tingkat ketiga. Ambang 1 & 2 jam TIDAK
+    * ikut jadi setelan -- staf sudah hafal keduanya; ini murni tingkat tambahan di atasnya.
+    */
+   private static void applyQueueTimerState(TextView tv, long elapsedMs, long lateMs) {
+      int level = lateMs > 0L && elapsedMs >= lateMs ? 3 : (elapsedMs >= QUEUE_LATE_MS ? 2 : (elapsedMs >= QUEUE_WARN_MS ? 1 : 0));
       Object prev = tv.getTag(id.tvElapsed);
       boolean changed = !(prev instanceof Integer) || (Integer)prev != level;
       if (changed) {
          tv.setTag(id.tvElapsed, level);
-         tv.setBackgroundResource(level == 2 ? drawable.bg_pending_badge : (level == 1 ? drawable.bg_queue_timer_warn : drawable.bg_queue_timer_ok));
+         tv.setBackgroundResource(level == 3 ? drawable.bg_queue_timer_danger : (level == 2 ? drawable.bg_pending_badge : (level == 1 ? drawable.bg_queue_timer_warn : drawable.bg_queue_timer_ok)));
       }
 
       if (level == 0) {
          tv.clearAnimation();
          tv.setAlpha(1.0F);
       } else if (changed || tv.getAnimation() == null) {
-         AlphaAnimation blink = new AlphaAnimation(1.0F, level == 2 ? 0.2F : 0.35F);
-         blink.setDuration(level == 2 ? 350L : 650L);
+         AlphaAnimation blink = new AlphaAnimation(1.0F, level >= 3 ? 0.15F : (level == 2 ? 0.2F : 0.35F));
+         blink.setDuration(level >= 3 ? 250L : (level == 2 ? 350L : 650L));
          blink.setRepeatMode(2);
          blink.setRepeatCount(-1);
          tv.startAnimation(blink);
       }
+   }
+
+   /**
+    * Satu titik untuk teks + warna badge umur, dipakai KEENAM tempat yang menulis badge (3 adapter x
+    * bind + refreshTimers). Prefiks jam-pasir ditempel di sini, bukan di formatter -- pesanan yang
+    * sudah melewati batas umur memakai sirene supaya beda di ekor mata.
+    */
+   private static void bindElapsedBadge(TextView tv, long elapsedMs) {
+      boolean late = lateMs > 0L && elapsedMs >= lateMs;
+      tv.setText((late ? "\ud83d\udea8 " : "\u23f1 ") + formatElapsedBadge(elapsedMs));
+      applyQueueTimerState(tv, elapsedMs, lateMs);
+   }
+
+   /**
+    * Pesanan ini sudah melewati batas umur antrean cabang?
+    *
+    * <p>Turunan MURNI dari delivery_queued_at + setelan, TIDAK pernah ditulis ke kolom prioritas:
+    * SyncController membuang push kolom delivery_priority_* untuk baris yang sudah ada (anti-resurrect),
+    * jadi stempel lokal akan tampak jalan lalu lenyap pada pull berikutnya. Umur juga sudah bisa
+    * dihitung dari kolom yang ADA -- menyimpannya berarti menduplikasi kebenaran.
+    */
+   private static boolean isLate(Transaction t) {
+      if (t == null || lateMs <= 0L) {
+         return false;
+      }
+
+      return elapsedMillis(t.getDeliveryQueuedAt()) >= lateMs;
    }
 
    private Customer.Location resolveOrderLocation(Transaction t) {
@@ -3784,101 +4431,611 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
    }
 
-   private void showQueueMapPreview(Transaction t) {
+   /**
+    * Data satu panel "Preview" gabungan (Peta atas, Kompas, Foto bawah, Detail Transaksi) -
+    * dipakai BAIK dari antrean sendiri ({@link #showQueuePreview}) MAUPUN antrean perangkat lain
+    * ({@link #showOtherDevicePreview}); dua entry point itu mengambil datanya dari sumber yang
+    * beda (Transaction lokal vs JSONObject ringkas dari server) tapi merendernya lewat satu
+    * builder yang sama ({@link #showPreviewDialog}) supaya keduanya tak bisa saling menyimpang.
+    */
+   private static class PreviewData {
+      String title;
+      // Pin "konteks" di peta — kurir LAIN yang sedang memegang order ini (antrean perangkat lain);
+      // KOSONG untuk antrean sendiri, karena posisi kita sendiri sudah ditangani pin LIVE ("Posisi
+      // Anda") yang digambar terpisah lewat kompas — dua pin di titik yang sama cuma membingungkan.
+      boolean hasDev;
+      double devLat, devLng;
+      String devName;
+      // Uuid perangkat konteks -- diteruskan ke LiveDeviceOverlay.excluding() supaya lapisan pin
+      // live TIDAK menggambar ulang kurir yang pin-nya sudah kita gambar sendiri di sini.
+      String devUuid;
+      String devVehicle, devColor;   // identitas kendaraan kurir itu (App\Support\DeviceIcon)
+      // Pin mana yang KEDIP: true = pin konteks (perangkat yang DITUGASKAN); false = posisi saya
+      // sendiri (order ini belum bertuan/Pesanan Terbuka). Tak berlaku sama sekali bila !hasDev —
+      // lihat buildMiniMapHtml.
+      boolean blinkAssigned;
+      boolean hasDest;
+      double destLat, destLng;
+      String destName;
+      String address;
+      // "Detail Transaksi" ringkas: badge slug+warna (produk, Kembali, metode bayar, TOTAL) - baris
+      // panjang "• FREZMIN Air Mineral 19L × 1" lama diringkas jadi "[MIN ×1]" yang sekali lirik
+      // sudah kebaca, cermin kapsul produk yang sudah dipakai di kartu antrean (bindProductChips).
+      List<Chip> detailChips;
+      // Sisanya yang TIDAK cocok jadi badge (hutang/refund/prioritas/lama antre) - teks kecil di
+      // bawah baris badge; null/"" -> tak ada baris tambahan.
+      String detailExtra;
+      String photoLocalPath; // dicoba lebih dulu (sudah ada di disk, tanpa unduh)
+      String photoUrl;       // fallback bila photoLocalPath kosong/tak ada filenya
+   }
+
+   /** Satu badge "Detail Transaksi" — label siap-tampil + warna latar (teks dihitung kontras). */
+   private static class Chip {
+      final String label;
+      final int bg;
+      Chip(String label, int bg) { this.label = label; this.bg = bg; }
+   }
+
+   private void showQueuePreview(Transaction t) {
       double lat = effectiveLat(t);
       double lng = effectiveLng(t);
       if (lat == (double)0.0F && lng == (double)0.0F) {
          Toast.makeText(this, "Belum ada koordinat untuk order ini.", 0).show();
-      } else {
-         WebView webView = new WebView(this);
-         LiveDeviceOverlay[] overlayRef = new LiveDeviceOverlay[1];
-         WebSettings ws = webView.getSettings();
-         ws.setJavaScriptEnabled(true);
-         ws.setDomStorageEnabled(true);
-         ws.setUserAgentString(MapTiles.userAgent());
-         int sizeDp = Math.round(320.0F * this.getResources().getDisplayMetrics().density);
-         webView.setLayoutParams(new LinearLayout.LayoutParams(-1, sizeDp));
-         webView.setBackgroundColor(-1);
-         boolean hasDev = this.myLat != (double)0.0F || this.myLng != (double)0.0F;
-         String html = buildMiniMapHtml(hasDev, this.myLat, this.myLng, "Posisi Anda", true, lat, lng, safe(t.getCustomerName()));
-         LinearLayout content = new LinearLayout(this);
-         content.setOrientation(1);
-         content.addView(webView);
-         Customer.Location destLoc = this.resolveOrderLocation(t);
-         Customer custForArea = t.getCustomerId() > 0L ? this.customerDao.getByIdMerged(t.getCustomerId()) : null;
-         String adminArea = custForArea != null ? custForArea.getAdminArea() : "";
-         String areaSuffix = !adminArea.isEmpty() ? " (" + adminArea + ")" : "";
-         String address = destLoc != null ? "Kirim Ke: " + safe(destLoc.name) + areaSuffix : (t.getCustomerAddress() != null && !t.getCustomerAddress().trim().isEmpty() ? t.getCustomerAddress().trim() + areaSuffix : "");
-         if (!address.isEmpty()) {
-            TextView tvDialogAddress = new TextView(this);
-            tvDialogAddress.setText("\ud83d\udccd " + address);
-            tvDialogAddress.setTextSize(13.0F);
-            int padDp = Math.round(16.0F * this.getResources().getDisplayMetrics().density);
-            int padTopDp = Math.round(8.0F * this.getResources().getDisplayMetrics().density);
-            tvDialogAddress.setPadding(padDp, padTopDp, padDp, 0);
-            content.addView(tvDialogAddress);
-         }
+         return;
+      }
+      Customer c = this.customerDao.getByIdMerged(t.getCustomerId());
+      Customer.Location destLoc = this.resolveOrderLocation(t);
+      String adminArea = c != null ? c.getAdminArea() : "";
+      String areaSuffix = !adminArea.isEmpty() ? " (" + adminArea + ")" : "";
 
-         AlertDialog dialog = (new AlertDialog.Builder(this)).setTitle("\ud83d\udccd Preview Peta").setView(content).setPositiveButton("Tutup", (DialogInterface.OnClickListener)null).setNeutralButton("\ud83e\udded Navigasi", (dlg, w) -> this.openMapsNavigation(lat, lng)).create();
-         dialog.setOnShowListener((d) -> {
-            webView.setLayoutParams(new LinearLayout.LayoutParams(-1, sizeDp));
-            dialog.getWindow().setLayout(-1, -2);
-            webView.post(() -> {
-               webView.onResume();
-               webView.setWebViewClient(new WebViewClient() {
-                  public void onPageFinished(WebView view, String url) {
-                     overlayRef[0] = new LiveDeviceOverlay(DeliveryQueueActivity.this, webView);
-                     overlayRef[0].start();
-                  }
-               });
-               webView.loadDataWithBaseURL("https://unpkg.com", html, "text/html", "UTF-8", (String)null);
-            });
-         });
-         dialog.setOnDismissListener((d) -> {
-            if (overlayRef[0] != null) {
-               overlayRef[0].stop();
+      PreviewData d = new PreviewData();
+      d.title = safe(t.getCustomerName());
+      // Antrean SENDIRI: tak ada kurir "konteks" lain untuk digambar — posisi kita sendiri
+      // ditangani pin LIVE (lihat komentar PreviewData.hasDev).
+      d.hasDev = false;
+      d.hasDest = true;
+      d.destLat = lat;
+      d.destLng = lng;
+      d.destName = d.title;
+      d.address = destLoc != null ? "Kirim Ke: " + safe(destLoc.name) + areaSuffix
+            : (t.getCustomerAddress() != null && !t.getCustomerAddress().trim().isEmpty()
+                  ? t.getCustomerAddress().trim() + areaSuffix : "");
+      d.detailChips = this.buildQueueDetailChips(t);
+      String extra = (this.refundSummaryText(t) + this.debtSummaryText(t)).trim();
+      d.detailExtra = extra.isEmpty() ? null : extra;
+      d.photoLocalPath = destLoc != null && destLoc.photo != null && !destLoc.photo.trim().isEmpty()
+            ? null   // foto lokasi tersimpan sbg URL server (lihat photoUrl), bukan path lokal
+            : (c != null ? c.getPhotoPath() : null);
+      d.photoUrl = destLoc != null && destLoc.photo != null && !destLoc.photo.trim().isEmpty()
+            ? destLoc.photo.trim() : (c != null ? c.getPhotoUrl() : null);
+      this.showPreviewDialog(d);
+   }
+
+   /**
+    * Badge "Detail Transaksi" untuk antrean SENDIRI — produk (slug+warna, {@link #chipLabel}/
+    * {@link #chipColor}, sama persis dengan kapsul kartu antrean {@link #bindProductChips}) lalu
+    * Kembali, metode bayar, dan Total. Hutang/refund SENGAJA tidak ikut jadi badge (angkanya bisa
+    * panjang & butuh konteks kalimat) — tetap teks di {@code PreviewData.detailExtra}.
+    */
+   private List<Chip> buildQueueDetailChips(Transaction t) {
+      List<Chip> chips = new ArrayList<>();
+      List<TransactionItem> items = t.getItems();
+      if (items != null) {
+         for (TransactionItem it : items) {
+            if (it != null && it.jumlah > 0) {
+               chips.add(new Chip(this.chipLabel(it) + " ×" + it.jumlah, this.chipColor(it)));
             }
+         }
+      }
+      int kembali = this.dao.getReturnedGalonForSale(t.getCustomerId(), t.getTanggal());
+      chips.add(new Chip("↩ " + kembali + " gln", 0xFF64748B));
+      // Metode bayar DIGABUNG ke dalam badge TOTAL, bukan badge sendiri — "berapa" dan "lewat apa"
+      // adalah satu pertanyaan yang sama bagi kurir ("apa yang harus kuterima"), jadi satu badge.
+      boolean bon = t.getCatatan() != null && t.getCatatan().contains("[CASH BON]");
+      String pay = t.getPaymentMethodLabel();
+      String payLabel = bon ? "CASH BON" : (pay != null && !pay.isEmpty() ? pay.toUpperCase(Locale.US) : null);
+      int totalBg = bon ? 0xFFDC2626 : 0xFF0369A1;
+      chips.add(new Chip("TOTAL " + this.rp(t.getTotalHarga()) + (payLabel != null ? " · " + payLabel : ""), totalBg));
+      return chips;
+   }
 
-            webView.stopLoading();
-            webView.destroy();
-         });
-         dialog.show();
+   // ---------------------------------------------------------------- Preview: kompas "arah ke tujuan"
+
+   /** 8 arah mata angin dalam Bahasa Indonesia dari bearing absolut (0=Utara, searah jarum jam). */
+   private static String cardinalLabel(double bearingDeg) {
+      String[] labels = {"Utara", "Timur Laut", "Timur", "Tenggara", "Selatan", "Barat Daya", "Barat", "Barat Laut"};
+      int idx = (int) Math.round(((bearingDeg % 360) + 360) % 360 / 45.0) % 8;
+      return labels[idx];
+   }
+
+   /**
+    * Nyalakan panel kompas: GPS live (LocationManager, cermin pola CustomerMapActivity - GPS lalu
+    * NETWORK, 2 detik/3 meter) + heading perangkat (SensorManager, ROTATION_VECTOR - sensor fusion
+    * yang MEMANFAATKAN giroskop untuk meredam derau, fallback ACCELEROMETER+MAGNETIC_FIELD di
+    * perangkat tanpa rotation-vector). Jarum panel dihitung ULANG setiap fix/tick datang lewat
+    * {@link #updateCompassUi()} - arah relatif terhadap KE MANA PERANGKAT MENGHADAP SEKARANG, bukan
+    * bearing absolut, supaya benar-benar terasa "aktif" seperti diminta (mirip Google Lens/Live
+    * View) tanpa perlu kamera menyala (sudah dikonfirmasi ke pengguna - kompas panel, bukan AR kamera).
+    *
+    * <p>Selalu dipanggil dari {@code dialog.setOnShowListener}, selalu dimatikan lewat
+    * {@link #stopCompass()} di {@code setOnDismissListener} - sensor+GPS yang lupa dimatikan adalah
+    * kebocoran baterai diam-diam begitu dialog ditutup.</p>
+    */
+   @SuppressLint("MissingPermission")
+   private void startCompass(double destLat, double destLng) {
+      this.compassDestLat = destLat;
+      this.compassDestLng = destLng;
+      this.compassMyLat = Double.NaN;
+      this.compassMyLng = Double.NaN;
+      this.compassAzimuthDeg = Float.NaN;
+      this.updateCompassUi();
+
+      if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED) {
+         if (this.tvCompassLabel != null) {
+            this.tvCompassLabel.setText("Aktifkan izin lokasi untuk arah & jarak");
+         }
+         ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQ_COMPASS_LOCATION);
+         return;
+      }
+
+      if (this.compassLocationManager == null) {
+         this.compassLocationManager = (LocationManager) this.getSystemService(Context.LOCATION_SERVICE);
+      }
+      if (this.compassLocationManager != null && this.compassLocationListener == null) {
+         this.compassLocationListener = new LocationListener() {
+            public void onLocationChanged(@NonNull Location loc) {
+               DeliveryQueueActivity.this.compassMyLat = loc.getLatitude();
+               DeliveryQueueActivity.this.compassMyLng = loc.getLongitude();
+               DeliveryQueueActivity.this.updateCompassUi();
+               DeliveryQueueActivity.this.pushMyPosToMap();
+            }
+            public void onStatusChanged(String provider, int status, Bundle extras) {}
+            public void onProviderEnabled(@NonNull String provider) {}
+            public void onProviderDisabled(@NonNull String provider) {}
+         };
+         try {
+            if (this.compassLocationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+               this.compassLocationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 3f, this.compassLocationListener);
+            }
+            if (this.compassLocationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+               this.compassLocationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2000L, 3f, this.compassLocationListener);
+            }
+            Location last = this.compassLocationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+            if (last == null) {
+               last = this.compassLocationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+            }
+            if (last != null) {
+               this.compassMyLat = last.getLatitude();
+               this.compassMyLng = last.getLongitude();
+               this.pushMyPosToMap();
+            }
+         } catch (Exception ignored) {
+         }
+      }
+
+      if (this.compassSensorManager == null) {
+         this.compassSensorManager = (SensorManager) this.getSystemService(Context.SENSOR_SERVICE);
+      }
+      if (this.compassSensorManager != null) {
+         this.compassRotationSensor = this.compassSensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
+         if (this.compassRotationSensor == null) {
+            this.compassAccelSensor = this.compassSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+            this.compassMagnetSensor = this.compassSensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
+         }
+      }
+      boolean hasCompass = this.compassRotationSensor != null || (this.compassAccelSensor != null && this.compassMagnetSensor != null);
+      if (hasCompass && this.compassSensorListener == null) {
+         final float[] rotVec = new float[5];
+         final float[] gravity = new float[3];
+         final float[] geomagnetic = new float[3];
+         final boolean[] haveGravity = {false};
+         final boolean[] haveGeomag = {false};
+         this.compassSensorListener = new SensorEventListener() {
+            public void onSensorChanged(SensorEvent e) {
+               float[] rotMatrix = new float[9];
+               boolean ok;
+               if (e.sensor.getType() == Sensor.TYPE_ROTATION_VECTOR) {
+                  System.arraycopy(e.values, 0, rotVec, 0, Math.min(e.values.length, rotVec.length));
+                  SensorManager.getRotationMatrixFromVector(rotMatrix, rotVec);
+                  ok = true;
+               } else {
+                  if (e.sensor.getType() == Sensor.TYPE_ACCELEROMETER) {
+                     System.arraycopy(e.values, 0, gravity, 0, 3);
+                     haveGravity[0] = true;
+                  } else if (e.sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD) {
+                     System.arraycopy(e.values, 0, geomagnetic, 0, 3);
+                     haveGeomag[0] = true;
+                  }
+                  ok = haveGravity[0] && haveGeomag[0] && SensorManager.getRotationMatrix(rotMatrix, new float[9], gravity, geomagnetic);
+               }
+               if (!ok) return;
+
+               // Kompensasi rotasi layar: getOrientation() mengasumsikan orientasi ALAMI perangkat;
+               // tanpa remap, heading meleset 90/180 derajat tepat saat kurir memutar HP ke landscape.
+               int rotation = DeliveryQueueActivity.this.getWindowManager().getDefaultDisplay().getRotation();
+               int axisX = SensorManager.AXIS_X, axisY = SensorManager.AXIS_Y;
+               if (rotation == Surface.ROTATION_90) { axisX = SensorManager.AXIS_Y; axisY = SensorManager.AXIS_MINUS_X; }
+               else if (rotation == Surface.ROTATION_180) { axisX = SensorManager.AXIS_MINUS_X; axisY = SensorManager.AXIS_MINUS_Y; }
+               else if (rotation == Surface.ROTATION_270) { axisX = SensorManager.AXIS_MINUS_Y; axisY = SensorManager.AXIS_X; }
+               float[] remapped = new float[9];
+               SensorManager.remapCoordinateSystem(rotMatrix, axisX, axisY, remapped);
+               float[] orientation = new float[3];
+               SensorManager.getOrientation(remapped, orientation);
+               DeliveryQueueActivity.this.compassAzimuthDeg = (float) ((Math.toDegrees(orientation[0]) + 360) % 360);
+               DeliveryQueueActivity.this.updateCompassUi();
+            }
+            public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+         };
+         if (this.compassRotationSensor != null) {
+            this.compassSensorManager.registerListener(this.compassSensorListener, this.compassRotationSensor, SensorManager.SENSOR_DELAY_GAME);
+         } else {
+            this.compassSensorManager.registerListener(this.compassSensorListener, this.compassAccelSensor, SensorManager.SENSOR_DELAY_GAME);
+            this.compassSensorManager.registerListener(this.compassSensorListener, this.compassMagnetSensor, SensorManager.SENSOR_DELAY_GAME);
+         }
+      } else if (!hasCompass && this.tvCompassLabel != null) {
+         this.tvCompassLabel.setText("Kompas tidak tersedia di perangkat ini");
       }
    }
 
-   private void showQueuePhotoPreview(Transaction t) {
-      Customer c = this.customerDao.getByIdMerged(t.getCustomerId());
-      Customer.Location destLoc = this.resolveOrderLocation(t);
-      String destPhotoUrl = destLoc != null && destLoc.photo != null && !destLoc.photo.trim().isEmpty() ? destLoc.photo.trim() : null;
-      if (destPhotoUrl != null || c != null && c.hasPhoto()) {
-         String path = destPhotoUrl == null && c != null ? c.getPhotoPath() : null;
-         if (path != null && !path.isEmpty() && (new File(path)).exists()) {
-            this.showFullScreenPhotoQueue(path);
-         } else {
-            String url = destPhotoUrl != null ? destPhotoUrl : (c != null ? c.getPhotoUrl() : null);
-            if (url != null && !url.isEmpty()) {
-               ProgressDialog progress = ProgressDialog.show(this, (CharSequence)null, "Memuat foto…", true, false);
-               String name = "queue_" + t.getCustomerId() + "_" + Integer.toHexString(url.hashCode()) + ".jpg";
-               (new Thread(() -> {
-                  File f = BitmapUtils.downloadToCache(this.getApplicationContext(), url, name);
-                  this.runOnUiThread(() -> {
-                     progress.dismiss();
-                     if (!this.isFinishing() && !this.isDestroyed()) {
-                        if (f == null) {
-                           Toast.makeText(this, "Gagal memuat foto.", 0).show();
-                        } else {
-                           this.showFullScreenPhotoQueue(f.getAbsolutePath());
-                        }
-                     }
-                  });
-               })).start();
-            } else {
-               Toast.makeText(this, "Foto rumah belum ada.", 0).show();
-            }
-         }
-      } else {
-         Toast.makeText(this, "Foto rumah belum ada.", 0).show();
+   private void stopCompass() {
+      if (this.compassSensorManager != null && this.compassSensorListener != null) {
+         try { this.compassSensorManager.unregisterListener(this.compassSensorListener); } catch (Exception ignored) {}
       }
+      if (this.compassLocationManager != null && this.compassLocationListener != null) {
+         try { this.compassLocationManager.removeUpdates(this.compassLocationListener); } catch (Exception ignored) {}
+      }
+      this.compassSensorListener = null;
+      this.compassLocationListener = null;
+      this.compassRotationSensor = null;
+      this.compassAccelSensor = null;
+      this.compassMagnetSensor = null;
+      this.compassArrow = null;
+      this.tvCompassLabel = null;
+      this.tvCompassDist = null;
+   }
+
+   /** Dipanggil dari tiap fix GPS baru & tiap tick sensor - jarum + label kompas selalu terkini. */
+   private void updateCompassUi() {
+      if (this.compassArrow == null || this.tvCompassDist == null || this.tvCompassLabel == null) {
+         return;   // dialog sudah ditutup (race: callback sensor/GPS terakhir tiba setelah stopCompass)
+      }
+      if (Double.isNaN(this.compassMyLat) || Double.isNaN(this.compassMyLng)) {
+         this.tvCompassDist.setText("--");
+         CharSequence cur = this.tvCompassLabel.getText();
+         if (!"Kompas tidak tersedia di perangkat ini".contentEquals(cur)
+               && !"Aktifkan izin lokasi untuk arah & jarak".contentEquals(cur)) {
+            this.tvCompassLabel.setText("Mencari posisi GPS...");
+         }
+         this.compassArrow.clearHeading();
+         return;
+      }
+
+      double bearing = Wilayah.bearing(this.compassMyLat, this.compassMyLng, this.compassDestLat, this.compassDestLng);
+      double km = haversineKm(this.compassMyLat, this.compassMyLng, this.compassDestLat, this.compassDestLng);
+      String jarak = formatJarak(km);
+      this.tvCompassDist.setText(jarak != null ? jarak : "--");
+
+      if (!Float.isNaN(this.compassAzimuthDeg)) {
+         float relative = (float) (((bearing - this.compassAzimuthDeg) % 360 + 360) % 360);
+         this.tvCompassLabel.setText("\u2197 " + cardinalLabel(bearing));
+         this.compassArrow.pointTo(relative);
+      } else {
+         this.tvCompassLabel.setText("\u2197 " + cardinalLabel(bearing) + " (kompas tak tersedia)");
+         this.compassArrow.clearHeading();
+      }
+   }
+
+   /** Ikon &amp; warna kendaraan PERANGKAT INI (App\Support\DeviceIcon, dicache dari /api/me) \u2014
+    *  identitas yang sama dipakai pin posisi live perangkat ini di peta manapun di app ini. */
+   private String myVehicleEmoji() {
+      String v = this.syncCfg().getDeviceVehicle();
+      return v != null && !v.isEmpty() ? v : "\ud83d\udef5";
+   }
+
+   private String myVehicleColor() {
+      String c = this.syncCfg().getDeviceColor();
+      return c != null && !c.isEmpty() ? c : "#0369A1";
+   }
+
+   /**
+    * Dorong posisi TERKINI (compassMyLat/Lng, sudah diperbarui pemanggil) ke peta Preview yang
+    * sedang terbuka lewat {@code window.updateMyPos(lat,lng)} yang didefinisikan
+    * {@link #buildMiniMapHtml} \u2014 pin "Posisi Anda" bergerak & peta zoom in/out mengikuti jarak
+    * TERKINI ke tujuan, persis diminta ("tampilan active"), tanpa memuat ulang peta dari nol.
+    *
+    * <p>Aman dipanggil kapan pun \u2014 no-op bila dialog Preview sedang tak terbuka (previewMapWebView
+    * null) atau belum ada fix GPS sama sekali (compassMyLat/Lng masih NaN).</p>
+    */
+   private void pushMyPosToMap() {
+      if (this.previewMapWebView == null || Double.isNaN(this.compassMyLat) || Double.isNaN(this.compassMyLng)) {
+         return;
+      }
+      this.previewMapWebView.evaluateJavascript(
+            "window.updateMyPos && window.updateMyPos(" + this.compassMyLat + "," + this.compassMyLng + ");", null);
+   }
+
+   /**
+    * Chip "panduan arah" yang MELAYANG di pojok kanan bawah foto lokasi.
+    *
+    * <p>Dulu kompas ini menempati barisnya sendiri di atas peta, dan itu memakan ~90dp tinggi dialog
+    * hanya untuk dua baris teks — peta jadi sempit padahal petalah yang paling dibaca. Sebagai
+    * overlay, informasinya tetap ada tanpa memakan ruang vertikal sama sekali.
+    *
+    * <p>Latarnya kepingan PUTIH membulat, bukan scrim gelap: {@link CompassArrowView} menggambar
+    * jarumnya dengan biru tua (#0369A1), yang di atas scrim gelap nyaris tak terbaca. Putih pekat
+    * 95% menjaga kontrasnya sama persis seperti saat kompas masih berdiri di latar dialog, di atas
+    * foto seterang atau segelap apa pun.
+    */
+   private View buildCompassOverlay() {
+      LinearLayout chip = new LinearLayout(this);
+      chip.setOrientation(LinearLayout.HORIZONTAL);
+      chip.setGravity(android.view.Gravity.CENTER_VERTICAL);
+      chip.setPadding(this.dp(8f), this.dp(6f), this.dp(10f), this.dp(6f));
+
+      android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+      bg.setColor(0xF2FFFFFF);
+      bg.setCornerRadius(this.dp(12f));
+      bg.setStroke(this.dp(1f), 0x33000000);
+      chip.setBackground(bg);
+      chip.setElevation(this.dp(4f));
+
+      CompassArrowView arrow = new CompassArrowView(this);
+      chip.addView(arrow, new LinearLayout.LayoutParams(this.dp(40f), this.dp(40f)));
+
+      LinearLayout texts = new LinearLayout(this);
+      texts.setOrientation(LinearLayout.VERTICAL);
+      LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+      tp.leftMargin = this.dp(8f);
+
+      TextView tvLabel = new TextView(this);
+      tvLabel.setText("Mencari posisi GPS...");
+      tvLabel.setTextSize(11f);
+      tvLabel.setTextColor(0xFF334155);
+      tvLabel.setMaxLines(1);
+      tvLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);
+
+      TextView tvDist = new TextView(this);
+      tvDist.setText("--");
+      tvDist.setTextSize(18f);
+      tvDist.setTypeface(tvDist.getTypeface(), android.graphics.Typeface.BOLD);
+      tvDist.setTextColor(0xFF0369A1);
+
+      texts.addView(tvLabel);
+      texts.addView(tvDist);
+      chip.addView(texts, tp);
+
+      android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            android.view.Gravity.BOTTOM | android.view.Gravity.END);
+      lp.rightMargin = this.dp(8f);
+      lp.bottomMargin = this.dp(8f);
+      chip.setLayoutParams(lp);
+
+      // Referensi yang dipakai pembaruan kompas berkala (updateCompass) — sama seperti sebelumnya,
+      // hanya tempat tampilnya yang berpindah.
+      this.compassArrow = arrow;
+      this.tvCompassLabel = tvLabel;
+      this.tvCompassDist = tvDist;
+
+      return chip;
+   }
+
+   /**
+    * Panel "Preview" gabungan: Kompas (arah+jarak live) di atas, lalu Peta, lalu Foto lokasi, lalu
+    * Detail Transaksi - menggantikan dua dialog terpisah "Preview Peta" & "Foto" yang dulu berdiri
+    * sendiri-sendiri (lihat {@link #showQueuePreview} & {@code showOtherDevicePreview}).
+    */
+   private void showPreviewDialog(PreviewData d) {
+      ScrollView scroll = new ScrollView(this);
+      LinearLayout content = new LinearLayout(this);
+      content.setOrientation(LinearLayout.VERTICAL);
+      scroll.addView(content);
+
+      // ---- Peta ----
+      WebView webView = new WebView(this);
+      LiveDeviceOverlay[] overlayRef = new LiveDeviceOverlay[1];
+      WebSettings ws = webView.getSettings();
+      ws.setJavaScriptEnabled(true);
+      ws.setDomStorageEnabled(true);
+      ws.setUserAgentString(MapTiles.userAgent());
+      int mapSizeDp = this.dp(340f);
+      webView.setLayoutParams(new LinearLayout.LayoutParams(-1, mapSizeDp));
+      webView.setBackgroundColor(-1);
+      // Sentuhan di dalam peta menggeser peta, BUKAN men-scroll dialog - tanpa ini ScrollView luar
+      // "mencuri" gestur pan/zoom Leaflet begitu jarinya bergerak sedikit vertikal.
+      webView.setOnTouchListener((v, ev) -> {
+         switch (ev.getAction()) {
+            case android.view.MotionEvent.ACTION_DOWN:
+               v.getParent().requestDisallowInterceptTouchEvent(true);
+               break;
+            case android.view.MotionEvent.ACTION_UP:
+            case android.view.MotionEvent.ACTION_CANCEL:
+               v.getParent().requestDisallowInterceptTouchEvent(false);
+               break;
+         }
+         return false;
+      });
+      String html = buildMiniMapHtml(d.hasDev, d.devLat, d.devLng, safe(d.devName), d.devVehicle, d.devColor,
+            d.hasDest, d.destLat, d.destLng, safe(d.destName), this.myVehicleEmoji(), this.myVehicleColor(), d.blinkAssigned);
+      content.addView(webView);
+      if (d.address != null && !d.address.isEmpty()) {
+         TextView tvAddress = new TextView(this);
+         tvAddress.setText("\ud83d\udccd " + d.address);
+         tvAddress.setTextSize(13.0F);
+         tvAddress.setPadding(this.dp(16f), this.dp(8f), this.dp(16f), 0);
+         content.addView(tvAddress);
+      }
+
+      // ---- Foto lokasi ----
+      content.addView(this.sectionHeader("Foto Lokasi"));
+      // Foto + panduan arah dalam SATU wadah: kompasnya melayang di pojok kanan bawah foto, bukan
+      // memakan barisnya sendiri di atas peta. Itulah yang membuat petanya bisa jauh lebih lega.
+      android.widget.FrameLayout photoBox = new android.widget.FrameLayout(this);
+      int photoSizeDp = this.dp(180f);
+      photoBox.setLayoutParams(new LinearLayout.LayoutParams(-1, photoSizeDp));
+      ImageView photoView = new ImageView(this);
+      photoView.setLayoutParams(new android.widget.FrameLayout.LayoutParams(-1, -1));
+      photoView.setScaleType(ScaleType.CENTER_CROP);
+      photoView.setBackgroundColor(0xFFF1F5F9);
+      photoBox.addView(photoView);
+      if (d.hasDest) {
+         photoBox.addView(this.buildCompassOverlay());
+      }
+      content.addView(photoBox);
+      TextView tvNoPhoto = new TextView(this);
+      tvNoPhoto.setText("Foto rumah belum ada.");
+      tvNoPhoto.setTextSize(13f);
+      tvNoPhoto.setTextColor(0xFF94A3B8);
+      tvNoPhoto.setPadding(this.dp(16f), this.dp(8f), this.dp(16f), 0);
+      tvNoPhoto.setVisibility(View.GONE);
+      content.addView(tvNoPhoto);
+      this.resolvePreviewPhoto(d, photoView, tvNoPhoto, photoBox, d.hasDest);
+
+      // ---- Detail Transaksi: badge slug+warna, bukan lagi baris teks panjang ----
+      boolean hasChips = d.detailChips != null && !d.detailChips.isEmpty();
+      boolean hasExtra = d.detailExtra != null && !d.detailExtra.trim().isEmpty();
+      if (hasChips || hasExtra) {
+         content.addView(this.sectionHeader("Detail Transaksi"));
+      }
+      if (hasChips) {
+         // Badge PERSIS gaya kapsul produk kartu Antrean Delivery (lihat chipAt) — bukan Material
+         // Chip lagi: target-sentuh minimumnya tak pernah benar-benar bisa dikecilkan sampai
+         // seukuran "MIN ×1" di kartu, jadi dua badge yang mestinya kembar terlihat beda ukuran.
+         // Barisnya TIDAK melipat (cermin productChips di kartu, yang juga satu baris) — kalau
+         // melebihi lebar dialog, digulir ke samping lewat HorizontalScrollView, bukan dipotong.
+         android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+         hs.setHorizontalScrollBarEnabled(false);
+         LinearLayout row = new LinearLayout(this);
+         row.setOrientation(LinearLayout.HORIZONTAL);
+         row.setPadding(this.dp(16f), this.dp(4f), this.dp(16f), hasExtra ? this.dp(4f) : this.dp(10f));
+         for (Chip c : d.detailChips) {
+            row.addView(this.makeDetailBadge(c.label, c.bg));
+         }
+         hs.addView(row);
+         content.addView(hs);
+      }
+      if (hasExtra) {
+         TextView tvExtra = new TextView(this);
+         tvExtra.setText(d.detailExtra.trim());
+         tvExtra.setTextSize(13f);
+         tvExtra.setTextColor(0xFF64748B);
+         tvExtra.setPadding(this.dp(16f), this.dp(6f), this.dp(16f), this.dp(14f));
+         content.addView(tvExtra);
+      }
+
+      AlertDialog.Builder builder = (new AlertDialog.Builder(this)).setTitle("\ud83d\udd0d Preview \u2014 " + safe(d.title))
+            .setView(scroll).setPositiveButton("Tutup", (DialogInterface.OnClickListener) null);
+      if (d.hasDest) {
+         builder.setNeutralButton("\ud83e\udded Navigasi", (dlg, w) -> this.openMapsNavigation(d.destLat, d.destLng));
+      }
+
+      AlertDialog dialog = builder.create();
+      dialog.setOnShowListener((dlg) -> {
+         webView.setLayoutParams(new LinearLayout.LayoutParams(-1, mapSizeDp));
+         dialog.getWindow().setLayout(-1, -2);
+         webView.post(() -> {
+            webView.onResume();
+            webView.setWebViewClient(new WebViewClient() {
+               public void onPageFinished(WebView view, String url) {
+                  overlayRef[0] = new LiveDeviceOverlay(DeliveryQueueActivity.this, webView)
+                        .excluding(d.hasDev ? d.devUuid : null);
+                  overlayRef[0].start();
+                  // Peta baru selesai memuat -> updateMyPos() baru sekarang benar-benar ada di
+                  // halamannya. Dorong posisi TERAKHIR yang sudah diketahui kompas (kalau ada fix
+                  // yang datang lebih cepat dari load peta ini) supaya pin "Posisi Anda" langsung
+                  // muncul, bukan menunggu fix GPS BERIKUTNYA.
+                  DeliveryQueueActivity.this.previewMapWebView = webView;
+                  DeliveryQueueActivity.this.pushMyPosToMap();
+               }
+            });
+            webView.loadDataWithBaseURL("https://unpkg.com", html, "text/html", "UTF-8", (String) null);
+         });
+         if (d.hasDest) {
+            this.startCompass(d.destLat, d.destLng);
+         }
+      });
+      dialog.setOnDismissListener((dlg) -> {
+         if (overlayRef[0] != null) {
+            overlayRef[0].stop();
+         }
+         webView.stopLoading();
+         webView.destroy();
+         this.previewMapWebView = null;
+         this.stopCompass();
+      });
+      dialog.show();
+   }
+
+   private TextView sectionHeader(String text) {
+      TextView tv = new TextView(this);
+      tv.setText(text);
+      tv.setTextSize(12f);
+      tv.setTypeface(tv.getTypeface(), android.graphics.Typeface.BOLD);
+      tv.setTextColor(0xFF64748B);
+      tv.setPadding(this.dp(16f), this.dp(14f), this.dp(16f), this.dp(4f));
+      return tv;
+   }
+
+   /**
+    * Isi ImageView foto lokasi TANPA memblokir dialog: lokal -> decode langsung (cepat); URL server
+    * -> unduh di thread lain lalu tempel begitu selesai. Beda dengan dulu (Toast + dialog terpisah
+    * yang menunggu unduhan sebelum tampil), sekarang Preview-nya sudah terbuka duluan dan fotonya
+    * menyusul - konsisten dengan Peta+Kompas yang juga tampil seketika.
+    */
+   /**
+    * @param photoBox    wadah foto + overlay kompas
+    * @param keepForCompass true bila chip arah menempel di wadah itu — wadahnya TIDAK boleh
+    *                       disembunyikan walau fotonya tak ada, kalau tidak panduan arahnya ikut
+    *                       hilang. Tingginya dikecilkan supaya tak menyisakan kotak abu-abu besar.
+    */
+   private void resolvePreviewPhoto(PreviewData d, ImageView photoView, TextView tvNoPhoto,
+         android.widget.FrameLayout photoBox, boolean keepForCompass) {
+      Runnable hidePhoto = () -> {
+         photoView.setVisibility(View.GONE);
+         tvNoPhoto.setVisibility(View.VISIBLE);
+         if (keepForCompass) {
+            ViewGroup.LayoutParams lp = photoBox.getLayoutParams();
+            lp.height = this.dp(64f);
+            photoBox.setLayoutParams(lp);
+         } else {
+            photoBox.setVisibility(View.GONE);
+         }
+      };
+      String local = d.photoLocalPath;
+      if (local != null && !local.isEmpty() && (new File(local)).exists()) {
+         Bitmap bmp = BitmapUtils.decodeForScreen(this, local);
+         if (bmp != null) {
+            photoView.setImageBitmap(bmp);
+            photoView.setOnClickListener((v) -> this.showFullScreenPhotoQueue(local));
+            return;
+         }
+      }
+      String url = d.photoUrl;
+      if (url == null || url.isEmpty()) {
+         hidePhoto.run();
+         return;
+      }
+      String name = "preview_" + Integer.toHexString(String.valueOf(d.destName).hashCode()) + "_" + Integer.toHexString(url.hashCode()) + ".jpg";
+      (new Thread(() -> {
+         File f = BitmapUtils.downloadToCache(this.getApplicationContext(), url, name);
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            if (f == null) {
+               hidePhoto.run();
+            } else {
+               Bitmap bmp = BitmapUtils.decodeForScreen(this, f.getAbsolutePath());
+               if (bmp != null) {
+                  photoView.setImageBitmap(bmp);
+                  String path = f.getAbsolutePath();
+                  photoView.setOnClickListener((v) -> this.showFullScreenPhotoQueue(path));
+               } else {
+                  hidePhoto.run();   // gambar rusak/tak bisa di-decode: jalur ketiga, mudah terlewat
+               }
+            }
+         });
+      })).start();
    }
 
    private void showFullScreenPhotoQueue(String path) {
@@ -3904,6 +5061,175 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private void claimOpenDispatchOnly(Transaction t) {
       this.claimOpenDispatch(t, false);
+   }
+
+   // ============================ Ambil Alih massal (Tab 2 & Tab 3) ============================
+
+   /**
+    * Masuk mode pilih-banyak. Dipicu tekan-tahan sebuah kartu, konvensi yang sama dengan
+    * mode-pilih rute di Tab 1 supaya kurir tak perlu mempelajari dua gestur berbeda.
+    *
+    * @param open true = Tab 3 (Pesanan Terbuka), false = Tab 2 (Perangkat Lain)
+    */
+   private void enterClaimSelect(boolean open) {
+      if (!this.syncCfg().isEnrolled()) {
+         Toast.makeText(this, "Perangkat belum terhubung ke server.", 1).show();
+         return;
+      }
+      if (open) {
+         this.claimSelectOpen = true;
+         this.claimSelectedOpen.clear();
+      } else {
+         this.claimSelectOther = true;
+         this.claimSelectedOther.clear();
+      }
+      this.updateClaimSelectUi(open);
+      Toast.makeText(this, "Pilih order → Ambil Alih sekaligus", 0).show();
+   }
+
+   private void exitClaimSelect(boolean open) {
+      if (open) {
+         this.claimSelectOpen = false;
+         this.claimSelectedOpen.clear();
+         if (this.openDispatchAdapter != null) {
+            this.openDispatchAdapter.notifyDataSetChanged();
+         }
+      } else {
+         this.claimSelectOther = false;
+         this.claimSelectedOther.clear();
+         if (this.otherDevicesAdapter != null) {
+            this.otherDevicesAdapter.notifyDataSetChanged();
+         }
+      }
+      this.updateClaimSelectUi(open);
+   }
+
+   private void updateClaimSelectUi(boolean open) {
+      View bar = open ? this.barClaimOpen : this.barClaimOther;
+      TextView label = open ? this.tvClaimOpenCount : this.tvClaimOtherCount;
+      boolean on = open ? this.claimSelectOpen : this.claimSelectOther;
+      int n = open ? this.claimSelectedOpen.size() : this.claimSelectedOther.size();
+      if (bar != null) {
+         bar.setVisibility(on ? 0 : 8);
+      }
+      if (label != null) {
+         label.setText(n + " dipilih");
+      }
+   }
+
+   /** Ketuk kartu saat mode-pilih aktif → masuk/keluar pilihan. */
+   private void toggleClaimOther(String trxUuid) {
+      if (trxUuid == null || trxUuid.isEmpty()) {
+         return;
+      }
+      if (!this.claimSelectedOther.remove(trxUuid)) {
+         this.claimSelectedOther.add(trxUuid);
+      }
+      this.updateClaimSelectUi(false);
+   }
+
+   private void toggleClaimOpen(long id) {
+      if (!this.claimSelectedOpen.remove(id)) {
+         this.claimSelectedOpen.add(id);
+      }
+      this.updateClaimSelectUi(true);
+   }
+
+   private void confirmBulkClaimOther() {
+      // Snapshot pemilik SAAT INI per order: klaim memakainya sebagai syarat optimistic-locking,
+      // jadi order yang keburu berpindah ditolak server alih-alih direbut diam-diam.
+      java.util.LinkedHashMap<String, String> picked = new java.util.LinkedHashMap<>();
+      for (JSONObject o : this.otherDevicesAdapter.data) {
+         String uuid = o.optString("uuid", "");
+         if (!uuid.isEmpty() && this.claimSelectedOther.contains(uuid)) {
+            picked.put(uuid, o.optString("routed_uuid", ""));
+         }
+      }
+      if (picked.isEmpty()) {
+         Toast.makeText(this, "Belum ada order yang dipilih.", 0).show();
+         return;
+      }
+      (new AlertDialog.Builder(this))
+            .setTitle("Ambil alih " + picked.size() + " order?")
+            .setMessage("Semua order ini pindah ke Antrian Saya. Kurir yang memegangnya sekarang "
+                  + "akan kehilangan order tersebut dari antriannya.")
+            .setPositiveButton("Ambil Alih", (d, w) -> this.runBulkClaim(picked, false))
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener)null)
+            .show();
+   }
+
+   private void confirmBulkClaimOpen() {
+      java.util.LinkedHashMap<String, String> picked = new java.util.LinkedHashMap<>();
+      for (Transaction t : this.openDispatchAdapter.data) {
+         if (this.claimSelectedOpen.contains(t.getId())) {
+            String uuid = this.dao.getSyncUuidById(t.getId());
+            if (uuid != null && !uuid.isEmpty()) {
+               // Pesanan Terbuka tak bertuan → syarat pemilik dikirim KOSONG, sama dengan klaim
+               // satuan; server menolak bila ternyata sudah ada yang mengambil duluan.
+               picked.put(uuid, "");
+            }
+         }
+      }
+      if (picked.isEmpty()) {
+         Toast.makeText(this, "Belum ada order yang dipilih.", 0).show();
+         return;
+      }
+      (new AlertDialog.Builder(this))
+            .setTitle("Ambil alih " + picked.size() + " Pesanan Terbuka?")
+            .setMessage("Semua order ini masuk Antrian Saya. Perangkat lain tidak bisa mengambilnya "
+                  + "lagi setelah ini.")
+            .setPositiveButton("Ambil Alih", (d, w) -> this.runBulkClaim(picked, true))
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener)null)
+            .show();
+   }
+
+   /**
+    * Klaim beberapa order berurutan lewat endpoint klaim yang SAMA dengan klaim satuan.
+    *
+    * <p>Sengaja satu per satu, bukan satu panggilan borongan: servernya memakai UPDATE bersyarat
+    * per order supaya order yang keburu diambil rekan ditolak. Menggabungkannya jadi satu
+    * transaksi borongan akan memaksa pilihan "semua atau tidak sama sekali" — padahal yang benar
+    * di lapangan adalah mengambil yang masih bisa diambil, lalu melaporkan sisanya.
+    *
+    * @param picked uuid transaksi → uuid pemilik yang diharapkan ("" = tak bertuan)
+    */
+   private void runBulkClaim(java.util.LinkedHashMap<String, String> picked, boolean open) {
+      SyncSettings cfg = this.syncCfg();
+      android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
+      wait.setMessage("Mengambil alih " + picked.size() + " order...");
+      wait.setCancelable(false);
+      wait.show();
+
+      (new Thread(() -> {
+         int ok = 0;
+         int fail = 0;
+         for (java.util.Map.Entry<String, String> e : picked.entrySet()) {
+            try {
+               JSONObject body = new JSONObject();
+               body.put("transaction_uuid", e.getKey());
+               body.put("expected_device_uuid", e.getValue() != null ? e.getValue() : "");
+               (new SyncApi(cfg)).claimDelivery(body);
+               ok++;
+            } catch (Exception ex) {
+               fail++;
+            }
+         }
+         final int okF = ok;
+         final int failF = fail;
+         this.runOnUiThread(() -> {
+            try { wait.dismiss(); } catch (Throwable ignored) {}
+            if (this.isFinishing() || this.isDestroyed()) {
+               return;
+            }
+            this.exitClaimSelect(open);
+            String msg = okF + " order masuk Antrian Saya"
+                  + (failF > 0 ? " \u00b7 " + failF + " gagal (mungkin sudah diambil rekan)" : ".");
+            Toast.makeText(this, msg, 1).show();
+            com.crowja.damiupos.sync.SyncScheduler.syncNow(this.getApplicationContext());
+            this.loadOtherDevices();
+            this.loadData();
+         });
+      })).start();
    }
 
    private void confirmAmbilAlih(Transaction t) {
@@ -4062,12 +5388,21 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
          if (DeliveryQueueActivity.this.sortOtherMode == 1) {
             this.data.sort((a, b) -> Integer.compare(b.optInt("galon", 0), a.optInt("galon", 0)));
+         } else if (DeliveryQueueActivity.this.sortOtherMode == 2) {
+            // Menunggu PALING LAMA duluan — sama seperti badge umur ⏱ tiap kartu.
+            this.data.sort((a, b) -> Long.compare(Ts.millisOrMin(this.str(a, "queued_at")), Ts.millisOrMin(this.str(b, "queued_at"))));
          } else if (!Double.isNaN(DeliveryQueueActivity.this.otherLat) && !Double.isNaN(DeliveryQueueActivity.this.otherLng)) {
             this.data.sort((a, b) -> Double.compare(this.distanceKmOf(a), this.distanceKmOf(b)));
          }
 
          this.notifyDataSetChanged();
          DeliveryQueueActivity.this.updateOtherEmptyState();
+         int galon = 0;
+         for (JSONObject o : this.data) {
+            galon += Math.max(0, o.optInt("galon", 0));
+         }
+         DeliveryQueueActivity.this.setTabSummary(DeliveryQueueActivity.this.tvOtherSummary,
+               this.data.size(), this.rawData.size(), galon);
       }
 
       private double distanceKmOf(JSONObject o) {
@@ -4098,8 +5433,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          String badge = (orderPriority ? "⚡ " : "") + (custPriority ? "⭐ " : "") + (incomplete ? "❗ " : "");
          h.tvCustomer.setText(badge + this.str(q, "name"));
          long elapsedMs = DeliveryQueueActivity.elapsedMillis(q.optString("queued_at", (String)null));
-         h.tvElapsed.setText("⏱ " + DeliveryQueueActivity.formatElapsedBadge(elapsedMs));
-         DeliveryQueueActivity.applyQueueTimerState(h.tvElapsed, elapsedMs);
+         DeliveryQueueActivity.bindElapsedBadge(h.tvElapsed, elapsedMs);
          StringBuilder meta = new StringBuilder();
          String dev = this.str(q, "device_group_label");
          if (!dev.isEmpty()) {
@@ -4135,6 +5469,44 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
          h.btnMore.setOnClickListener((v) -> DeliveryQueueActivity.this.showOtherDeviceMoreMenu(v, q));
          h.btnTakeOver.setOnClickListener((v) -> DeliveryQueueActivity.this.showOtherDeviceOrderDetail(q));
+
+         // Mode pilih-banyak: tekan-tahan untuk masuk, lalu ketuk untuk menandai. Tombol per-kartu
+         // disembunyikan selama memilih supaya tak ada dua cara bertindak pada kartu yang sama.
+         final String trxUuid = this.str(q, "uuid");
+         boolean picking = DeliveryQueueActivity.this.claimSelectOther;
+         boolean picked = picking && DeliveryQueueActivity.this.claimSelectedOther.contains(trxUuid);
+         h.btnMore.setVisibility(picking ? 8 : 0);
+         h.btnTakeOver.setVisibility(picking ? 8 : 0);
+         // VH tab ini tak menyimpan rujukan kartu (beda dari adapter Tab 3); akarnya memang
+         // MaterialCardView, jadi diambil dari itemView saat dibutuhkan saja.
+         if (h.itemView instanceof com.google.android.material.card.MaterialCardView) {
+            com.google.android.material.card.MaterialCardView cardView =
+                  (com.google.android.material.card.MaterialCardView) h.itemView;
+            cardView.setStrokeWidth(DeliveryQueueActivity.this.dp(picked ? 3.0F : 1.0F));
+            if (picked) {
+               cardView.setStrokeColor(DeliveryQueueActivity.this.getResources().getColor(color.primary));
+            }
+         }
+         h.itemView.setOnClickListener((v) -> {
+            if (DeliveryQueueActivity.this.claimSelectOther) {
+               DeliveryQueueActivity.this.toggleClaimOther(trxUuid);
+               this.notifyItemChanged(h.getBindingAdapterPosition());
+            } else {
+               DeliveryQueueActivity.this.showOtherDeviceOrderDetail(q);
+            }
+         });
+         h.itemView.setOnLongClickListener((v) -> {
+            if (DeliveryQueueActivity.this.claimSelectOther || trxUuid.isEmpty()) {
+               return false;
+            }
+            DeliveryQueueActivity.this.enterClaimSelect(false);
+            if (!DeliveryQueueActivity.this.claimSelectOther) {
+               return false;   // belum terhubung server → jangan kunci kartunya
+            }
+            DeliveryQueueActivity.this.toggleClaimOther(trxUuid);
+            this.notifyDataSetChanged();
+            return true;
+         });
       }
 
       public int getItemCount() {
@@ -4148,8 +5520,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             int pos = vh.getAdapterPosition();
             if (pos >= 0 && pos < this.data.size() && vh instanceof VH) {
                long ms = DeliveryQueueActivity.elapsedMillis(((JSONObject)this.data.get(pos)).optString("queued_at", (String)null));
-               ((VH)vh).tvElapsed.setText("⏱ " + DeliveryQueueActivity.formatElapsedBadge(ms));
-               DeliveryQueueActivity.applyQueueTimerState(((VH)vh).tvElapsed, ms);
+               DeliveryQueueActivity.bindElapsedBadge(((VH)vh).tvElapsed, ms);
             }
          }
 
@@ -4182,6 +5553,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private class QueueAdapter extends RecyclerView.Adapter<QueueAdapter.VH> {
+      // SENGAJA tetap daftar UTUH (bukan hasil saring pencarian) — dipakai luas di luar kelas ini
+      // (aksi massal, jalankan-rit, kartu Strategi, dsb; lihat mis. runStops/applyRunModeChrome)
+      // yang semuanya berasumsi "this.adapter.data" = seluruh Antrean Saya. Menyaringnya di sini
+      // akan diam-diam menyusutkan cakupan aksi-aksi itu tiap kali kotak cari sedang terisi.
+      // Pencarian HANYA menyaring apa yang dirender, lewat shown() di bawah.
       private List<Transaction> data;
 
       private QueueAdapter() {
@@ -4192,15 +5568,35 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       void setData(List<Transaction> list) {
          this.data = list != null ? list : new ArrayList<>();
          this.notifyDataSetChanged();
+         DeliveryQueueActivity.this.updateMineEmptyState();
+      }
+
+      /** Dipanggil dari kotak cari — data mentahnya tak berubah, cuma render ulang apa yang lolos
+       *  saring (via shown()). */
+      void applyFilter() {
+         this.notifyDataSetChanged();
+         DeliveryQueueActivity.this.updateMineEmptyState();
       }
 
       private List<Transaction> shown() {
+         List<Transaction> base;
          if (!DeliveryQueueActivity.this.selectionMode && DeliveryQueueActivity.this.isRunning()) {
             List<Transaction> run = DeliveryQueueActivity.this.runStops();
-            return run.isEmpty() ? this.data : run;
+            base = run.isEmpty() ? this.data : run;
          } else {
-            return this.data;
+            base = this.data;
          }
+         String q = DeliveryQueueActivity.this.searchMineQuery.toLowerCase(Locale.US);
+         if (q.isEmpty()) {
+            return base;
+         }
+         List<Transaction> filtered = new ArrayList<>();
+         for (Transaction t : base) {
+            String name = safe(t.getCustomerName()).toLowerCase(Locale.US);
+            String phone = t.getCustomerPhone() != null ? t.getCustomerPhone().toLowerCase(Locale.US) : "";
+            if (name.contains(q) || phone.contains(q)) filtered.add(t);
+         }
+         return filtered;
       }
 
       void refreshTimers() {
@@ -4212,8 +5608,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             int pos = vh.getAdapterPosition();
             if (pos >= 0 && pos < vis.size() && vh instanceof VH) {
                long ms = DeliveryQueueActivity.elapsedMillis(((Transaction)vis.get(pos)).getDeliveryQueuedAt());
-               ((VH)vh).tvElapsed.setText("⏱ " + DeliveryQueueActivity.formatElapsedBadge(ms));
-               DeliveryQueueActivity.applyQueueTimerState(((VH)vh).tvElapsed, ms);
+               DeliveryQueueActivity.bindElapsedBadge(((VH)vh).tvElapsed, ms);
             }
          }
 
@@ -4300,8 +5695,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             }
 
             long elapsedMs = DeliveryQueueActivity.elapsedMillis(t.getDeliveryQueuedAt());
-            h.tvElapsed.setText("⏱ " + DeliveryQueueActivity.formatElapsedBadge(elapsedMs));
-            DeliveryQueueActivity.applyQueueTimerState(h.tvElapsed, elapsedMs);
+            DeliveryQueueActivity.bindElapsedBadge(h.tvElapsed, elapsedMs);
             int bucket = DeliveryQueueActivity.dayBucket(t.getTanggal());
             if (bucket < 0) {
                h.card.setCardBackgroundColor(Color.parseColor("#FFEBEE"));
@@ -4314,14 +5708,18 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                h.card.setStrokeColor(0);
             }
 
-            int blinkHi = t.isCustomerDataIncomplete() ? -1096636 : (t.isOpenDispatch() ? -10262799 : (!t.isCustomerPriority() && !t.isOrderPriority() ? 0 : -19712));
+            // TERLAMBAT menang atas semua sebab kedip lain (data tak lengkap / pesanan terbuka /
+            // prioritas) dan memakai stroke lebih tebal, supaya satu kartu gawat tetap terbaca walau
+            // kartu di sekitarnya juga berkedip.
+            boolean lateNow = DeliveryQueueActivity.isLate(t);
+            int blinkHi = lateNow ? 0xFFD32F2F : (t.isCustomerDataIncomplete() ? -1096636 : (t.isOpenDispatch() ? -10262799 : (!t.isCustomerPriority() && !t.isOrderPriority() ? 0 : -19712)));
             boolean isSelectedNow = DeliveryQueueActivity.this.selectionMode && DeliveryQueueActivity.this.selectedIds.contains(t.getId());
             if (isSelectedNow) {
                this.stopBlink(h);
                h.card.setStrokeWidth(DeliveryQueueActivity.this.dp(3.0F));
                h.card.setStrokeColor(DeliveryQueueActivity.this.getResources().getColor(color.primary));
             } else if (blinkHi != 0) {
-               h.card.setStrokeWidth(DeliveryQueueActivity.this.dp(2.0F));
+               h.card.setStrokeWidth(DeliveryQueueActivity.this.dp(lateNow ? 3.0F : 2.0F));
                this.applyBlink(h, blinkHi);
             } else {
                this.stopBlink(h);
@@ -4486,12 +5884,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
          if (DeliveryQueueActivity.this.sortOpenMode == 1) {
             this.data.sort((a, b) -> Integer.compare(b.getJumlahGalon(), a.getJumlahGalon()));
+         } else if (DeliveryQueueActivity.this.sortOpenMode == 2) {
+            // Menunggu PALING LAMA duluan — sama seperti badge umur ⏱ tiap kartu.
+            this.data.sort((a, b) -> Long.compare(elapsedMillis(b.getDeliveryQueuedAt()), elapsedMillis(a.getDeliveryQueuedAt())));
          } else if (DeliveryQueueActivity.this.myLat != (double)0.0F || DeliveryQueueActivity.this.myLng != (double)0.0F) {
             this.data.sort((a, b) -> Double.compare(DeliveryQueueActivity.distOrInf(a, DeliveryQueueActivity.this.myLat, DeliveryQueueActivity.this.myLng), DeliveryQueueActivity.distOrInf(b, DeliveryQueueActivity.this.myLat, DeliveryQueueActivity.this.myLng)));
          }
 
          this.notifyDataSetChanged();
          DeliveryQueueActivity.this.updateOpenEmptyState();
+         DeliveryQueueActivity.this.setTabSummary(DeliveryQueueActivity.this.tvOpenSummary,
+               this.data.size(), this.rawData.size(), DeliveryQueueActivity.totalGalonOf(this.data));
       }
 
       void refreshTimers() {
@@ -4501,8 +5904,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             int pos = vh.getAdapterPosition();
             if (pos >= 0 && pos < this.data.size() && vh instanceof VH) {
                long ms = DeliveryQueueActivity.elapsedMillis(((Transaction)this.data.get(pos)).getDeliveryQueuedAt());
-               ((VH)vh).tvElapsed.setText("⏱ " + DeliveryQueueActivity.formatElapsedBadge(ms));
-               DeliveryQueueActivity.applyQueueTimerState(((VH)vh).tvElapsed, ms);
+               DeliveryQueueActivity.bindElapsedBadge(((VH)vh).tvElapsed, ms);
             }
          }
 
@@ -4538,27 +5940,25 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             h.tvAdminArea.setVisibility(8);
          }
 
-         if (t.isOrderPriority()) {
-            this.startPriorityBlink(h);
+         boolean lateOpen = DeliveryQueueActivity.isLate(t);
+         if (lateOpen) {
+            this.startCardBlink(h, 0xFFD32F2F);
+         } else if (t.isOrderPriority()) {
+            this.startCardBlink(h, -19712);
          } else {
-            this.stopPriorityBlink(h);
+            this.stopCardBlink(h);
          }
 
          long ms = DeliveryQueueActivity.elapsedMillis(t.getDeliveryQueuedAt());
-         h.tvElapsed.setText("⏱ " + DeliveryQueueActivity.formatElapsedBadge(ms));
-         DeliveryQueueActivity.applyQueueTimerState(h.tvElapsed, ms);
+         DeliveryQueueActivity.bindElapsedBadge(h.tvElapsed, ms);
          String jarakSuffix = jarak != null ? " (" + jarak + ")" : "";
          h.btnMore.setOnClickListener((v) -> {
             PopupMenu menu = new PopupMenu(DeliveryQueueActivity.this, v);
-            menu.getMenu().add(0, 1, 0, "\ud83d\udccd Preview Peta" + jarakSuffix);
-            menu.getMenu().add(0, 2, 1, "\ud83d\uddbc Foto");
+            menu.getMenu().add(0, 1, 0, "\ud83d\udd0d Preview" + jarakSuffix);
             menu.setOnMenuItemClickListener((item) -> {
                switch (item.getItemId()) {
                   case 1:
-                     DeliveryQueueActivity.this.showQueueMapPreview(t);
-                     return true;
-                  case 2:
-                     DeliveryQueueActivity.this.showQueuePhotoPreview(t);
+                     DeliveryQueueActivity.this.showQueuePreview(t);
                      return true;
                   default:
                      return false;
@@ -4569,36 +5969,71 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          h.btnClaim.setText("\ud83d\ude4b");
          h.btnClaim.setContentDescription("Ambil Alih");
          h.btnClaim.setOnClickListener((v) -> DeliveryQueueActivity.this.confirmAmbilAlih(t));
+
+         // Mode pilih-banyak — perilaku & tampilannya sama persis dengan Tab 2.
+         boolean pickingOpen = DeliveryQueueActivity.this.claimSelectOpen;
+         boolean pickedOpen = pickingOpen && DeliveryQueueActivity.this.claimSelectedOpen.contains(t.getId());
+         h.btnMore.setVisibility(pickingOpen ? 8 : 0);
+         h.btnClaim.setVisibility(pickingOpen ? 8 : 0);
+         h.card.setStrokeWidth(DeliveryQueueActivity.this.dp(pickedOpen || lateOpen ? 3.0F : 1.0F));
+         if (pickedOpen) {
+            h.card.setStrokeColor(DeliveryQueueActivity.this.getResources().getColor(color.primary));
+         }
+         h.itemView.setOnClickListener((v) -> {
+            if (DeliveryQueueActivity.this.claimSelectOpen) {
+               DeliveryQueueActivity.this.toggleClaimOpen(t.getId());
+               this.notifyItemChanged(h.getBindingAdapterPosition());
+            } else {
+               DeliveryQueueActivity.this.showOrderDetail(t);
+            }
+         });
+         h.itemView.setOnLongClickListener((v) -> {
+            if (DeliveryQueueActivity.this.claimSelectOpen) {
+               return false;
+            }
+            DeliveryQueueActivity.this.enterClaimSelect(true);
+            if (!DeliveryQueueActivity.this.claimSelectOpen) {
+               return false;
+            }
+            DeliveryQueueActivity.this.toggleClaimOpen(t.getId());
+            this.notifyDataSetChanged();
+            return true;
+         });
       }
 
       public int getItemCount() {
          return this.data.size();
       }
 
-      private void startPriorityBlink(VH h) {
-         if (h.priorityBlink == null || !h.priorityBlink.isStarted()) {
-            ValueAnimator anim = ValueAnimator.ofArgb(new int[]{-19712, 587182848});
+      /** Kedip border kartu; warnanya jadi parameter agar "terlambat" (merah) dan "prioritas"
+       *  (oranye) berbagi satu mekanisme, bukan menambah mekanisme kedip kelima di layar ini. */
+      private void startCardBlink(VH h, int colorHi) {
+         if (h.priorityBlink == null || !h.priorityBlink.isStarted() || h.blinkColor != colorHi) {
+            this.stopCardBlink(h);
+            ValueAnimator anim = ValueAnimator.ofArgb(new int[]{colorHi, colorHi & 16777215 | 570425344});
             anim.setDuration(700L);
             anim.setRepeatMode(2);
             anim.setRepeatCount(-1);
             anim.addUpdateListener((a) -> h.card.setStrokeColor((Integer)a.getAnimatedValue()));
             anim.start();
             h.priorityBlink = anim;
+            h.blinkColor = colorHi;
          }
       }
 
-      private void stopPriorityBlink(VH h) {
+      private void stopCardBlink(VH h) {
          if (h.priorityBlink != null) {
             h.priorityBlink.cancel();
             h.priorityBlink = null;
          }
 
+         h.blinkColor = 0;
          h.card.setStrokeColor(h.defaultStrokeColor);
       }
 
       public void onViewRecycled(@NonNull VH h) {
          super.onViewRecycled(h);
-         this.stopPriorityBlink(h);
+         this.stopCardBlink(h);
       }
 
       class VH extends RecyclerView.ViewHolder {
@@ -4613,6 +6048,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          MaterialButton btnMore;
          LinearLayout productChips;
          ValueAnimator priorityBlink;
+         int blinkColor;
          final int defaultStrokeColor;
 
          VH(View v) {

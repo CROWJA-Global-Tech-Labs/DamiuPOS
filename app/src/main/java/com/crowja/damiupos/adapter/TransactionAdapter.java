@@ -14,6 +14,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.crowja.damiupos.R;
 import com.crowja.damiupos.model.Transaction;
 import com.crowja.damiupos.model.TransactionItem;
+import com.crowja.damiupos.util.Ts;
 
 import java.text.NumberFormat;
 import java.text.SimpleDateFormat;
@@ -46,12 +47,18 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
 
     private List<Transaction> transactions = new ArrayList<>();
     private boolean showCustomerName = true;
+    // Baris "⏱ Waktu Pengiriman" per transaksi — dibiarkan MATI secara default (perlu opt-in
+    // eksplisit dari layar pemanggil) supaya adapter yang sama tetap netral role di
+    // MainActivity/TransactionListActivity; hanya CustomerDetailActivity yang menyalakannya, dan
+    // hanya untuk role admin/marketing/spv (lihat CustomerDetailActivity untuk alasannya).
+    private boolean showDeliveryMetric = false;
     private OnItemClickListener onItemClickListener;
     private OnItemLongClickListener onItemLongClickListener;
     private int colorPrimary = 0, colorGreen = 0; // di-resolve sekali
 
     public void setOnItemClickListener(OnItemClickListener l) { this.onItemClickListener = l; }
     public void setOnItemLongClickListener(OnItemLongClickListener l) { this.onItemLongClickListener = l; }
+    public void setShowDeliveryMetric(boolean v) { this.showDeliveryMetric = v; }
 
     public TransactionAdapter() {}
 
@@ -162,9 +169,38 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
         }
     }
 
+    /**
+     * Detik proses (delivery_queued_at → delivery_done_at) untuk SATU transaksi JUAL yang sudah
+     * selesai diantar; -1 bila bukan kandidat (KEMBALI, belum DONE, atau stempelnya hilang).
+     *
+     * <p>Sengaja hanya dua stempel ini — sama dengan {@code Reports::deliveryStatsByStaff} di web —
+     * BUKAN delivery_started_at: kolom itu flag "sedang berjalan sekarang" yang ditulis ulang tiap
+     * kurir menekan ▶/■ (lihat migration 2026_08_05_090000), jadi tak aman dijadikan bagian durasi
+     * historis. queued→done tetap benar walau tak pernah dijalankan lewat ▶.</p>
+     */
+    public static long deliverySeconds(Transaction trx) {
+        if (!Transaction.TYPE_JUAL.equals(trx.getType())
+                || !Transaction.DELIVERY_DONE.equals(trx.getDeliveryStatus())) {
+            return -1;
+        }
+        long q = Ts.millis(trx.getDeliveryQueuedAt());
+        long d = Ts.millis(trx.getDeliveryDoneAt());
+        if (q == Long.MAX_VALUE || d == Long.MAX_VALUE || d < q) return -1;
+        return (d - q) / 1000L;
+    }
+
+    /** "17 mnt 36 dtk" / "2 jam 5 mnt" — cermin DeliveryQueueActivity#formatDuration (detik, bukan ms). */
+    public static String formatDeliverySeconds(long secs) {
+        long h = secs / 3600L;
+        long m = secs % 3600L / 60L;
+        long s = secs % 60L;
+        if (h > 0L) return h + " jam " + m + " mnt";
+        return m > 0L ? m + " mnt " + s + " dtk" : s + " dtk";
+    }
+
     class ViewHolder extends RecyclerView.ViewHolder {
         View cardTransaction;
-        TextView tvTypeIcon, tvType, tvCustomerName, tvProductItems, tvDate, tvGalonCount, tvHarga;
+        TextView tvTypeIcon, tvType, tvCustomerName, tvProductItems, tvDate, tvDeliveryTime, tvGalonCount, tvHarga;
 
         ViewHolder(@NonNull View itemView) {
             super(itemView);
@@ -174,6 +210,7 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
             tvCustomerName = itemView.findViewById(R.id.tvCustomerName);
             tvProductItems = itemView.findViewById(R.id.tvProductItems);
             tvDate = itemView.findViewById(R.id.tvDate);
+            tvDeliveryTime = itemView.findViewById(R.id.tvDeliveryTime);
             tvGalonCount = itemView.findViewById(R.id.tvGalonCount);
             tvHarga = itemView.findViewById(R.id.tvHarga);
         }
@@ -230,6 +267,18 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
             if (pay != null && !pay.isEmpty()) dateLine += "  ·  " + pay;
             tvDate.setText(dateLine);
             tvGalonCount.setText(trx.getJumlahGalon() + " galon");
+
+            if (showDeliveryMetric) {
+                long secs = deliverySeconds(trx);
+                if (secs >= 0) {
+                    tvDeliveryTime.setText("⏱ " + formatDeliverySeconds(secs));
+                    tvDeliveryTime.setVisibility(View.VISIBLE);
+                } else {
+                    tvDeliveryTime.setVisibility(View.GONE);
+                }
+            } else {
+                tvDeliveryTime.setVisibility(View.GONE);
+            }
 
             if (isJual || trx.getTotalHarga() > 0) {
                 tvHarga.setText("Rp " + NF.format(trx.getTotalHarga()));

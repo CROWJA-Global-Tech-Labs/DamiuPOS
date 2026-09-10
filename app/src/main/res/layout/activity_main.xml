@@ -305,6 +305,7 @@
 
                         <!-- Bawah: judul (align bottom) -->
                         <TextView
+                            android:id="@+id/tvPendapatanCaption"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="10dp"
@@ -389,6 +390,7 @@
 
                         <!-- Bawah: judul (align bottom) -->
                         <TextView
+                            android:id="@+id/tvGalonTerjualCaption"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="10dp"
@@ -739,169 +741,280 @@
             </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- Pencapaian Penjualan — Admin & Marketing (lihat User.canViewSalesAchievement).
-                 Rekap penjualan per karyawan SE-CABANG, dihitung di server & disegarkan berkala,
-                 jadi angkanya sama persis dengan dashboard web. -->
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnSalesAchievement"
+            <!-- Menu Marketing/Promosi — grid 2 kolom. Tiap sel adalah FrameLayout (bukan tombol
+                 telanjang) supaya SEMUA sel seragam: badge bisa menempel di pojok, dan visibilitas
+                 per-peran selalu dipasang di sel, tak pernah di tombolnya. Kalau dipasang di tombol,
+                 sel-nya tetap memesan satu petak grid dan meninggalkan lubang.
+
+                 Penempatan baris/kolomnya DITENTUKAN DI KODE (MainActivity.packQuickMenuGrid),
+                 bukan di sini: kelima menu punya aturan peran yang berbeda-beda, jadi sel mana yang
+                 tampil berubah-ubah. GridLayout menempatkan anak secara otomatis TERMASUK yang GONE,
+                 jadi tanpa penataan ulang itu grid ini akan berlubang. Sel terakhir melebar dua
+                 kolom saat jumlah yang tampil ganjil, supaya barisnya tak pernah menggantung. -->
+            <androidx.gridlayout.widget.GridLayout
+                android:id="@+id/gridQuickMenu"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:minHeight="50dp"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:paddingTop="8dp"
-                android:paddingBottom="8dp"
-                android:text="🏆 Pencapaian Penjualan"
-                android:textAllCaps="false"
-                android:textColor="@color/white"
-                android:textSize="15sp"
-                android:textStyle="bold"
-                android:visibility="gone"
-                app:backgroundTint="#00695C"
-                app:cornerRadius="12dp"
-                app:elevation="0dp"
-                android:stateListAnimator="@null"
-                app:icon="@android:drawable/ic_menu_sort_by_size"
-                app:iconPadding="6dp"
-                app:iconSize="20dp"
-                app:iconTint="@color/white"
-                app:iconGravity="textStart" />
+                app:columnCount="2"
+                app:useDefaultMargins="false">
 
-            <!-- Input Promosi Galon — Marketing & Admin selalu; staf lain bila promo_enabled.
-                 Buat pelanggan BARU dulu, lalu Transaksi Baru mode Promosi (Gratis/Berbayar). -->
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnPromosi"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:minHeight="50dp"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:paddingTop="8dp"
-                android:paddingBottom="8dp"
-                android:text="🎁 Input Promosi Galon"
-                android:textAllCaps="false"
-                android:textColor="@color/white"
-                android:textSize="15sp"
-                android:textStyle="bold"
-                android:visibility="gone"
-                app:backgroundTint="#2E7D32"
-                app:cornerRadius="12dp"
-                app:elevation="0dp"
-                android:stateListAnimator="@null"
-                app:icon="@android:drawable/ic_input_add"
-                app:iconPadding="6dp"
-                app:iconSize="20dp"
-                app:iconTint="@color/white"
-                app:iconGravity="textStart" />
-
-            <!-- Pelanggan Promosi — daftar + statistik konversi hasil promo galon gratis
-                 (kapan diberi promosi, kapan pembelian pertamanya). Visibilitas = btnPromosi.
-                 Dibungkus FrameLayout untuk badge "WA Perkenalan tertunggak" (Petugas WA
-                 Perkenalan — pola sama dgn tvDeliveryBadge). -->
-            <FrameLayout
-                android:id="@+id/boxPromoCustomers"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:visibility="gone">
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnPromoCustomers"
-                    android:layout_width="match_parent"
+                <!-- Target Sales (d/h "Pencapaian Penjualan") — Admin & Marketing
+                     (User.canViewSalesAchievement). Rekap penjualan per karyawan SE-CABANG,
+                     dihitung di server, jadi angkanya sama persis dengan dashboard web. -->
+                <FrameLayout
+                    android:id="@+id/boxSalesAchievement"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:minHeight="44dp"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:text="📊 Pelanggan Promosi"
-                    android:textAllCaps="false"
-                    android:textColor="#2E7D32"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    app:strokeColor="#2E7D32"
-                    app:strokeWidth="1dp"
-                    app:backgroundTint="@color/white"
-                    app:cornerRadius="12dp"
-                    app:elevation="0dp"
-                    android:stateListAnimator="@null" />
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
 
-                <TextView
-                    android:id="@+id/tvPromoIntroBadge"
-                    android:layout_width="wrap_content"
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnSalesAchievement"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="🏆 Target Sales"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#00695C"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
+                </FrameLayout>
+
+                <!-- Promo Galon (d/h "Input Promosi Galon") — Marketing & Admin selalu; staf lain
+                     bila promo_enabled. Buat pelanggan BARU dulu, lalu Transaksi Baru mode Promosi. -->
+                <FrameLayout
+                    android:id="@+id/boxPromosi"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="top|end"
-                    android:layout_marginTop="2dp"
-                    android:layout_marginEnd="2dp"
-                    android:background="@drawable/bg_pending_badge"
-                    android:minWidth="22dp"
-                    android:paddingStart="6dp"
-                    android:paddingEnd="6dp"
-                    android:paddingTop="1dp"
-                    android:paddingBottom="1dp"
-                    android:elevation="6dp"
-                    android:gravity="center"
-                    android:text="0"
-                    android:textColor="@color/white"
-                    android:textSize="11sp"
-                    android:textStyle="bold"
-                    android:visibility="gone" />
-            </FrameLayout>
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
 
-            <!-- Daftar Kunjungan Urgent — pelanggan yang ditandai "Kunjungi Urgent" dari Follow Up
-                 (web / HP admin) dan belum dikunjungi. Visibilitas: marketing/admin.
-                 Dibungkus FrameLayout supaya badge jumlah bisa menempel di pojok, pola yang sama
-                 dengan badge Follow Up. Visibilitas diatur pada PEMBUNGKUS, bukan tombolnya —
-                 kalau di tombol, badge-nya tetap melayang saat tombol disembunyikan. -->
-            <FrameLayout
-                android:id="@+id/wrapKunjungan"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:visibility="gone">
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPromosi"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="🎁 Promo Galon"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#2E7D32"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
+                </FrameLayout>
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnKunjungan"
-                    android:layout_width="match_parent"
+                <!-- Rekor Pengiriman — hari & bulan TERBAIK tiap perangkat, dihitung server dengan
+                     perakit yang sama dengan kartu di halaman Delivery web. Staf/SPV/Admin. -->
+                <FrameLayout
+                    android:id="@+id/boxDeliveryRecord"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:minHeight="44dp"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:text="🧭 Daftar Kunjungan Urgent"
-                    android:textAllCaps="false"
-                    android:textColor="#1565C0"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    app:strokeColor="#1565C0"
-                    app:strokeWidth="1dp"
-                    app:backgroundTint="@color/white"
-                    app:cornerRadius="12dp"
-                    app:elevation="0dp"
-                    android:stateListAnimator="@null" />
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
 
-                <TextView
-                    android:id="@+id/tvKunjunganBadge"
-                    android:layout_width="wrap_content"
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnDeliveryRecord"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="🏁 Rekor Antar"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#00897B"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
+                </FrameLayout>
+
+                <!-- Cust. Promo (d/h "Pelanggan Promosi") — daftar + statistik konversi hasil promo
+                     galon gratis. Visibilitas = Promo Galon. -->
+                <FrameLayout
+                    android:id="@+id/boxPromoCustomers"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="top|end"
-                    android:layout_marginTop="2dp"
-                    android:layout_marginEnd="2dp"
-                    android:background="@drawable/bg_followup_badge"
-                    android:minWidth="22dp"
-                    android:paddingStart="6dp"
-                    android:paddingEnd="6dp"
-                    android:paddingTop="1dp"
-                    android:paddingBottom="1dp"
-                    android:elevation="6dp"
-                    android:gravity="center"
-                    android:text="0"
-                    android:textColor="#FF7043"
-                    android:textSize="11sp"
-                    android:textStyle="bold"
-                    android:visibility="gone" />
-            </FrameLayout>
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
 
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPromoCustomers"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="📊 Cust. Promo"
+                        android:textAllCaps="false"
+                        android:textColor="#2E7D32"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:strokeColor="#2E7D32"
+                        app:strokeWidth="1dp"
+                        app:backgroundTint="@color/white"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
+                </FrameLayout>
+
+                <!-- WA Perkenalan — menu KHUSUS perangkat yang dicentang "Petugas WA Perkenalan"
+                     di dashboard. Badge = pelanggan promosi yang belum disapa DI WILAYAH TUGAS
+                     perangkat ini. -->
+                <FrameLayout
+                    android:id="@+id/boxIntroWa"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnIntroWa"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="💬 WA Perkenalan"
+                        android:textAllCaps="false"
+                        android:textColor="#1B5E20"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:strokeColor="#1B5E20"
+                        app:strokeWidth="1dp"
+                        app:backgroundTint="@color/white"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
+
+                    <TextView
+                        android:id="@+id/tvIntroWaBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="top|end"
+                        android:layout_marginTop="2dp"
+                        android:layout_marginEnd="2dp"
+                        android:background="@drawable/bg_pending_badge"
+                        android:minWidth="22dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:paddingTop="1dp"
+                        android:paddingBottom="1dp"
+                        android:elevation="6dp"
+                        android:gravity="center"
+                        android:text="0"
+                        android:textColor="@color/white"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+                </FrameLayout>
+
+                <!-- Kunjungan Urgent (d/h "Daftar Kunjungan Urgent") — pelanggan yang ditandai
+                     "Kunjungi Urgent" dari Follow Up (web / HP admin) dan belum dikunjungi.
+                     Visibilitas: marketing/admin. -->
+                <FrameLayout
+                    android:id="@+id/wrapKunjungan"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnKunjungan"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="🧭 Kunjungan Urgent"
+                        android:textAllCaps="false"
+                        android:textColor="#1565C0"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:strokeColor="#1565C0"
+                        app:strokeWidth="1dp"
+                        app:backgroundTint="@color/white"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
+
+                    <TextView
+                        android:id="@+id/tvKunjunganBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="top|end"
+                        android:layout_marginTop="2dp"
+                        android:layout_marginEnd="2dp"
+                        android:background="@drawable/bg_followup_badge"
+                        android:minWidth="22dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:paddingTop="1dp"
+                        android:paddingBottom="1dp"
+                        android:elevation="6dp"
+                        android:gravity="center"
+                        android:text="0"
+                        android:textColor="#FF7043"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+                </FrameLayout>
+            </androidx.gridlayout.widget.GridLayout>
+
+            <!-- Menu utama 2 kolom. Tiap baris memakai bobot yang sama, jadi begitu satu sel
+                 di-GONE-kan, pasangannya otomatis memakai lebar penuh — lihat
+                 MainActivity.expandLoneMenuButtons yang merapikan sel pembungkus supaya aturan itu
+                 tetap berlaku walau yang disembunyikan tombol di dalamnya, bukan sel-nya. -->
             <LinearLayout
+                android:id="@+id/menuRows"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
@@ -1163,12 +1276,10 @@
                         app:iconSize="22dp"
                         app:iconTint="@color/white" />
 
-                    <!-- Empty cell keeps "Pengaturan" half-width & column-aligned. -->
-                    <View
-                        android:layout_width="0dp"
-                        android:layout_height="64dp"
-                        android:layout_weight="1"
-                        android:layout_margin="4dp" />
+                    <!-- Dulu ada sel kosong di sini supaya "Pengaturan" tetap setengah lebar dan
+                         sekolom dengan baris di atasnya. Dibuang: aturan menunya sekarang "melebar
+                         kalau tetangganya tidak ada", dan sel kosong itu tetangga palsu yang membuat
+                         Pengaturan satu-satunya menu yang menyisakan ruang menganggur. -->
                 </LinearLayout>
             </LinearLayout>
 

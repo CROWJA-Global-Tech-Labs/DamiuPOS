@@ -400,6 +400,12 @@ public class Customer {
     public String getOriginLabel() { return originLabel; }
     public void setOriginLabel(String v) { this.originLabel = v; }
 
+    /** "Pesan Cepat" — link publik satu-produk (App\Support\QuickOrder di web); null bila riwayat
+     *  pelanggan ini belum layak. Server-authoritative, pull-only. */
+    private String quickOrderLink;
+    public String getQuickOrderLink() { return quickOrderLink; }
+    public void setQuickOrderLink(String v) { this.quickOrderLink = v; }
+
     // ---- Daftar Kunjungan (marketing) ----
     /** Order TERAKHIR lintas perangkat (agg server, pull-only); null = belum ada / belum pull. */
     private String srvLastJual;

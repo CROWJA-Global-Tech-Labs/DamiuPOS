@@ -28,8 +28,10 @@ import com.crowja.damiupos.adapter.TransactionAdapter;
 import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.TransactionDao;
+import com.crowja.damiupos.db.UserDao;
 import com.crowja.damiupos.model.Customer;
 import com.crowja.damiupos.model.Transaction;
+import com.crowja.damiupos.model.User;
 
 import java.util.List;
 
@@ -72,6 +74,11 @@ public class CustomerDetailActivity extends AppCompatActivity {
     private MaterialCardView cardMap;
     private WebView webMap;
     private boolean mapLoaded;
+    private MaterialCardView cardDeliveryMetric;
+    private TextView tvDeliveryAvg, tvDeliveryCount;
+    /** ⏱ Waktu Pengiriman: bahan analisis kecepatan antar, bukan urusan sehari-hari kurir/staf —
+     *  hanya role yang benar-benar memakainya untuk keputusan (admin/marketing/spv) yang melihatnya. */
+    private boolean canSeeDeliveryMetric;
 
     /** Pin posisi LIVE perangkat lain — dipasang di semua peta aplikasi. */
     private LiveDeviceOverlay liveDev;
@@ -121,8 +128,15 @@ public class CustomerDetailActivity extends AppCompatActivity {
         btnCatatHutang.setOnClickListener(v -> showDebtDialog(true));
         tvEmptyHistory = findViewById(R.id.tvEmptyHistory);
         rvTransactions = findViewById(R.id.rvTransactions);
+        cardDeliveryMetric = findViewById(R.id.cardDeliveryMetric);
+        tvDeliveryAvg = findViewById(R.id.tvDeliveryAvg);
+        tvDeliveryCount = findViewById(R.id.tvDeliveryCount);
+
+        User u = new UserDao(dbHelper).getById(settingsDao.getCurrentUserId());
+        canSeeDeliveryMetric = u != null && (u.isAdmin() || u.isMarketing() || u.isSpv());
 
         adapter = new TransactionAdapter(false);
+        adapter.setShowDeliveryMetric(canSeeDeliveryMetric);
         rvTransactions.setLayoutManager(new LinearLayoutManager(this));
         // Tanpa setHasFixedSize: RV riwayat ini tingginya wrap_content (di dalam ScrollView),
         // ukurannya berubah mengikuti isi → setHasFixedSize(true) salah di sini.
@@ -535,6 +549,39 @@ public class CustomerDetailActivity extends AppCompatActivity {
     }
 
     /**
+     * Kartu "⏱ Rata-rata Waktu Pengiriman": bahan analisis kecepatan antar untuk pelanggan ini —
+     * dipakai kalau ybs sering mengeluh order lama, untuk melihat apakah keluhannya beralasan.
+     * Dihitung dari riwayat LOKAL perangkat ini saja (sama seperti adapter di atasnya), memakai
+     * detik yang sama dengan badge per-baris ({@link TransactionAdapter#deliverySeconds}) supaya
+     * rata-ratanya konsisten dengan yang ditampilkan di tiap baris riwayat.
+     *
+     * <p>Role-gated: hanya admin/marketing/spv, {@see #canSeeDeliveryMetric}. Kartu tetap gone bila
+     * belum ada satu pun order JUAL yang sudah selesai diantar untuk dihitung.</p>
+     */
+    private void renderDeliveryMetric(List<Transaction> transactions) {
+        if (!canSeeDeliveryMetric) {
+            cardDeliveryMetric.setVisibility(View.GONE);
+            return;
+        }
+        long sum = 0;
+        int n = 0;
+        for (Transaction t : transactions) {
+            long secs = TransactionAdapter.deliverySeconds(t);
+            if (secs >= 0) {
+                sum += secs;
+                n++;
+            }
+        }
+        if (n == 0) {
+            cardDeliveryMetric.setVisibility(View.GONE);
+            return;
+        }
+        cardDeliveryMetric.setVisibility(View.VISIBLE);
+        tvDeliveryAvg.setText(TransactionAdapter.formatDeliverySeconds(sum / n));
+        tvDeliveryCount.setText("dari " + n + " order selesai");
+    }
+
+    /**
      * Kartu HUTANG: sisa + tiga baris riwayat terakhir. Kartu SELALU tampil (bukan hanya saat
      * berhutang) supaya "+ Hutang" tetap terjangkau untuk mencatat kurang-bayar; tombol pelunasan
      * yang disembunyikan saat tak ada hutang. Sisa dihitung dari buku besar, tak pernah disimpan
@@ -715,6 +762,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
         // per-perangkat, tidak branch-wide). Kalau total gabungan > lokal, beri catatan jujur.
         List<Transaction> transactions = transactionDao.getByCustomerId(customerId);
         adapter.setData(transactions);
+        renderDeliveryMetric(transactions);
 
         int otherDevices = mergedTrx - transactions.size();
         if (otherDevices > 0 && !transactions.isEmpty()) {

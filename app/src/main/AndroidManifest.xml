@@ -119,6 +119,9 @@
         <activity android:name=".DeliveryQueueActivity" />
         <activity android:name=".OtherDeviceQueueActivity" />
         <activity android:name=".SalesAchievementActivity" />
+        <activity android:name=".IntroWaActivity" />
+        <activity android:name=".DeliveryRecordActivity" />
+        <activity android:name=".DeliveryHistoryActivity" />
         <activity android:name=".DeliveryMapActivity" />
         <activity android:name=".DeliveryObstacleActivity" />
         <activity android:name=".ChangelogActivity" />

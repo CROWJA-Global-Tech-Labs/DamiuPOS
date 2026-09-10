@@ -88,9 +88,18 @@ public final class OnlineTasks {
 
             // Muatan max perangkat ini (Strategi Pengiriman) — diatur admin di dashboard.
             if (r.has("max_load")) cfg.setMaxLoad(r.optInt("max_load", 0));
+            // Batas "Pesanan Terlambat" khusus perangkat ini (menit) — 0 = ikut setelan cabang.
+            if (r.has("delivery_max_age_minutes")) {
+                cfg.setDeviceMaxAgeMinutes(r.optInt("delivery_max_age_minutes", 0));
+            }
             // Kode prefix ID transaksi struk perangkat ini (App\Support\ReceiptNumber di web) —
             // dipakai TransactionDao.insert() menyusun receipt_no baris JUAL baru, offline.
             if (r.has("receipt_code")) cfg.setReceiptCode(r.optString("receipt_code", ""));
+            // Identitas ikon perangkat ini — dipakai pin "Posisi Anda" di panel Preview
+            // (DeliveryQueueActivity), supaya identitasnya sama dgn pin perangkat ini di peta lain.
+            if (r.has("device_icon")) cfg.setDeviceIcon(r.optString("device_icon", ""));
+            if (r.has("device_color")) cfg.setDeviceColor(r.optString("device_color", ""));
+            if (r.has("device_vehicle")) cfg.setDeviceVehicle(r.optString("device_vehicle", ""));
             // Slug cabang (Kelola Cabang) → link statis airfrez.com/{slug}-qris di struk WA QRIS.
             // Dari /me (bukan hanya enroll) supaya terisi walau diatur admin SETELAH HP terdaftar.
             JSONObject branchObj = r.optJSONObject("branch");

@@ -27,14 +27,19 @@ public class CustomerGiftDao {
         public final int qty;
         public final String reason;      // boleh null/empty
         public final String syncUuid;
+        /** Sudah dilekatkan ke transaksi ini (struk sudah menjanjikannya), belum Selesai. Null =
+         *  belum dilekatkan ke mana pun. Cermin App\Support\Gifts di web. */
+        public final String pendingTransactionUuid;
 
-        Gift(long localId, String itemType, String itemName, int qty, String reason, String syncUuid) {
+        Gift(long localId, String itemType, String itemName, int qty, String reason, String syncUuid,
+             String pendingTransactionUuid) {
             this.localId = localId;
             this.itemType = itemType;
             this.itemName = itemName;
             this.qty = qty;
             this.reason = reason;
             this.syncUuid = syncUuid;
+            this.pendingTransactionUuid = pendingTransactionUuid;
         }
 
         /** Label ringkas, mis. "3 pcs Gelas Cantik". */
@@ -62,17 +67,26 @@ public class CustomerGiftDao {
             DatabaseHelper.COL_ID, DatabaseHelper.COL_GIFT_ITEM_TYPE,
             DatabaseHelper.COL_GIFT_ITEM_NAME, DatabaseHelper.COL_GIFT_QTY,
             DatabaseHelper.COL_GIFT_REASON, DatabaseHelper.COL_SYNC_UUID,
+            DatabaseHelper.COL_GIFT_PENDING_TRX_UUID,
     };
 
     private static Gift fromCursor(Cursor c) {
         return new Gift(c.getLong(0), c.getString(1), c.getString(2),
-                c.getInt(3), c.getString(4), c.getString(5));
+                c.getInt(3), c.getString(4), c.getString(5), c.getString(6));
     }
 
     /** Predikat "belum diberikan" (redeemed_at NULL/kosong). */
-    private static final String PENDING =
+    private static final String REDEEMED_EMPTY =
             "(" + DatabaseHelper.COL_GIFT_REDEEMED_AT + " IS NULL OR "
                     + DatabaseHelper.COL_GIFT_REDEEMED_AT + " = '')";
+
+    /** Predikat "belum dilekatkan ke transaksi mana pun" (pending_transaction_uuid NULL/kosong). */
+    private static final String NOT_ATTACHED =
+            "(" + DatabaseHelper.COL_GIFT_PENDING_TRX_UUID + " IS NULL OR "
+                    + DatabaseHelper.COL_GIFT_PENDING_TRX_UUID + " = '')";
+
+    /** Benar-benar bebas ditawarkan: belum diberikan DAN belum dilekatkan ke transaksi lain. */
+    private static final String PENDING = "(" + REDEEMED_EMPTY + " AND " + NOT_ATTACHED + ")";
 
     /**
      * _id SEMUA salinan pelanggan lokal dengan nomor sama (branch-wide) untuk {@code customerLocalId}
@@ -153,13 +167,19 @@ public class CustomerGiftDao {
     }
 
     /**
-     * Klaim SEMUA gift pending pelanggan {@code customerLocalId} untuk transaksi JUAL ber-uuid
-     * {@code trxUuid}: isi {@code redeemed_at} (= sekarang), tautkan {@code redeemed_transaction_uuid},
-     * rekam pemberi, bump {@code edited_at} & tandai dirty (synced=0) → di-push balik ke server.
-     * Beroperasi pada {@code db} yang diberikan (dipanggil di dalam TransactionDao.insert). Aman
-     * dipanggil untuk non-JUAL/tanpa pelanggan (no-op). Mengembalikan gift yang baru di-klaim.
+     * Klaim SEMUA gift CUSTOM pending pelanggan {@code customerLocalId} untuk transaksi JUAL ber-
+     * uuid {@code trxUuid}. {@code queued} — transaksi ini MASIH masuk antrean delivery (PENDING/
+     * TERTUNDA, belum Selesai)? true → hanya DILEKATKAN ({@code pending_transaction_uuid}, struk
+     * sudah boleh menjanjikannya tapi belum "sungguh diberikan"); false (self-pick/tunai walk-in,
+     * "dibuat = selesai") → langsung {@code redeemed_at} seperti dulu. {@link #finalizeAttachedForTransaction}
+     * yang menuntaskan gift terlekat saat order itu akhirnya ditandai Selesai. Cermin
+     * App\Support\Gifts::redeemForTransaction di web — jaga selaras.
+     *
+     * <p>Beroperasi pada {@code db} yang diberikan (dipanggil di dalam TransactionDao.insert). Aman
+     * dipanggil untuk non-JUAL/tanpa pelanggan (no-op). Mengembalikan gift yang baru dilekatkan/diberikan.
      */
-    public List<Gift> redeemForTransaction(SQLiteDatabase db, long customerLocalId, String trxUuid, String byName) {
+    public List<Gift> redeemForTransaction(SQLiteDatabase db, long customerLocalId, String trxUuid,
+                                            String byName, boolean queued) {
         List<Gift> redeemed = new ArrayList<>();
         if (customerLocalId <= 0 || trxUuid == null || trxUuid.isEmpty()) return redeemed;
         Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMER_GIFTS, COLS,
@@ -180,10 +200,16 @@ public class CustomerGiftDao {
         String now = DatabaseHelper.nowIso();
         for (Gift g : redeemed) {
             ContentValues v = new ContentValues();
-            v.put(DatabaseHelper.COL_GIFT_REDEEMED_AT, now);
-            v.put(DatabaseHelper.COL_GIFT_REDEEMED_TRX_UUID, trxUuid);
+            // Siapa yang MEMUTUSKAN memberi gift ini dicatat sekarang baik dua-duanya — beda dari
+            // siapa yang belakangan menstempel Selesai (bisa kurir lain).
             if (byName != null && !byName.isEmpty()) {
                 v.put(DatabaseHelper.COL_GIFT_REDEEMED_BY, byName);
+            }
+            if (queued) {
+                v.put(DatabaseHelper.COL_GIFT_PENDING_TRX_UUID, trxUuid);
+            } else {
+                v.put(DatabaseHelper.COL_GIFT_REDEEMED_AT, now);
+                v.put(DatabaseHelper.COL_GIFT_REDEEMED_TRX_UUID, trxUuid);
             }
             v.put(DatabaseHelper.COL_EDITED_AT, now);
             v.put(DatabaseHelper.COL_SYNCED, 0);
@@ -194,17 +220,22 @@ public class CustomerGiftDao {
     }
 
     /**
-     * Klaim SATU gift (dipakai popup gift produk setelah staf memilih wujudnya). Sama seperti
-     * {@link #redeemForTransaction} tapi untuk satu baris, di database milik dbHelper.
+     * Klaim/lekatkan SATU gift PRODUK (dipakai popup gift produk setelah staf memilih wujudnya).
+     * {@code queued} — sama artinya dengan {@link #redeemForTransaction}. Sama seperti method itu
+     * tapi untuk satu baris, di database milik dbHelper (dipanggil dari luar sebuah insert transaksi).
      */
-    public void redeemOne(long giftLocalId, String trxUuid, String byName) {
+    public void redeemOne(long giftLocalId, String trxUuid, String byName, boolean queued) {
         if (giftLocalId <= 0 || trxUuid == null || trxUuid.isEmpty()) return;
         String now = DatabaseHelper.nowIso();
         ContentValues v = new ContentValues();
-        v.put(DatabaseHelper.COL_GIFT_REDEEMED_AT, now);
-        v.put(DatabaseHelper.COL_GIFT_REDEEMED_TRX_UUID, trxUuid);
         if (byName != null && !byName.isEmpty()) {
             v.put(DatabaseHelper.COL_GIFT_REDEEMED_BY, byName);
+        }
+        if (queued) {
+            v.put(DatabaseHelper.COL_GIFT_PENDING_TRX_UUID, trxUuid);
+        } else {
+            v.put(DatabaseHelper.COL_GIFT_REDEEMED_AT, now);
+            v.put(DatabaseHelper.COL_GIFT_REDEEMED_TRX_UUID, trxUuid);
         }
         v.put(DatabaseHelper.COL_EDITED_AT, now);
         v.put(DatabaseHelper.COL_SYNCED, 0);
@@ -213,17 +244,40 @@ public class CustomerGiftDao {
     }
 
     /**
-     * Gift yang di-klaim oleh transaksi ber-uuid {@code trxUuid} — untuk ditampilkan di struk
-     * (gambar & teks WA). Cocokkan langsung ke {@code redeemed_transaction_uuid} (uuid mentah:
-     * transaksi device-isolated, jadi struk cuma ada di HP yang menjual).
+     * Tuntaskan gift yang DILEKATKAN ke transaksi ini ({@code pending_transaction_uuid}) menjadi
+     * SUNGGUH DIBERIKAN — dipanggil TEPAT SEKALI dari {@link TransactionDao#markDelivered}, saat
+     * transaksinya ditandai Selesai. Aman dipanggil untuk transaksi tanpa gift terlekat (no-op) dan
+     * aman dipanggil berulang (predikat menyaring baris yang sudah punya redeemed_at). Cermin
+     * App\Support\Gifts::finalizeAttachedForTransaction di web.
+     */
+    public void finalizeAttachedForTransaction(String trxUuid) {
+        if (trxUuid == null || trxUuid.isEmpty()) return;
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        String now = DatabaseHelper.nowIso();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_GIFT_REDEEMED_AT, now);
+        v.put(DatabaseHelper.COL_GIFT_REDEEMED_TRX_UUID, trxUuid);
+        v.putNull(DatabaseHelper.COL_GIFT_PENDING_TRX_UUID);
+        v.put(DatabaseHelper.COL_EDITED_AT, now);
+        v.put(DatabaseHelper.COL_SYNCED, 0);
+        db.update(DatabaseHelper.TABLE_CUSTOMER_GIFTS, v,
+                DatabaseHelper.COL_GIFT_PENDING_TRX_UUID + "=? AND " + REDEEMED_EMPTY,
+                new String[]{trxUuid});
+    }
+
+    /**
+     * Gift yang di-klaim oleh transaksi ber-uuid {@code trxUuid} — baik yang sudah TUNTAS
+     * ({@code redeemed_transaction_uuid}) maupun yang baru DILEKATKAN dan masih menunggu Selesai
+     * ({@code pending_transaction_uuid}) — untuk ditampilkan di struk (gambar & teks WA). Struknya
+     * boleh menjanjikan gift ini WALAU ordernya belum Selesai; cermin App\Support\Gifts::redeemedBy.
      */
     public List<Gift> redeemedForTransaction(String trxUuid) {
         List<Gift> out = new ArrayList<>();
         if (trxUuid == null || trxUuid.isEmpty()) return out;
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMER_GIFTS, COLS,
-                DatabaseHelper.COL_GIFT_REDEEMED_TRX_UUID + "=?",
-                new String[]{trxUuid}, null, null, DatabaseHelper.COL_CREATED_AT + " ASC");
+                DatabaseHelper.COL_GIFT_REDEEMED_TRX_UUID + "=? OR " + DatabaseHelper.COL_GIFT_PENDING_TRX_UUID + "=?",
+                new String[]{trxUuid, trxUuid}, null, null, DatabaseHelper.COL_CREATED_AT + " ASC");
         try {
             while (c.moveToNext()) out.add(fromCursor(c));
         } finally {

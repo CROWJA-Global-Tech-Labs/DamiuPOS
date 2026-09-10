@@ -230,7 +230,9 @@ public class UserDao {
         for (User u : all) {
             if (u.isAdmin()) { out.add(u); continue; }   // admin selalu boleh (jangan kunci owner)
             String su = syncUuidOf(u.getId());
-            if (su != null && allowed.contains(su)) out.add(u);
+            // sync_uuid lokal kosong (belum ke-sync ulang) -> jangan kunci staf keluar,
+            // tetap tampilkan; PIN tetap jadi gerbang akhir saat login.
+            if (su == null || allowed.contains(su)) out.add(u);
         }
         return out.isEmpty() ? all : out;   // jangan pernah kosong
     }

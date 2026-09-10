@@ -124,6 +124,16 @@ public final class WhatsAppFollowUp {
             }
         }
 
+        // "Pesan Cepat": pelanggan riwayat SATU produk yang sudah order ≥3× dapat kalimat siap-
+        // tempel tambahan yang membawa mereka LANGSUNG ke halaman pesan-satu-produk. Server yang
+        // memutuskan kelayakannya (App\Support\QuickOrder, tersinkron ke customer.quick_order_link);
+        // HP di sini cuma menempelkannya kalau ada — SELALU paragraf terpisah di akhir, tak pernah
+        // menggantikan isi pesan di atasnya (beda dari pantun). Cermin FollowUpWa::deeplink di web.
+        String quickOrderLink = c.getQuickOrderLink();
+        if (quickOrderLink != null && !quickOrderLink.trim().isEmpty()) {
+            msg = msg + "\n\nYA, saya pesan. Klik link berikut: " + quickOrderLink;
+        }
+
         try {
             Intent i = new Intent(Intent.ACTION_VIEW,
                     Uri.parse("https://wa.me/" + normalized + "?text=" + Uri.encode(msg)));

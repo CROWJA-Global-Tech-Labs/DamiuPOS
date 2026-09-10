@@ -21,4 +21,19 @@
         android:id="@+id/action_report_obstacle"
         android:title="🚧 Laporkan Kendala Pengiriman"
         app:showAsAction="never" />
+
+    <!-- 📜 dipilih karena 🗺 🚧 ⚠️ 🏁 🎲 sudah dipakai fitur lain. TIDAK di-gate per-tab: riwayat
+         lokal ini milik perangkat ini di tab mana pun, jadi menyembunyikannya di tab 2/3 justru
+         membingungkan (beda dari 🚧 yang memang soal antrian perangkat ini). -->
+    <item
+        android:id="@+id/action_delivery_history"
+        android:title="📜 Riwayat Pengiriman"
+        app:showAsAction="never" />
+
+    <!-- Label & 👁/🙈 diganti runtime (onPrepareOptionsMenu) sesuai state tersimpan — GATE tab 0
+         saja: kartunya cuma ada di Antrean Saya, menampilkannya di tab lain cuma membingungkan. -->
+    <item
+        android:id="@+id/action_toggle_strategy"
+        android:title="👁 Sembunyikan Strategi Pengiriman"
+        app:showAsAction="never" />
 </menu>
