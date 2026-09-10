@@ -25,12 +25,12 @@ public class GalonStockDao {
         values.put(DatabaseHelper.COL_STOCK_JUMLAH, jumlah);
         values.put(DatabaseHelper.COL_STOCK_CATATAN, catatan);
         values.put(DatabaseHelper.COL_STOCK_PHOTO_PATH, photoPath);
-        return db.insert(DatabaseHelper.TABLE_GALON_STOCK, null, values);
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_GALON_STOCK, values);
     }
 
     public int deleteStock(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        return db.delete(DatabaseHelper.TABLE_GALON_STOCK,
+        return dbHelper.syncDelete(db, DatabaseHelper.TABLE_GALON_STOCK, "galon_stock",
                 DatabaseHelper.COL_STOCK_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
@@ -42,7 +42,7 @@ public class GalonStockDao {
         values.put(DatabaseHelper.COL_STOCK_JUMLAH, jumlah);
         values.put(DatabaseHelper.COL_STOCK_CATATAN, catatan);
         values.put(DatabaseHelper.COL_STOCK_PHOTO_PATH, photoPath);
-        return db.update(DatabaseHelper.TABLE_GALON_STOCK, values,
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_GALON_STOCK, values,
                 DatabaseHelper.COL_STOCK_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
@@ -116,9 +116,24 @@ public class GalonStockDao {
         return total;
     }
 
-    /** Stok galon tersedia = stok_masuk - galon_keluar + galon_kembali */
+    /** Stok galon tersedia = stok_masuk - galon_keluar + galon_kembali (semua LOKAL). */
     public int getStokTersedia() {
         return getTotalStokMasuk() - getTotalGalonKeluar() + getTotalGalonKembali();
+    }
+
+    /**
+     * Stok tersedia "resmi" — SATU sumber kebenaran yang dipakai badge dashboard maupun layar
+     * Stok Galon, supaya keduanya selalu sama. Memakai galon keluar/kembali OTORITATIF dari server
+     * (branch-wide) bila perangkat ter-enroll & sudah sync; per-device isolation membuat transaksi
+     * lokal bisa tertinggal sehingga {@link #getStokTersedia()} (murni lokal) berbeda dari dashboard.
+     * Stok masuk tetap dari galon_stock lokal (sudah branch-wide, dan langsung mencerminkan koreksi
+     * yang baru dibuat di HP ini).
+     */
+    public int getStokTersediaResmi(com.crowja.damiupos.sync.SyncSettings sync) {
+        boolean useServer = sync != null && sync.isEnrolled() && sync.hasServerStok();
+        int keluar  = useServer ? sync.getStokKeluar()  : getTotalGalonKeluar();
+        int kembali = useServer ? sync.getStokKembali() : getTotalGalonKembali();
+        return getTotalStokMasuk() - keluar + kembali;
     }
 
     /** Get stock addition history, newest first */

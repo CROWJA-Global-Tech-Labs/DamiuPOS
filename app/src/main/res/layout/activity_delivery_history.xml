@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "Riwayat Pengiriman" — daftar order yang sudah ditandai Selesai, dibaca dari DB LOKAL.
+     Berbeda dari "🏁 Rekor Pengiriman" (agregat hari/bulan terbaik, dihitung server): yang ini
+     daftar kejadiannya. Cakupannya perangkat ini saja karena transaksi device-isolated di lapisan
+     sync — catatan di bawah daftar menyatakannya terang-terangan. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/grey_light">
+
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@color/primary"
+        app:title="📜 Riwayat Pengiriman"
+        app:titleTextColor="@color/white"
+        app:navigationIcon="@drawable/ic_arrow_back" />
+
+    <TextView
+        android:id="@+id/tvSummary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="8dp"
+        android:textColor="#546E7A"
+        android:textSize="12sp"
+        android:text="Memuat…" />
+
+    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        android:id="@+id/swipe"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvHistory"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingBottom="16dp" />
+
+            <TextView
+                android:id="@+id/tvEmpty"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:gravity="center"
+                android:padding="24dp"
+                android:textColor="#90A4AE"
+                android:textSize="14sp"
+                android:visibility="gone"
+                android:text="Belum ada pengiriman yang diselesaikan." />
+        </FrameLayout>
+    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+    <!-- Catatan cakupan yang jujur, bukan disamarkan: pola yang sama dipakai Detail Pelanggan. -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#ECEFF1"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:textColor="#78909C"
+        android:textSize="11sp"
+        android:text="Hanya pengiriman yang diselesaikan di perangkat ini. Pengiriman perangkat lain tercatat di perangkatnya masing-masing." />
+</LinearLayout>

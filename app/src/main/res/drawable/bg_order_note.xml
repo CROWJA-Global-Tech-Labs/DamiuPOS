@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Latar catatan order di kaki kartu antrian (tvOrderNote). Panel kuning gading redup + garis kiri
+     tebal: catatan harus TERBACA sebagai blok terpisah dari baris data kartu, tapi tidak boleh
+     menyaingi badge merah "data belum lengkap" atau kedip prioritas — jadi tanpa warna jenuh. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#FFF8E1" />
+            <corners android:radius="6dp" />
+        </shape>
+    </item>
+    <!-- Garis aksen di tepi KIRI: dibuat dengan menggeser kotak kedua ke kanan sejauh 3dp, cara
+         standar layer-list (shape tak punya "border satu sisi"). -->
+    <item android:left="3dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFF8E1" />
+            <corners android:radius="6dp" />
+        </shape>
+    </item>
+    <item android:right="0dp" android:width="3dp" android:gravity="left|fill_vertical">
+        <shape android:shape="rectangle">
+            <solid android:color="#F9A825" />
+        </shape>
+    </item>
+</layer-list>

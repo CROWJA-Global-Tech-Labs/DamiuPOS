@@ -32,7 +32,7 @@ public class OrderInboxDao {
         v.put(DatabaseHelper.COL_INBOX_PARSER, inbox.getParserUsed());
         v.put(DatabaseHelper.COL_INBOX_STATUS,
                 inbox.getStatus() != null ? inbox.getStatus() : OrderInbox.STATUS_PENDING);
-        return db.insert(DatabaseHelper.TABLE_ORDER_INBOX, null, v);
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_ORDER_INBOX, v);
     }
 
     public int updateStatus(long id, String status, long trxId) {
@@ -40,7 +40,7 @@ public class OrderInboxDao {
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_INBOX_STATUS, status);
         v.put(DatabaseHelper.COL_INBOX_TRX_ID, trxId);
-        return db.update(DatabaseHelper.TABLE_ORDER_INBOX, v,
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_ORDER_INBOX, v,
                 DatabaseHelper.COL_INBOX_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
@@ -61,7 +61,7 @@ public class OrderInboxDao {
                 + DatabaseHelper.COL_INBOX_STATUS + "=?) AND "
                 + DatabaseHelper.COL_INBOX_RECEIVED_AT
                 + " < datetime('now','localtime','-" + thresholdHours + " hours')";
-        return db.update(DatabaseHelper.TABLE_ORDER_INBOX, v, where,
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_ORDER_INBOX, v, where,
                 new String[]{OrderInbox.STATUS_APPROVED, OrderInbox.STATUS_REJECTED});
     }
 
@@ -70,7 +70,7 @@ public class OrderInboxDao {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_INBOX_REPLIED, 1);
-        return db.update(DatabaseHelper.TABLE_ORDER_INBOX, v,
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_ORDER_INBOX, v,
                 DatabaseHelper.COL_INBOX_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
@@ -137,14 +137,14 @@ public class OrderInboxDao {
         v.put(DatabaseHelper.COL_INBOX_PARSED_JSON, parsedJson);
         v.put(DatabaseHelper.COL_INBOX_PARSER, parserUsed);
         v.put(DatabaseHelper.COL_INBOX_REPLIED, 0);
-        return db.update(DatabaseHelper.TABLE_ORDER_INBOX, v,
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_ORDER_INBOX, v,
                 DatabaseHelper.COL_INBOX_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
 
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        return db.delete(DatabaseHelper.TABLE_ORDER_INBOX,
+        return dbHelper.syncDelete(db, DatabaseHelper.TABLE_ORDER_INBOX, "order_inbox",
                 DatabaseHelper.COL_INBOX_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
@@ -196,6 +196,59 @@ public class OrderInboxDao {
         return o;
     }
 
+    // ---------------------------------------------------------- Penugasan perangkat
+    //
+    // Pengingat/pesanan HANYA boleh membunyikan notifikasi di perangkat YANG DITUGASKAN menangani
+    // pelanggannya. Server sudah mengarahkan tiap baris ke perangkat itu lewat origin (isolasi pull),
+    // TAPI ada jalur yang sengaja disiarkan ke semua perangkat ('web') — mis. saat penugasan tak bisa
+    // ditentukan di server, atau baris lama sebelum perbaikan routing. Saring sekali lagi di sini
+    // supaya HP lain tidak ikut berbunyi. Sumber kebenaran sama dgn filter "Pelanggan Wilayah Saya":
+    // override per-pelanggan MENGALAHKAN wilayah otomatis ({@link com.crowja.damiupos.Wilayah}).
+
+    /** Pesanan PENDING yang jadi tanggung jawab perangkat ini (lihat {@link #assignedHere}). */
+    public List<OrderInbox> getPendingForThisDevice() {
+        return assignedHere(getPending());
+    }
+
+    /** Jumlah PENDING untuk perangkat ini — dasar badge, alarm, & notifikasi Android. */
+    public int countPendingForThisDevice() {
+        return getPendingForThisDevice().size();
+    }
+
+    /** PENDING terbaru untuk perangkat ini (banner toolbar), atau null. */
+    public OrderInbox getLatestPendingForThisDevice() {
+        List<OrderInbox> list = getPendingForThisDevice();   // queryList sudah urut received_at DESC
+        return list.isEmpty() ? null : list.get(0);
+    }
+
+    /**
+     * Sisakan item yang penugasan pelanggannya = perangkat INI.
+     *
+     * <p>Bila penugasan TAK BISA ditentukan — item tanpa pelanggan tertaut, pelanggan tanpa
+     * koordinat, atau config wilayah belum diatur — item TETAP ditampilkan. Lebih baik beberapa
+     * perangkat melihat satu pengingat daripada pengingat itu hilang dari semua perangkat.
+     */
+    private List<OrderInbox> assignedHere(List<OrderInbox> src) {
+        com.crowja.damiupos.sync.SyncSettings cfg =
+                new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(dbHelper));
+        String myUuid = cfg.getDeviceUuid();
+        if (myUuid == null || myUuid.trim().isEmpty()) {
+            return src;   // belum provisioning → tak bisa menilai kepemilikan
+        }
+        String center = cfg.getBranchCenter(), zones = cfg.getWilayahZones();
+        CustomerDao custDao = new CustomerDao(dbHelper);
+        List<OrderInbox> out = new ArrayList<>();
+        for (OrderInbox o : src) {
+            if (o.getCustomerId() <= 0) { out.add(o); continue; }
+            com.crowja.damiupos.model.Customer c = custDao.getById(o.getCustomerId());
+            if (c == null) { out.add(o); continue; }
+            String dev = com.crowja.damiupos.Wilayah.effectiveDevice(
+                    c.getAssignedDeviceUuid(), center, zones, c.getLatitude(), c.getLongitude());
+            if (dev == null || dev.trim().isEmpty() || dev.equals(myUuid)) out.add(o);
+        }
+        return out;
+    }
+
     private List<OrderInbox> queryList(String where, String[] args) {
         List<OrderInbox> list = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
@@ -221,7 +274,114 @@ public class OrderInboxDao {
         // replied column hanya ada di DB v11+; pakai getColumnIndex (boleh -1)
         int repliedIdx = c.getColumnIndex(DatabaseHelper.COL_INBOX_REPLIED);
         o.setReplied(repliedIdx >= 0 && c.getInt(repliedIdx) == 1);
+        int schedIdx = c.getColumnIndex(DatabaseHelper.COL_INBOX_SCHED_INTERVAL);   // DB v41+
+        o.setSchedIntervalDays(schedIdx >= 0 && !c.isNull(schedIdx) ? c.getInt(schedIdx) : 0);
         o.setReceivedAt(c.getString(c.getColumnIndexOrThrow(DatabaseHelper.COL_INBOX_RECEIVED_AT)));
         return o;
+    }
+
+    /**
+     * Redam pengingat "Pesanan Terjadwal (tiap N hari)" yang sudah TIDAK berlaku: kalau pelanggannya
+     * ternyata sudah melakukan order (JUAL) dalam N hari terakhir menurut data LOKAL — yang lebih
+     * mutakhir daripada data server saat pengingat di-generate (04:30) — pengingat itu ditandai
+     * ARCHIVED supaya tidak lagi terhitung PENDING (tidak membunyikan alarm). Perubahan disinkron
+     * balik (syncUpdate) sehingga web & perangkat lain ikut bersih. Hanya menyentuh pengingat
+     * ber-parser 'scheduled' dengan sched_interval_days &gt; 0; jadwal mingguan & order WA biasa
+     * dibiarkan. Dipanggil tiap sync (lihat SyncEngine) → cek berkala.
+     *
+     * @return jumlah pengingat yang diarsipkan.
+     */
+    public int pruneStaleScheduledReminders() {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+
+        // 1) Pengingat interval yang masih PENDING + nomor pelanggannya.
+        List<long[]> reminders = new ArrayList<>();   // {inboxId, custId, N}
+        List<String> phones = new ArrayList<>();
+        Cursor c = db.rawQuery(
+                "SELECT oi." + DatabaseHelper.COL_INBOX_ID + ", oi." + DatabaseHelper.COL_INBOX_CUSTOMER_ID
+                        + ", oi." + DatabaseHelper.COL_INBOX_SCHED_INTERVAL + ", c." + DatabaseHelper.COL_PHONE
+                        + " FROM " + DatabaseHelper.TABLE_ORDER_INBOX + " oi"
+                        + " LEFT JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c"
+                        + " ON c." + DatabaseHelper.COL_ID + " = oi." + DatabaseHelper.COL_INBOX_CUSTOMER_ID
+                        + " WHERE oi." + DatabaseHelper.COL_INBOX_STATUS + "='" + OrderInbox.STATUS_PENDING + "'"
+                        + " AND oi." + DatabaseHelper.COL_INBOX_PARSER + "='scheduled'"
+                        + " AND oi." + DatabaseHelper.COL_INBOX_SCHED_INTERVAL + " > 0", null);
+        while (c.moveToNext()) {
+            reminders.add(new long[]{c.getLong(0), c.getLong(1), c.getLong(2)});
+            phones.add(c.isNull(3) ? null : c.getString(3));
+        }
+        c.close();
+        if (reminders.isEmpty()) return 0;
+
+        // tanggal dinormalkan ke waktu LOKAL (baris UTC "…Z" hasil sinkron dikonversi dulu) supaya
+        // "dalam N hari terakhir" benar — samakan dengan filter tanggal di TransactionDao.
+        String localDt = "(CASE WHEN t." + DatabaseHelper.COL_TANGGAL + " LIKE '%Z' THEN datetime(t."
+                + DatabaseHelper.COL_TANGGAL + ",'localtime') ELSE t." + DatabaseHelper.COL_TANGGAL + " END)";
+
+        int archived = 0;
+        for (int i = 0; i < reminders.size(); i++) {
+            long[] r = reminders.get(i);
+            long inboxId = r[0], custId = r[1];
+            int n = (int) r[2];
+            List<Long> ids = siblingCustomerIds(db, custId, phones.get(i));
+            if (ids.isEmpty()) continue;
+
+            // Ada JUAL dalam N hari terakhir (waktu lokal)? → pelanggan sudah order, pengingat basi.
+            String sql = "SELECT 1 FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t"
+                    + " WHERE t." + DatabaseHelper.COL_TYPE + "='JUAL'"
+                    + " AND t." + DatabaseHelper.COL_CUSTOMER_ID + " IN (" + joinIds(ids) + ")"
+                    + " AND date(" + localDt + ") > date('now','localtime','-" + n + " days') LIMIT 1";
+            Cursor rc = db.rawQuery(sql, null);
+            boolean orderedRecently = rc.moveToFirst();
+            rc.close();
+
+            if (orderedRecently) {
+                ContentValues v = new ContentValues();
+                v.put(DatabaseHelper.COL_INBOX_STATUS, OrderInbox.STATUS_ARCHIVED);
+                dbHelper.syncUpdate(db, DatabaseHelper.TABLE_ORDER_INBOX, v,
+                        DatabaseHelper.COL_INBOX_ID + "=?", new String[]{String.valueOf(inboxId)});
+                archived++;
+            }
+        }
+        return archived;
+    }
+
+    /** Id semua salinan pelanggan yang nomornya kanonik-sama (duplikat lintas-perangkat); tanpa
+     *  nomor → hanya id itu sendiri. Meniru penghitungan "order terakhir lintas salinan" di server. */
+    private List<Long> siblingCustomerIds(SQLiteDatabase db, long custId, String phone) {
+        List<Long> ids = new ArrayList<>();
+        String canon = canonicalPhone(phone);
+        if (canon == null) {
+            if (custId > 0) ids.add(custId);
+            return ids;
+        }
+        Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMERS,
+                new String[]{DatabaseHelper.COL_ID, DatabaseHelper.COL_PHONE},
+                null, null, null, null, null);
+        while (c.moveToNext()) {
+            String p = c.isNull(1) ? null : c.getString(1);
+            if (canon.equals(canonicalPhone(p))) ids.add(c.getLong(0));
+        }
+        c.close();
+        if (ids.isEmpty() && custId > 0) ids.add(custId);
+        return ids;
+    }
+
+    /** Digit saja, 08xx→628xx (samakan dengan dedup nomor di server). null bila kosong. */
+    private static String canonicalPhone(String phone) {
+        if (phone == null) return null;
+        String d = phone.replaceAll("\\D+", "");
+        if (d.isEmpty()) return null;
+        if (d.startsWith("0")) d = "62" + d.substring(1);
+        return d;
+    }
+
+    private static String joinIds(List<Long> ids) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < ids.size(); i++) {
+            if (i > 0) sb.append(',');
+            sb.append(ids.get(i));
+        }
+        return sb.length() == 0 ? "0" : sb.toString();
     }
 }

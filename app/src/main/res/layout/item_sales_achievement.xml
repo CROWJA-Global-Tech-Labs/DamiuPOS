@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Satu baris "Pencapaian Penjualan": satu KARYAWAN beserta capaiannya pada rentang terpilih.
+     Semua angkanya datang jadi dari server (SalesAchievementController) — kartu ini hanya menata. -->
+<com.google.android.material.card.MaterialCardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="8dp"
+    app:cardCornerRadius="10dp"
+    app:cardElevation="1dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <!-- Peringkat: 1,2,3… mengikuti urutan galon terbanyak dari server. -->
+            <TextView
+                android:id="@+id/tvRank"
+                android:layout_width="26dp"
+                android:layout_height="wrap_content"
+                android:textColor="@color/grey_medium"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvName"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvGalon"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:textColor="@color/primary"
+                android:textSize="17sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Bilah pangsa terhadap total cabang pada rentang ini. -->
+        <View
+            android:id="@+id/barShare"
+            android:layout_width="match_parent"
+            android:layout_height="6dp"
+            android:layout_marginTop="7dp"
+            android:background="@color/primary" />
+
+        <TextView
+            android:id="@+id/tvMeta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+
+        <!-- Rincian produk (nama × galon) — sengaja teks, bukan kapsul berwarna: layar ini bisa
+             memuat puluhan karyawan dan kapsul membuat daftarnya berisik. GONE bila tak ada. -->
+        <TextView
+            android:id="@+id/tvProducts"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:textColor="@color/grey_dark"
+            android:textSize="11sp"
+            android:visibility="gone" />
+    </LinearLayout>
+</com.google.android.material.card.MaterialCardView>

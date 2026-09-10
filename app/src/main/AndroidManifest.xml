@@ -2,11 +2,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Lapor koordinat SAAT APP DI BACKGROUND / setelah service di-restart dari boot/alarm.
+         Tanpa ini, FGS bertipe location tak bisa membaca GPS begitu di-mulai dari latar belakang
+         (Android 10/11+). Wajib untuk pelacakan yang benar-benar berjalan di background. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.WRITE_CONTACTS" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Deteksi internet kembali → sync langsung transaksi yang dibuat offline (LocationService). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
@@ -15,9 +22,19 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- Re-arm pengingat jam kerja setelah reboot perangkat. -->
+    <!-- Re-arm pengingat jam kerja + restart service sinkronisasi setelah reboot perangkat. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Minta pengecualian dari optimasi baterai (Doze) supaya service sinkronisasi/lokasi tidak
+         dibunuh sistem saat app lama di background. Normal permission — tak butuh grant runtime. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Alarm PERSIS untuk "watchdog" yang menghidupkan ulang service sinkronisasi secara berkala.
+         Alarm persis = satu-satunya cara memicu start foreground-service dari background pada
+         Android 12+ (selain BOOT & onTaskRemoved). APK didistribusikan sendiri (bukan Play), jadi
+         izin ini aman dipakai; runtime tetap di-guard canScheduleExactAlarms() + fallback inexact. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
@@ -25,6 +42,10 @@
     <queries>
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
+        <!-- Pin berlabel Google Maps (Daftar Kunjungan / Follow Up peta): tanpa ini
+             resolveActivity() selalu null di Android 11+ (package visibility) dan
+             aplikasi selalu jatuh ke fallback browser. -->
+        <package android:name="com.google.android.apps.maps" />
         <intent>
             <action android:name="android.intent.action.SEND" />
             <data android:mimeType="image/*" />
@@ -64,6 +85,20 @@
             </intent-filter>
         </activity>
 
+        <!-- Deep link dari halaman publik pelanggan: damiupos://transaksi?customer=<uuid> → Transaksi Baru. -->
+        <activity
+            android:name=".DeepLinkActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="damiupos" android:host="transaksi" />
+            </intent-filter>
+        </activity>
+
         <activity android:name=".CustomerListActivity" />
         <activity android:name=".CustomerFormActivity" />
         <activity android:name=".CustomerDetailActivity" />
@@ -71,15 +106,26 @@
         <activity android:name=".TransactionListActivity" />
         <activity android:name=".ReportActivity" />
         <activity android:name=".ExportActivity" />
-        <activity android:name=".ProductListActivity" />
-        <activity android:name=".ProductFormActivity" />
         <activity android:name=".GalonStockActivity" />
         <activity android:name=".MapPickerActivity" />
         <activity android:name=".ReceiptActivity" />
         <activity android:name=".SettingsActivity" />
         <activity android:name=".WizardActivity" />
         <activity android:name=".FollowUpActivity" />
+        <activity android:name=".PromoCustomersActivity" />
+        <activity android:name=".VisitListActivity" />
         <activity android:name=".FollowUpMapActivity" />
+        <activity android:name=".CustomerMapActivity" />
+        <activity android:name=".DeliveryQueueActivity" />
+        <activity android:name=".OtherDeviceQueueActivity" />
+        <activity android:name=".SalesAchievementActivity" />
+        <activity android:name=".IntroWaActivity" />
+        <activity android:name=".DeliveryRecordActivity" />
+        <activity android:name=".DeliveryHistoryActivity" />
+        <activity android:name=".DeliveryMapActivity" />
+        <activity android:name=".DeliveryObstacleActivity" />
+        <activity android:name=".ChangelogActivity" />
+        <activity android:name=".SyncSettingsActivity" />
         <activity android:name=".UpgradeActivity" />
         <activity android:name=".ContactPickerActivity" />
         <activity android:name=".OrderInboxActivity" />
@@ -89,40 +135,40 @@
         <activity android:name=".ResellerListActivity" />
         <activity android:name=".ResellerDetailActivity" />
         <activity android:name=".LoginActivity" />
-        <activity android:name=".UserListActivity" />
         <activity android:name=".AttendanceSettingsActivity" />
         <activity
             android:name=".CameraCaptureActivity"
             android:screenOrientation="portrait" />
+        <!-- Workflow "Ambil Foto & Koordinat" pelanggan: kamera live + koordinat/mini-map + shutter
+             ter-gate akurasi GPS. Portrait terkunci. -->
+        <activity
+            android:name=".PhotoCoordinateActivity"
+            android:screenOrientation="portrait" />
+        <!-- Provisioning QR scan, locked to portrait. -->
+        <activity
+            android:name=".PortraitCaptureActivity"
+            android:screenOrientation="portrait"
+            android:stateNotNeeded="true"
+            android:theme="@style/zxing_CaptureTheme"
+            android:windowSoftInputMode="stateAlwaysHidden" />
 
         <!--
-            NotificationListenerService untuk auto-detect pesan WA.
-            User HARUS enable manual via:
-            Settings → Notifications → Special access → Notification access
+            Auto-kirim struk WhatsApp: menekan tombol "Kirim" otomatis setelah struk dibagikan
+            ke chat pelanggan. AccessibilityService dibatasi ke paket WhatsApp saja
+            (res/xml/wa_autosend_service.xml) & hanya aktif beberapa detik setelah share.
         -->
         <service
-            android:name=".wa.WaListenerService"
-            android:exported="true"
-            android:label="DAMIU POS — Auto Detect Pesanan WA"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            android:name=".wa.WaAutoSendService"
+            android:exported="false"
+            android:label="DAMIU POS — Asisten WA (Auto-Kirim Struk &amp; Tombol + Trx)"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
+                <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/wa_autosend_service" />
         </service>
-
-        <!--
-            Test injection receiver — hanya berfungsi di debug build
-            (lihat WaTestInjectionReceiver.onReceive). Dipakai untuk
-            simulasi pesan WA via `adb shell am broadcast` tanpa harus
-            kirim WA real.
-        -->
-        <receiver
-            android:name=".wa.WaTestInjectionReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="com.crowja.damiupos.TEST_PARSE" />
-            </intent-filter>
-        </receiver>
 
         <!--
             Foreground service untuk play nada dering loop saat ada
@@ -134,6 +180,12 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <!-- Pelacakan lokasi staff saat clock in (Phase 5). -->
+        <service
+            android:name=".LocationService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
         <!--
             Pengingat "jam kerja harian sudah terpenuhi". Dipicu AlarmManager
             (one-shot, setAndAllowWhileIdle) saat akumulasi jam kerja staf
@@ -141,6 +193,19 @@
         -->
         <receiver
             android:name=".WorkHoursReminderReceiver"
+            android:exported="false" />
+
+        <!-- Re-notify wajib update setelah "Tunda 1 jam" habis. -->
+        <receiver
+            android:name=".sync.UpdateReminderReceiver"
+            android:exported="false" />
+
+        <!-- Watchdog: menghidupkan ulang LocationService (sinkronisasi + lapor lokasi) bila dibunuh
+             OEM/Doze saat app di background. Dipicu alarm persis berkala + saat app disapu dari
+             Recents (onTaskRemoved). Alarm/onTaskRemoved = jalur start-FGS yang diizinkan Android
+             12+ dari background. -->
+        <receiver
+            android:name=".sync.ServiceRestartReceiver"
             android:exported="false" />
 
         <!-- Re-arm pengingat jam kerja setelah perangkat reboot. -->
@@ -153,7 +218,7 @@
         </receiver>
 
         <provider
-            android:name="androidx.core.content.FileProvider"
+            android:name=".DamiuFileProvider"
             android:authorities="${applicationId}.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">

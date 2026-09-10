@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Timer antrian >= batas umur maksimum (setelan cabang delivery_max_age_minutes): BAHAYA.
+     Merah tua #B71C1C, lebih gelap dari level ">= 2 jam" (#D32F2F bg_pending_badge) supaya
+     tingkat ketiga tetap terbaca beda walau kartunya sudah ikut berkedip merah. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#B71C1C" />
+    <corners android:radius="11dp" />
+    <stroke android:width="1.5dp" android:color="#FFFFFF" />
+</shape>

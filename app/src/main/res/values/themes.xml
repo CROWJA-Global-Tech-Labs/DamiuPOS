@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.DAMIUPOS" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <!-- App is intentionally Light-only (no values-night/, no DayNight). Opt out of the
+             OS "force dark" auto-inversion (aggressive on Samsung One UI) so the struk PNG
+             capture — and every screen — keeps its real light colors instead of being inverted
+             to a solid dark/gray image. No-op below API 29. -->
+        <item name="android:forceDarkAllowed">false</item>
         <item name="colorPrimary">@color/primary</item>
         <item name="colorPrimaryDark">@color/primary_dark</item>
         <item name="colorAccent">@color/accent</item>
@@ -57,5 +62,27 @@
     <style name="CircleImageView">
         <item name="cornerFamily">rounded</item>
         <item name="cornerSize">50%</item>
+    </style>
+
+    <!-- Sel statistik header layar "Pelanggan Promosi" (angka + label di atas warna primary). -->
+    <style name="PromoStatCell">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:gravity">center</item>
+    </style>
+    <style name="PromoStatValue">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/white</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+    <style name="PromoStatLabel">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">#D6FFFFFF</item>
+        <item name="android:textSize">11sp</item>
     </style>
 </resources>

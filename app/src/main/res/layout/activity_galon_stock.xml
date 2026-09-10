@@ -272,10 +272,23 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="Foto Struk Pembelian"
+                            android:text="Kamera"
                             android:textAllCaps="false"
                             app:cornerRadius="8dp"
                             app:icon="@android:drawable/ic_menu_camera"
+                            app:iconGravity="textStart" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnPickGalleryStruk"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="4dp"
+                            android:layout_weight="1"
+                            android:text="Galeri"
+                            android:textAllCaps="false"
+                            app:cornerRadius="8dp"
+                            app:icon="@android:drawable/ic_menu_gallery"
                             app:iconGravity="textStart" />
 
                         <ImageView

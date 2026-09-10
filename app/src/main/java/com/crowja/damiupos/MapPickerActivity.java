@@ -1,5 +1,7 @@
 package com.crowja.damiupos;
 
+import com.crowja.damiupos.map.LiveDeviceOverlay;
+
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.Context;
@@ -40,6 +42,9 @@ public class MapPickerActivity extends AppCompatActivity {
     private LocationListener locationListener;
 
     @SuppressLint("SetJavaScriptEnabled")
+    /** Pin posisi LIVE perangkat lain — dipasang di semua peta aplikasi. */
+    private LiveDeviceOverlay liveDev;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -60,9 +65,21 @@ public class MapPickerActivity extends AppCompatActivity {
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
+        // UA pengenal aplikasi supaya penyedia tile tidak memblokir request.
+        settings.setUserAgentString(MapTiles.userAgent());
 
         webView.addJavascriptInterface(new MapBridge(), "Android");
-        webView.setWebViewClient(new WebViewClient());
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                // Pemilih koordinat pun menampilkan posisi perangkat lain: berguna untuk menaruh
+                // titik pelanggan relatif terhadap kurir yang sedang di lapangan.
+                if (liveDev == null) {
+                    liveDev = new LiveDeviceOverlay(MapPickerActivity.this, webView);
+                }
+                liveDev.start();
+            }
+        });
 
         String html = buildMapHtml(initLat, initLng);
         webView.loadDataWithBaseURL("https://unpkg.com", html, "text/html", "UTF-8", null);
@@ -170,6 +187,7 @@ public class MapPickerActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (liveDev != null) liveDev.stop();
         super.onDestroy();
         if (locationManager != null && locationListener != null) {
             try { locationManager.removeUpdates(locationListener); } catch (Exception ignored) {}
@@ -216,8 +234,8 @@ public class MapPickerActivity extends AppCompatActivity {
                 "<script>\n" +
                 "var map = L.map('map',{zoomControl:true}).setView([" + lat + "," + lng + "], 15);\n" +
                 "L.control.zoom({position:'bottomright'}).remove();\n" +
-                "L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{\n" +
-                "  attribution:'OSM',maxZoom:19\n" +
+                "L.tileLayer('" + MapTiles.LEAFLET_URL + "',{\n" +
+                "  subdomains:'" + MapTiles.SUBDOMAINS + "',attribution:'" + MapTiles.ATTRIBUTION + "',maxZoom:19\n" +
                 "}).addTo(map);\n" +
                 "function updateCoords(){\n" +
                 "  var c=map.getCenter();\n" +

@@ -35,6 +35,9 @@ public class ExpenseListActivity extends AppCompatActivity
     private EditText etSearch;
     private ExpenseAdapter adapter;
     private ExpenseDao expenseDao;
+    /** Non-null = daftar DIBATASI ke pengeluaran yang diinput operator ini (staf login non-admin).
+     *  Null = tampil semua (admin, atau mode single-user/owner tanpa login). */
+    private String creatorFilter = null;
 
     private static final NumberFormat NF = NumberFormat.getInstance(new Locale("id", "ID"));
 
@@ -49,6 +52,20 @@ public class ExpenseListActivity extends AppCompatActivity
 
         expenseDao = new ExpenseDao(DatabaseHelper.getInstance(this));
 
+        // Staf login non-admin hanya melihat pengeluaran yang DIA input sendiri; admin dan
+        // mode single-user (owner, tanpa login) tetap melihat semua.
+        com.crowja.damiupos.db.SettingsDao sess =
+                new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this));
+        long uid = sess.getCurrentUserId();
+        if (uid > 0) {
+            com.crowja.damiupos.model.User u =
+                    new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid);
+            if (u != null && !u.isAdmin()) {
+                creatorFilter = sess.getCurrentUserName();
+                if (creatorFilter != null && creatorFilter.isEmpty()) creatorFilter = null;
+            }
+        }
+
         rvExpenses = findViewById(R.id.rvExpenses);
         tvEmpty = findViewById(R.id.tvEmpty);
         tvTotalMonth = findViewById(R.id.tvTotalMonth);
@@ -57,6 +74,7 @@ public class ExpenseListActivity extends AppCompatActivity
 
         adapter = new ExpenseAdapter(this);
         rvExpenses.setLayoutManager(new LinearLayoutManager(this));
+        rvExpenses.setHasFixedSize(true);
         rvExpenses.setAdapter(adapter);
 
         findViewById(R.id.fabAdd).setOnClickListener(v ->
@@ -79,9 +97,14 @@ public class ExpenseListActivity extends AppCompatActivity
     }
 
     private void refreshList(String keyword) {
-        List<Expense> list = keyword.isEmpty()
-                ? expenseDao.getAll()
-                : expenseDao.search(keyword);
+        List<Expense> list;
+        if (creatorFilter != null) {
+            list = keyword.isEmpty()
+                    ? expenseDao.getAllBy(creatorFilter)
+                    : expenseDao.searchBy(keyword, creatorFilter);
+        } else {
+            list = keyword.isEmpty() ? expenseDao.getAll() : expenseDao.search(keyword);
+        }
         adapter.setItems(list);
         boolean empty = list.isEmpty();
         tvEmpty.setVisibility(empty ? View.VISIBLE : View.GONE);
@@ -89,8 +112,12 @@ public class ExpenseListActivity extends AppCompatActivity
     }
 
     private void refreshSummary() {
-        tvTotalMonth.setText("Rp " + NF.format(Math.round(expenseDao.getTotalThisMonth())));
-        tvTotalToday.setText("Hari ini: Rp " + NF.format(Math.round(expenseDao.getTotalToday())));
+        double month = creatorFilter != null
+                ? expenseDao.getTotalThisMonthBy(creatorFilter) : expenseDao.getTotalThisMonth();
+        double today = creatorFilter != null
+                ? expenseDao.getTotalTodayBy(creatorFilter) : expenseDao.getTotalToday();
+        tvTotalMonth.setText("Rp " + NF.format(Math.round(month)));
+        tvTotalToday.setText("Hari ini: Rp " + NF.format(Math.round(today)));
     }
 
     @Override

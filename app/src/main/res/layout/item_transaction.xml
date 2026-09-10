@@ -39,8 +39,11 @@
 
                 <TextView
                     android:id="@+id/tvType"
-                    android:layout_width="wrap_content"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:maxLines="2"
+                    android:ellipsize="end"
                     android:textSize="14sp"
                     android:textStyle="bold" />
 
@@ -49,9 +52,21 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
                     android:textColor="@color/text_secondary"
                     android:textSize="13sp" />
             </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvProductItems"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxLines="2"
+                android:ellipsize="end"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:visibility="gone" />
 
             <TextView
                 android:id="@+id/tvDate"
@@ -59,6 +74,17 @@
                 android:layout_height="wrap_content"
                 android:textColor="@color/text_secondary"
                 android:textSize="12sp" />
+
+            <!-- Waktu Pengiriman (delivery_queued_at → delivery_done_at) — hanya admin/marketing/spv,
+                 lihat TransactionAdapter#setShowDeliveryMetric. Gone bila order belum selesai diantar. -->
+            <TextView
+                android:id="@+id/tvDeliveryTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#0369A1"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
         </LinearLayout>
 
         <LinearLayout

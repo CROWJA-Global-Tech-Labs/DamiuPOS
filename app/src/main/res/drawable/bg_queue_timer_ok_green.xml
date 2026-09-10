@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Timer antrian perangkat lain, < 1 jam: HIJAU (green-800 #2E7D32, kontras aman dgn teks putih). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#2E7D32" />
+    <corners android:radius="11dp" />
+    <stroke android:width="1.5dp" android:color="#FFFFFF" />
+</shape>

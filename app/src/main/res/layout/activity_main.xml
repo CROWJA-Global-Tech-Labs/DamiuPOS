@@ -158,7 +158,7 @@
                             android:id="@+id/tvOperatorShift"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:maxLines="1"
+                            android:maxLines="2"
                             android:ellipsize="end"
                             android:text="Sedang bekerja"
                             android:textColor="#CCFFFFFF"
@@ -250,6 +250,7 @@
                         android:orientation="vertical"
                         android:padding="14dp">
 
+                        <!-- Atas: ikon (kiri) + nilai & pill tren (kanan) -->
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
@@ -265,27 +266,53 @@
                                 app:tint="@color/white"
                                 android:contentDescription="Pendapatan" />
 
-                            <TextView
-                                android:layout_width="wrap_content"
+                            <LinearLayout
+                                android:layout_width="0dp"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
-                                android:text="@string/pendapatan_hari_ini"
-                                android:textColor="#E0FFFFFF"
-                                android:textSize="11sp"
-                                android:textStyle="bold" />
+                                android:layout_weight="1"
+                                android:layout_marginStart="6dp"
+                                android:gravity="end"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:id="@+id/tvPendapatan"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:gravity="end"
+                                    android:text="Rp 0"
+                                    android:textColor="@color/white"
+                                    android:textSize="18sp"
+                                    android:textStyle="bold"
+                                    android:maxLines="1"
+                                    android:ellipsize="end" />
+
+                                <TextView
+                                    android:id="@+id/tvPendapatanTrend"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_gravity="end"
+                                    android:layout_marginTop="4dp"
+                                    android:background="@drawable/bg_trend_pill"
+                                    android:paddingStart="6dp"
+                                    android:paddingEnd="6dp"
+                                    android:paddingTop="1dp"
+                                    android:paddingBottom="1dp"
+                                    android:textColor="@color/white"
+                                    android:textSize="10sp"
+                                    android:visibility="gone" />
+                            </LinearLayout>
                         </LinearLayout>
 
+                        <!-- Bawah: judul (align bottom) -->
                         <TextView
-                            android:id="@+id/tvPendapatan"
-                            android:layout_width="wrap_content"
+                            android:id="@+id/tvPendapatanCaption"
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="10dp"
-                            android:text="Rp 0"
-                            android:textColor="@color/white"
-                            android:textSize="20sp"
-                            android:textStyle="bold"
-                            android:maxLines="1"
-                            android:ellipsize="end" />
+                            android:text="@string/pendapatan_hari_ini"
+                            android:textColor="#E0FFFFFF"
+                            android:textSize="11sp"
+                            android:textStyle="bold" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
@@ -308,6 +335,7 @@
                         android:orientation="vertical"
                         android:padding="14dp">
 
+                        <!-- Atas: ikon (kiri) + nilai & pill tren (kanan) -->
                         <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
@@ -323,24 +351,52 @@
                                 app:tint="@color/white"
                                 android:contentDescription="Galon terjual" />
 
-                            <TextView
-                                android:layout_width="wrap_content"
+                            <LinearLayout
+                                android:layout_width="0dp"
                                 android:layout_height="wrap_content"
-                                android:layout_marginStart="8dp"
-                                android:text="@string/galon_terjual_hari_ini"
-                                android:textColor="#E0FFFFFF"
-                                android:textSize="11sp"
-                                android:textStyle="bold" />
+                                android:layout_weight="1"
+                                android:layout_marginStart="6dp"
+                                android:gravity="end"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:id="@+id/tvGalonTerjual"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:gravity="end"
+                                    android:text="0"
+                                    android:textColor="@color/white"
+                                    android:textSize="18sp"
+                                    android:textStyle="bold"
+                                    android:maxLines="1"
+                                    android:ellipsize="end" />
+
+                                <TextView
+                                    android:id="@+id/tvGalonTerjualTrend"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:layout_gravity="end"
+                                    android:layout_marginTop="4dp"
+                                    android:background="@drawable/bg_trend_pill"
+                                    android:paddingStart="6dp"
+                                    android:paddingEnd="6dp"
+                                    android:paddingTop="1dp"
+                                    android:paddingBottom="1dp"
+                                    android:textColor="@color/white"
+                                    android:textSize="10sp"
+                                    android:visibility="gone" />
+                            </LinearLayout>
                         </LinearLayout>
 
+                        <!-- Bawah: judul (align bottom) -->
                         <TextView
-                            android:id="@+id/tvGalonTerjual"
-                            android:layout_width="wrap_content"
+                            android:id="@+id/tvGalonTerjualCaption"
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="10dp"
-                            android:text="0"
-                            android:textColor="@color/white"
-                            android:textSize="20sp"
+                            android:text="@string/galon_terjual_hari_ini"
+                            android:textColor="#E0FFFFFF"
+                            android:textSize="11sp"
                             android:textStyle="bold" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
@@ -375,14 +431,30 @@
                         android:orientation="vertical"
                         android:padding="12dp">
 
-                        <ImageView
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
-                            android:background="@drawable/bg_icon_circle"
-                            android:padding="5dp"
-                            android:src="@android:drawable/ic_menu_recent_history"
-                            app:tint="@color/white"
-                            android:contentDescription="Transaksi" />
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:background="@drawable/bg_icon_circle"
+                                android:padding="5dp"
+                                android:src="@android:drawable/ic_menu_recent_history"
+                                app:tint="@color/white"
+                                android:contentDescription="Transaksi" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="6dp"
+                                android:text="TRX"
+                                android:textColor="#E0FFFFFF"
+                                android:textSize="11sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
 
                         <TextView
                             android:id="@+id/tvTransaksiHariIni"
@@ -395,11 +467,18 @@
                             android:textStyle="bold" />
 
                         <TextView
+                            android:id="@+id/tvTransaksiTrend"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Transaksi"
-                            android:textColor="#E0FFFFFF"
-                            android:textSize="11sp" />
+                            android:layout_marginTop="5dp"
+                            android:background="@drawable/bg_trend_pill"
+                            android:paddingStart="6dp"
+                            android:paddingEnd="6dp"
+                            android:paddingTop="1dp"
+                            android:paddingBottom="1dp"
+                            android:textColor="@color/white"
+                            android:textSize="10sp"
+                            android:visibility="gone" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
@@ -424,14 +503,30 @@
                         android:orientation="vertical"
                         android:padding="12dp">
 
-                        <ImageView
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
-                            android:background="@drawable/bg_icon_circle"
-                            android:padding="5dp"
-                            android:src="@android:drawable/ic_menu_rotate"
-                            app:tint="@color/white"
-                            android:contentDescription="Galon beredar" />
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:background="@drawable/bg_icon_circle"
+                                android:padding="5dp"
+                                android:src="@android:drawable/ic_menu_rotate"
+                                app:tint="@color/white"
+                                android:contentDescription="Galon beredar" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="6dp"
+                                android:text="GLN"
+                                android:textColor="#E0FFFFFF"
+                                android:textSize="11sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
 
                         <TextView
                             android:id="@+id/tvGalonBeredar"
@@ -444,21 +539,29 @@
                             android:textStyle="bold" />
 
                         <TextView
+                            android:id="@+id/tvGalonBeredarTrend"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="@string/galon_beredar"
-                            android:textColor="#E0FFFFFF"
-                            android:textSize="11sp" />
+                            android:layout_marginTop="5dp"
+                            android:background="@drawable/bg_trend_pill"
+                            android:paddingStart="6dp"
+                            android:paddingEnd="6dp"
+                            android:paddingTop="1dp"
+                            android:paddingBottom="1dp"
+                            android:textColor="@color/white"
+                            android:textSize="10sp"
+                            android:visibility="gone" />
                     </LinearLayout>
 
                     <!-- Badge stok tersedia (pindahan dari tile Stok Galon);
-                         blink merah saat stok <= ambang peringatan. -->
+                         blink merah saat stok <= ambang peringatan. Di pojok bawah
+                         supaya tidak bentrok dengan nilai di kanan atas. -->
                     <TextView
                         android:id="@+id/tvStokBadge"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_gravity="top|end"
-                        android:layout_marginTop="4dp"
+                        android:layout_gravity="bottom|end"
+                        android:layout_marginBottom="4dp"
                         android:layout_marginEnd="4dp"
                         android:background="@drawable/bg_stock_badge"
                         android:minWidth="22dp"
@@ -494,14 +597,30 @@
                         android:orientation="vertical"
                         android:padding="12dp">
 
-                        <ImageView
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
-                            android:background="@drawable/bg_icon_circle"
-                            android:padding="5dp"
-                            android:src="@android:drawable/ic_menu_myplaces"
-                            app:tint="@color/white"
-                            android:contentDescription="Total pelanggan" />
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <ImageView
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:background="@drawable/bg_icon_circle"
+                                android:padding="5dp"
+                                android:src="@android:drawable/ic_menu_myplaces"
+                                app:tint="@color/white"
+                                android:contentDescription="Total pelanggan" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="6dp"
+                                android:text="CUST"
+                                android:textColor="#E0FFFFFF"
+                                android:textSize="11sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
 
                         <TextView
                             android:id="@+id/tvTotalPelanggan"
@@ -514,17 +633,38 @@
                             android:textStyle="bold" />
 
                         <TextView
+                            android:id="@+id/tvTotalPelangganTrend"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="@string/total_pelanggan"
-                            android:textColor="#E0FFFFFF"
-                            android:textSize="11sp" />
+                            android:layout_marginTop="5dp"
+                            android:background="@drawable/bg_trend_pill"
+                            android:paddingStart="6dp"
+                            android:paddingEnd="6dp"
+                            android:paddingTop="1dp"
+                            android:paddingBottom="1dp"
+                            android:textColor="@color/white"
+                            android:textSize="10sp"
+                            android:visibility="gone" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
             </LinearLayout>
 
+            <!-- Keterangan CAKUPAN angka: transaksi TIDAK dibagi antar-HP (tiap perangkat hanya
+                 menyimpan penjualannya sendiri + order web), sedangkan pelanggan & galon beredar
+                 adalah data se-depot. Tanpa keterangan ini staf mengira dua HP "berbeda data". -->
+            <TextView
+                android:id="@+id/tvKpiScopeNote"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/kpi_scope_note"
+                android:textSize="10sp"
+                android:alpha="0.75"
+                android:gravity="center" />
+
             <!-- Quick Actions (dominant panel) -->
             <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardQuickActions"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
@@ -568,138 +708,286 @@
                     app:iconTint="@color/white"
                     app:iconGravity="textStart" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnJualGalon"
+                <FrameLayout
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
                     android:layout_weight="1"
-                    android:layout_marginStart="6dp"
-                    android:minHeight="76dp"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:paddingTop="16dp"
-                    android:paddingBottom="16dp"
-                    android:text="@string/jual_galon"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="16sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="@color/primary"
-                    app:cornerRadius="16dp"
-                    app:elevation="0dp"
-                    android:stateListAnimator="@null"
-                    app:icon="@android:drawable/ic_input_add"
-                    app:iconPadding="8dp"
-                    app:iconSize="26dp"
-                    app:iconTint="@color/white"
-                    app:iconGravity="textStart" />
+                    android:layout_marginStart="6dp">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnJualGalon"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:minHeight="76dp"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:paddingTop="16dp"
+                        android:paddingBottom="16dp"
+                        android:text="@string/jual_galon"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="@color/primary"
+                        app:cornerRadius="16dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null"
+                        app:icon="@android:drawable/ic_input_add"
+                        app:iconPadding="8dp"
+                        app:iconSize="26dp"
+                        app:iconTint="@color/white"
+                        app:iconGravity="textStart" />
+                </FrameLayout>
             </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- Menu Karyawan (absensi) — hanya tampil untuk admin saat multi
-                 user aktif. Pintu masuk kelola pegawai, riwayat & rekap absensi. -->
-            <com.google.android.material.card.MaterialCardView
-                android:id="@+id/cardKaryawan"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:clickable="true"
-                android:focusable="true"
-                android:foreground="?attr/selectableItemBackground"
-                android:visibility="gone"
-                app:cardBackgroundColor="#00897B"
-                app:cardCornerRadius="14dp"
-                app:cardElevation="3dp">
+            <!-- Menu Marketing/Promosi — grid 2 kolom. Tiap sel adalah FrameLayout (bukan tombol
+                 telanjang) supaya SEMUA sel seragam: badge bisa menempel di pojok, dan visibilitas
+                 per-peran selalu dipasang di sel, tak pernah di tombolnya. Kalau dipasang di tombol,
+                 sel-nya tetap memesan satu petak grid dan meninggalkan lubang.
 
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="14dp">
-
-                    <ImageView
-                        android:layout_width="36dp"
-                        android:layout_height="36dp"
-                        android:background="@drawable/bg_icon_circle"
-                        android:padding="7dp"
-                        android:src="@android:drawable/ic_menu_my_calendar"
-                        app:tint="@color/white"
-                        android:contentDescription="Karyawan" />
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:layout_marginStart="12dp"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Karyawan"
-                            android:textColor="@color/white"
-                            android:textSize="16sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="2dp"
-                            android:text="Kelola pegawai, absensi &amp; rekap"
-                            android:textColor="#CCFFFFFF"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <ImageView
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:contentDescription="Buka"
-                        android:src="@android:drawable/ic_media_play"
-                        app:tint="@color/white" />
-                </LinearLayout>
-            </com.google.android.material.card.MaterialCardView>
-
+                 Penempatan baris/kolomnya DITENTUKAN DI KODE (MainActivity.packQuickMenuGrid),
+                 bukan di sini: kelima menu punya aturan peran yang berbeda-beda, jadi sel mana yang
+                 tampil berubah-ubah. GridLayout menempatkan anak secara otomatis TERMASUK yang GONE,
+                 jadi tanpa penataan ulang itu grid ini akan berlubang. Sel terakhir melebar dua
+                 kolom saat jumlah yang tampil ganjil, supaya barisnya tak pernah menggantung. -->
             <androidx.gridlayout.widget.GridLayout
-                xmlns:grid="http://schemas.android.com/apk/res-auto"
+                android:id="@+id/gridQuickMenu"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                grid:columnCount="2"
-                grid:useDefaultMargins="false">
+                app:columnCount="2"
+                app:useDefaultMargins="false">
 
+                <!-- Target Sales (d/h "Pencapaian Penjualan") — Admin & Marketing
+                     (User.canViewSalesAchievement). Rekap penjualan per karyawan SE-CABANG,
+                     dihitung di server, jadi angkanya sama persis dengan dashboard web. -->
                 <FrameLayout
+                    android:id="@+id/boxSalesAchievement"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal">
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
 
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnFollowUp"
+                        android:id="@+id/btnSalesAchievement"
                         android:layout_width="match_parent"
-                        android:layout_height="64dp"
-                        android:layout_margin="4dp"
-                        android:minHeight="60dp"
-                        android:paddingTop="8dp"
-                        android:paddingBottom="8dp"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
                         android:maxLines="1"
                         android:ellipsize="end"
-                        android:text="Follow Up"
+                        android:text="🏆 Target Sales"
                         android:textAllCaps="false"
                         android:textColor="@color/white"
                         android:textSize="13sp"
                         android:textStyle="bold"
-                        app:backgroundTint="#FF7043"
-                        app:cornerRadius="14dp"
-                        app:elevation="3dp"
-                        app:icon="@android:drawable/ic_popup_reminder"
-                        app:iconGravity="textStart"
-                        app:iconPadding="8dp"
-                        app:iconSize="22dp"
-                        app:iconTint="@color/white" />
+                        app:backgroundTint="#00695C"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
+                </FrameLayout>
+
+                <!-- Promo Galon (d/h "Input Promosi Galon") — Marketing & Admin selalu; staf lain
+                     bila promo_enabled. Buat pelanggan BARU dulu, lalu Transaksi Baru mode Promosi. -->
+                <FrameLayout
+                    android:id="@+id/boxPromosi"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPromosi"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="🎁 Promo Galon"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#2E7D32"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
+                </FrameLayout>
+
+                <!-- Rekor Pengiriman — hari & bulan TERBAIK tiap perangkat, dihitung server dengan
+                     perakit yang sama dengan kartu di halaman Delivery web. Staf/SPV/Admin. -->
+                <FrameLayout
+                    android:id="@+id/boxDeliveryRecord"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnDeliveryRecord"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="🏁 Rekor Antar"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#00897B"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
+                </FrameLayout>
+
+                <!-- Cust. Promo (d/h "Pelanggan Promosi") — daftar + statistik konversi hasil promo
+                     galon gratis. Visibilitas = Promo Galon. -->
+                <FrameLayout
+                    android:id="@+id/boxPromoCustomers"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPromoCustomers"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="📊 Cust. Promo"
+                        android:textAllCaps="false"
+                        android:textColor="#2E7D32"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:strokeColor="#2E7D32"
+                        app:strokeWidth="1dp"
+                        app:backgroundTint="@color/white"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
+                </FrameLayout>
+
+                <!-- WA Perkenalan — menu KHUSUS perangkat yang dicentang "Petugas WA Perkenalan"
+                     di dashboard. Badge = pelanggan promosi yang belum disapa DI WILAYAH TUGAS
+                     perangkat ini. -->
+                <FrameLayout
+                    android:id="@+id/boxIntroWa"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnIntroWa"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="💬 WA Perkenalan"
+                        android:textAllCaps="false"
+                        android:textColor="#1B5E20"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:strokeColor="#1B5E20"
+                        app:strokeWidth="1dp"
+                        app:backgroundTint="@color/white"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
 
                     <TextView
-                        android:id="@+id/tvFollowUpBadge"
+                        android:id="@+id/tvIntroWaBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="top|end"
+                        android:layout_marginTop="2dp"
+                        android:layout_marginEnd="2dp"
+                        android:background="@drawable/bg_pending_badge"
+                        android:minWidth="22dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:paddingTop="1dp"
+                        android:paddingBottom="1dp"
+                        android:elevation="6dp"
+                        android:gravity="center"
+                        android:text="0"
+                        android:textColor="@color/white"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+                </FrameLayout>
+
+                <!-- Kunjungan Urgent (d/h "Daftar Kunjungan Urgent") — pelanggan yang ditandai
+                     "Kunjungi Urgent" dari Follow Up (web / HP admin) dan belum dikunjungi.
+                     Visibilitas: marketing/admin. -->
+                <FrameLayout
+                    android:id="@+id/wrapKunjungan"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnKunjungan"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="🧭 Kunjungan Urgent"
+                        android:textAllCaps="false"
+                        android:textColor="#1565C0"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:strokeColor="#1565C0"
+                        app:strokeWidth="1dp"
+                        app:backgroundTint="@color/white"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
+
+                    <TextView
+                        android:id="@+id/tvKunjunganBadge"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_gravity="top|end"
@@ -719,137 +1007,281 @@
                         android:textStyle="bold"
                         android:visibility="gone" />
                 </FrameLayout>
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnLaporan"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_margin="4dp"
-                    android:minHeight="60dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:text="Report &amp; Grafik"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="#EC407A"
-                    app:cornerRadius="14dp"
-                    app:elevation="3dp"
-                    app:icon="@android:drawable/ic_menu_sort_by_size"
-                    app:iconGravity="textStart"
-                    app:iconPadding="8dp"
-                    app:iconSize="22dp"
-                    app:iconTint="@color/white"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnExport"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_margin="4dp"
-                    android:minHeight="60dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:text="Export"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="#66BB6A"
-                    app:cornerRadius="14dp"
-                    app:elevation="3dp"
-                    app:icon="@android:drawable/ic_menu_save"
-                    app:iconGravity="textStart"
-                    app:iconPadding="8dp"
-                    app:iconSize="22dp"
-                    app:iconTint="@color/white"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnReseller"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_margin="4dp"
-                    android:minHeight="60dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:text="Reseller"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="#AB47BC"
-                    app:cornerRadius="14dp"
-                    app:elevation="3dp"
-                    app:icon="@android:drawable/ic_menu_share"
-                    app:iconGravity="textStart"
-                    app:iconPadding="8dp"
-                    app:iconSize="22dp"
-                    app:iconTint="@color/white"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnPengeluaran"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_margin="4dp"
-                    android:minHeight="60dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:text="Pengeluaran"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="#EF5350"
-                    app:cornerRadius="14dp"
-                    app:elevation="3dp"
-                    app:icon="@android:drawable/ic_menu_directions"
-                    app:iconGravity="textStart"
-                    app:iconPadding="8dp"
-                    app:iconSize="22dp"
-                    app:iconTint="@color/white"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnPengaturan"
-                    android:layout_width="0dp"
-                    android:layout_height="64dp"
-                    android:layout_margin="4dp"
-                    android:minHeight="60dp"
-                    android:paddingTop="8dp"
-                    android:paddingBottom="8dp"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:text="Pengaturan"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:backgroundTint="#78909C"
-                    app:cornerRadius="14dp"
-                    app:elevation="3dp"
-                    app:icon="@android:drawable/ic_menu_preferences"
-                    app:iconGravity="textStart"
-                    app:iconPadding="8dp"
-                    app:iconSize="22dp"
-                    app:iconTint="@color/white"
-                    grid:layout_columnWeight="1"
-                    grid:layout_gravity="fill_horizontal" />
             </androidx.gridlayout.widget.GridLayout>
+
+            <!-- Menu utama 2 kolom. Tiap baris memakai bobot yang sama, jadi begitu satu sel
+                 di-GONE-kan, pasangannya otomatis memakai lebar penuh — lihat
+                 MainActivity.expandLoneMenuButtons yang merapikan sel pembungkus supaya aturan itu
+                 tetap berlaku walau yang disembunyikan tombol di dalamnya, bukan sel-nya. -->
+            <LinearLayout
+                android:id="@+id/menuRows"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="vertical">
+
+                <!-- Row 1: Antrian Delivery | Follow Up -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
+
+                    <FrameLayout
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnAntrianDelivery"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:minHeight="60dp"
+                            android:paddingTop="8dp"
+                            android:paddingBottom="8dp"
+                            android:maxLines="2"
+                            android:text="Antrian\nDelivery"
+                            android:textAllCaps="false"
+                            android:textColor="@color/white"
+                            android:textSize="13sp"
+                            android:textStyle="bold"
+                            app:backgroundTint="#00897B"
+                            app:cornerRadius="14dp"
+                            app:elevation="3dp"
+                            app:icon="@android:drawable/ic_menu_directions"
+                            app:iconGravity="textStart"
+                            app:iconPadding="8dp"
+                            app:iconSize="22dp"
+                            app:iconTint="@color/white" />
+
+                        <TextView
+                            android:id="@+id/tvDeliveryBadge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="top|end"
+                            android:layout_marginTop="2dp"
+                            android:layout_marginEnd="2dp"
+                            android:background="@drawable/bg_pending_badge"
+                            android:minWidth="22dp"
+                            android:paddingStart="6dp"
+                            android:paddingEnd="6dp"
+                            android:paddingTop="1dp"
+                            android:paddingBottom="1dp"
+                            android:elevation="6dp"
+                            android:gravity="center"
+                            android:text="0"
+                            android:textColor="@color/white"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:visibility="gone" />
+                    </FrameLayout>
+
+                    <FrameLayout
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnFollowUp"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:minHeight="60dp"
+                            android:paddingTop="8dp"
+                            android:paddingBottom="8dp"
+                            android:maxLines="1"
+                            android:ellipsize="end"
+                            android:text="Follow Up"
+                            android:textAllCaps="false"
+                            android:textColor="@color/white"
+                            android:textSize="13sp"
+                            android:textStyle="bold"
+                            app:backgroundTint="#FF7043"
+                            app:cornerRadius="14dp"
+                            app:elevation="3dp"
+                            app:icon="@android:drawable/ic_popup_reminder"
+                            app:iconGravity="textStart"
+                            app:iconPadding="8dp"
+                            app:iconSize="22dp"
+                            app:iconTint="@color/white" />
+
+                        <TextView
+                            android:id="@+id/tvFollowUpBadge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="top|end"
+                            android:layout_marginTop="2dp"
+                            android:layout_marginEnd="2dp"
+                            android:background="@drawable/bg_followup_badge"
+                            android:minWidth="22dp"
+                            android:paddingStart="6dp"
+                            android:paddingEnd="6dp"
+                            android:paddingTop="1dp"
+                            android:paddingBottom="1dp"
+                            android:elevation="6dp"
+                            android:gravity="center"
+                            android:text="0"
+                            android:textColor="#FF7043"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:visibility="gone" />
+                    </FrameLayout>
+                </LinearLayout>
+
+                <!-- Row 2: Report & Grafik | Export -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLaporan"
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        android:minHeight="60dp"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:maxLines="2"
+                        android:text="Report &amp;\nGrafik"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#EC407A"
+                        app:cornerRadius="14dp"
+                        app:elevation="3dp"
+                        app:icon="@android:drawable/ic_menu_sort_by_size"
+                        app:iconGravity="textStart"
+                        app:iconPadding="8dp"
+                        app:iconSize="22dp"
+                        app:iconTint="@color/white" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnExport"
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        android:minHeight="60dp"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="Export"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#66BB6A"
+                        app:cornerRadius="14dp"
+                        app:elevation="3dp"
+                        app:icon="@android:drawable/ic_menu_save"
+                        app:iconGravity="textStart"
+                        app:iconPadding="8dp"
+                        app:iconSize="22dp"
+                        app:iconTint="@color/white" />
+                </LinearLayout>
+
+                <!-- Row 3: Reseller | Pengeluaran -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnReseller"
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        android:minHeight="60dp"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="Reseller"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#AB47BC"
+                        app:cornerRadius="14dp"
+                        app:elevation="3dp"
+                        app:icon="@android:drawable/ic_menu_share"
+                        app:iconGravity="textStart"
+                        app:iconPadding="8dp"
+                        app:iconSize="22dp"
+                        app:iconTint="@color/white" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPengeluaran"
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        android:minHeight="60dp"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="Pengeluaran"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#EF5350"
+                        app:cornerRadius="14dp"
+                        app:elevation="3dp"
+                        app:icon="@android:drawable/ic_menu_directions"
+                        app:iconGravity="textStart"
+                        app:iconPadding="8dp"
+                        app:iconSize="22dp"
+                        app:iconTint="@color/white" />
+                </LinearLayout>
+
+                <!-- Row 4: Pengaturan (Analisa & Prediksi dipindah ke web dashboard) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPengaturan"
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        android:minHeight="60dp"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="Pengaturan"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#78909C"
+                        app:cornerRadius="14dp"
+                        app:elevation="3dp"
+                        app:icon="@android:drawable/ic_menu_preferences"
+                        app:iconGravity="textStart"
+                        app:iconPadding="8dp"
+                        app:iconSize="22dp"
+                        app:iconTint="@color/white" />
+
+                    <!-- Dulu ada sel kosong di sini supaya "Pengaturan" tetap setengah lebar dan
+                         sekolom dengan baris di atasnya. Dibuang: aturan menunya sekarang "melebar
+                         kalau tetangganya tidak ada", dan sel kosong itu tetangga palsu yang membuat
+                         Pengaturan satu-satunya menu yang menyisakan ruang menganggur. -->
+                </LinearLayout>
+            </LinearLayout>
 
             <!-- Recent Transactions -->
             <TextView
