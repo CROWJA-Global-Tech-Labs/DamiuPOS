@@ -328,10 +328,13 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
     /** Konfirmasi yang JUJUR: sebutkan bahwa staf menekan Kirim sendiri di tiap chat. */
     private void confirmNotify(List<Customer> targets) {
         // Auto-kirim dashboard hanya berlaku untuk varian TANPA foto (lihat javadoc kelas ini —
-        // verifikasi tujuan gateway tak berlaku pada layar pratinjau media). Dengan foto, atau
-        // saat flag mati, tetap pakai alur konfirmasi + per-pelanggan yang lama.
+        // verifikasi tujuan gateway tak berlaku pada layar pratinjau media). Dialog "Beritahu
+        // Konsumen?" hanya tampil kalau toggle web OFF atau bridge WA tak terhubung — kalau
+        // toggle ON dan bridge siap, langsung auto-kirim tanpa dialog.
         SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
-        if (autoSettings.isAutoSendDeliveryIssueWa() && savedPhotoPath.isEmpty()) {
+        boolean bridgeConnected = com.crowja.damiupos.wa.WaAutoSendService.serviceContext() != null
+                && com.crowja.damiupos.wa.WaAutoSendService.isEnabled(this);
+        if (autoSettings.isAutoSendDeliveryIssueWa() && savedPhotoPath.isEmpty() && bridgeConnected) {
             autoNotifyAll(targets);
             return;
         }
