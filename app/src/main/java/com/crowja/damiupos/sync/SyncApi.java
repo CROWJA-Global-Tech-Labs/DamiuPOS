@@ -445,6 +445,11 @@ public class SyncApi {
         return get(url, cfg.getToken());
     }
 
+    /** Status FREZ WA Bridge server ({@code ok}+{@code configured}) — dipakai sebagai syarat auto-kirim WA. */
+    public JSONObject waBridgeStatus() throws Exception {
+        return get(cfg.getBaseUrl() + "/api/wa-bridge/status", cfg.getToken());
+    }
+
     private JSONObject get(String url, String token) throws Exception {
         Request.Builder b = new Request.Builder()
                 .url(url)

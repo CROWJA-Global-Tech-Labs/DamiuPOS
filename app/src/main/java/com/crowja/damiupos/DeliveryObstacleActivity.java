@@ -329,15 +329,40 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
     private void confirmNotify(List<Customer> targets) {
         // Auto-kirim dashboard hanya berlaku untuk varian TANPA foto (lihat javadoc kelas ini —
         // verifikasi tujuan gateway tak berlaku pada layar pratinjau media). Dialog "Beritahu
-        // Konsumen?" hanya tampil kalau toggle web OFF atau bridge WA tak terhubung — kalau
-        // toggle ON dan bridge siap, langsung auto-kirim tanpa dialog.
+        // Konsumen?" hanya tampil kalau toggle web OFF atau bridge WA (FREZ WA Bridge, server
+        // terpisah — lihat SyncApi#waBridgeStatus) tak terhubung — kalau toggle ON dan bridge
+        // siap, langsung auto-kirim tanpa dialog.
         SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
-        boolean bridgeConnected = com.crowja.damiupos.wa.WaAutoSendService.serviceContext() != null
-                && com.crowja.damiupos.wa.WaAutoSendService.isEnabled(this);
-        if (autoSettings.isAutoSendDeliveryIssueWa() && savedPhotoPath.isEmpty() && bridgeConnected) {
-            autoNotifyAll(targets);
+        if (autoSettings.isAutoSendDeliveryIssueWa() && savedPhotoPath.isEmpty()) {
+            checkBridgeThenNotify(targets);
             return;
         }
+        showNotifyDialog(targets);
+    }
+
+    /** Tanya status FREZ WA Bridge ke server (background) sebelum memilih auto-kirim vs dialog manual. */
+    private void checkBridgeThenNotify(List<Customer> targets) {
+        new Thread(() -> {
+            boolean bridgeOk = false;
+            try {
+                com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                        new SettingsDao(DatabaseHelper.getInstance(this)));
+                if (cfg.isEnrolled()) {
+                    JSONObject res = new com.crowja.damiupos.sync.SyncApi(cfg).waBridgeStatus();
+                    bridgeOk = res != null && res.optBoolean("configured", false) && res.optBoolean("ok", false);
+                }
+            } catch (Exception ignored) {
+                // Bridge tak terjangkau/timeout → anggap putus, jatuh ke dialog manual.
+            }
+            final boolean finalOk = bridgeOk;
+            runOnUiThread(() -> {
+                if (finalOk) autoNotifyAll(targets);
+                else showNotifyDialog(targets);
+            });
+        }).start();
+    }
+
+    private void showNotifyDialog(List<Customer> targets) {
         new AlertDialog.Builder(this)
                 .setTitle("Beritahu Konsumen?")
                 .setMessage(targets.size() + " pelanggan akan diberitahu lewat WhatsApp.\n\n"
