@@ -2,7 +2,11 @@ package com.crowja.damiupos.model;
 
 public class Product {
     private long id;
+    private String uuid;   // sync_uuid (sama di web + semua HP) — kunci harga khusus per pelanggan
     private String name;
+    /** Label PENDEK dari dashboard (mis. "RO") untuk chip berwarna di kartu Antrian Delivery.
+     *  Kosong/null = pemanggil memendekkan {@link #name} sendiri. */
+    private String slug;
     private double hargaJual;
     private double hargaModal;
     private String color; // hex color e.g. "#1565C0"
@@ -19,8 +23,14 @@ public class Product {
     public long getId() { return id; }
     public void setId(long id) { this.id = id; }
 
+    public String getUuid() { return uuid; }
+    public void setUuid(String uuid) { this.uuid = uuid; }
+
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
+
+    public String getSlug() { return slug; }
+    public void setSlug(String slug) { this.slug = slug; }
 
     public double getHargaJual() { return hargaJual; }
     public void setHargaJual(double hargaJual) { this.hargaJual = hargaJual; }

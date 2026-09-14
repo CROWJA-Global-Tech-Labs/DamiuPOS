@@ -87,6 +87,8 @@
                 app:cardCornerRadius="10dp"
                 app:cardElevation="1dp">
 
+                <!-- JANGAN pakai app:tint: ikut mewarnai foto asli (setImageBitmap) jadi
+                     abu-abu solid. Tint placeholder diatur dari kode (ExpenseDetailActivity). -->
                 <ImageView
                     android:id="@+id/ivFoto"
                     android:layout_width="match_parent"
@@ -95,8 +97,7 @@
                     android:background="@color/grey_light"
                     android:contentDescription="Foto struk"
                     android:scaleType="fitCenter"
-                    android:src="@android:drawable/ic_menu_gallery"
-                    app:tint="@color/grey_medium" />
+                    android:src="@android:drawable/ic_menu_gallery" />
             </androidx.cardview.widget.CardView>
 
             <TextView

@@ -56,23 +56,45 @@ public class ResellerWithdrawalDao {
             v.put(DatabaseHelper.COL_WD_NOTE, note.trim());
         }
         v.put(DatabaseHelper.COL_WD_EXPENSE_ID, expenseId);
-        return db.insert(DatabaseHelper.TABLE_RESELLER_WD, null, v);
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_RESELLER_WD, v);
     }
 
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        return db.delete(DatabaseHelper.TABLE_RESELLER_WD,
+        return dbHelper.syncDelete(db, DatabaseHelper.TABLE_RESELLER_WD, "reseller_withdrawals",
                 DatabaseHelper.COL_WD_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
 
-    /** Total rupiah yang sudah dicairkan reseller ini. */
+    /**
+     * Net rupiah keluar = pencairan − tambah-saldo. "Tambah saldo" (top-up dari web
+     * dashboard) disimpan sebagai pencairan ber-amount negatif, jadi otomatis menambah
+     * saldo lewat rumus {@code saldo = komisi − net}.
+     */
     public double getTotalWithdrawn(long customerId) {
+        return sumAmount(customerId, null);
+    }
+
+    /** Total pencairan nyata (amount &gt; 0), tanpa memperhitungkan tambah-saldo. */
+    public double getTotalCashedOut(long customerId) {
+        return sumAmount(customerId, true);
+    }
+
+    /** Total "tambah saldo" (kredit) untuk reseller ini — disimpan sebagai amount negatif. */
+    public double getTotalDeposits(long customerId) {
+        return -sumAmount(customerId, false);
+    }
+
+    /** SUM(amount) untuk reseller; positiveOnly=null semua, true amount&gt;0, false amount&lt;0. */
+    private double sumAmount(long customerId, Boolean positiveOnly) {
+        String where = DatabaseHelper.COL_WD_CUSTOMER_ID + "=?";
+        if (positiveOnly != null) {
+            where += " AND " + DatabaseHelper.COL_WD_AMOUNT + (positiveOnly ? ">0" : "<0");
+        }
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         Cursor c = db.rawQuery(
                 "SELECT COALESCE(SUM(" + DatabaseHelper.COL_WD_AMOUNT + "),0) FROM " +
-                        DatabaseHelper.TABLE_RESELLER_WD +
-                        " WHERE " + DatabaseHelper.COL_WD_CUSTOMER_ID + "=?",
+                        DatabaseHelper.TABLE_RESELLER_WD + " WHERE " + where,
                 new String[]{String.valueOf(customerId)});
         double total = 0;
         if (c.moveToFirst()) total = c.getDouble(0);

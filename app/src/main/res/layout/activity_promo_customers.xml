@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/grey_light">
+
+    <com.google.android.material.appbar.AppBarLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <androidx.appcompat.widget.Toolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            android:background="@color/primary"
+            android:titleTextColor="@color/white"
+            app:navigationIcon="@drawable/ic_arrow_back"
+            app:title="Pelanggan Promosi" />
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <!-- Statistik kohort (mengikuti rentang & filter tanggal terpilih). -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@color/primary"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="12dp">
+
+        <LinearLayout style="@style/PromoStatCell">
+            <TextView android:id="@+id/tvStatTotal" style="@style/PromoStatValue" />
+            <TextView style="@style/PromoStatLabel" android:text="Diberi Promo" />
+        </LinearLayout>
+        <LinearLayout style="@style/PromoStatCell">
+            <TextView android:id="@+id/tvStatConverted" style="@style/PromoStatValue" />
+            <TextView style="@style/PromoStatLabel" android:text="Order Ulang" />
+        </LinearLayout>
+        <LinearLayout style="@style/PromoStatCell">
+            <TextView android:id="@+id/tvStatRate" style="@style/PromoStatValue" />
+            <TextView style="@style/PromoStatLabel" android:text="Konversi" />
+        </LinearLayout>
+        <LinearLayout style="@style/PromoStatCell">
+            <TextView android:id="@+id/tvStatDays" style="@style/PromoStatValue" />
+            <TextView style="@style/PromoStatLabel" android:text="Rata² Hari" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Preset tanggal -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/white"
+        android:scrollbars="none"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp">
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/togglePreset"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:singleSelection="true"
+            app:selectionRequired="true">
+
+            <Button style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:id="@+id/btnPresetMonth" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:textAllCaps="false" android:text="Bulan Ini" />
+            <Button style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:id="@+id/btnPresetWeek" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:textAllCaps="false" android:text="Pekan Ini" />
+            <Button style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:id="@+id/btnPresetToday" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:textAllCaps="false" android:text="Hari Ini" />
+            <Button style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:id="@+id/btnPreset3m" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:textAllCaps="false" android:text="3 Bulan" />
+            <Button style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:id="@+id/btnPresetAll" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:textAllCaps="false" android:text="Semua" />
+            <Button style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:id="@+id/btnPresetCustom" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:textAllCaps="false" android:text="Kustom…" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+    </HorizontalScrollView>
+
+    <!-- Cari + filter status -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@color/white"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="8dp">
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
+            app:startIconDrawable="@android:drawable/ic_menu_search"
+            android:hint="Cari nama / telp">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etSearch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="text"
+                android:imeOptions="actionSearch"
+                android:maxLines="1" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/toggleStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            app:singleSelection="true"
+            app:selectionRequired="true">
+
+            <Button style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:id="@+id/btnStatusAll" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:textAllCaps="false" android:text="Semua" />
+            <Button style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:id="@+id/btnStatusConverted" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:textAllCaps="false" android:text="🔁 Sudah" />
+            <Button style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:id="@+id/btnStatusPending" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:textAllCaps="false" android:text="⏳ Belum" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+    </LinearLayout>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rv"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:padding="12dp"
+            android:clipToPadding="false" />
+
+        <TextView
+            android:id="@+id/tvEmpty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:padding="24dp"
+            android:text="Tidak ada pelanggan promosi pada rentang / filter ini."
+            android:textColor="@color/grey_medium"
+            android:textSize="15sp"
+            android:visibility="gone" />
+    </FrameLayout>
+</LinearLayout>

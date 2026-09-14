@@ -147,6 +147,8 @@ public final class ShiftReporter {
         sb.append("Pendapatan: Rp ").append(nf.format(sum[3])).append("\n");
         sb.append("Pengeluaran: Rp ").append(nf.format(totalExpense)).append("\n");
         sb.append("Laba Bersih: Rp ").append(nf.format(sum[3] - totalExpense)).append("\n");
+        String bonusLine = salesBonusLine(settings, (int) sum[1]);
+        if (!bonusLine.isEmpty()) sb.append(bonusLine).append("\n");
 
         // Detail air minum terjual per jenis.
         appendWaterProducts(sb, transactions, nf);
@@ -170,6 +172,25 @@ public final class ShiftReporter {
         return sb.toString();
     }
 
+    /**
+     * Baris "Bonus Penjualan" untuk laporan (galon × bonus/galon). Kembalikan ""
+     * kalau bonus dimatikan di Pengaturan.
+     */
+    public static String salesBonusLine(SettingsDao s, int galon) {
+        if (!s.isSalesBonusEnabled()) return "";
+        double rate = s.getSalesBonusPerGalon();
+        double bonus = galon * rate;
+        NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
+        return "Bonus Penjualan: Rp " + nf.format(Math.round(bonus))
+                + " (" + galon + " galon x Rp " + nf.format(Math.round(rate)) + ")";
+    }
+
+    /** Nilai bonus penjualan (galon × bonus/galon); 0 kalau dimatikan. */
+    public static double salesBonusValue(SettingsDao s, int galon) {
+        if (!s.isSalesBonusEnabled()) return 0;
+        return galon * s.getSalesBonusPerGalon();
+    }
+
     /** Rincian galon + pendapatan per jenis air minum (transaksi JUAL hari ini). */
     private static void appendWaterProducts(StringBuilder sb, List<Transaction> transactions,
                                             NumberFormat nf) {
@@ -178,6 +199,9 @@ public final class ShiftReporter {
             if (!Transaction.TYPE_JUAL.equals(t.getType())) continue;
             // Lewati transaksi jual botol kosong (bukan air minum).
             if (t.getCatatan() != null && t.getCatatan().contains("[JUAL BOTOL KOSONG]")) continue;
+            // Belum diantar (PENDING) atau ditunda (TERTUNDA) → belum "terjual" — cocok dgn sum[] di atas.
+            String ds = t.getDeliveryStatus();
+            if (ds != null && !Transaction.DELIVERY_DONE.equals(ds)) continue;
 
             List<TransactionItem> items = t.getItems();
             if (items != null && !items.isEmpty()) {
@@ -214,20 +238,33 @@ public final class ShiftReporter {
     /** Rincian pendapatan JUAL per metode pembayaran. */
     private static void appendPaymentMethods(StringBuilder sb, List<Transaction> transactions,
                                              NumberFormat nf) {
-        double tunai = 0, qris = 0, transfer = 0, lainnya = 0;
+        double tunai = 0, qris = 0, transfer = 0, hutang = 0, lainnya = 0;
         for (Transaction t : transactions) {
             if (!Transaction.TYPE_JUAL.equals(t.getType())) continue;
+            // Belum diantar (PENDING) atau ditunda (TERTUNDA) → belum "terjual" — cocok dgn sum[] di atas.
+            String ds = t.getDeliveryStatus();
+            if (ds != null && !Transaction.DELIVERY_DONE.equals(ds)) continue;
             double amt = t.getTotalHarga();
             String pm = t.getPaymentMethod();
             if (Transaction.PAY_TUNAI.equals(pm)) tunai += amt;
             else if (Transaction.PAY_QRIS.equals(pm)) qris += amt;
             else if (Transaction.PAY_TRANSFER.equals(pm)) transfer += amt;
+            // HUTANG punya embernya SENDIRI, bukan ikut Tunai/Lainnya: nilainya sudah dihitung
+            // sebagai omzet (galonnya keluar) tapi UANGNYA belum diterima — mencampurnya ke Tunai
+            // membuat setoran kurir seolah kurang sebesar itu.
+            else if (Transaction.PAY_HUTANG.equals(pm)) hutang += amt;
             else lainnya += amt; // transaksi lama tanpa metode tercatat
         }
         sb.append("\n*Pembayaran (JUAL)*\n");
         sb.append("Tunai: Rp ").append(nf.format(tunai)).append("\n");
         sb.append("QRIS: Rp ").append(nf.format(qris)).append("\n");
         sb.append("Transfer: Rp ").append(nf.format(transfer)).append("\n");
+        // Hutang dipisah + setoran tunai ditegaskan ulang: kurir menyetor UANG, dan hutang
+        // bukan uang yang ia pegang.
+        if (hutang > 0) {
+            sb.append("Hutang (belum diterima): Rp ").append(nf.format(hutang)).append("\n");
+            sb.append("Setoran tunai: Rp ").append(nf.format(tunai)).append("\n");
+        }
         if (lainnya > 0) {
             sb.append("Tidak dicatat: Rp ").append(nf.format(lainnya)).append("\n");
         }

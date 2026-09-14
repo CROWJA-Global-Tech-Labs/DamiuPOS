@@ -10,9 +10,14 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.text.InputType;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
+import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -30,6 +35,8 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.crowja.damiupos.adapter.StockHistoryAdapter;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.GalonStockDao;
+import com.crowja.damiupos.db.SettingsDao;
+import com.crowja.damiupos.sync.SyncSettings;
 import com.google.android.material.textfield.TextInputEditText;
 
 import java.io.File;
@@ -38,11 +45,13 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import com.crowja.damiupos.util.CameraIntents;
 
 public class GalonStockActivity extends AppCompatActivity {
 
     private static final int REQUEST_CAMERA = 500;
     private static final int REQUEST_PERMISSION_CAMERA = 501;
+    private static final int REQUEST_PICK_GALLERY = 502;
 
     private TextView tvStokTersedia, tvStokMasuk, tvGalonKeluar, tvGalonKembali;
     private TextView tvEmptyHistory, tvFormTitle;
@@ -54,6 +63,7 @@ public class GalonStockActivity extends AppCompatActivity {
     private View layoutEditBanner;
     private StockHistoryAdapter adapter;
     private GalonStockDao galonStockDao;
+    private SyncSettings sync;
 
     private String currentPhotoPath; // pending capture path
     /** Id entry stok yang sedang di-edit. 0 = mode tambah baru. */
@@ -69,6 +79,7 @@ public class GalonStockActivity extends AppCompatActivity {
         toolbar.setNavigationOnClickListener(v -> finish());
 
         galonStockDao = new GalonStockDao(DatabaseHelper.getInstance(this));
+        sync = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
 
         tvStokTersedia = findViewById(R.id.tvStokTersedia);
         tvStokMasuk = findViewById(R.id.tvStokMasuk);
@@ -93,6 +104,7 @@ public class GalonStockActivity extends AppCompatActivity {
 
         btnTambahStok.setOnClickListener(v -> saveStock());
         findViewById(R.id.btnFotoStruk).setOnClickListener(v -> takePhoto());
+        findViewById(R.id.btnPickGalleryStruk).setOnClickListener(v -> pickFromGallery());
         findViewById(R.id.btnBatalEdit).setOnClickListener(v -> exitEditMode(true));
         btnRemoveStruk.setOnClickListener(v -> clearPendingPhoto());
         ivStrukPreview.setOnClickListener(v -> {
@@ -102,6 +114,77 @@ public class GalonStockActivity extends AppCompatActivity {
         refreshData();
     }
 
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        menu.add(0, 1, 0, "Koreksi Keseluruhan")
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == 1) { showKoreksiDialog(); return true; }
+        return super.onOptionsItemSelected(item);
+    }
+
+    /**
+     * Koreksi keseluruhan: set stok galon TERSEDIA langsung ke nilai yang benar.
+     * Sistem mencatat entry penyesuaian (selisih) supaya histori tetap auditable.
+     */
+    private void showKoreksiDialog() {
+        final int current = currentTersedia();
+        final EditText et = new EditText(this);
+        et.setInputType(InputType.TYPE_CLASS_NUMBER);
+        et.setText(String.valueOf(current));
+        et.setHint("Jumlah galon tersedia yang benar");
+        LinearLayout wrap = new LinearLayout(this);
+        int pad = (int) (20 * getResources().getDisplayMetrics().density);
+        wrap.setPadding(pad, pad / 2, pad, 0);
+        wrap.addView(et);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Koreksi Keseluruhan Stok")
+                .setMessage("Stok tersedia sekarang: " + current + " galon.\n"
+                        + "Masukkan jumlah yang benar — sistem akan menyesuaikan otomatis.")
+                .setView(wrap)
+                .setPositiveButton("Koreksi", (d, w) -> {
+                    String str = et.getText() != null ? et.getText().toString().trim() : "";
+                    if (str.isEmpty()) return;
+                    int target;
+                    try {
+                        target = Integer.parseInt(str);
+                    } catch (NumberFormatException e) {
+                        Toast.makeText(this, "Nilai tidak valid", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    int delta = target - currentTersedia();
+                    if (delta == 0) {
+                        Toast.makeText(this, "Stok sudah sesuai", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    galonStockDao.addStock(delta, "Koreksi keseluruhan → tersedia " + target
+                            + " (selisih " + (delta > 0 ? "+" : "") + delta + ")");
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                    Toast.makeText(this, "Stok tersedia dikoreksi ke " + target + " galon",
+                            Toast.LENGTH_LONG).show();
+                    refreshData();
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /** Pilih gambar dari galeri (tanpa izin storage; pakai document picker). */
+    private void pickFromGallery() {
+        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        i.setType("image/*");
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        try {
+            startActivityForResult(Intent.createChooser(i, "Pilih foto"), REQUEST_PICK_GALLERY);
+        } catch (Exception e) {
+            Toast.makeText(this, "Tidak ada aplikasi galeri", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private void takePhoto() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -109,7 +192,7 @@ public class GalonStockActivity extends AppCompatActivity {
                     new String[]{Manifest.permission.CAMERA}, REQUEST_PERMISSION_CAMERA);
             return;
         }
-        Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        Intent intent = CameraIntents.preferBackCamera(new Intent(MediaStore.ACTION_IMAGE_CAPTURE));
         if (intent.resolveActivity(getPackageManager()) == null) {
             Toast.makeText(this, "Tidak ada aplikasi kamera", Toast.LENGTH_SHORT).show();
             return;
@@ -157,6 +240,24 @@ public class GalonStockActivity extends AppCompatActivity {
                 ivStrukPreview.setImageBitmap(bmp);
                 ivStrukPreview.setVisibility(View.VISIBLE);
                 btnRemoveStruk.setVisibility(View.VISIBLE);
+            }
+        } else if (requestCode == REQUEST_PICK_GALLERY && resultCode == RESULT_OK && data != null
+                && data.getData() != null) {
+            try {
+                File dest = createImageFile();   // sets currentPhotoPath
+                if (com.crowja.damiupos.util.BitmapUtils.copyUriToFile(this, data.getData(), dest)) {
+                    Bitmap bmp = loadRotated(currentPhotoPath);
+                    if (bmp != null) {
+                        ivStrukPreview.setImageBitmap(bmp);
+                        ivStrukPreview.setVisibility(View.VISIBLE);
+                        btnRemoveStruk.setVisibility(View.VISIBLE);
+                    }
+                } else {
+                    currentPhotoPath = null;
+                    Toast.makeText(this, "Gagal memuat foto dari galeri", Toast.LENGTH_SHORT).show();
+                }
+            } catch (IOException e) {
+                Toast.makeText(this, "Gagal menyimpan foto", Toast.LENGTH_SHORT).show();
             }
         }
     }
@@ -233,6 +334,14 @@ public class GalonStockActivity extends AppCompatActivity {
         ivStrukPreview.setImageDrawable(null);
         ivStrukPreview.setVisibility(View.GONE);
         btnRemoveStruk.setVisibility(View.GONE);
+        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());   // push ke dashboard
+        refreshData();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Tampilkan angka stok terbaru dari server (galon keluar/kembali) setelah sync di background.
         refreshData();
     }
 
@@ -304,6 +413,7 @@ public class GalonStockActivity extends AppCompatActivity {
                 .setMessage("Yakin ingin menghapus data stok ini?")
                 .setPositiveButton("Hapus", (dialog, which) -> {
                     galonStockDao.deleteStock(id);
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());   // hapus tersinkron
                     Toast.makeText(this, "Data stok dihapus", Toast.LENGTH_SHORT).show();
                     if (editingId == id) exitEditMode(true);
                     refreshData();
@@ -312,10 +422,23 @@ public class GalonStockActivity extends AppCompatActivity {
                 .show();
     }
 
+    /** Galon keluar/kembali = angka OTORITATIF dari server (branch-wide) bila perangkat ter-enroll &
+     *  sudah pernah sync → SELALU sama dgn dashboard (per-device isolation bisa membuat transaksi
+     *  lokal tertinggal). Stok Masuk pakai galon_stock lokal (sudah branch-wide → == server, tapi
+     *  langsung mencerminkan penyesuaian yang baru dibuat di HP ini). */
+    private boolean useServerStok() { return sync.isEnrolled() && sync.hasServerStok(); }
+    private int serverOrLocalKeluar()  { return useServerStok() ? sync.getStokKeluar()  : galonStockDao.getTotalGalonKeluar(); }
+    private int serverOrLocalKembali() { return useServerStok() ? sync.getStokKembali() : galonStockDao.getTotalGalonKembali(); }
+
+    /** Stok tersedia "resmi" (sama dengan badge dashboard & web): delegasi ke satu sumber kebenaran. */
+    private int currentTersedia() {
+        return galonStockDao.getStokTersediaResmi(sync);
+    }
+
     private void refreshData() {
         int stokMasuk = galonStockDao.getTotalStokMasuk();
-        int galonKeluar = galonStockDao.getTotalGalonKeluar();
-        int galonKembali = galonStockDao.getTotalGalonKembali();
+        int galonKeluar = serverOrLocalKeluar();
+        int galonKembali = serverOrLocalKembali();
         int stokTersedia = stokMasuk - galonKeluar + galonKembali;
 
         tvStokTersedia.setText(String.valueOf(stokTersedia));

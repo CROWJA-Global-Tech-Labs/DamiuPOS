@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pemisah tanggal di daftar Riwayat Pengiriman ("Hari ini" / "Kemarin" / tanggal absolut). -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/tvDay"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingStart="14dp"
+    android:paddingEnd="14dp"
+    android:paddingTop="14dp"
+    android:paddingBottom="6dp"
+    android:textColor="#37474F"
+    android:textSize="13sp"
+    android:textStyle="bold"
+    tools:ignore="MissingDefaultResource"
+    xmlns:tools="http://schemas.android.com/tools" />

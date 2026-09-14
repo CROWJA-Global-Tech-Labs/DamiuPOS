@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Timer antrian >= 1 jam: KUNING (amber-700 #B45309 dipilih agar teks putih tetap kontras;
+     amber muda + putih hanya ~2:1 dan tak terbaca di bawah sinar matahari). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#B45309" />
+    <corners android:radius="11dp" />
+    <stroke android:width="1.5dp" android:color="#FFFFFF" />
+</shape>

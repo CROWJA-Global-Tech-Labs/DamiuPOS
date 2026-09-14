@@ -24,7 +24,7 @@ public class ProductDao {
         values.put(DatabaseHelper.COL_HARGA_JUAL, product.getHargaJual());
         values.put(DatabaseHelper.COL_HARGA_MODAL, product.getHargaModal());
         values.put(DatabaseHelper.COL_COLOR, product.getColor());
-        return db.insert(DatabaseHelper.TABLE_PRODUCTS, null, values);
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_PRODUCTS, values);
     }
 
     public int update(Product product) {
@@ -34,14 +34,14 @@ public class ProductDao {
         values.put(DatabaseHelper.COL_HARGA_JUAL, product.getHargaJual());
         values.put(DatabaseHelper.COL_HARGA_MODAL, product.getHargaModal());
         values.put(DatabaseHelper.COL_COLOR, product.getColor());
-        return db.update(DatabaseHelper.TABLE_PRODUCTS, values,
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_PRODUCTS, values,
                 DatabaseHelper.COL_PRODUCT_ID + "=?",
                 new String[]{String.valueOf(product.getId())});
     }
 
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        return db.delete(DatabaseHelper.TABLE_PRODUCTS,
+        return dbHelper.syncDelete(db, DatabaseHelper.TABLE_PRODUCTS, "products",
                 DatabaseHelper.COL_PRODUCT_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
@@ -84,10 +84,40 @@ public class ProductDao {
         return count;
     }
 
+    /**
+     * Nama jenis galon yang muncul lebih dari sekali di tabel produk — gejala
+     * "Kasus B" setelah upgrade dari versi lama: katalog jenis galon di web punya
+     * sync_uuid berbeda dari produk lokal lama, sehingga sinkron (yang mencocokkan
+     * lewat sync_uuid, bukan nama) menampilkannya ganda. Dipakai untuk memberi
+     * peringatan supaya admin merapikan dari dashboard web.
+     */
+    public List<String> getDuplicateJenisNames() {
+        List<String> dups = new ArrayList<>();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.rawQuery(
+                "SELECT TRIM(" + DatabaseHelper.COL_PRODUCT_NAME + ") AS nm, COUNT(*) AS n FROM "
+                        + DatabaseHelper.TABLE_PRODUCTS
+                        + " WHERE TRIM(" + DatabaseHelper.COL_PRODUCT_NAME + ") <> ''"
+                        + " GROUP BY LOWER(TRIM(" + DatabaseHelper.COL_PRODUCT_NAME + "))"
+                        + " HAVING n > 1 ORDER BY nm", null);
+        try {
+            while (c.moveToNext()) dups.add(c.getString(0));
+        } finally {
+            c.close();
+        }
+        return dups;
+    }
+
     private Product cursorToProduct(Cursor cursor) {
         Product p = new Product();
         p.setId(cursor.getLong(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_PRODUCT_ID)));
+        int idxUuid = cursor.getColumnIndex(DatabaseHelper.COL_SYNC_UUID);
+        if (idxUuid >= 0) p.setUuid(cursor.getString(idxUuid));
         p.setName(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_PRODUCT_NAME)));
+        // Defensif (getColumnIndex, bukan …OrThrow): kolom baru v71 — perangkat yang belum sempat
+        // upgrade DB / query lama yang tak menyertakan kolom ini tak boleh membuat app crash.
+        int idxSlug = cursor.getColumnIndex(DatabaseHelper.COL_PRODUCT_SLUG);
+        if (idxSlug >= 0) p.setSlug(cursor.getString(idxSlug));
         p.setHargaJual(cursor.getDouble(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_HARGA_JUAL)));
         p.setHargaModal(cursor.getDouble(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_HARGA_MODAL)));
         p.setColor(cursor.getString(cursor.getColumnIndexOrThrow(DatabaseHelper.COL_COLOR)));

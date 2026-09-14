@@ -42,14 +42,22 @@ public class TransactionListActivity extends AppCompatActivity {
     private MaterialButton btnDateRange, btnSort;
     private MaterialButtonToggleGroup toggleTypeFilter;
     private TextInputEditText etSearch;
+    private android.widget.CheckBox cbPaySemua, cbPayTunai, cbPayQris, cbPayTransfer;
+    private boolean suppressPayEvents = false;
 
     // Filter state
     private String typeFilter = "ALL"; // ALL, JUAL, KEMBALI
     private String startDate = null;   // yyyy-MM-dd
     private String endDate = null;
     private String search = "";
+    private final android.os.Handler searchHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private Runnable pendingSearch;
     private int sortMode = 0; // 0=newest, 1=oldest, 2=highest, 3=lowest
 
+    // RV rvTransactions di layout ini height=0dp+weight=1 → ukurannya TETAP (mengisi ruang, tak
+    // berubah oleh isi), jadi setHasFixedSize(true) valid & bermanfaat. Lint keliru menandainya
+    // (dibingungkan id 'rvTransactions' yang juga dipakai layout lain yang wrap_content).
+    @android.annotation.SuppressLint("InvalidSetHasFixedSize")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -69,9 +77,43 @@ public class TransactionListActivity extends AppCompatActivity {
         btnSort = findViewById(R.id.btnSort);
         toggleTypeFilter = findViewById(R.id.toggleTypeFilter);
         etSearch = findViewById(R.id.etSearch);
+        cbPaySemua = findViewById(R.id.cbPaySemua);
+        cbPayTunai = findViewById(R.id.cbPayTunai);
+        cbPayQris = findViewById(R.id.cbPayQris);
+        cbPayTransfer = findViewById(R.id.cbPayTransfer);
+        // "Semua" dipilih → bersihkan metode spesifik; dimatikan tanpa metode lain
+        // → kembalikan ke "Semua" (filter tidak pernah kosong total).
+        cbPaySemua.setOnCheckedChangeListener((b, checked) -> {
+            if (suppressPayEvents) return;
+            suppressPayEvents = true;
+            if (checked) {
+                cbPayTunai.setChecked(false);
+                cbPayQris.setChecked(false);
+                cbPayTransfer.setChecked(false);
+            } else if (noPayMethodChecked()) {
+                cbPaySemua.setChecked(true);
+            }
+            suppressPayEvents = false;
+            reload();
+        });
+        android.widget.CompoundButton.OnCheckedChangeListener methodListener = (b, checked) -> {
+            if (suppressPayEvents) return;
+            suppressPayEvents = true;
+            if (checked) {
+                cbPaySemua.setChecked(false);          // pilih metode spesifik → matikan "Semua"
+            } else if (noPayMethodChecked()) {
+                cbPaySemua.setChecked(true);           // tak ada metode → kembali ke "Semua"
+            }
+            suppressPayEvents = false;
+            reload();
+        };
+        cbPayTunai.setOnCheckedChangeListener(methodListener);
+        cbPayQris.setOnCheckedChangeListener(methodListener);
+        cbPayTransfer.setOnCheckedChangeListener(methodListener);
 
         adapter = new TransactionAdapter(true);
         rv.setLayoutManager(new LinearLayoutManager(this));
+        rv.setHasFixedSize(true);
         rv.setAdapter(adapter);
 
         adapter.setOnItemClickListener(trx -> {
@@ -80,7 +122,7 @@ public class TransactionListActivity extends AppCompatActivity {
             startActivity(i);
         });
 
-        adapter.setOnItemLongClickListener(this::confirmDelete);
+        adapter.setOnItemLongClickListener(this::showTransactionActions);
 
         toggleTypeFilter.addOnButtonCheckedListener((g, checkedId, isChecked) -> {
             if (!isChecked) return;
@@ -97,8 +139,12 @@ public class TransactionListActivity extends AppCompatActivity {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
             @Override public void afterTextChanged(Editable s) {
+                // Debounce: reload() memuat SEMUA transaksi + parse items_json + filter/sort di Java —
+                // jangan jalankan tiap huruf; satukan ketikan cepat jadi satu reload.
                 search = s.toString().trim().toLowerCase(Locale.getDefault());
-                reload();
+                if (pendingSearch != null) searchHandler.removeCallbacks(pendingSearch);
+                pendingSearch = () -> reload();
+                searchHandler.postDelayed(pendingSearch, 280);
             }
         });
 
@@ -121,6 +167,12 @@ public class TransactionListActivity extends AppCompatActivity {
     }
 
     @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        searchHandler.removeCallbacksAndMessages(null);
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         reload();
@@ -133,9 +185,16 @@ public class TransactionListActivity extends AppCompatActivity {
         } else {
             all = transactionDao.getAll();
         }
+        // Set metode pembayaran yang dipilih (kosong = semua metode).
+        java.util.Set<String> payFilter = new java.util.HashSet<>();
+        if (cbPayTunai.isChecked()) payFilter.add(Transaction.PAY_TUNAI);
+        if (cbPayQris.isChecked()) payFilter.add(Transaction.PAY_QRIS);
+        if (cbPayTransfer.isChecked()) payFilter.add(Transaction.PAY_TRANSFER);
+
         List<Transaction> filtered = new ArrayList<>();
         for (Transaction t : all) {
             if (!"ALL".equals(typeFilter) && !typeFilter.equals(t.getType())) continue;
+            if (!payFilter.isEmpty() && !payFilter.contains(t.getPaymentMethod())) continue;
             if (!search.isEmpty()) {
                 String name = t.getCustomerName() != null
                         ? t.getCustomerName().toLowerCase(Locale.getDefault()) : "";
@@ -147,8 +206,8 @@ public class TransactionListActivity extends AppCompatActivity {
         // Sort
         switch (sortMode) {
             case 1: // oldest first
-                java.util.Collections.sort(filtered, (a, b) -> safeStr(a.getTanggal())
-                        .compareTo(safeStr(b.getTanggal())));
+                java.util.Collections.sort(filtered, (a, b) -> safeStr(a.getEffectiveTime())
+                        .compareTo(safeStr(b.getEffectiveTime())));
                 break;
             case 2: // highest total
                 java.util.Collections.sort(filtered, (a, b) -> Double.compare(b.getTotalHarga(), a.getTotalHarga()));
@@ -157,8 +216,8 @@ public class TransactionListActivity extends AppCompatActivity {
                 java.util.Collections.sort(filtered, (a, b) -> Double.compare(a.getTotalHarga(), b.getTotalHarga()));
                 break;
             default: // newest first
-                java.util.Collections.sort(filtered, (a, b) -> safeStr(b.getTanggal())
-                        .compareTo(safeStr(a.getTanggal())));
+                java.util.Collections.sort(filtered, (a, b) -> safeStr(b.getEffectiveTime())
+                        .compareTo(safeStr(a.getEffectiveTime())));
         }
 
         adapter.setData(filtered);
@@ -187,9 +246,117 @@ public class TransactionListActivity extends AppCompatActivity {
         tvSummaryTotal.setText("Rp " + nf.format(total));
     }
 
+    private boolean noPayMethodChecked() {
+        return !cbPayTunai.isChecked() && !cbPayQris.isChecked() && !cbPayTransfer.isChecked();
+    }
+
     private String safeStr(String s) { return s != null ? s : ""; }
 
+    /** Long-press sebuah transaksi → menu aksi. "Ubah Pelanggan" tersedia untuk SEMUA staf
+     *  (permintaan: staf bisa memindah transaksi ke pelanggan lain); "Hapus" tetap gated admin. */
+    private void showTransactionActions(Transaction trx) {
+        String custName = trx.getCustomerName() != null ? trx.getCustomerName() : "-";
+        // "Alokasi Galon" (usulan pembagian galon → butuh persetujuan email) hanya untuk JUAL.
+        java.util.List<String> opts = new java.util.ArrayList<>();
+        opts.add("Ubah Pelanggan");
+        if (Transaction.TYPE_JUAL.equals(trx.getType())) opts.add("Alokasi Galon");
+        opts.add("Hapus Transaksi");
+        final String[] options = opts.toArray(new String[0]);
+        new AlertDialog.Builder(this)
+                .setTitle("Transaksi — " + custName)
+                .setItems(options, (d, which) -> {
+                    String sel = options[which];
+                    if ("Ubah Pelanggan".equals(sel)) showChangeCustomer(trx);
+                    else if ("Alokasi Galon".equals(sel)) AllocationDialog.show(this, trx, "trx");
+                    else confirmDelete(trx);
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /** Pindahkan transaksi ke pelanggan lain — ubah "kolom nama pelanggan". Reuse dialog pemilih
+     *  pelanggan yang sama dengan Transaksi Baru (kartu dedup + agregat + tag). Konfirmasi dulu
+     *  supaya salah-tekan tidak diam-diam memindah transaksi. */
+    private void showChangeCustomer(Transaction trx) {
+        View dialogView = getLayoutInflater().inflate(R.layout.dialog_select_customer, null);
+        RecyclerView rvCustomers = dialogView.findViewById(R.id.rvCustomers);
+        android.widget.EditText etSearchCust = dialogView.findViewById(R.id.etSearchCustomer);
+        // Sembunyikan tombol cepat "Umum" / "Pelanggan Baru": memindah transaksi hanya ke
+        // pelanggan yang SUDAH ada (bukan bikin baru dari sini).
+        View quickPickRow = dialogView.findViewById(R.id.quickPickRow);
+        View quickPickDivider = dialogView.findViewById(R.id.quickPickDivider);
+        if (quickPickRow != null) quickPickRow.setVisibility(View.GONE);
+        if (quickPickDivider != null) quickPickDivider.setVisibility(View.GONE);
+
+        com.crowja.damiupos.db.CustomerDao customerDao =
+                new com.crowja.damiupos.db.CustomerDao(DatabaseHelper.getInstance(this));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Pindahkan ke Pelanggan")
+                .setView(dialogView)
+                .setNegativeButton(R.string.batal, null)
+                .create();
+
+        com.crowja.damiupos.adapter.CustomerAdapter adapter =
+                new com.crowja.damiupos.adapter.CustomerAdapter(picked -> {
+                    dialog.dismiss();
+                    confirmChangeCustomer(trx, picked);
+                });
+        rvCustomers.setLayoutManager(new LinearLayoutManager(this));
+        rvCustomers.setAdapter(adapter);
+        adapter.setData(com.crowja.damiupos.db.CustomerDao.dedupeForDisplay(customerDao.getAll()));
+
+        etSearchCust.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+            @Override public void onTextChanged(CharSequence s, int st, int b, int c) {}
+            @Override public void afterTextChanged(Editable s) {
+                String k = s.toString().trim();
+                adapter.setData(com.crowja.damiupos.db.CustomerDao.dedupeForDisplay(
+                        k.isEmpty() ? customerDao.getAll() : customerDao.search(k)));
+            }
+        });
+        dialog.show();
+    }
+
+    private void confirmChangeCustomer(Transaction trx, com.crowja.damiupos.model.Customer target) {
+        String from = trx.getCustomerName() != null ? trx.getCustomerName() : "-";
+        String to = target.getName() != null ? target.getName() : "-";
+        if (target.getId() == trx.getCustomerId()) {
+            Toast.makeText(this, "Transaksi sudah milik pelanggan itu", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Pindahkan Transaksi?")
+                .setMessage("Pindahkan transaksi ini:\n\nDari: " + from + "\nKe: " + to
+                        + "\n\nNominal & isi transaksi tidak berubah. Perubahan tersinkron ke dashboard.")
+                .setPositiveButton("YA, PINDAHKAN", (d, w) -> {
+                    int rows = transactionDao.updateCustomerId(trx.getId(), target.getId());
+                    if (rows > 0) {
+                        Toast.makeText(this, "Transaksi dipindahkan ke " + to, Toast.LENGTH_SHORT).show();
+                        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                        reload();
+                    } else {
+                        Toast.makeText(this, "Gagal memindahkan transaksi", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
     private void confirmDelete(Transaction trx) {
+        // Marketing: akuisisi saja — tidak boleh menghapus riwayat penjualan
+        // (mencegah manipulasi poin promosi dari HP marketing).
+        long uid = new com.crowja.damiupos.db.SettingsDao(
+                DatabaseHelper.getInstance(this)).getCurrentUserId();
+        if (uid > 0) {
+            com.crowja.damiupos.model.User u =
+                    new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid);
+            if (u != null && !u.canDeleteTransaction()) {
+                Toast.makeText(this, "Hanya admin yang bisa menghapus transaksi",
+                        Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
         String title = "Hapus Transaksi?";
         String custName = trx.getCustomerName() != null ? trx.getCustomerName() : "-";
         NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));

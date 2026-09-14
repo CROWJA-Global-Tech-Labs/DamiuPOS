@@ -104,15 +104,22 @@ public class OrderInboxActivity extends AppCompatActivity {
 
     private void reload() {
         data.clear();
-        if (showArchive) {
-            // View arsip
-            data.addAll(dao.getArchived());
-        } else {
-            // Inbox aktif: PENDING dulu, lalu APPROVED/REJECTED yang belum
-            // diarsipkan
-            data.addAll(dao.getPending());
-            for (OrderInbox o : dao.getActive()) {
-                if (!OrderInbox.STATUS_PENDING.equals(o.getStatus())) data.add(o);
+        // Karyawan marketing TIDAK menangani Pesanan Terjadwal → inbox dikosongkan saat mereka login
+        // (pengingat tetap tersimpan/tersinkron di perangkat, hanya tidak ditampilkan). Konsisten
+        // dgn banner/alarm yang sudah dilewati untuk marketing di MainActivity.refreshOrderInboxBanner.
+        boolean marketing = com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(this);
+        if (!marketing) {
+            if (showArchive) {
+                // View arsip
+                data.addAll(dao.getArchived());
+            } else {
+                // Inbox aktif: PENDING dulu, lalu APPROVED/REJECTED yang belum
+                // diarsipkan. PENDING disaring ke pesanan yang DITUGASKAN ke perangkat ini —
+                // konsisten dgn badge/alarm/notifikasi (OrderAlertService & MainActivity).
+                data.addAll(dao.getPendingForThisDevice());
+                for (OrderInbox o : dao.getActive()) {
+                    if (!OrderInbox.STATUS_PENDING.equals(o.getStatus())) data.add(o);
+                }
             }
         }
         adapter.notifyDataSetChanged();
@@ -124,7 +131,7 @@ public class OrderInboxActivity extends AppCompatActivity {
         }
         // Update title supaya jelas mode mana
         if (toolbar != null) {
-            toolbar.setTitle(showArchive ? "Arsip Pesanan WA" : "Pesanan dari WhatsApp");
+            toolbar.setTitle(showArchive ? "Arsip Pesanan" : "Pesanan Terjadwal");
         }
     }
 
@@ -168,7 +175,11 @@ public class OrderInboxActivity extends AppCompatActivity {
      * User wajib pilih manual yang sesuai dengan chat WA yang dibalas.
      */
     private void reply(OrderInbox o) {
-        String template = settingsDao.getWaReplyTemplate();
+        // Pesanan Terjadwal → isi chat = permohonan IZIN kirim galon (bukan balasan generik),
+        // otomatis menyebut item pesanan pelanggan. Item lain (jika ada) tetap pakai template biasa.
+        String template = isScheduledReminder(o)
+                ? buildScheduledPermissionMessage(o)
+                : settingsDao.getWaReplyTemplate();
 
         // Selalu siapkan clipboard sebagai backup
         ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
@@ -349,7 +360,9 @@ public class OrderInboxActivity extends AppCompatActivity {
      * Kalau pelanggan terpilih tidak punya nomor, fallback ke WA main + clipboard.
      */
     private void promptPickCustomerForReply(OrderInbox o) {
-        java.util.List<Customer> customers = customerDao.getAll();
+        // getAllForMatching: lampirkan pesanan = pencocokan identitas — pelanggan "Sudah Order
+        // Ulang" (tersembunyi dari daftar) tetap bisa dipilih agar tidak dibuat duplikat baru.
+        java.util.List<Customer> customers = customerDao.getAllForMatching();
         if (customers.isEmpty()) {
             // Tidak ada pelanggan sama sekali → fallback langsung
             openWhatsAppMainFallback();
@@ -630,7 +643,17 @@ public class OrderInboxActivity extends AppCompatActivity {
             Toast.makeText(this, "Balas terlebih dahulu", Toast.LENGTH_LONG).show();
             return;
         }
-        ParsedOrder parsed = ParsedOrder.fromJson(o.getParsedJson());
+        // Item pesanan: parsed_json pengingat terjadwal KOSONG dari server — item hanya ada di
+        // baris "Pesan: …". Sintesis ParsedOrder dari situ supaya jumlah produk ikut terisi di form.
+        String parsedJson = o.getParsedJson();
+        ParsedOrder parsed = ParsedOrder.fromJson(parsedJson);
+        if (parsed.items.isEmpty()) {
+            ParsedOrder synth = parseScheduledItems(o.getRawMessage());
+            if (!synth.items.isEmpty()) {
+                parsed = synth;
+                parsedJson = synth.toJson();
+            }
+        }
         Intent intent = new Intent(this, TransactionActivity.class);
         if (o.getCustomerId() > 0) {
             intent.putExtra("customer_id", o.getCustomerId());
@@ -640,24 +663,20 @@ public class OrderInboxActivity extends AppCompatActivity {
         } else if (ParsedOrder.TYPE_JUAL_BOTOL.equals(parsed.type)) {
             intent.putExtra("type", "JUAL_BOTOL");
         }
-        // Auto-fill items hasil parser → TransactionActivity akan match
-        // nama produk ke DB & populate items list otomatis.
-        intent.putExtra(TransactionActivity.EXTRA_INBOX_PARSED_JSON,
-                o.getParsedJson());
-        // Pass sender name supaya TransactionActivity bisa auto-open
-        // customer picker kalau customer_id belum di-set di inbox (parser
-        // gagal auto-match). User tinggal pilih pelanggan yg sesuai.
+        // Auto-fill items → TransactionActivity match nama produk ke DB & isi jumlah otomatis.
+        intent.putExtra(TransactionActivity.EXTRA_INBOX_PARSED_JSON, parsedJson);
+        // Pass sender name supaya TransactionActivity bisa auto-open customer picker kalau
+        // customer_id belum di-set di inbox. User tinggal pilih pelanggan yg sesuai.
         intent.putExtra(TransactionActivity.EXTRA_INBOX_SENDER_NAME,
                 o.getSenderName());
-        // Pass sender_phone — kalau user sudah correct nomor via Balas
-        // confirm-dialog (saved ke inbox.sender_phone), TransactionActivity
-        // pakai nomor itu sebagai override DB customer phone.
+        // Pass sender_phone — kalau user sudah correct nomor via Balas confirm-dialog.
         if (o.getSenderPhone() != null && !o.getSenderPhone().isEmpty()) {
             intent.putExtra(TransactionActivity.EXTRA_INBOX_SENDER_PHONE,
                     o.getSenderPhone());
         }
-        dao.updateStatus(o.getId(), OrderInbox.STATUS_APPROVED, 0);
-        OrderAlertService.refresh(this); // service akan stopSelf kalau pending=0
+        // JANGAN tandai SELESAI di sini — inbox ditandai APPROVED oleh TransactionActivity TEPAT
+        // saat transaksi tersimpan (EXTRA_INBOX_ID). Batal simpan → inbox tetap PENDING.
+        intent.putExtra(TransactionActivity.EXTRA_INBOX_ID, o.getId());
         startActivity(intent);
         Toast.makeText(this, "Pelanggan & item terisi — periksa lalu Simpan",
                 Toast.LENGTH_SHORT).show();
@@ -694,6 +713,93 @@ public class OrderInboxActivity extends AppCompatActivity {
 
     private static String safe(String s) { return s != null ? s : "(tidak diketahui)"; }
 
+    /** True bila item ini pengingat "Pesanan Terjadwal" (kunjungan/order berulang), bukan
+     *  balasan chat biasa — dari interval jadwal atau penanda teks di pesan. */
+    private static boolean isScheduledReminder(OrderInbox o) {
+        if (o.getSchedIntervalDays() > 0) return true;
+        String raw = o.getRawMessage();
+        return raw != null && raw.toUpperCase(java.util.Locale.ROOT).contains("PESANAN TERJADWAL");
+    }
+
+    /** Susun pesan WA permohonan IZIN kirim galon untuk pesanan terjadwal, menyertakan item
+     *  pesanan pelanggan (baris "Pesan: …" pada pengingat, fallback ringkasan item ParsedOrder). */
+    private String buildScheduledPermissionMessage(OrderInbox o) {
+        String items = extractPesanLine(o.getRawMessage());
+        if (items.isEmpty()) {
+            items = ParsedOrder.fromJson(o.getParsedJson()).shortSummary();
+        }
+        StringBuilder sb = new StringBuilder("Assalamu'alaikum 🙏\n");
+        sb.append("Mohon izin, apakah hari ini berkenan kami antarkan pesanan galonnya");
+        if (items != null && !items.trim().isEmpty()) {
+            sb.append(":\n• ").append(items.trim());
+        } else {
+            sb.append("?");
+        }
+        sb.append("\n\nTerima kasih 🙏");
+        return sb.toString();
+    }
+
+    /** Sintesis ParsedOrder JUAL dari baris "Pesan: …" pengingat terjadwal. Server menulis item
+     *  sebagai "NAMA ×QTY, NAMA ×QTY" (pemisah koma, penanda '×' U+00D7). Sengaja HANYA pisah pada
+     *  '×' — bukan huruf 'x' — supaya nama produk seperti "FREZOXY" tak salah dipotong. */
+    private static ParsedOrder parseScheduledItems(String raw) {
+        ParsedOrder p = new ParsedOrder();
+        p.isOrder = true;
+        p.type = ParsedOrder.TYPE_JUAL;
+        String pesan = extractPesanLine(raw);
+        if (pesan.isEmpty()) return p;
+        for (String part : pesan.split(",")) {
+            String t = part.trim();
+            int idx = t.lastIndexOf('×');   // '×'
+            if (idx <= 0) continue;
+            String name = t.substring(0, idx).trim();
+            String qtyStr = t.substring(idx + 1).replaceAll("[^0-9]", "");
+            if (name.isEmpty() || qtyStr.isEmpty()) continue;
+            try {
+                int qty = Integer.parseInt(qtyStr);
+                if (qty > 0) p.items.add(new ParsedOrder.Item(name, qty));
+            } catch (NumberFormatException ignored) {}
+        }
+        return p;
+    }
+
+    /** Ambil isi baris "Pesan: …" dari teks pengingat (mis. "Air Mineral FREZMIN 19L ×2").
+     *  Kosong bila tak ada. */
+    private static String extractPesanLine(String raw) {
+        if (raw == null) return "";
+        for (String line : raw.split("\\r?\\n")) {
+            String t = line.trim();
+            if (t.toLowerCase(java.util.Locale.ROOT).startsWith("pesan:")) {
+                int colon = t.indexOf(':');
+                return colon >= 0 ? t.substring(colon + 1).trim() : "";
+            }
+        }
+        return "";
+    }
+
+    /** Format waktu terima → "dd MMM yyyy HH:mm" (waktu lokal). Menerima ISO UTC
+     *  "…THH:mm:ss[.ffffff]Z" (yang dikirim server) atau "yyyy-MM-dd HH:mm:ss" lokal. */
+    private static String formatReceived(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return "-";
+        String s = raw.trim();
+        try {
+            boolean utc = s.endsWith("Z");
+            String core = utc ? s.substring(0, s.length() - 1) : s;
+            int dot = core.indexOf('.');
+            if (dot > 0) core = core.substring(0, dot);          // buang pecahan detik
+            core = core.replace('T', ' ').trim();
+            java.text.SimpleDateFormat in =
+                    new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US);
+            in.setTimeZone(utc ? java.util.TimeZone.getTimeZone("UTC") : java.util.TimeZone.getDefault());
+            java.util.Date d = in.parse(core);
+            if (d == null) return raw;
+            return new java.text.SimpleDateFormat("dd MMM yyyy HH:mm", new java.util.Locale("id", "ID"))
+                    .format(d);
+        } catch (Exception e) {
+            return raw;
+        }
+    }
+
     // ============================================================
     // Adapter
     // ============================================================
@@ -710,28 +816,28 @@ public class OrderInboxActivity extends AppCompatActivity {
         @Override
         public void onBindViewHolder(@NonNull VH h, int pos) {
             OrderInbox o = data.get(pos);
-            ParsedOrder parsed = ParsedOrder.fromJson(o.getParsedJson());
 
             h.tvSender.setText(safe(o.getSenderName()));
-            h.tvRaw.setText("\"" + safe(o.getRawMessage()) + "\"");
 
-            // Summary line: "JUAL — 3× Aqua + 2× Le Minerale [URGENT]"
-            StringBuilder sum = new StringBuilder();
-            if (parsed.isOrder) {
-                sum.append(parsed.type != null ? parsed.type : "?")
-                        .append(" — ").append(parsed.shortSummary());
-                if (parsed.urgent) sum.append("  ⚡");
-            } else {
-                sum.append("(bukan pesanan)");
+            // Kartu "Pesanan Terjadwal" — pengingat kunjungan/order berulang (mesin parsing WA sudah
+            // dihapus, jadi tak ada lagi "Parser / Confidence / (bukan pesanan)"). Header = jadwal,
+            // isi = instruksi pengingat, meta = tanggal (waktu lokal, bukan ISO UTC mentah).
+            int interval = o.getSchedIntervalDays();
+            h.tvSummary.setText(interval > 0
+                    ? "🗓️ Pesanan Terjadwal · tiap " + interval + " hari"
+                    : "🗓️ Pesanan Terjadwal");
+
+            // Isi pengingat apa adanya (buang prefil "PESANAN TERJADWAL — " yang sudah diwakili header,
+            // dan tanda kutip lama). Tampilkan lebih lega (maks 5 baris).
+            String body = safe(o.getRawMessage());
+            String stripPrefix = "PESANAN TERJADWAL";
+            int dash = body.indexOf("—");
+            if (body.toUpperCase(java.util.Locale.ROOT).contains(stripPrefix) && dash >= 0 && dash + 1 < body.length()) {
+                body = body.substring(dash + 1).trim();
             }
-            h.tvSummary.setText(sum.toString());
+            h.tvRaw.setText(body);
 
-            // Meta: parser badge + waktu
-            String parserLabel = OrderInbox.PARSER_CLAUDE.equals(o.getParserUsed())
-                    ? "AI" : "regex";
-            h.tvMeta.setText("Parser: " + parserLabel
-                    + "  •  Confidence: " + String.format(java.util.Locale.US, "%.0f%%", parsed.confidence * 100)
-                    + "  •  " + safe(o.getReceivedAt()));
+            h.tvMeta.setText("🕒 " + formatReceived(o.getReceivedAt()));
 
             // Status badge + tombol aksi yang tampil bergantung status
             String status = o.getStatus();
@@ -767,6 +873,9 @@ public class OrderInboxActivity extends AppCompatActivity {
                 h.actionsRow.setVisibility(View.VISIBLE);
                 h.btnArchive.setVisibility(View.GONE);
             }
+            // Pesanan Terjadwal: tombol "Buat Trx" saja — status SELESAI ditentukan saat transaksi
+            // benar-benar dibuat (di TransactionActivity), bukan oleh tombol ini.
+            h.btnApprove.setText(isScheduledReminder(o) ? "Buat Trx" : "Buat Trx + Selesai");
 
             // Visual feedback: kalau sudah dibalas, "Balas" outlined dengan checkmark
             // dan "Buat Trx + Selesai" jadi accent (terang). Kalau belum, approve

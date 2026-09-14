@@ -7,8 +7,13 @@ import android.content.IntentFilter;
 import android.content.res.ColorStateList;
 import android.net.Uri;
 import android.graphics.Color;
+import android.media.AudioAttributes;
+import android.media.Ringtone;
+import android.media.RingtoneManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
@@ -43,9 +48,11 @@ import com.crowja.damiupos.model.OrderInbox;
 import com.crowja.damiupos.model.Transaction;
 import com.crowja.damiupos.wa.NotificationAlertHelper;
 import com.crowja.damiupos.wa.ParsedOrder;
-import com.crowja.damiupos.wa.WaListenerService;
 
 import java.text.NumberFormat;
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
@@ -53,6 +60,21 @@ public class MainActivity extends AppCompatActivity {
 
     private TextView tvPendapatan, tvGalonTerjual, tvTransaksiHariIni;
     private TextView tvGalonBeredar, tvTotalPelanggan;
+    private TextView tvPendapatanTrend, tvGalonTerjualTrend, tvTransaksiTrend;
+    private TextView tvGalonBeredarTrend, tvTotalPelangganTrend;
+    private TextView tvPendapatanCaption, tvGalonTerjualCaption, tvKpiScopeNote;
+    // Kartu Pendapatan/Galon Terjual/TRX disegarkan lagi tiap {@link #SALES_CARDS_REFRESH_MS} SELAMA
+    // beranda tampil (mulai onResume, berhenti onPause) — sinkron periodik yang terasa oleh
+    // pengguna, terpisah dari SyncScheduler 15 menit di latar yang sudah ada (lihat
+    // refreshSalesCards untuk kenapa keduanya tak bisa saling menggantikan).
+    private static final long SALES_CARDS_REFRESH_MS = 60_000L;
+    private final Handler salesCardsHandler = new Handler(Looper.getMainLooper());
+    private final Runnable salesCardsTicker = new Runnable() {
+        @Override public void run() {
+            refreshSalesCards();
+            salesCardsHandler.postDelayed(this, SALES_CARDS_REFRESH_MS);
+        }
+    };
     private TextView tvEmptyRecent;
     private RecyclerView rvRecentTransactions;
     private TransactionAdapter adapter;
@@ -69,13 +91,29 @@ public class MainActivity extends AppCompatActivity {
     private int originalToolbarColor;
     private static final String DEFAULT_TOOLBAR_SUBTITLE = "Point of Sales Khusus Depot Air Minum";
 
-    /** Receiver untuk update toolbar saat ada pesanan baru dari WA. */
-    private final BroadcastReceiver newOrderReceiver = new BroadcastReceiver() {
+    /** Receiver: saat sinkron membawa data baru dari server (mis. order delivery
+     *  dibuat di dashboard web), segarkan dashboard supaya badge Antrian Delivery
+     *  langsung update tanpa harus keluar-masuk layar. */
+    private final BroadcastReceiver syncedReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            refreshOrderInboxBanner();
+            refreshDashboard();
+            // Sinkron baru saja membawa pesanan untuk perangkat ini dengan pelanggan belum
+            // lengkap → tampilkan popup "Lengkapi Data Pelanggan" (jika ada yang antre).
+            showPendingIncompleteWarnings();
         }
     };
+
+    /** Receiver: pesan admin dari dashboard ("Kirim Pesan ke Perangkat") tiba saat
+     *  layar tampil → tampilkan popup dialog (selain notifikasi Android). */
+    private final BroadcastReceiver adminMsgReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            showPendingAdminMessage();
+        }
+    };
+    /** Popup pesan admin yang sedang tampil (supaya tidak menumpuk). */
+    private androidx.appcompat.app.AlertDialog adminMsgDialog;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -110,7 +148,7 @@ public class MainActivity extends AppCompatActivity {
         // Tap toolbar saat ada pesanan baru → akui (acknowledge) +
         // buka inbox; sound + blink stop.
         toolbar.setOnClickListener(v -> {
-            if (orderInboxDao != null && orderInboxDao.countPending() > 0) {
+            if (orderInboxDao != null && orderInboxDao.countPendingForThisDevice() > 0) {
                 acknowledgeAlerts();
                 startActivity(new Intent(this, OrderInboxActivity.class));
             }
@@ -125,8 +163,16 @@ public class MainActivity extends AppCompatActivity {
         tvPendapatan = findViewById(R.id.tvPendapatan);
         tvGalonTerjual = findViewById(R.id.tvGalonTerjual);
         tvTransaksiHariIni = findViewById(R.id.tvTransaksiHariIni);
+        tvPendapatanCaption = findViewById(R.id.tvPendapatanCaption);
+        tvGalonTerjualCaption = findViewById(R.id.tvGalonTerjualCaption);
+        tvKpiScopeNote = findViewById(R.id.tvKpiScopeNote);
         tvGalonBeredar = findViewById(R.id.tvGalonBeredar);
         tvTotalPelanggan = findViewById(R.id.tvTotalPelanggan);
+        tvPendapatanTrend = findViewById(R.id.tvPendapatanTrend);
+        tvGalonTerjualTrend = findViewById(R.id.tvGalonTerjualTrend);
+        tvTransaksiTrend = findViewById(R.id.tvTransaksiTrend);
+        tvGalonBeredarTrend = findViewById(R.id.tvGalonBeredarTrend);
+        tvTotalPelangganTrend = findViewById(R.id.tvTotalPelangganTrend);
         tvEmptyRecent = findViewById(R.id.tvEmptyRecent);
         rvRecentTransactions = findViewById(R.id.rvRecentTransactions);
 
@@ -153,12 +199,41 @@ public class MainActivity extends AppCompatActivity {
             startActivity(intent);
         });
 
+        // Input Promosi Galon: buat pelanggan BARU dulu (form lengkap), lalu lanjut ke Transaksi
+        // Baru mode Promosi (toggle Gratis/Berbayar). Poin promosi otomatis dihitung di server.
+        View btnPromosi = findViewById(R.id.btnPromosi);
+        if (btnPromosi != null) btnPromosi.setOnClickListener(v ->
+                startActivity(new Intent(this, CustomerFormActivity.class)
+                        .putExtra(CustomerFormActivity.EXTRA_PROMOSI_FLOW, true)));
+        // Pelanggan Promosi: daftar + statistik konversi hasil promo galon gratis perangkat ini.
+        View btnPromoCust = findViewById(R.id.btnPromoCustomers);
+        if (btnPromoCust != null) btnPromoCust.setOnClickListener(v ->
+                startActivity(new Intent(this, PromoCustomersActivity.class)));
+
+        // Rekor Pengiriman: hari & bulan terbaik tiap perangkat (dihitung server).
+        View btnDeliveryRecord = findViewById(R.id.btnDeliveryRecord);
+        if (btnDeliveryRecord != null) btnDeliveryRecord.setOnClickListener(v ->
+                startActivity(new Intent(this, DeliveryRecordActivity.class)));
+
+        // WA Perkenalan: antrean pelanggan promosi yang belum disapa (Petugas WA Perkenalan).
+        View btnIntroWa = findViewById(R.id.btnIntroWa);
+        if (btnIntroWa != null) btnIntroWa.setOnClickListener(v ->
+                startActivity(new Intent(this, IntroWaActivity.class)));
+
+        // Daftar Kunjungan: pedoman kunjungan lapangan (pelanggan paling lama tidak order dulu).
+        View btnKunjungan = findViewById(R.id.btnKunjungan);
+        if (btnKunjungan != null) btnKunjungan.setOnClickListener(v ->
+                startActivity(new Intent(this, VisitListActivity.class)));
+
         btnFollowUp = findViewById(R.id.btnFollowUp);
         originalFollowUpTint = btnFollowUp.getBackgroundTintList();
         btnFollowUp.setOnClickListener(v -> {
             btnFollowUp.clearAnimation();
             startActivity(new Intent(this, FollowUpActivity.class));
         });
+
+        findViewById(R.id.btnAntrianDelivery).setOnClickListener(v ->
+                startActivity(new Intent(this, DeliveryQueueActivity.class)));
 
         findViewById(R.id.btnLaporan).setOnClickListener(v -> {
             startActivity(new Intent(this, ReportActivity.class));
@@ -220,20 +295,17 @@ public class MainActivity extends AppCompatActivity {
         View btnClockOut = findViewById(R.id.btnClockOut);
         View btnAdminLogout = findViewById(R.id.btnAdminLogout);
         if (btnIstirahat != null) btnIstirahat.setOnClickListener(v -> doIstirahat());
-        // Pulang: konfirmasi dulu → selfie → catat OUT → laporan + apresiasi.
-        if (btnClockOut != null) btnClockOut.setOnClickListener(v -> confirmPulang());
+        // Pulang: konfirmasi → selfie → catat OUT → laporan + apresiasi.
+        if (btnClockOut != null) btnClockOut.setOnClickListener(v -> warnIncompleteDeliveryThenConfirmPulang());
         // Admin: logout biasa (tanpa absensi/laporan).
         if (btnAdminLogout != null) btnAdminLogout.setOnClickListener(v -> doAdminLogout());
 
-        // Menu Karyawan (absensi) — admin only.
-        View cardKaryawan = findViewById(R.id.cardKaryawan);
-        if (cardKaryawan != null) {
-            cardKaryawan.setOnClickListener(v ->
-                    startActivity(new Intent(this, UserListActivity.class)));
-        }
-
         // Siapkan channel pengingat jam kerja + minta izin notifikasi (Android 13+).
         ensureNotificationAccess();
+
+        // Online: keep periodic sync armed + check for a newer app version on launch.
+        com.crowja.damiupos.sync.SyncScheduler.schedulePeriodic(getApplicationContext());
+        com.crowja.damiupos.sync.VersionUpdater.checkAndPrompt(this);
     }
 
     private static final int REQ_POST_NOTIF = 9311;
@@ -250,15 +322,161 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private static final int REQ_LOCATION = 9312;
+    private boolean locationAsked;
+
+    /** Start staff location tracking while on shift; request the permission once if needed. */
+    private void ensureLocationTracking() {
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                new SettingsDao(DatabaseHelper.getInstance(this)));
+        if (!cfg.isEnrolled() || !cfg.isLocationTrackingEnabled()) return;
+        if (androidx.core.content.ContextCompat.checkSelfPermission(this,
+                android.Manifest.permission.ACCESS_FINE_LOCATION)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            LocationService.start(this);
+        } else if (!locationAsked) {
+            locationAsked = true;
+            androidx.core.app.ActivityCompat.requestPermissions(this,
+                    new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION}, REQ_LOCATION);
+        }
+    }
+
+    private static final int REQ_BG_LOCATION = 9314;
+    /** Sudah minta izin lokasi "sepanjang waktu" pada SESI proses ini? Sengaja NON-persisten:
+     *  bila staf menutup dialog, app minta lagi saat dibuka berikutnya — pelacakan latar wajib,
+     *  jadi tak boleh menyerah permanen setelah sekali ditolak. */
+    private boolean bgLocationAsked;
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_LOCATION && grantResults.length > 0
+                && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            LocationService.start(this);
+            ensureBackgroundReliability();   // lanjut minta lokasi "sepanjang waktu" + pengecualian baterai
+        } else if (requestCode == REQ_BG_LOCATION) {
+            // Apapun hasilnya, mulai/segarkan service — dgn bg-location ter-grant, restart dari
+            // background/boot nanti bisa membaca GPS.
+            LocationService.ensureOnline(getApplicationContext());
+        }
+    }
+
+    /**
+     * Minta izin/pengaturan yang membuat sinkronisasi + lapor koordinat TETAP JALAN saat app tidak
+     * di foreground. Dipanggil dari onResume; tiap item hanya diminta SEKALI (flag SharedPreferences)
+     * supaya tidak mengganggu.
+     * <ol>
+     *   <li>Pengecualian optimasi baterai (Doze) — membantu SEMUA proses latar (sync + lokasi) agar
+     *       tak dibunuh sistem. Diminta saat perangkat terhubung ke cabang.</li>
+     *   <li>Lokasi "Izinkan sepanjang waktu" (ACCESS_BACKGROUND_LOCATION) — supaya FGS bertipe
+     *       location tetap membaca GPS setelah di-restart dari background/boot. Hanya bila pelacakan
+     *       lokasi aktif & izin lokasi dasar sudah diberi.</li>
+     * </ol>
+     */
+    private void ensureBackgroundReliability() {
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                new SettingsDao(DatabaseHelper.getInstance(this)));
+        if (!cfg.isEnrolled()) return;
+        android.content.SharedPreferences p = getSharedPreferences("damiu_reliability", MODE_PRIVATE);
+
+        // (1) Pengecualian optimasi baterai — sekali saja.
+        if (!p.getBoolean("battery_asked", false)) {
+            p.edit().putBoolean("battery_asked", true).apply();
+            try {
+                android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                    Intent i = new Intent(
+                            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                            .setData(android.net.Uri.parse("package:" + getPackageName()));
+                    if (i.resolveActivity(getPackageManager()) != null) startActivity(i);
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        // (2) Lokasi "sepanjang waktu" — hanya bila pelacakan aktif, fine sudah diberi, bg belum.
+        //     Guard NON-persisten (bgLocationAsked): app minta lagi tiap dibuka sampai diberi —
+        //     GPS latar TAK BISA terbaca tanpa izin ini, jadi jangan menyerah setelah sekali ditolak.
+        if (cfg.isLocationTrackingEnabled()
+                && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                && !bgLocationAsked
+                && androidx.core.content.ContextCompat.checkSelfPermission(this,
+                        android.Manifest.permission.ACCESS_FINE_LOCATION)
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED
+                && androidx.core.content.ContextCompat.checkSelfPermission(this,
+                        android.Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            bgLocationAsked = true;
+            androidx.core.app.ActivityCompat.requestPermissions(this,
+                    new String[]{android.Manifest.permission.ACCESS_BACKGROUND_LOCATION}, REQ_BG_LOCATION);
+        }
+    }
+
     /** Konfirmasi sebelum Pulang (clock out) — gate selfie + pencatatan OUT. */
+    /**
+     * Gerbang sebelum Konfirmasi Pulang: kalau HP ini masih punya order di Antrian Delivery
+     * (PENDING, belum diselesaikan/ditunda), tampilkan peringatan seru dulu — staf gampang lupa
+     * ada pengiriman menggantung saat buru-buru pulang, dan order itu akan tertinggal di HP sampai
+     * staf berikutnya (atau dia sendiri besok) membukanya lagi. "Tetap Pulang" tetap tersedia
+     * (bukan blokir keras — order boleh dilanjutkan staf shift berikutnya), hanya diingatkan dulu.
+     */
+    private void warnIncompleteDeliveryThenConfirmPulang() {
+        int pending = 0;
+        try {
+            pending = transactionDao.countDeliveryQueue();
+        } catch (Exception ignored) {}
+        if (pending <= 0) {
+            confirmPulang();
+            return;
+        }
+
+        IncompleteCustomerDialog.playAlarm(this);
+        new AlertDialog.Builder(this)
+                .setIcon(android.R.drawable.ic_dialog_alert)
+                .setTitle("⚠️ Masih Ada Pengiriman Belum Selesai!")
+                .setMessage("Antrian Delivery HP ini masih ada " + pending
+                        + " pesanan yang belum diselesaikan/ditunda.\n\n"
+                        + "Yakin mau Pulang sekarang? Order yang tersisa akan menunggu "
+                        + "sampai dilanjutkan (oleh kamu lagi atau staf shift berikutnya).")
+                .setPositiveButton("Lihat Antrian Dulu", (d, w) ->
+                        startActivity(new Intent(this, DeliveryQueueActivity.class)))
+                .setNegativeButton("Tetap Pulang", (d, w) -> confirmPulang())
+                .show();
+    }
+
     private void confirmPulang() {
+        long uid = settingsDao.getCurrentUserId();
+        StringBuilder msg = new StringBuilder("Akhiri shift dan catat jam pulang sekarang? "
+                + "Laporan shift akan dikirim ke admin.");
+        try {
+            String[] period = AttendanceRecap.currentPeriod(settingsDao.getPayrollCutoffDay());
+            AttendanceRecap.PeriodSummary ps = AttendanceRecap.computePeriodSummary(
+                    DatabaseHelper.getInstance(this), uid, period[0], period[1],
+                    settingsDao.getDailyNormalHours());
+            msg.append("\n\nPeriode cut-off (").append(period[0]).append(" s/d ")
+                    .append(period[1]).append("):\n");
+            msg.append("Kerja ").append(fmtHours(ps.totalHours))
+                    .append(" dari ideal ").append(fmtHours(ps.requiredHours)).append(".\n");
+            double diff = ps.diffHours;
+            if (diff >= 0.05) {
+                msg.append("Status: LEBIH ").append(fmtHours(diff)).append(" — mantap! 🎉");
+            } else if (diff <= -0.05) {
+                msg.append("Status: KURANG ").append(fmtHours(-diff)).append(".");
+            } else {
+                msg.append("Status: CUKUP ✓");
+            }
+        } catch (Exception ignored) {}
         new AlertDialog.Builder(this)
                 .setTitle("Konfirmasi Pulang")
-                .setMessage("Akhiri shift dan catat jam pulang sekarang? "
-                        + "Laporan shift akan dikirim ke admin.")
+                .setMessage(msg.toString())
                 .setPositiveButton("Ya, Pulang", (d, w) -> startSelfieThenClockOut())
                 .setNegativeButton("Batal", null)
                 .show();
+    }
+
+    /** Format jam desimal → "Xj Ym" (pakai formatter shift). */
+    private String fmtHours(double hours) {
+        return ShiftReporter.formatDuration(Math.round(hours * 3600000.0));
     }
 
     /**
@@ -274,15 +492,98 @@ public class MainActivity extends AppCompatActivity {
         card.setVisibility(show ? View.VISIBLE : View.GONE);
 
         boolean isAdmin = false;
+        boolean isViewer = false;
+        boolean isMarketing = false;
+        // Kapabilitas layar dibaca dari predikat di model User, bukan disusun ulang di sini —
+        // dua sumber kebenaran untuk aturan peran yang sama pasti menyimpang cepat atau lambat.
+        boolean canSeeDeliveryRecord = false;
         if (show) {
             com.crowja.damiupos.model.User cur =
                     new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid);
             isAdmin = cur != null && cur.isAdmin();
+            isViewer = cur != null && cur.isViewer();
+            isMarketing = cur != null && cur.isMarketing();
+            canSeeDeliveryRecord = cur != null && cur.canViewDeliveryRecord();
+        }
+        boolean tracksAttendance = show && !isAdmin && !isViewer && !isMarketing; // hanya staf yang absen
+
+        // Viewer tidak boleh buat transaksi → sembunyikan aksi cepat Jual/Kembali.
+        View qaJual = findViewById(R.id.btnJualGalon);
+        View qaKembali = findViewById(R.id.btnGalonKembali);
+        if (qaJual != null) qaJual.setVisibility(isViewer ? View.GONE : View.VISIBLE);
+        if (qaKembali != null) qaKembali.setVisibility(isViewer ? View.GONE : View.VISIBLE);
+
+        // Marketing kini JUGA boleh Jual Air Minum & Botol Galon Kembali langsung dari sini
+        // (dulu disembunyikan, hanya Promosi) — tombol Promosi tetap tampil terpisah di bawah.
+        View cardQuickActions = findViewById(R.id.cardQuickActions);
+        if (cardQuickActions != null) {
+            cardQuickActions.setVisibility(View.VISIBLE);
+        }
+        // Marketing tidak ikut flow delivery (antrean kiriman dikerjakan kurir/staf depot)
+        // → sembunyikan tombol Delivery beserta badge-nya (parent FrameLayout keduanya).
+        View btnDelivery = findViewById(R.id.btnAntrianDelivery);
+        if (btnDelivery != null && btnDelivery.getParent() instanceof View) {
+            ((View) btnDelivery.getParent()).setVisibility(isMarketing ? View.GONE : View.VISIBLE);
         }
 
-        // Menu Karyawan hanya untuk admin yang sedang login.
-        View cardKaryawan = findViewById(R.id.cardKaryawan);
-        if (cardKaryawan != null) cardKaryawan.setVisibility(isAdmin ? View.VISIBLE : View.GONE);
+        // Pencapaian Penjualan: Admin & Marketing (User.canViewSalesAchievement) — peran yang
+        // memantau capaian tim. Disembunyikan untuk peran lain: layarnya memuat omzet SE-CABANG.
+        // Visibilitas dipasang pada SEL grid (FrameLayout), bukan tombolnya — tombol yang GONE di
+        // dalam sel yang VISIBLE tetap memesan petak grid dan meninggalkan lubang.
+        View boxAchievement = findViewById(R.id.boxSalesAchievement);
+        View btnAchievement = findViewById(R.id.btnSalesAchievement);
+        if (boxAchievement != null) {
+            boolean canSee = show && (isAdmin || isMarketing);
+            boxAchievement.setVisibility(canSee ? View.VISIBLE : View.GONE);
+        }
+        if (btnAchievement != null) {
+            btnAchievement.setOnClickListener(v ->
+                    startActivity(new Intent(this, SalesAchievementActivity.class)));
+        }
+
+        // Rekor Pengiriman: Staf/SPV/Admin (User.canViewDeliveryRecord). Isinya hitungan ORDER
+        // SELESAI, bukan omzet — justru kurirlah yang paling berkepentingan melihat rekornya.
+        View boxDeliveryRecord = findViewById(R.id.boxDeliveryRecord);
+        if (boxDeliveryRecord != null) {
+            boxDeliveryRecord.setVisibility(show && canSeeDeliveryRecord ? View.VISIBLE : View.GONE);
+        }
+
+        // Input Promosi Galon: Marketing & Admin selalu; staf lain bila promo_enabled (salary_config).
+        View boxPromosi = findViewById(R.id.boxPromosi);
+        if (boxPromosi != null) {
+            boolean canPromosi = show
+                    && new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).canPromosi(uid);
+            boxPromosi.setVisibility(canPromosi ? View.VISIBLE : View.GONE);
+            // Pelanggan Promosi (daftar + statistik konversi) mengikuti gate yang sama.
+            View boxPromoCust = findViewById(R.id.boxPromoCustomers);
+            if (boxPromoCust != null) boxPromoCust.setVisibility(canPromosi ? View.VISIBLE : View.GONE);
+        }
+
+        // Daftar Kunjungan Urgent: Marketing & Admin. Visibilitas dipasang pada PEMBUNGKUS
+        // (FrameLayout tombol + badge) — kalau dipasang di tombolnya saja, badge jumlah tetap
+        // melayang di layar meski tombolnya sudah disembunyikan.
+        View wrapKunjungan = findViewById(R.id.wrapKunjungan);
+        if (wrapKunjungan != null) {
+            wrapKunjungan.setVisibility(show && (isMarketing || isAdmin) ? View.VISIBLE : View.GONE);
+        }
+
+        // Sel WA Perkenalan ikut ditentukan di updatePromoIntroBadge (gate-nya bukan peran, tapi
+        // centang "Petugas WA Perkenalan" di web) — panggil dulu supaya grid ditata setelah SEMUA
+        // sel tahu nasibnya, bukan setengah jalan.
+        updatePromoIntroBadge();   // menata ulang grid di ujungnya
+        expandLoneMenuButtons();   // menu bawah: yang tetangganya mati melebar sebaris penuh
+
+        // Stok Galon & Reseller: khusus Admin. Non-admin (Staf/SPV/Marketing/Viewer) tak perlu
+        // melihat angka stok gudang atau data reseller/komisi — sembunyikan tile & kartu statistiknya.
+        boolean adminOnly = show && isAdmin;
+        View cardGalonBeredar = findViewById(R.id.cardGalonBeredar);
+        if (cardGalonBeredar != null) {
+            cardGalonBeredar.setVisibility(!show || adminOnly ? View.VISIBLE : View.GONE);
+        }
+        View btnReseller = findViewById(R.id.btnReseller);
+        if (btnReseller != null) {
+            btnReseller.setVisibility(!show || adminOnly ? View.VISIBLE : View.GONE);
+        }
 
         if (!show) return;
 
@@ -293,11 +594,12 @@ public class MainActivity extends AppCompatActivity {
         TextView tvShift = findViewById(R.id.tvOperatorShift);
         tvName.setText(settingsDao.getCurrentUserName());
 
-        if (isAdmin) {
+        if (!tracksAttendance) {
+            // Admin & Viewer: tanpa absensi, hanya tombol Logout.
             if (btnIstirahat != null) btnIstirahat.setVisibility(View.GONE);
             if (btnClockOut != null) btnClockOut.setVisibility(View.GONE);
             if (btnAdminLogout != null) btnAdminLogout.setVisibility(View.VISIBLE);
-            tvShift.setText("Admin");
+            tvShift.setText(isViewer ? "Viewer" : isMarketing ? "Marketing" : "Admin");
         } else {
             if (btnIstirahat != null) btnIstirahat.setVisibility(View.VISIBLE);
             if (btnClockOut != null) btnClockOut.setVisibility(View.VISIBLE);
@@ -307,16 +609,90 @@ public class MainActivity extends AppCompatActivity {
                         DatabaseHelper.getInstance(this), uid);
                 String info = "Kerja " + ShiftReporter.formatDuration(s.workMillis);
                 if (s.breakCount > 0) info += " • Istirahat " + s.breakCount + "x";
+                // Akumulasi jam kerja periode cut-off (elapsed / ideal).
+                try {
+                    String[] period = AttendanceRecap.currentPeriod(settingsDao.getPayrollCutoffDay());
+                    AttendanceRecap.PeriodSummary ps = AttendanceRecap.computePeriodSummary(
+                            DatabaseHelper.getInstance(this), uid, period[0], period[1],
+                            settingsDao.getDailyNormalHours());
+                    info += "\n" + fmtHours(ps.totalHours) + " / "
+                            + fmtHours(ps.requiredHours);
+                } catch (Exception ignored) {}
                 tvShift.setText(info);
                 // Self-heal: pastikan pengingat "jam kerja terpenuhi" terjadwal
                 // selama shift masih terbuka (no-op kalau target sudah tercapai).
                 if (s.clockIn != null) {
                     WorkHoursReminder.schedule(getApplicationContext(), uid);
+                    maybeShowWorkHoursAppreciation(uid);
+                    // Lacak lokasi staff selama shift berjalan (no-op kalau izin/
+                    // pelacakan dimatikan). Dihentikan saat Istirahat/Pulang.
+                    ensureLocationTracking();
                 }
             } catch (Exception e) {
                 tvShift.setText("Sedang bekerja");
             }
         }
+    }
+
+    private Ringtone appreciationRingtone;
+
+    /**
+     * Popup apresiasi (sekali per periode cut-off per staf) begitu akumulasi jam
+     * kerja PERIODE sudah memenuhi target (hari kerja ideal × jam ideal/hari).
+     * Tombol "OK" + suara nyaring. Pendamping notifikasi Android.
+     */
+    private void maybeShowWorkHoursAppreciation(long uid) {
+        String[] period = AttendanceRecap.currentPeriod(settingsDao.getPayrollCutoffDay());
+        AttendanceRecap.PeriodSummary ps = AttendanceRecap.computePeriodSummary(
+                DatabaseHelper.getInstance(this), uid, period[0], period[1],
+                settingsDao.getDailyNormalHours());
+        if (ps.requiredHours <= 0 || ps.totalHours < ps.requiredHours) return;
+        String guardKey = "work_met_popup_" + uid;     // sekali per periode cut-off
+        if (period[1].equals(settingsDao.get(guardKey, ""))) return;
+        if (isFinishing() || isDestroyed()) return;
+        settingsDao.set(guardKey, period[1]);
+
+        String uname = settingsDao.getCurrentUserName();
+        String first = (uname != null && !uname.isEmpty()) ? uname : "Kak";
+        SpannableStringBuilder msg = new SpannableStringBuilder();
+        msg.append("Hebat, " + first + "! Jam kerja periode cut-off ini sudah terpenuhi.\n\n");
+        appendStyled(msg, "Total periode: " + fmtHours(ps.totalHours)
+                        + " / target " + fmtHours(ps.requiredHours),
+                Color.parseColor("#1565C0"), true, 1.15f);
+        msg.append("\n\nTerima kasih atas dedikasimu. 🎉");
+
+        playLoudChime();
+        new AlertDialog.Builder(this)
+                .setTitle("🎉 Jam Kerja Terpenuhi!")
+                .setMessage(msg)
+                .setCancelable(false)
+                .setPositiveButton("OK", (d, w) -> stopChime())
+                .setOnDismissListener(d -> stopChime())
+                .show();
+    }
+
+    /** Mainkan nada nyaring (stream alarm) sekali. */
+    private void playLoudChime() {
+        try {
+            Uri snd = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+            if (snd == null) snd = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+            Ringtone rt = RingtoneManager.getRingtone(getApplicationContext(), snd);
+            if (rt == null) return;
+            rt.setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build());
+            appreciationRingtone = rt;
+            rt.play();
+        } catch (Exception ignored) {}
+    }
+
+    private void stopChime() {
+        try {
+            if (appreciationRingtone != null && appreciationRingtone.isPlaying()) {
+                appreciationRingtone.stop();
+            }
+        } catch (Exception ignored) {}
     }
 
     /**
@@ -326,15 +702,24 @@ public class MainActivity extends AppCompatActivity {
     private void doIstirahat() {
         long uid = settingsDao.getCurrentUserId();
         if (uid <= 0) return;
+        String uname = settingsDao.getCurrentUserName();
         new AlertDialog.Builder(this)
                 .setTitle("Istirahat?")
-                .setMessage("Aplikasi akan terkunci. Anda perlu clock in lagi (PIN) "
-                        + "untuk melanjutkan bekerja.")
+                .setMessage("Aplikasi terkunci selama istirahat. Tekan \"Lanjut Kerja\" "
+                        + "untuk melanjutkan tanpa PIN, atau rekan lain bisa login.")
                 .setPositiveButton("Ya, Istirahat", (d, w) -> {
-                    new AttendanceDao(DatabaseHelper.getInstance(this))
+                    long attId = new AttendanceDao(DatabaseHelper.getInstance(this))
                             .log(uid, Attendance.EVENT_BREAK);
+                    LocationService.stampAttendanceLocation(this, attId);   // GPS istirahat untuk dashboard
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());   // absensi real-time
                     // Pause pengingat jam kerja — di-rearm saat clock in lagi.
                     WorkHoursReminder.cancel(getApplicationContext(), uid);
+                    // Istirahat: berhenti melacak LOKASI, tapi service tetap hidup
+                    // (poll-only) supaya polling background tetap aktif selama shift.
+                    LocationService.pollOnly(getApplicationContext());
+                    // Ingat siapa yang istirahat → tombol "Lanjut Kerja" 1 ketukan di layar login
+                    // (tanpa PIN/selfie). Shift tetap terbuka sampai Pulang.
+                    settingsDao.setBreakUser(uid, uname);
                     settingsDao.clearCurrentUser();
                     Intent i = new Intent(this, LoginActivity.class);
                     i.putExtra(LoginActivity.EXTRA_FROM_BREAK, true);
@@ -349,6 +734,10 @@ public class MainActivity extends AppCompatActivity {
     private static final int REQ_SELFIE_LOGOUT = 702;
     private long pendingLogoutUid;
     private String pendingLogoutName;
+    // Vonis area absensi untuk event OUT yang sedang diproses (diisi dari hasil layar selfie).
+    private boolean pendingOutOfRadius;
+    private int pendingDistanceM = -1;
+    private String pendingRadiusReason;
 
     /** Tombol Pulang: ambil selfie wajah dulu, baru proses clock out. */
     private void startSelfieThenClockOut() {
@@ -374,6 +763,13 @@ public class MainActivity extends AppCompatActivity {
             }
             String photo = data != null
                     ? data.getStringExtra(CameraCaptureActivity.EXTRA_PHOTO_PATH) : null;
+            // Vonis area absensi dari layar selfie (alasan sudah ditagih di sana bila di luar radius).
+            pendingOutOfRadius = data != null
+                    && data.getBooleanExtra(CameraCaptureActivity.EXTRA_OUT_OF_RADIUS, false);
+            pendingDistanceM = data != null
+                    ? data.getIntExtra(CameraCaptureActivity.EXTRA_DISTANCE_M, -1) : -1;
+            pendingRadiusReason = data != null
+                    ? data.getStringExtra(CameraCaptureActivity.EXTRA_RADIUS_REASON) : null;
             finishClockOut(photo);
         }
     }
@@ -398,54 +794,35 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        // Foto login diambil SEBELUM OUT (setelah OUT, shift berjalan tertutup).
-        String loginPhoto = attDao.getCurrentShiftLoginPhoto(uid);
-        String summary = ShiftReporter.buildSummaryText(this, dbHelper, uid, uname);
         // "Jam kerja hari ini" untuk popup apresiasi — dibatasi tanggal hari ini
         // (akurat walau shift sempat dibiarkan terbuka lintas hari).
         long workMs = ShiftReporter.workedMillisToday(dbHelper, uid);
 
         // Catat OUT + foto pulang.
-        attDao.log(uid, Attendance.EVENT_OUT, logoutPhoto);
+        long outAttId = attDao.log(uid, Attendance.EVENT_OUT, logoutPhoto,
+                pendingOutOfRadius, pendingDistanceM, pendingRadiusReason);
+        pendingOutOfRadius = false;
+        pendingDistanceM = -1;
+        pendingRadiusReason = null;
+        LocationService.stampAttendanceLocation(this, outAttId);   // GPS pulang untuk dashboard
+        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());   // absensi real-time
         // Shift selesai → batalkan pengingat jam kerja + lepas sesi SEGERA
         // (sinkron). Kalau popup apresiasi hilang karena rotasi/destroy, gate
         // onCreate tetap mengarahkan ke login (tidak terjebak masih "login").
         WorkHoursReminder.cancel(getApplicationContext(), uid);
+        // Shift selesai → tutup flag + hentikan GPS, TAPI service tetap hidup dalam
+        // mode poll-only supaya sinkronisasi dengan dashboard tetap jalan di
+        // background (mis. karyawan baru ditambah admin tetap terkirim ke HP).
+        settingsDao.setShiftActive(false);
+        LocationService.pollOnly(getApplicationContext());
         pendingLogoutUid = 0;
         pendingLogoutName = null;
         settingsDao.clearCurrentUser();
 
-        // Kirim laporan shift (teks + foto login & pulang) ke email admin.
-        if (settingsDao.isShiftEmailConfigured()) {
-            String depot = settingsDao.getDepotName();
-            if (depot == null || depot.isEmpty()) depot = "DAMIU POS";
-            String stamp = new java.text.SimpleDateFormat("dd MMM yyyy HH:mm",
-                    new Locale("id", "ID")).format(new java.util.Date());
-            String subject = "Laporan Shift - " + depot + " - " + uname + " - " + stamp;
-            String body = summary
-                    + "\n\nFoto wajah saat Clock In & Pulang terlampir."
-                    + "\nDikirim otomatis oleh DAMIU POS.";
-            java.util.List<java.io.File> atts = new java.util.ArrayList<>();
-            addIfExists(atts, loginPhoto);
-            addIfExists(atts, logoutPhoto);
-            ShiftEmailSender.sendAsync(getApplicationContext(),
-                    settingsDao.getSmtpHost(), settingsDao.getSmtpPort(),
-                    settingsDao.getSmtpUser(), settingsDao.getSmtpPass(),
-                    settingsDao.getAdminEmail(), subject, body, atts);
-        } else {
-            Toast.makeText(this,
-                    "Email/SMTP admin belum diatur — laporan tidak terkirim",
-                    Toast.LENGTH_LONG).show();
-        }
+        // Data shift (termasuk event OUT + foto) tersimpan lokal & didorong ke
+        // server — admin melihatnya di dashboard web. Tidak ada lagi email.
+        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
 
-        // Rekap absensi bulanan + rekap pekanan otomatis (periode terbaru yang
-        // selesai) — auto retry di hari berikutnya kalau di hari trigger tidak
-        // ada yang login.
-        AttendanceRecap.maybeSendDueRecap(getApplicationContext(), dbHelper, true);
-        AttendanceRecap.maybeSendDueWeeklyRecap(getApplicationContext(), dbHelper, true);
-
-        // Popup apresiasi + jam kerja hari ini. Navigasi ke login DITUNDA
-        // sampai user menekan OK (kalau langsung finish(), dialog ikut tertutup).
         showAppreciationThenLogout(uname, workMs);
     }
 
@@ -460,6 +837,26 @@ public class MainActivity extends AppCompatActivity {
         msg.append("Terima kasih, " + first + "! Kerja kerasmu hari ini sangat berarti.\n\n");
         appendStyled(msg, "Total kerja hari ini: " + ShiftReporter.formatDurationLong(workMs),
                 Color.parseColor("#1565C0"), true, 1.15f);
+        // Bonus penjualan: hari ini + akumulasi periode cut-off (kalau diaktifkan).
+        if (settingsDao.isSalesBonusEnabled()) {
+            try {
+                NumberFormat bnf = NumberFormat.getInstance(new Locale("id", "ID"));
+                String today = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
+                String[] period = AttendanceRecap.currentPeriod(settingsDao.getPayrollCutoffDay());
+                int galonToday = (int) transactionDao.getSummaryByDateRange(today, today)[1];
+                int galonPeriod = (int) transactionDao.getSummaryByDateRange(period[0], today)[1];
+                double bonusToday = ShiftReporter.salesBonusValue(settingsDao, galonToday);
+                double bonusPeriod = ShiftReporter.salesBonusValue(settingsDao, galonPeriod);
+                msg.append("\n\n");
+                appendStyled(msg, "Bonus penjualan hari ini: Rp " + bnf.format(Math.round(bonusToday))
+                                + " (" + galonToday + " galon)",
+                        Color.parseColor("#2E7D32"), true, 1.05f);
+                msg.append("\n");
+                appendStyled(msg, "Akumulasi bonus periode ini: Rp " + bnf.format(Math.round(bonusPeriod))
+                                + " (" + galonPeriod + " galon)",
+                        Color.parseColor("#2E7D32"), false, 1f);
+            } catch (Exception ignored) {}
+        }
         msg.append("\n\nIstirahat yang cukup, sampai jumpa besok! 👋");
         new AlertDialog.Builder(this)
                 .setTitle("👋 Selamat Pulang!")
@@ -497,12 +894,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private static void addIfExists(java.util.List<java.io.File> list, String path) {
-        if (path == null || path.isEmpty()) return;
-        java.io.File f = new java.io.File(path);
-        if (f.exists()) list.add(f);
-    }
-
     /** Admin: logout biasa tanpa absensi/laporan. */
     private void doAdminLogout() {
         settingsDao.clearCurrentUser();
@@ -521,9 +912,12 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onPrepareOptionsMenu(Menu menu) {
-        // Ikon amplop (inbox pesanan WA) hanya tampil kalau auto-detect aktif.
+        // Ikon amplop (inbox Pesanan Terjadwal) tampil hanya untuk NON-marketing saat ada
+        // pengingat pending. Marketing tidak menangani Pesanan Terjadwal → ikon disembunyikan.
         MenuItem inbox = menu.findItem(R.id.action_inbox);
-        if (inbox != null) inbox.setVisible(settingsDao.isWaAutoDetectEnabled());
+        if (inbox != null) inbox.setVisible(
+                !com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(this)
+                        && orderInboxDao != null && orderInboxDao.countPendingForThisDevice() > 0);
         return super.onPrepareOptionsMenu(menu);
     }
 
@@ -539,8 +933,13 @@ public class MainActivity extends AppCompatActivity {
             startActivity(new Intent(this, OrderInboxActivity.class));
             return true;
         }
+        if (item.getItemId() == R.id.action_sync) {
+            startActivity(new Intent(this, SyncSettingsActivity.class));
+            return true;
+        }
         return super.onOptionsItemSelected(item);
     }
+
 
     private void showAboutDialog() {
         View view = LayoutInflater.from(this).inflate(R.layout.dialog_about, null);
@@ -557,8 +956,17 @@ public class MainActivity extends AppCompatActivity {
                 view.findViewById(R.id.btnAboutUpgrade);
         com.google.android.material.button.MaterialButton btnManage =
                 view.findViewById(R.id.btnAboutManage);
+        com.google.android.material.button.MaterialButton btnChangelog =
+                view.findViewById(R.id.btnAboutChangelog);
 
         tvVersion.setText("v" + BuildConfig.VERSION_NAME);
+
+        if (btnChangelog != null) {
+            btnChangelog.setOnClickListener(v -> {
+                startActivity(new Intent(this, ChangelogActivity.class));
+                dialog.dismiss();
+            });
+        }
 
         boolean pro = settingsDao.isProActive();
         if (pro) {
@@ -613,23 +1021,137 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        // Multi-user login may have just been turned on from the dashboard (synced via
+        // app_settings) — enforce the login/clock-in gate now, without needing a cold restart.
+        // Guard isFinishing() so we don't double-launch when onCreate already gated + finished.
+        if (!isFinishing() && settingsDao.isMultiUserEnabled() && settingsDao.getCurrentUserId() <= 0) {
+            startActivity(new Intent(this, LoginActivity.class));
+            finish();
+            return;
+        }
         refreshDashboard();
-        // Listen broadcast pesanan WA baru
-        IntentFilter f = new IntentFilter(WaListenerService.ACTION_NEW_ORDER);
+        // Kontrol Versi: bila versi APK ini DINONAKTIFKAN dari dashboard (flag dari heartbeat
+        // /api/me), tampilkan popup minta update. Dipanggil di onResume karena HP depot bisa
+        // terbuka berhari-hari — cek murah (baca flag lokal, hormati snooze 1 jam).
+        com.crowja.damiupos.sync.VersionUpdater.maybePromptBlocked(this);
+        // Online (REST, no MQTT): kick a sync + online tick (config/version/
+        // broadcasts) so opening the app pulls fresh data and admin messages.
+        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+        // Hangatkan cache logo depot (disinkron dari web) supaya struk pertama pun sudah ada logonya.
+        new Thread(() -> com.crowja.damiupos.util.DepotLogo.ensureDownloaded(getApplicationContext())).start();
+        // Sinkronisasi berkelanjutan: nyalakan service polling yang berjalan terus
+        // selama app hidup (termasuk background), tidak bergantung pada shift —
+        // sehingga perubahan dari dashboard (karyawan baru, dll.) sampai real-time.
+        LocationService.ensureOnline(getApplicationContext());
+        // Minta pengecualian baterai + lokasi "sepanjang waktu" (sekali) supaya sinkronisasi &
+        // lapor koordinat tetap jalan walau app tidak di foreground / setelah reboot.
+        ensureBackgroundReliability();
+        // Listen broadcast "sinkron membawa data baru" → badge Antrian Delivery
+        // (dan KPI/transaksi terakhir) ikut update real-time saat dashboard terbuka.
+        IntentFilter syncedFilter = new IntentFilter(com.crowja.damiupos.sync.SyncEngine.ACTION_SYNCED);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(newOrderReceiver, f, Context.RECEIVER_NOT_EXPORTED);
+            registerReceiver(syncedReceiver, syncedFilter, Context.RECEIVER_NOT_EXPORTED);
         } else {
-            registerReceiver(newOrderReceiver, f);
+            registerReceiver(syncedReceiver, syncedFilter);
+        }
+        // Listen pesan admin baru → popup dialog saat dashboard tampil.
+        IntentFilter adminMsgFilter = new IntentFilter(
+                com.crowja.damiupos.sync.OnlineNotifier.ACTION_ADMIN_MESSAGE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(adminMsgReceiver, adminMsgFilter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(adminMsgReceiver, adminMsgFilter);
         }
         refreshOrderInboxBanner();
         // Re-evaluasi visibilitas ikon inbox (auto-detect bisa di-toggle di Pengaturan).
         invalidateOptionsMenu();
+        // Tampilkan pesan admin yang tertunda (mis. tiba saat app di background).
+        showPendingAdminMessage();
+        // Popup "Lengkapi Data Pelanggan" tertunda: pesanan baru untuk perangkat ini yang
+        // pelanggannya belum lengkap foto/koordinat (mis. sinkron terjadi saat app di background).
+        showPendingIncompleteWarnings();
+        // Alarm langka: transaksi yang SUDAH lama (>15 mnt) tapi belum terkonfirmasi tersinkron ke
+        // server — normalnya nihil karena sync + reconcile memulihkannya otomatis. Kalau tetap ada,
+        // operator perlu tahu (mis. HP lama offline / satu baris bermasalah) agar penjualan tak "hilang"
+        // dari dashboard. Query di thread background; Toast di main thread (guard activity masih hidup).
+        warnIfUnsyncedTransactions();
+        // Kartu Pendapatan/Galon Terjual/TRX tetap disegarkan berkala SELAMA beranda tampil — lihat
+        // refreshSalesCards untuk alasan admin/marketing/spv butuh panggilan server berulang, bukan
+        // cuma sinkron dua-arah 15 menit yang sudah berjalan di latar.
+        salesCardsHandler.removeCallbacks(salesCardsTicker);
+        salesCardsHandler.postDelayed(salesCardsTicker, SALES_CARDS_REFRESH_MS);
+    }
+
+    /** Peringatkan bila ada transaksi lama yang belum tersinkron (lihat TransactionDao.countUnsynced). */
+    private void warnIfUnsyncedTransactions() {
+        new Thread(() -> {
+            final int stuck;
+            try { stuck = transactionDao.countUnsynced(15); }
+            catch (Throwable ignored) { return; }
+            if (stuck <= 0) return;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(this,
+                        "⚠ " + stuck + " transaksi belum tersinkron ke server. Pastikan HP online; "
+                                + "sistem akan mencoba mengirim ulang otomatis.",
+                        Toast.LENGTH_LONG).show();
+                com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+            });
+        }).start();
     }
 
     @Override
     protected void onPause() {
         super.onPause();
-        try { unregisterReceiver(newOrderReceiver); } catch (Exception ignored) {}
+        try { unregisterReceiver(syncedReceiver); } catch (Exception ignored) {}
+        try { unregisterReceiver(adminMsgReceiver); } catch (Exception ignored) {}
+        salesCardsHandler.removeCallbacks(salesCardsTicker);
+    }
+
+    /**
+     * Tampilkan pesan admin dari dashboard ("Kirim Pesan ke Perangkat") sebagai popup
+     * dialog (selain notifikasi Android). Sumber kebenaran = pending message di settings,
+     * jadi tampil sekali lalu dibersihkan (tidak dobel antara broadcast & onResume).
+     */
+    private void showPendingAdminMessage() {
+        if (isFinishing() || settingsDao == null) return;
+        if (!settingsDao.hasPendingAdminMessage()) return;
+        String title = settingsDao.getPendingAdminMessageTitle();
+        String body = settingsDao.getPendingAdminMessageBody();
+        settingsDao.clearPendingAdminMessage();
+        if (adminMsgDialog != null && adminMsgDialog.isShowing()) adminMsgDialog.dismiss();
+        adminMsgDialog = new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setIcon(android.R.drawable.ic_dialog_email)
+                .setTitle(title == null || title.isEmpty() ? "Pesan dari Admin" : title)
+                .setMessage(body)
+                .setPositiveButton("OK", null)
+                .show();
+    }
+
+    /**
+     * Tampilkan popup "⚠️ Lengkapi Data Pelanggan" untuk pesanan baru (antrean) yang pelanggannya
+     * belum lengkap foto/koordinat — dikumpulkan saat sinkron (lihat {@code SyncEngine}). Antrean
+     * dikonsumsi sekali; bila ada beberapa, tampilkan satu popup teratas dan sisakan sisanya untuk
+     * kunjungan layar berikutnya (hindari menumpuk dialog). Pelanggan yang sudah lengkap sejak
+     * dikumpulkan (mis. dilengkapi via perangkat lain) dibuang diam-diam.
+     */
+    private void showPendingIncompleteWarnings() {
+        if (isFinishing() || settingsDao == null || customerDao == null) return;
+        // Setting cabut-kredit nonaktif untuk cabang ini → tak ada void yang perlu dicegah;
+        // jangan ganggu operator dengan popup (biarkan antrean apa adanya bila nanti diaktifkan).
+        if (!settingsDao.isRevokeCreditIncompleteEnabled()) return;
+        java.util.List<Long> ids = settingsDao.takePendingIncompleteWarn();
+        if (ids.isEmpty()) return;
+        com.crowja.damiupos.model.Customer toShow = null;
+        java.util.List<Long> rest = new java.util.ArrayList<>();
+        for (Long id : ids) {
+            com.crowja.damiupos.model.Customer c = customerDao.getById(id);
+            if (!IncompleteCustomerDialog.shouldWarn(c)) continue;   // sudah lengkap → buang
+            if (toShow == null) toShow = c; else rest.add(id);
+        }
+        // Sisanya tampil di kunjungan layar berikutnya (satu popup per kali agar tak menumpuk).
+        if (!rest.isEmpty()) settingsDao.addPendingIncompleteWarn(rest);
+        if (toShow != null) IncompleteCustomerDialog.warn(this, toShow);
     }
 
     private void startBlink(View view) {
@@ -640,7 +1162,28 @@ public class MainActivity extends AppCompatActivity {
         view.startAnimation(blink);
     }
 
+    /**
+     * Badge "Daftar Kunjungan Urgent" = berapa ORANG yang masih menunggu dikunjungi.
+     *
+     * Sumbernya CustomerDao.countVisitUrgent(), yang memakai definisi SQL yang sama persis dengan
+     * isi daftarnya — kalau dihitung terpisah, badge dan daftar cepat atau lambat pasti berbeda.
+     * Dipanggil bersama badge Follow Up supaya keduanya segar di saat yang sama (termasuk setelah
+     * sinkron membawa tanda baru dari web).
+     */
+    private void updateVisitUrgentIndicator() {
+        TextView badge = findViewById(R.id.tvKunjunganBadge);
+        if (badge == null) return;
+        int n = customerDao.countVisitUrgent();
+        if (n > 0) {
+            badge.setText(String.valueOf(n));
+            badge.setVisibility(View.VISIBLE);
+        } else {
+            badge.setVisibility(View.GONE);
+        }
+    }
+
     private void updateFollowUpIndicator() {
+        updateVisitUrgentIndicator();
         if (btnFollowUp == null) return;
         int count = customerDao.countFollowUpCandidates(settingsDao.getFollowupDays());
         btnFollowUp.setText("Follow Up");
@@ -666,13 +1209,141 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /** Badge jumlah order di Antrian Delivery (PENDING). */
+    private void updateDeliveryBadge() {
+        TextView badge = findViewById(R.id.tvDeliveryBadge);
+        if (badge == null) return;
+        int count = 0;
+        try {
+            count = transactionDao.countDeliveryQueue();
+        } catch (Exception ignored) {}
+        if (count > 0) {
+            badge.setText(String.valueOf(count));
+            badge.setVisibility(View.VISIBLE);
+        } else {
+            badge.setVisibility(View.GONE);
+        }
+    }
+
+    /**
+     * Badge "WA Perkenalan tertunggak" pada tombol Pelanggan Promosi — HANYA untuk perangkat yang
+     * dicentang "Petugas WA Perkenalan" di web. Hitungan = pelanggan promosi (gratis/berbayar)
+     * yang belum pernah dikirim WA Perkenalan, disaring ke sektor wilayah yang ditugaskan
+     * ({@link IntroWaDuty#filterPending}); turun otomatis begitu perangkat MANA PUN mengirim
+     * (stempel server tersinkron pull). Disegarkan bersama refreshDashboard (ACTION_SYNCED).
+     */
+    /**
+     * Menu utama 2 kolom (Antrian Delivery … Pengaturan): pastikan tombol yang tetangganya mati
+     * benar-benar melebar sebaris penuh.
+     *
+     * <p>Baris-barisnya LinearLayout berbobot sama, jadi lebar itu sebenarnya dibagi ulang sendiri
+     * begitu satu sel GONE. Yang TIDAK tertangani: sel pembungkus (FrameLayout tempat badge
+     * menempel) yang tetap VISIBLE padahal tombol di dalamnya sudah disembunyikan — sel kosong itu
+     * masih menagih separuh baris, jadi tetangganya tetap setengah lebar dan di layar tampak ada
+     * lubang. Di sini sel seperti itu ikut di-GONE-kan supaya aturannya berlaku seragam, tak peduli
+     * menu tadi dimatikan lewat sel-nya atau lewat tombolnya.
+     */
+    private void expandLoneMenuButtons() {
+        View rows = findViewById(R.id.menuRows);
+        if (!(rows instanceof android.view.ViewGroup)) return;
+        android.view.ViewGroup rowsVg = (android.view.ViewGroup) rows;
+        for (int r = 0; r < rowsVg.getChildCount(); r++) {
+            if (!(rowsVg.getChildAt(r) instanceof android.view.ViewGroup)) continue;
+            android.view.ViewGroup row = (android.view.ViewGroup) rowsVg.getChildAt(r);
+            for (int i = 0; i < row.getChildCount(); i++) {
+                View cell = row.getChildAt(i);
+                if (!(cell instanceof android.view.ViewGroup)) continue;   // tombol telanjang: sudah beres
+                android.view.ViewGroup box = (android.view.ViewGroup) cell;
+                boolean anyVisible = false;
+                for (int j = 0; j < box.getChildCount(); j++) {
+                    if (box.getChildAt(j) instanceof com.google.android.material.button.MaterialButton
+                            && box.getChildAt(j).getVisibility() == View.VISIBLE) {
+                        anyVisible = true;
+                        break;
+                    }
+                }
+                if (!anyVisible && cell.getVisibility() == View.VISIBLE) cell.setVisibility(View.GONE);
+            }
+        }
+    }
+
+    /**
+     * Tata ulang grid menu marketing supaya sel yang TAMPIL selalu rapat berpasangan.
+     *
+     * <p>Perlu dilakukan sendiri karena GridLayout menempatkan anaknya berurutan TERMASUK yang
+     * GONE: sel yang disembunyikan tetap memesan petaknya, jadi grid berlubang begitu satu menu
+     * mati — dan kelima menu di sini punya aturan tampil yang berbeda-beda (peran staf untuk empat
+     * menu, centang "Petugas WA Perkenalan" untuk satu menu), sehingga kombinasinya banyak.
+     *
+     * <p>Sel terakhir dilebarkan dua kolom saat jumlah yang tampil ganjil — kalau tidak, baris
+     * penutup menyisakan satu tombol setengah lebar dengan ruang kosong di sebelahnya.
+     */
+    private void packQuickMenuGrid() {
+        androidx.gridlayout.widget.GridLayout grid = findViewById(R.id.gridQuickMenu);
+        if (grid == null) return;
+
+        java.util.List<View> visible = new java.util.ArrayList<>();
+        for (int i = 0; i < grid.getChildCount(); i++) {
+            View c = grid.getChildAt(i);
+            if (c.getVisibility() == View.VISIBLE) visible.add(c);
+        }
+        grid.setVisibility(visible.isEmpty() ? View.GONE : View.VISIBLE);
+
+        for (int i = 0; i < visible.size(); i++) {
+            View c = visible.get(i);
+            boolean lastAndOdd = (i == visible.size() - 1) && (visible.size() % 2 == 1);
+            int span = lastAndOdd ? 2 : 1;
+            androidx.gridlayout.widget.GridLayout.LayoutParams lp =
+                    (androidx.gridlayout.widget.GridLayout.LayoutParams) c.getLayoutParams();
+            lp.rowSpec = androidx.gridlayout.widget.GridLayout.spec(i / 2);
+            lp.columnSpec = androidx.gridlayout.widget.GridLayout.spec(
+                    i % 2, span, androidx.gridlayout.widget.GridLayout.FILL, span);
+            lp.width = 0;
+            c.setLayoutParams(lp);
+        }
+        grid.requestLayout();
+    }
+
+    private void updatePromoIntroBadge() {
+        TextView badge = findViewById(R.id.tvIntroWaBadge);
+        View box = findViewById(R.id.boxIntroWa);
+        // Menu WA Perkenalan HANYA untuk perangkat petugas — perangkat lain tak perlu melihat
+        // antrean yang bukan tugasnya. Gate-nya dipasang di sini (bukan di applyRoleVisibility)
+        // supaya menu + badge selalu muncul dan hilang bersama, dari satu keputusan yang sama.
+        boolean isDuty = false;
+        int count = 0;
+        try {
+            com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                    new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this)));
+            isDuty = cfg.isIntroWaDevice();
+            if (isDuty) {
+                count = IntroWaDuty.filterPending(customerDao.getPromoIntroPending(), cfg).size();
+            }
+        } catch (Exception ignored) {}
+        if (box != null) box.setVisibility(isDuty ? View.VISIBLE : View.GONE);
+        if (badge != null) {
+            if (count > 0) {
+                badge.setText(String.valueOf(count));
+                badge.setVisibility(View.VISIBLE);
+            } else {
+                badge.setVisibility(View.GONE);
+            }
+        }
+        // Sel ini baru saja bisa muncul/hilang → petak grid harus ditata ulang, kalau tidak
+        // barisnya berlubang atau menyisakan tombol setengah lebar.
+        packQuickMenuGrid();
+    }
+
     private void updateStockIndicator() {
         // Indikator stok sekarang menempel di card "Galon Beredar"
         // (tile Stok Galon sudah dihapus, card jadi pintu masuknya).
         TextView tvStokBadge = findViewById(R.id.tvStokBadge);
         if (tvStokBadge == null) return;
         int threshold = settingsDao.getStockAlert();
-        int stok = galonStockDao.getStokTersedia();
+        // Pakai tersedia "resmi" (server-authoritative bila sync) — SAMA dengan layar Stok Galon &
+        // dashboard web; sebelumnya badge memakai angka murni lokal sehingga bisa berbeda dari isi menu.
+        int stok = galonStockDao.getStokTersediaResmi(
+                new com.crowja.damiupos.sync.SyncSettings(settingsDao));
 
         tvStokBadge.setText("Stok: " + stok);
 
@@ -685,9 +1356,88 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void refreshDashboard() {
+    /**
+     * Kartu Pendapatan/Galon Terjual/TRX: sumber & cakupannya BEDA per peran, bukan sekadar query
+     * lokal seperti dulu — transaksi TIDAK branch-wide di lapisan sync (tiap HP cuma memegang
+     * barisnya sendiri, {@code config/sync.php} kunci {@code branch_wide}), jadi "lihat data
+     * se-depot" bagi admin/marketing/spv mustahil benar dari DB lokal betapa pun sering disinkron —
+     * harus dihitung di SERVER, memakai endpoint yang SAMA dengan "Pencapaian Penjualan"
+     * ({@link SalesAchievementActivity}) supaya angkanya tak pernah menyimpang dari layar itu.
+     * Peran lain (kurir/staf) melihat HANYA transaksi ATAS NAMANYA sendiri (created_by_name),
+     * bukan seluruh isi HP — satu perangkat delivery bisa dipakai bergantian oleh beberapa staf
+     * (multi-user, lihat SettingsDao#isMultiUserEnabled).
+     *
+     * <p>Dipanggil dari refreshDashboard() (sekali per buka layar / tiap sinkron masuk) DAN dari
+     * ticker berkala {@link #salesCardsTicker} selama beranda tampil, supaya kartu admin/marketing/
+     * spv benar-benar "hidup" tanpa perlu keluar-masuk layar untuk melihat angka terbaru.</p>
+     */
+    private void refreshSalesCards() {
         NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
 
+        com.crowja.damiupos.model.User cur = null;
+        if (settingsDao.isMultiUserEnabled() && settingsDao.getCurrentUserId() > 0) {
+            cur = new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this))
+                    .getById(settingsDao.getCurrentUserId());
+        }
+
+        if (cur != null && (cur.isAdmin() || cur.isMarketing() || cur.isSpv())) {
+            setSalesScopeCaption("se-depot");
+            com.crowja.damiupos.sync.SyncSettings cfg =
+                    new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+            if (!cfg.isEnrolled()) {
+                showSalesCardsLocal(nf, null);   // belum terhubung server -> jatuh ke angka lokal
+                return;
+            }
+            new Thread(() -> {
+                org.json.JSONObject totals = null;
+                try {
+                    org.json.JSONObject res = new com.crowja.damiupos.sync.SyncApi(cfg)
+                            .salesAchievement("today", null, null, null);
+                    totals = res.optJSONObject("totals");
+                } catch (Exception ignored) {
+                }
+                final org.json.JSONObject totalsF = totals;
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    if (totalsF != null) {
+                        tvPendapatan.setText("Rp " + nf.format(totalsF.optDouble("revenue", 0)));
+                        tvGalonTerjual.setText(String.valueOf(totalsF.optInt("galon", 0)));
+                        tvTransaksiHariIni.setText(String.valueOf(totalsF.optInt("trx", 0)));
+                    } else {
+                        // Server tak terjangkau (offline dsb) -> jangan biarkan kartu kosong;
+                        // tampilkan angka LOKAL sebagai cadangan, keterangan jujur bahwa itu
+                        // bukan angka se-depot supaya tak disalahartikan.
+                        setSalesScopeCaption("HP ini — offline");
+                        showSalesCardsLocal(nf, null);
+                    }
+                });
+            }).start();
+            return;
+        }
+
+        String staffName = cur != null ? settingsDao.getCurrentUserName() : null;
+        setSalesScopeCaption(staffName != null && !staffName.isEmpty() ? "milik Anda" : "HP ini");
+        showSalesCardsLocal(nf, staffName != null && !staffName.isEmpty() ? staffName : null);
+    }
+
+    private void showSalesCardsLocal(NumberFormat nf, String staffName) {
+        double pendapatan = transactionDao.getPendapatanHariIni(staffName);
+        tvPendapatan.setText("Rp " + nf.format(pendapatan));
+        int galonTerjual = transactionDao.getGalonTerjualHariIni(staffName);
+        tvGalonTerjual.setText(String.valueOf(galonTerjual));
+        int trxHariIni = transactionDao.getTransaksiHariIni(staffName);
+        tvTransaksiHariIni.setText(String.valueOf(trxHariIni));
+    }
+
+    private void setSalesScopeCaption(String scope) {
+        if (tvPendapatanCaption != null) tvPendapatanCaption.setText("Pendapatan Hari Ini · " + scope);
+        if (tvGalonTerjualCaption != null) tvGalonTerjualCaption.setText("Galon Terjual Hari Ini · " + scope);
+        if (tvKpiScopeNote != null) {
+            tvKpiScopeNote.setText("Pendapatan · Galon Terjual · TRX = " + scope + ". GLN & CUST = se-depot.");
+        }
+    }
+
+    private void refreshDashboard() {
         // Pro Temp chip — countdown ke expiry kalau user pakai rewarded ad
         TextView chipProTemp = findViewById(R.id.chipProTemp);
         if (chipProTemp != null) {
@@ -707,14 +1457,7 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        double pendapatan = transactionDao.getPendapatanHariIni();
-        tvPendapatan.setText("Rp " + nf.format(pendapatan));
-
-        int galonTerjual = transactionDao.getGalonTerjualHariIni();
-        tvGalonTerjual.setText(String.valueOf(galonTerjual));
-
-        int trxHariIni = transactionDao.getTransaksiHariIni();
-        tvTransaksiHariIni.setText(String.valueOf(trxHariIni));
+        refreshSalesCards();
 
         int galonBeredar = customerDao.getTotalGalonBeredar();
         tvGalonBeredar.setText(String.valueOf(galonBeredar));
@@ -722,10 +1465,14 @@ public class MainActivity extends AppCompatActivity {
         int totalPelanggan = customerDao.getTotalCustomers();
         tvTotalPelanggan.setText(String.valueOf(totalPelanggan));
 
+        refreshTrends();
+
         // Blinking indicators
         updateFollowUpIndicator();
         updateStockIndicator();
         refreshOperatorBar();
+        updateDeliveryBadge();
+        updatePromoIntroBadge();
 
         // Recent transactions
         List<Transaction> recent = transactionDao.getRecent(10);
@@ -742,6 +1489,89 @@ public class MainActivity extends AppCompatActivity {
         refreshOrderInboxBanner();
     }
 
+    // ----------------------------------------------------------- Tren harian
+
+    private static final int TREND_WINDOW = 30;          // hari (periode "per bulan")
+    private static final int TREND_UP = 0xFF69F0AE;      // hijau muda
+    private static final int TREND_DOWN = 0xFFFF8A80;    // merah muda
+    private static final int TREND_FLAT = 0xFFE0E0E0;    // abu terang
+
+    /**
+     * Hitung rata-rata per hari (window 30 hari ≈ per bulan) untuk 5 metrik
+     * dashboard, lalu tampilkan sebagai chip kecil dengan ikon panah arah tren
+     * dibanding 30 hari sebelumnya: NAIK (panah atas), TURUN (panah bawah),
+     * STAGNAN (garis). Warna hijau/merah/abu sesuai arah.
+     */
+    private void refreshTrends() {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        Calendar cal = Calendar.getInstance();
+        String today = sdf.format(cal.getTime());
+        cal.add(Calendar.DAY_OF_YEAR, -(TREND_WINDOW - 1));
+        String curStart = sdf.format(cal.getTime());   // [today-29 .. today] = 30 hari
+        cal.add(Calendar.DAY_OF_YEAR, -1);
+        String prevEnd = sdf.format(cal.getTime());    // today-30
+        cal.add(Calendar.DAY_OF_YEAR, -(TREND_WINDOW - 1));
+        String prevStart = sdf.format(cal.getTime());  // [today-59 .. today-30] = 30 hari
+
+        // [count, galon_jual, galon_kembali, pendapatan]
+        double[] cur = transactionDao.getSummaryByDateRange(curStart, today);
+        double[] prev = transactionDao.getSummaryByDateRange(prevStart, prevEnd);
+        double w = TREND_WINDOW;
+
+        // 1. Pendapatan rata-rata / hari
+        setTrendRupiah(tvPendapatanTrend, cur[3] / w, prev[3] / w);
+        // 2. Galon terjual rata-rata / hari
+        setTrendNumber(tvGalonTerjualTrend, cur[1] / w, prev[1] / w, false);
+        // 3. Transaksi rata-rata / hari
+        setTrendNumber(tvTransaksiTrend, cur[0] / w, prev[0] / w, false);
+        // 4. Galon beredar — penambahan bersih / hari (galon JUAL - galon KEMBALI)
+        setTrendNumber(tvGalonBeredarTrend, (cur[1] - cur[2]) / w, (prev[1] - prev[2]) / w, true);
+        // 5. Pelanggan baru rata-rata / hari
+        int curNew = customerDao.getCountCreatedBetween(curStart, today);
+        int prevNew = customerDao.getCountCreatedBetween(prevStart, prevEnd);
+        setTrendNumber(tvTotalPelangganTrend, curNew / w, prevNew / w, true);
+    }
+
+    /** -1 = TURUN, 0 = STAGNAN, 1 = NAIK. Ambang ±5%. */
+    private int trendDir(double cur, double prev) {
+        double base = Math.max(Math.abs(prev), 0.0001);
+        double pct = (cur - prev) / base;
+        if (pct > 0.05) return 1;
+        if (pct < -0.05) return -1;
+        return 0;
+    }
+
+    private void applyTrend(TextView tv, int dir, String avgText) {
+        if (tv == null) return;
+        String arrow = dir > 0 ? "▲" : dir < 0 ? "▼" : "▬";
+        int color = dir > 0 ? TREND_UP : dir < 0 ? TREND_DOWN : TREND_FLAT;
+        tv.setText(arrow + " " + avgText + "/hari");
+        tv.setTextColor(color);
+        tv.setVisibility(View.VISIBLE);
+    }
+
+    private void setTrendRupiah(TextView tv, double curAvg, double prevAvg) {
+        applyTrend(tv, trendDir(curAvg, prevAvg), "Rp " + compactRupiah(curAvg));
+    }
+
+    private void setTrendNumber(TextView tv, double curAvg, double prevAvg, boolean signed) {
+        String v = oneDecimal(curAvg);
+        if (signed && curAvg > 0) v = "+" + v;
+        applyTrend(tv, trendDir(curAvg, prevAvg), v);
+    }
+
+    private String compactRupiah(double v) {
+        double a = Math.abs(v);
+        if (a >= 1_000_000_000d) return oneDecimal(v / 1_000_000_000d) + "M";
+        if (a >= 1_000_000d) return oneDecimal(v / 1_000_000d) + "jt";
+        if (a >= 1_000d) return oneDecimal(v / 1_000d) + "rb";
+        return String.valueOf(Math.round(v));
+    }
+
+    private String oneDecimal(double v) {
+        return String.format(new Locale("id", "ID"), "%.1f", v);
+    }
+
     /**
      * Update toolbar berdasarkan jumlah pesanan WA yang masih PENDING.
      * Sound + blink jalan SELALU selama ada pesanan pending — baru stop
@@ -750,16 +1580,25 @@ public class MainActivity extends AppCompatActivity {
      */
     private void refreshOrderInboxBanner() {
         if (tvToolbarTitle == null || orderInboxDao == null) return;
-        int pendingCount = orderInboxDao.countPending();
+        // Karyawan marketing tidak menangani pesanan → jangan tampilkan/bunyikan alert pesanan
+        // (order baru dari WA/web). Perlakukan seperti tidak ada pesanan pending.
+        // Hanya pesanan yang DITUGASKAN ke perangkat ini (penugasan pelanggan / wilayah) — HP lain
+        // tak ikut berkedip & berbunyi untuk order yang bukan tanggung jawabnya.
+        int pendingCount = com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(this)
+                ? 0 : orderInboxDao.countPendingForThisDevice();
         if (pendingCount == 0) {
             // Reset ke tampilan default + matikan alert
             tvToolbarTitle.setText(R.string.app_name);
             tvToolbarSubtitle.setText(DEFAULT_TOOLBAR_SUBTITLE);
             mainToolbar.setBackgroundColor(originalToolbarColor);
             NotificationAlertHelper.stopAlert();
+            // Hentikan juga service SUARA pesanan (OrderAlertService) — untuk marketing pendingCount
+            // dipaksa 0, jadi cabang ini mematikan alarm yang mungkin tertinggal jalan dari sesi user
+            // sebelumnya (non-marketing) saat kini yang login marketing / saat pesanan sudah beres.
+            com.crowja.damiupos.wa.OrderAlertService.stop(this);
             return;
         }
-        OrderInbox latest = orderInboxDao.getLatestPending();
+        OrderInbox latest = orderInboxDao.getLatestPendingForThisDevice();
         if (latest == null) return;
         ParsedOrder parsed = ParsedOrder.fromJson(latest.getParsedJson());
 

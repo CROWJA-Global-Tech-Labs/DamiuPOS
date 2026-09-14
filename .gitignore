@@ -26,3 +26,24 @@ upload_certificate.pem
 trx_form_screenshot.png
 tools/adb_pair_qr.png
 _bld_tmp.txt
+screenshots/
+curlerr
+
+# Local data dumps — NEVER commit (real customer/depot data; repo is public)
+db-backups/
+device-backups/
+
+# Local device DB backups (contain real customer data — never commit; repo is public)
+backups/
+
+# Device migration dumps & stray capture artifacts (large / device-specific — never commit)
+*-migrate/
+s928_struk.png
+
+# Keluaran build & artefak yang tak boleh masuk repo publik
+app/release/
+graphify-out/
+
+# Sampah sesi debug (dump uiautomator, redirect salah ketik)
+u5.xml
+php

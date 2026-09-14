@@ -24,12 +24,45 @@ public class AttendanceDao {
 
     /** Catat event absensi + path foto wajah (nullable). */
     public long log(long userId, String event, String photoPath) {
+        return log(userId, event, photoPath, false, -1, null);
+    }
+
+    /**
+     * Catat event absensi lengkap dengan vonis geofence-nya. Alasan disimpan SEBARIS dengan
+     * event-nya (bukan tabel terpisah) supaya ikut terdorong ke server pada push absensi yang
+     * sama — bukti alasannya tak pernah terpisah dari absen yang dibelanya.
+     *
+     * @param outOfRadius true bila event ini di LUAR radius geofence cabang
+     * @param distanceM   jarak (meter) dari pusat geofence; &lt; 0 = tak terukur
+     * @param reason      alasan yang diketik staf; diabaikan bila absennya di dalam area
+     */
+    public long log(long userId, String event, String photoPath,
+                    boolean outOfRadius, int distanceM, String reason) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_ATT_USER_ID, userId);
         v.put(DatabaseHelper.COL_ATT_EVENT, event);
         if (photoPath != null) v.put(DatabaseHelper.COL_ATT_PHOTO_PATH, photoPath);
-        return db.insert(DatabaseHelper.TABLE_ATTENDANCE, null, v);
+        v.put(DatabaseHelper.COL_ATT_OUT_OF_RADIUS, outOfRadius ? 1 : 0);
+        if (distanceM >= 0) v.put(DatabaseHelper.COL_ATT_DISTANCE_M, distanceM);
+        if (outOfRadius && reason != null && !reason.trim().isEmpty()) {
+            v.put(DatabaseHelper.COL_ATT_RADIUS_REASON, reason.trim());
+        }
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_ATTENDANCE, v);
+    }
+
+    /**
+     * Stamp an attendance event with its GPS location (dipanggil async setelah event dicatat,
+     * begitu fix lokasi tersedia). Marks the row dirty so the next sync pushes the coordinates.
+     */
+    public void setLocation(long attendanceId, double lat, double lng) {
+        if (attendanceId <= 0) return;
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_ATT_LAT, lat);
+        v.put(DatabaseHelper.COL_ATT_LNG, lng);
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_ATTENDANCE, v,
+                DatabaseHelper.COL_ATT_ID + "=?", new String[]{String.valueOf(attendanceId)});
     }
 
     /**
@@ -66,6 +99,28 @@ public class AttendanceDao {
         if (c.moveToFirst()) a = fromCursor(c);
         c.close();
         return a;
+    }
+
+    /**
+     * True bila event TERAKHIR user (urut waktu) adalah OUT → user sudah dipulangkan, termasuk
+     * lewat "Pulangkan" di dashboard web (event OUT hasil sync). Dipakai SyncEngine untuk
+     * auto-logout sesi di HP. Urutan pakai wall-clock LOKAL karena ts campuran dua format:
+     * baris lokal "yyyy-MM-dd HH:mm:ss" vs baris sync web ISO UTC "…Z" (pola yang sama dengan
+     * TransactionDao.localDt); tie-break _id supaya deterministik.
+     */
+    public boolean isLastEventOut(long userId) {
+        if (userId <= 0) return false;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String ts = DatabaseHelper.COL_ATT_TS;
+        String localTs = "(CASE WHEN " + ts + " LIKE '%Z' THEN datetime(" + ts
+                + ",'localtime') ELSE " + ts + " END)";
+        try (Cursor c = db.rawQuery(
+                "SELECT " + DatabaseHelper.COL_ATT_EVENT + " FROM " + DatabaseHelper.TABLE_ATTENDANCE
+                        + " WHERE " + DatabaseHelper.COL_ATT_USER_ID + "=?"
+                        + " ORDER BY " + localTs + " DESC, " + DatabaseHelper.COL_ATT_ID + " DESC LIMIT 1",
+                new String[]{String.valueOf(userId)})) {
+            return c.moveToFirst() && Attendance.EVENT_OUT.equals(c.getString(0));
+        }
     }
 
     /**
@@ -125,6 +180,27 @@ public class AttendanceDao {
         return out;
     }
 
+    /**
+     * Apakah user sudah punya event MASUK (IN) bertanggal HARI INI (waktu lokal perangkat)?
+     * Dipakai jaring absensi otomatis di TransactionDao: staf yang jelas bekerja (bikin transaksi)
+     * tapi belum absen masuk hari ini akan dibuatkan MASUK otomatis. date(ts) mengambil bagian
+     * tanggal dari ts lokal ("yyyy-MM-dd HH:mm:ss") — event yang dibuat perangkat ini selalu lokal.
+     */
+    public boolean hasInToday(long userId) {
+        String today = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                .format(new java.util.Date());
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.rawQuery(
+                "SELECT 1 FROM " + DatabaseHelper.TABLE_ATTENDANCE +
+                        " WHERE " + DatabaseHelper.COL_ATT_USER_ID + "=?" +
+                        " AND " + DatabaseHelper.COL_ATT_EVENT + "='" + Attendance.EVENT_IN + "'" +
+                        " AND date(" + DatabaseHelper.COL_ATT_TS + ")=? LIMIT 1",
+                new String[]{String.valueOf(userId), today});
+        boolean has = c.moveToFirst();
+        c.close();
+        return has;
+    }
+
     /** Semua event user, terbaru dulu, dibatasi {@code limit} baris (0 = semua). */
     public List<Attendance> getEventsByUser(long userId, int limit) {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
@@ -147,6 +223,12 @@ public class AttendanceDao {
         a.setTs(c.getString(c.getColumnIndexOrThrow(DatabaseHelper.COL_ATT_TS)));
         int idxPhoto = c.getColumnIndex(DatabaseHelper.COL_ATT_PHOTO_PATH);
         if (idxPhoto >= 0) a.setPhotoPath(c.getString(idxPhoto));
+        int idxOut = c.getColumnIndex(DatabaseHelper.COL_ATT_OUT_OF_RADIUS);
+        if (idxOut >= 0) a.setOutOfRadius(c.getInt(idxOut) == 1);
+        int idxDist = c.getColumnIndex(DatabaseHelper.COL_ATT_DISTANCE_M);
+        if (idxDist >= 0 && !c.isNull(idxDist)) a.setDistanceM(c.getInt(idxDist));
+        int idxReason = c.getColumnIndex(DatabaseHelper.COL_ATT_RADIUS_REASON);
+        if (idxReason >= 0) a.setRadiusReason(c.getString(idxReason));
         return a;
     }
 }

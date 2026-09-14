@@ -15,6 +15,10 @@ import android.location.Location;
 import android.location.LocationManager;
 import android.os.Bundle;
 import android.os.CountDownTimer;
+import android.os.Handler;
+import android.os.Looper;
+import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -28,6 +32,11 @@ import androidx.camera.view.LifecycleCameraController;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.Priority;
+import com.google.android.gms.tasks.CancellationTokenSource;
 
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
@@ -56,13 +65,25 @@ public class CameraCaptureActivity extends AppCompatActivity {
     /** true = user menekan "Batal" di peringatan lokasi (batalkan absensi),
      *  beda dari kamera gagal/izin ditolak (yang tetap lanjut tanpa foto). */
     public static final String EXTRA_USER_CANCELLED = "user_cancelled";
+    /** true = titik selfie berada DI LUAR area absensi (geofence) cabang. */
+    public static final String EXTRA_OUT_OF_RADIUS = "out_of_radius";
+    /** Jarak (meter, dibulatkan) dari pusat area absensi; -1 = tak terukur. */
+    public static final String EXTRA_DISTANCE_M = "distance_m";
+    /** Alasan yang diketik staf saat absen di luar area — disimpan sebagai bukti. */
+    public static final String EXTRA_RADIUS_REASON = "radius_reason";
 
     private static final int REQ_CAMERA = 901;
 
     private PreviewView previewView;
     private TextView tvCountdown;
+    private TextView tvLabel;
     private LifecycleCameraController controller;
     private boolean capturing = false;
+
+    /** Lokasi GPS WAJIB untuk geotag foto absensi (EXIF + overlay peta). */
+    private Location selfieLocation;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private CancellationTokenSource locCancel;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -71,7 +92,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
 
         previewView = findViewById(R.id.previewView);
         tvCountdown = findViewById(R.id.tvCountdown);
-        TextView tvLabel = findViewById(R.id.tvLabel);
+        tvLabel = findViewById(R.id.tvLabel);
         String label = getIntent().getStringExtra(EXTRA_LABEL);
         tvLabel.setText("Foto Wajah" + (label != null ? " — " + label : ""));
 
@@ -113,9 +134,9 @@ public class CameraCaptureActivity extends AppCompatActivity {
         boolean loc = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED;
         if (cam && loc) {
-            startCamera();
+            acquireLocationThenStart();
         } else {
-            // Minta yang belum diberi. Lokasi opsional (untuk peta PiP).
+            // Kamera DAN lokasi sama-sama wajib (foto absensi harus ber-geotag).
             java.util.List<String> req = new java.util.ArrayList<>();
             if (!cam) req.add(Manifest.permission.CAMERA);
             if (!loc) req.add(Manifest.permission.ACCESS_FINE_LOCATION);
@@ -128,14 +149,91 @@ public class CameraCaptureActivity extends AppCompatActivity {
                                            @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQ_CAMERA) {
-            // Kamera wajib; lokasi opsional (peta PiP best-effort).
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-                    == PackageManager.PERMISSION_GRANTED) {
-                startCamera();
+            boolean cam = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                    == PackageManager.PERMISSION_GRANTED;
+            boolean loc = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED
+                    || ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED;
+            if (!cam) {
+                finishNoPhoto(); // tanpa kamera → tidak ada selfie (absensi lanjut tanpa foto)
+            } else if (!loc) {
+                // Lokasi WAJIB untuk geotag — tanpa izin lokasi, foto absensi tidak diizinkan.
+                blockNoLocation("Izin lokasi diperlukan untuk foto absensi ber-geotag.");
             } else {
-                finishNoPhoto(); // tanpa kamera → lanjut tanpa foto
+                acquireLocationThenStart();
             }
         }
+    }
+
+    /** Dapatkan fix GPS dulu (WAJIB) lalu mulai kamera. Tanpa lokasi → blok + opsi coba lagi. */
+    private void acquireLocationThenStart() {
+        tvCountdown.setText("📍");
+        if (tvLabel != null) tvLabel.setText("Mendapatkan lokasi GPS…");
+        requestFreshLocation(loc -> {
+            if (isFinishing()) return;
+            if (loc != null) {
+                selfieLocation = loc;
+                String label = getIntent().getStringExtra(EXTRA_LABEL);
+                if (tvLabel != null) tvLabel.setText("Foto Wajah" + (label != null ? " — " + label : ""));
+                startCamera();
+            } else {
+                blockNoLocation("Lokasi GPS belum didapat. Pastikan GPS aktif & sinyal cukup (idealnya di luar ruangan).");
+            }
+        });
+    }
+
+    /** Minta 1 fix lokasi terbaru (akurasi tinggi) dengan timeout 12 dtk, fallback last-known. */
+    @SuppressWarnings("MissingPermission")
+    private void requestFreshLocation(java.util.function.Consumer<Location> cb) {
+        boolean granted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED
+                || ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+        if (!granted) { cb.accept(null); return; }
+        final boolean[] done = {false};
+        locCancel = new CancellationTokenSource();
+        final Runnable timeout = () -> {
+            if (done[0]) return;
+            done[0] = true;
+            try { locCancel.cancel(); } catch (Throwable ignored) {}
+            cb.accept(getLastLocation());   // fallback ke last-known
+        };
+        handler.postDelayed(timeout, 12000);
+        try {
+            FusedLocationProviderClient fused = LocationServices.getFusedLocationProviderClient(this);
+            fused.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, locCancel.getToken())
+                    .addOnSuccessListener(loc -> {
+                        if (done[0]) return;
+                        done[0] = true;
+                        handler.removeCallbacks(timeout);
+                        cb.accept(loc != null ? loc : getLastLocation());
+                    })
+                    .addOnFailureListener(e -> {
+                        if (done[0]) return;
+                        done[0] = true;
+                        handler.removeCallbacks(timeout);
+                        cb.accept(getLastLocation());
+                    });
+        } catch (Throwable t) {
+            if (done[0]) return;
+            done[0] = true;
+            handler.removeCallbacks(timeout);
+            cb.accept(getLastLocation());
+        }
+    }
+
+    /** Lokasi wajib tidak terpenuhi → tawarkan Coba Lagi atau Batal (absensi dibatalkan). */
+    private void blockNoLocation(String why) {
+        if (isFinishing()) return;
+        tvCountdown.setText("");
+        new AlertDialog.Builder(this)
+                .setTitle("Lokasi Wajib")
+                .setMessage(why + "\n\nFoto absensi harus memuat lokasi.")
+                .setCancelable(false)
+                .setPositiveButton("Coba Lagi", (d, w) -> startCameraFlow())
+                .setNegativeButton("Batal", (d, w) -> finishUserCancelled())
+                .show();
     }
 
     private void startCamera() {
@@ -198,9 +296,84 @@ public class CameraCaptureActivity extends AppCompatActivity {
                 });
     }
 
+    /**
+     * Foto selesai → tegakkan area absensi. Di luar radius, staf WAJIB mengetik alasan sebelum
+     * absennya tercatat; alasan + jaraknya ikut kembali ke pemanggil dan tersimpan sebaris dengan
+     * event absensi (jadi bukti untuk laporan &amp; penggajian).
+     *
+     * <p>Pusat/radius memakai kunci geofence yang SAMA dengan dashboard (App\Support\Reports::
+     * geofence) sehingga vonis di HP dan vonis di slip gaji tidak pernah berbeda. Geofence belum
+     * diatur, atau lokasi tak terukur → lanjut seperti biasa: fitur ini menagih alasan, bukan
+     * memblokir absensi.
+     */
     private void finishWithPhoto(String path) {
+        double[] center = null;
+        double radius = 0;
+        try {
+            SettingsDao sd = new SettingsDao(DatabaseHelper.getInstance(this));
+            center = sd.getGeofenceCenter();
+            radius = sd.getGeofenceRadius();
+        } catch (Throwable ignored) {}
+
+        Location loc = selfieLocation != null ? selfieLocation : getLastLocation();
+        if (center == null || loc == null) {
+            deliverPhoto(path, false, -1, null);
+            return;
+        }
+
+        float[] out = new float[1];
+        Location.distanceBetween(center[0], center[1], loc.getLatitude(), loc.getLongitude(), out);
+        int distance = Math.round(out[0]);
+        if (distance <= radius) {
+            deliverPhoto(path, false, distance, null);
+            return;
+        }
+        askOutOfRadiusReason(path, distance, (int) Math.round(radius));
+    }
+
+    /** Popup WAJIB-isi: absen di luar area → alasan tidak boleh kosong, tak bisa ditutup di luar. */
+    private void askOutOfRadiusReason(String path, int distance, int radius) {
+        if (isFinishing()) {
+            deliverPhoto(path, true, distance, null);
+            return;
+        }
+        final EditText input = new EditText(this);
+        input.setHint("Contoh: antar pesanan ke pelanggan, motor mogok di jalan…");
+        input.setMinLines(2);
+        input.setGravity(android.view.Gravity.TOP | android.view.Gravity.START);
+        int pad = Math.round(getResources().getDisplayMetrics().density * 20);
+        FrameLayout box = new FrameLayout(this);
+        box.setPadding(pad, pad / 2, pad, 0);
+        box.addView(input);
+
+        AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle("Absen di Luar Area")
+                .setMessage("Anda berada ± " + distance + " m dari titik absensi (batas "
+                        + radius + " m).\n\nTuliskan alasan absen di luar area. "
+                        + "Alasan ini tersimpan di server sebagai bukti untuk laporan & penggajian.")
+                .setView(box)
+                .setCancelable(false)
+                .setPositiveButton("Simpan Alasan", null)   // di-override supaya dialog tak menutup saat kosong
+                .create();
+        dlg.show();
+        // Validasi tanpa menutup dialog: alasan kosong = tidak ada bukti, jadi tombolnya menolak.
+        dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String reason = input.getText() != null ? input.getText().toString().trim() : "";
+            if (reason.length() < 5) {
+                input.setError("Alasan wajib diisi (minimal 5 huruf)");
+                return;
+            }
+            dlg.dismiss();
+            deliverPhoto(path, true, distance, reason);
+        });
+    }
+
+    private void deliverPhoto(String path, boolean outOfRadius, int distance, String reason) {
         Intent data = new Intent();
         data.putExtra(EXTRA_PHOTO_PATH, path);
+        data.putExtra(EXTRA_OUT_OF_RADIUS, outOfRadius);
+        data.putExtra(EXTRA_DISTANCE_M, distance);
+        if (reason != null) data.putExtra(EXTRA_RADIUS_REASON, reason);
         setResult(RESULT_OK, data);
         finish();
     }
@@ -208,6 +381,13 @@ public class CameraCaptureActivity extends AppCompatActivity {
     private void finishNoPhoto() {
         setResult(RESULT_CANCELED);
         finish();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        try { if (locCancel != null) locCancel.cancel(); } catch (Throwable ignored) {}
+        handler.removeCallbacksAndMessages(null);
     }
 
     // -------------------------------------------------------- map PiP overlay
@@ -229,7 +409,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
                     new Locale("id", "ID")).format(new Date());
             canvas.drawText(stamp, w * 0.03f, h - w * 0.03f, tp);
 
-            Location loc = getLastLocation();
+            Location loc = selfieLocation != null ? selfieLocation : getLastLocation();
             if (loc != null) {
                 Bitmap map = fetchMapBitmap(loc.getLatitude(), loc.getLongitude(), 16);
                 int pip = (int) (w * 0.34f);
@@ -265,6 +445,19 @@ public class CameraCaptureActivity extends AppCompatActivity {
             try (FileOutputStream out = new FileOutputStream(photoFile)) {
                 base.compress(Bitmap.CompressFormat.JPEG, 88, out);
             }
+            // Tulis geotag GPS ke EXIF (tag lokasi WAJIB). compress() di atas menghapus EXIF,
+            // jadi ditulis SETELAH file final tersimpan agar foto benar-benar ber-geotag.
+            Location geo = selfieLocation != null ? selfieLocation : getLastLocation();
+            if (geo != null) {
+                try {
+                    androidx.exifinterface.media.ExifInterface exif =
+                            new androidx.exifinterface.media.ExifInterface(photoFile.getAbsolutePath());
+                    exif.setLatLong(geo.getLatitude(), geo.getLongitude());
+                    exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_GPS_DATESTAMP,
+                            new SimpleDateFormat("yyyy:MM:dd", Locale.US).format(new Date()));
+                    exif.saveAttributes();
+                } catch (Throwable ignored) {}
+            }
         } catch (Throwable ignored) {
         } finally {
             base.recycle();
@@ -295,6 +488,20 @@ public class CameraCaptureActivity extends AppCompatActivity {
                 if (upright != bmp) bmp.recycle();
             } else {
                 upright = bmp;
+            }
+            // Activity ini dikunci portrait → selfie yang benar SELALU portrait. Sebagian perangkat
+            // menulis EXIF orientation dengan benar (setelah koreksi di atas hasilnya sudah portrait);
+            // sebagian lain (quirk CameraX kamera depan) menyimpan piksel landscape dgn EXIF NORMAL.
+            // Dulu di sini ada rotasi -90° TANPA SYARAT untuk quirk itu — yang justru MEMBALIK foto
+            // portrait yang sudah benar di perangkat ber-EXIF benar ("banyak selfie tidak potrait").
+            // Kini rotasi hanya diterapkan BILA hasilnya masih landscape; foto portrait dibiarkan.
+            if (upright.getWidth() > upright.getHeight()) {
+                Matrix ccw = new Matrix();
+                ccw.postRotate(-90);
+                Bitmap rotated = Bitmap.createBitmap(
+                        upright, 0, 0, upright.getWidth(), upright.getHeight(), ccw, true);
+                if (rotated != upright) upright.recycle();
+                upright = rotated;
             }
             // Clamp ke 720p (sisi terpanjang ≤ 1280 px).
             int longSide = Math.max(upright.getWidth(), upright.getHeight());
@@ -337,7 +544,7 @@ public class CameraCaptureActivity extends AppCompatActivity {
         }
     }
 
-    /** Ambil 1 tile OSM yang memuat koordinat + gambar marker merah di titiknya. */
+    /** Ambil 1 tile basemap yang memuat koordinat + gambar marker merah di titiknya. */
     private Bitmap fetchMapBitmap(double lat, double lng, int z) {
         HttpURLConnection conn = null;
         try {
@@ -348,9 +555,9 @@ public class CameraCaptureActivity extends AppCompatActivity {
             int xtile = (int) Math.floor(xt);
             int ytile = (int) Math.floor(yt);
 
-            URL url = new URL("https://tile.openstreetmap.org/" + z + "/" + xtile + "/" + ytile + ".png");
+            URL url = new URL(MapTiles.tileUrl(z, xtile, ytile));
             conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestProperty("User-Agent", "DAMIU-POS/1.0 (attendance)");
+            conn.setRequestProperty("User-Agent", MapTiles.userAgent());
             conn.setConnectTimeout(8000);
             conn.setReadTimeout(8000);
             try (InputStream in = conn.getInputStream()) {

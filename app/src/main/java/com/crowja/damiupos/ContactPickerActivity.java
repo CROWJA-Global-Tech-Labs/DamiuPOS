@@ -17,6 +17,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -25,12 +26,22 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.crowja.damiupos.adapter.ContactPickerAdapter;
 import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
+import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.model.Customer;
+import com.crowja.damiupos.sync.SyncApi;
+import com.crowja.damiupos.sync.SyncSettings;
 import com.google.android.material.button.MaterialButton;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -157,10 +168,34 @@ public class ContactPickerActivity extends AppCompatActivity {
         });
     }
 
+    /** Satu kontak telepon + daftar nomornya (urut, sudah dedup di dalam kontak). */
+    private static final class ContactGroup {
+        final String name;
+        final List<String> phones = new ArrayList<>();
+        final Set<String> seen = new HashSet<>();   // dedup 8 digit terakhir DI DALAM kontak
+        ContactGroup(String name) { this.name = name; }
+    }
+
+    /** Rapikan nama: trim + ubah spasi beruntun jadi satu spasi (mis. "AYU  LAUNDRY" → "AYU LAUNDRY"). */
+    private static String cleanName(String s) {
+        return s == null ? "" : s.trim().replaceAll("\\s+", " ");
+    }
+
+    /** 8 digit terakhir (toleran prefix 0812 vs +62812), atau "" kalau terlalu pendek. */
+    private static String phoneSuffix(String phone) {
+        String n = phone.replaceAll("[^0-9]", "");
+        if (n.length() < 4) return "";
+        return n.substring(n.length() - Math.min(n.length(), 8));
+    }
+
     /**
-     * Baca semua kontak yang punya nomor telepon. Dedup dengan 8 digit terakhir
-     * supaya nomor dengan prefix berbeda (0812 vs +62812) tidak muncul dobel.
-     * Untuk setiap kontak, cek apakah sudah terdaftar di DB.
+     * Baca semua kontak yang punya nomor telepon. Nomor identik (8 digit terakhir
+     * sama) di-dedup, baik di dalam satu kontak maupun lintas kontak.
+     *
+     * <p>Tiap nama yang akan muncul lebih dari sekali — entah karena SATU kontak
+     * punya beberapa nomor, ATAU beberapa kontak terpisah memakai nama yang sama —
+     * diberi sufiks " #1", " #2", … berurutan. Mis. "Ayu Laundry" dengan 2 nomor
+     * jadi "Ayu Laundry #1" dan "Ayu Laundry #2". Nama unik tidak diberi sufiks.
      */
     private List<ContactPickerAdapter.ContactEntry> readContacts() {
         List<ContactPickerAdapter.ContactEntry> list = new ArrayList<>();
@@ -168,6 +203,7 @@ public class ContactPickerActivity extends AppCompatActivity {
         Cursor cursor = cr.query(
                 ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
                 new String[]{
+                        ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
                         ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
                         ContactsContract.CommonDataKinds.Phone.NUMBER
                 },
@@ -175,22 +211,55 @@ public class ContactPickerActivity extends AppCompatActivity {
                 ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC");
         if (cursor == null) return list;
 
-        Set<String> seenSuffix = new HashSet<>();
+        // Kumpulkan nomor per kontak (urut nama, lalu urut nomor sesuai cursor).
+        LinkedHashMap<String, ContactGroup> groups = new LinkedHashMap<>();
         while (cursor.moveToNext()) {
-            String name = cursor.getString(0);
-            String phone = cursor.getString(1);
+            String contactId = cursor.getString(0);
+            String name = cursor.getString(1);
+            String phone = cursor.getString(2);
             if (name == null || name.isEmpty() || phone == null || phone.isEmpty()) continue;
+            String suffix = phoneSuffix(phone);
+            if (suffix.isEmpty()) continue;
 
-            String normalized = phone.replaceAll("[^0-9]", "");
-            if (normalized.length() < 4) continue;
-            String suffix = normalized.substring(
-                    normalized.length() - Math.min(normalized.length(), 8));
-            if (!seenSuffix.add(suffix)) continue;
-
-            boolean already = customerDao.existsByPhone(phone);
-            list.add(new ContactPickerAdapter.ContactEntry(name, phone, already));
+            String key = contactId != null ? contactId : name;
+            ContactGroup g = groups.get(key);
+            if (g == null) { g = new ContactGroup(name); groups.put(key, g); }
+            if (g.seen.add(suffix)) g.phones.add(phone);   // dedup di dalam kontak
         }
         cursor.close();
+
+        // Dedup global (8 digit terakhir), kumpulkan pasangan nama+nomor sesuai urutan.
+        Set<String> globalSeen = new HashSet<>();
+        List<String[]> flat = new ArrayList<>();   // [name, phone]
+        for (ContactGroup g : groups.values()) {
+            for (String phone : g.phones) {
+                if (globalSeen.add(phoneSuffix(phone))) flat.add(new String[]{g.name, phone});
+            }
+        }
+
+        // Nama yang muncul >1 kali (kontak banyak nomor ATAU beberapa kontak senama —
+        // termasuk variasi spasi-ganda/kapitalisasi) diberi sufiks " #1", " #2", …
+        // berurutan; nama unik dibiarkan (sudah dirapikan spasinya). Pengelompokan
+        // pakai nama ternormalisasi (lowercase, spasi tunggal) supaya "AYU  LAUNDRY"
+        // dan "AYU LAUNDRY" dianggap sama.
+        Map<String, Integer> nameCount = new HashMap<>();
+        Map<String, String> baseByKey = new HashMap<>();   // key → casing kanonik (rapi)
+        for (String[] fp : flat) {
+            String clean = cleanName(fp[0]);
+            String key = clean.toLowerCase(Locale.ROOT);
+            nameCount.merge(key, 1, Integer::sum);
+            if (!baseByKey.containsKey(key)) baseByKey.put(key, clean);
+        }
+        Map<String, Integer> nameIdx = new HashMap<>();
+        for (String[] fp : flat) {
+            String clean = cleanName(fp[0]);
+            String key = clean.toLowerCase(Locale.ROOT);
+            String displayName = nameCount.get(key) > 1
+                    ? baseByKey.get(key) + " #" + nameIdx.merge(key, 1, Integer::sum)
+                    : clean;
+            boolean already = customerDao.existsByPhone(fp[1]);
+            list.add(new ContactPickerAdapter.ContactEntry(displayName, fp[1], already));
+        }
         return list;
     }
 
@@ -210,15 +279,23 @@ public class ContactPickerActivity extends AppCompatActivity {
         progress.show();
 
         executor.execute(() -> {
+            // Cross-check with the server FIRST: skip any number an admin deleted on the dashboard so
+            // we don't resurrect it. Offline / not enrolled → empty set → import behaves as before.
+            final Set<String> deletedOnServer = fetchDeletedOnServer(selected);
+
             int imported = 0;
             int skipped = 0;
+            final List<ContactPickerAdapter.ContactEntry> deletedSkipped = new ArrayList<>();
             int total = selected.size();
             for (int i = 0; i < total; i++) {
                 ContactPickerAdapter.ContactEntry e = selected.get(i);
-                if (customerDao.existsByPhone(e.phone)) {
+                if (deletedOnServer.contains(e.phone)) {
+                    deletedSkipped.add(e);   // dihapus di server → jangan di-import lagi
+                } else if (customerDao.existsByPhone(e.phone)) {
                     skipped++;
                 } else {
-                    customerDao.insert(new Customer(e.name, e.phone, ""));
+                    // Normalisasi nomor kontak ke format lokal 08XXXX sebelum simpan (cek dedup tetap kanonik).
+                    customerDao.insert(new Customer(e.name, com.crowja.damiupos.util.PhoneUtils.toLocal08(e.phone), ""));
                     imported++;
                 }
                 final int done = i + 1;
@@ -228,17 +305,77 @@ public class ContactPickerActivity extends AppCompatActivity {
                 });
             }
 
+            // Setelah impor: rapikan penomoran nama yang sama (mis. satu usaha dua nomor)
+            // supaya pelanggan baru DAN yang sudah ada sebelumnya konsisten jadi
+            // "Nama #1", "Nama #2", … — bukan campuran "Nama" + "Nama #2".
+            final int renamedFinal = customerDao.numberDuplicateNames();
+            com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+
             final int importedFinal = imported;
             final int skippedFinal = skipped;
             mainHandler.post(() -> {
                 progress.dismiss();
-                String msg = "Sinkronisasi selesai!\n" + importedFinal + " kontak diimpor";
-                if (skippedFinal > 0) msg += ", " + skippedFinal + " dilewati";
-                Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
-                setResult(RESULT_OK, new Intent().putExtra("imported", importedFinal));
-                finish();
+                String summary = importedFinal + " kontak diimpor";
+                if (skippedFinal > 0) summary += ", " + skippedFinal + " dilewati (sudah ada)";
+                if (renamedFinal > 0) {
+                    summary += "\n" + renamedFinal + " pelanggan bernama sama diberi nomor #1, #2, …";
+                }
+
+                if (!deletedSkipped.isEmpty()) {
+                    // Pelanggan yang sudah dihapus di server → laporkan jumlah + daftarnya.
+                    StringBuilder sb = new StringBuilder();
+                    sb.append(deletedSkipped.size())
+                            .append(" pelanggan tidak di-import karena sudah dihapus di server:\n");
+                    for (ContactPickerAdapter.ContactEntry e : deletedSkipped) {
+                        sb.append("\n• ").append(e.name);
+                        if (e.phone != null && !e.phone.isEmpty()) sb.append(" (").append(e.phone).append(")");
+                    }
+                    sb.append("\n\n").append(summary);
+                    new AlertDialog.Builder(this)
+                            .setTitle("Sebagian tidak di-import")
+                            .setMessage(sb.toString())
+                            .setCancelable(false)
+                            .setPositiveButton("Mengerti", (d, w) -> {
+                                setResult(RESULT_OK, new Intent().putExtra("imported", importedFinal));
+                                finish();
+                            })
+                            .show();
+                } else {
+                    Toast.makeText(this, "Sinkronisasi selesai!\n" + summary, Toast.LENGTH_LONG).show();
+                    setResult(RESULT_OK, new Intent().putExtra("imported", importedFinal));
+                    finish();
+                }
             });
         });
+    }
+
+    /**
+     * Ask the server which of these contacts' phone numbers were DELETED on the dashboard. Returns the
+     * exact input phone strings to skip. Best-effort: offline / not enrolled / any error → empty set,
+     * so contact import still works without a connection (it just can't honour server-side deletions).
+     */
+    private Set<String> fetchDeletedOnServer(List<ContactPickerAdapter.ContactEntry> selected) {
+        Set<String> result = new HashSet<>();
+        try {
+            SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
+            if (!cfg.isEnrolled()) return result;
+            JSONArray phones = new JSONArray();
+            for (ContactPickerAdapter.ContactEntry e : selected) {
+                if (e.phone != null && !e.phone.isEmpty()) phones.put(e.phone);
+            }
+            if (phones.length() == 0) return result;
+            JSONObject r = new SyncApi(cfg).customersDeletedCheck(phones);
+            JSONArray arr = r.optJSONArray("deleted");
+            if (arr != null) {
+                for (int i = 0; i < arr.length(); i++) {
+                    String p = arr.optString(i, "");
+                    if (!p.isEmpty()) result.add(p);
+                }
+            }
+        } catch (Throwable ignored) {
+            // Offline or server error — import normally (server deletions just aren't enforced now).
+        }
+        return result;
     }
 
     @Override

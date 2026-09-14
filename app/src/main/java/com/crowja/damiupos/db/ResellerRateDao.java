@@ -35,21 +35,27 @@ public class ResellerRateDao {
         return map;
     }
 
-    /** Upsert rate untuk (reseller, product). */
+    /** Upsert rate untuk (reseller, product). Update-or-insert (bukan REPLACE) supaya
+     *  sync_uuid baris dipertahankan saat diubah. */
     public void setRate(long customerId, long productId, double komisi) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
+        String where = DatabaseHelper.COL_RR_CUSTOMER_ID + "=? AND "
+                + DatabaseHelper.COL_RR_PRODUCT_ID + "=?";
+        String[] args = {String.valueOf(customerId), String.valueOf(productId)};
         ContentValues v = new ContentValues();
-        v.put(DatabaseHelper.COL_RR_CUSTOMER_ID, customerId);
-        v.put(DatabaseHelper.COL_RR_PRODUCT_ID, productId);
         v.put(DatabaseHelper.COL_RR_KOMISI, komisi);
-        db.insertWithOnConflict(DatabaseHelper.TABLE_RESELLER_RATES, null, v,
-                SQLiteDatabase.CONFLICT_REPLACE);
+        int updated = dbHelper.syncUpdate(db, DatabaseHelper.TABLE_RESELLER_RATES, v, where, args);
+        if (updated == 0) {
+            v.put(DatabaseHelper.COL_RR_CUSTOMER_ID, customerId);
+            v.put(DatabaseHelper.COL_RR_PRODUCT_ID, productId);
+            dbHelper.syncInsert(db, DatabaseHelper.TABLE_RESELLER_RATES, v);
+        }
     }
 
     /** Hapus override → kembali pakai rate global. */
     public void deleteRate(long customerId, long productId) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        db.delete(DatabaseHelper.TABLE_RESELLER_RATES,
+        dbHelper.syncDelete(db, DatabaseHelper.TABLE_RESELLER_RATES, "reseller_rates",
                 DatabaseHelper.COL_RR_CUSTOMER_ID + "=? AND " +
                         DatabaseHelper.COL_RR_PRODUCT_ID + "=?",
                 new String[]{String.valueOf(customerId), String.valueOf(productId)});

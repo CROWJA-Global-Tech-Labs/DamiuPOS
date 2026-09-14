@@ -28,6 +28,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
+import com.crowja.damiupos.db.UserDao;
 import com.crowja.damiupos.model.Customer;
 import com.crowja.damiupos.model.Transaction;
 
@@ -46,8 +47,6 @@ public class FollowUpActivity extends AppCompatActivity {
             new SimpleDateFormat("yyyy-MM-dd", Locale.US);
     private static final SimpleDateFormat SDF_OUT_DATE =
             new SimpleDateFormat("dd MMM yyyy", new Locale("id", "ID"));
-    private static final SimpleDateFormat SDF_OUT_DAY =
-            new SimpleDateFormat("EEEE", new Locale("id", "ID"));
 
     private RecyclerView rv;
     private TextView tvEmpty, tvSummary;
@@ -58,6 +57,15 @@ public class FollowUpActivity extends AppCompatActivity {
 
     /** Daftar follow-up terkini (di-refresh tiap onResume) — dipakai tombol Peta. */
     private List<Customer> currentList = new ArrayList<>();
+
+    /** Urutan daftar: kunci (false = pembelian terakhir, true = follow-up terakhir) × arah
+     *  (false = asc: terlama/belum-pernah dulu — default; true = desc: terbaru dulu). */
+    private boolean sortByFollowUp = false;
+    private boolean sortDesc = false;
+
+    /** Filter "Perangkat": null = SEMUA asal perangkat (default, sama seperti tanpa filter) —
+     *  hanya diisi begitu staf mencentang sebagian saja di dialog {@link #showOriginFilterDialog}. */
+    private java.util.Set<String> selectedOrigins = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -93,10 +101,16 @@ public class FollowUpActivity extends AppCompatActivity {
 
     private void loadData() {
         thresholdDays = settingsDao.getFollowupDays();
-        List<Customer> list = customerDao.getFollowUpCandidates(thresholdDays);
+        List<Customer> list = customerDao.getFollowUpCandidates(thresholdDays, selectedOrigins);
+        // Default (beli + asc) = urutan DAO; kombinasi lain di-sort ulang di sini.
+        if (sortByFollowUp) sortByLastFollowUp(list, sortDesc);
+        else if (sortDesc) sortByLastPurchase(list, true);
         currentList = list;
         adapter.setData(list);
-        tvSummary.setText(list.size() + " pelanggan belum bertransaksi lebih dari " + thresholdDays + " hari");
+        // Kemunculan pakai mana yang LEBIH LAMA: N hari fixed ATAU perkiraan galon habis (rate
+        // konsumsi galon/hari tiap pelanggan) — jadi hindari wording "lebih dari N hari" yang keliru.
+        tvSummary.setText(list.size() + " pelanggan sudah waktunya di-follow up"
+                + " (lewat " + thresholdDays + " hari atau perkiraan galonnya habis)");
         tvEmpty.setVisibility(list.isEmpty() ? View.VISIBLE : View.GONE);
         rv.setVisibility(list.isEmpty() ? View.GONE : View.VISIBLE);
         invalidateOptionsMenu(); // enable/disable tombol Peta sesuai ketersediaan koordinat
@@ -197,6 +211,12 @@ public class FollowUpActivity extends AppCompatActivity {
         menu.add(0, 1, 0, "Peta")
                 .setIcon(android.R.drawable.ic_dialog_map)
                 .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        menu.add(0, 2, 1, "Urutkan")
+                .setIcon(android.R.drawable.ic_menu_sort_by_size)
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        menu.add(0, 3, 2, "Perangkat")
+                .setIcon(android.R.drawable.ic_menu_manage)
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
         return true;
     }
 
@@ -208,7 +228,108 @@ public class FollowUpActivity extends AppCompatActivity {
             startActivity(new Intent(this, FollowUpMapActivity.class));
             return true;
         }
+        if (item.getItemId() == 2) {
+            showSortDialog();
+            return true;
+        }
+        if (item.getItemId() == 3) {
+            showOriginFilterDialog();
+            return true;
+        }
         return super.onOptionsItemSelected(item);
+    }
+
+    /** Filter "Perangkat": daftar SEMUA pelanggan (branch-luas), dgn checkbox per asal perangkat
+     *  — DEFAULT SEMUA TERCENTANG (perilaku sama dengan tanpa filter). Uncheck sebagian untuk
+     *  mempersempit; mencentang ulang semuanya kembali ke null (tanpa filter). */
+    private void showOriginFilterDialog() {
+        List<String> origins = customerDao.getDistinctCustomerOrigins();
+        if (origins.isEmpty()) {
+            Toast.makeText(this, "Belum ada data asal perangkat pelanggan.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String[] labels = origins.toArray(new String[0]);
+        boolean[] checked = new boolean[labels.length];
+        for (int i = 0; i < labels.length; i++) {
+            checked[i] = selectedOrigins == null || selectedOrigins.contains(labels[i]);
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Tampilkan Pelanggan dari Perangkat")
+                .setMultiChoiceItems(labels, checked, (d, which, isChecked) -> checked[which] = isChecked)
+                .setPositiveButton("Terapkan", (d, w) -> {
+                    java.util.Set<String> picked = new java.util.HashSet<>();
+                    for (int i = 0; i < labels.length; i++) if (checked[i]) picked.add(labels[i]);
+                    // Semua tercentang = sama dengan tanpa filter → simpan null (query lebih ringan,
+                    // dan daftar perangkat baru yang muncul belakangan otomatis ikut tampil).
+                    selectedOrigins = picked.size() >= labels.length ? null : picked;
+                    loadData();
+                })
+                .setNeutralButton("Pilih Semua", (d, w) -> {
+                    selectedOrigins = null;
+                    loadData();
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /** Pilih urutan daftar: kunci (pembelian / follow-up terakhir) × arah (asc / desc). */
+    private void showSortDialog() {
+        String[] options = {
+                "Pembelian terakhir — terlama dulu",
+                "Pembelian terakhir — terbaru dulu",
+                "Follow-up terakhir — belum pernah / terlama dulu",
+                "Follow-up terakhir — terbaru dulu",
+        };
+        int checked = (sortByFollowUp ? 2 : 0) + (sortDesc ? 1 : 0);
+        new AlertDialog.Builder(this)
+                .setTitle("Urutkan berdasarkan")
+                .setSingleChoiceItems(options, checked, (d, which) -> {
+                    sortByFollowUp = which >= 2;
+                    sortDesc = (which % 2) == 1;
+                    d.dismiss();
+                    loadData();
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /**
+     * Urut "Follow-up terakhir": entri MANUAL tetap terpin teratas (terbaru dulu — sama seperti
+     * default), lalu asc = BELUM PERNAH di-follow-up dulu lalu follow-up paling lama (urutan kerja
+     * "siapa yang paling perlu dihubungi"); desc = kebalikannya (terbaru dulu, belum-pernah paling
+     * bawah). Cermin sort ?sort=fu&dir=... di web.
+     */
+    private static void sortByLastFollowUp(List<Customer> list, boolean desc) {
+        final int mul = desc ? -1 : 1;
+        java.util.Collections.sort(list, (a, b) -> {
+            boolean am = a.getFollowupManualAt() != null;
+            boolean bm = b.getFollowupManualAt() != null;
+            if (am != bm) return am ? -1 : 1;
+            if (am) return compareNullable(b.getFollowupManualAt(), a.getFollowupManualAt());
+            String af = a.getLastFollowupAt(), bf = b.getLastFollowupAt();
+            if ((af == null) != (bf == null)) return (af == null ? -1 : 1) * mul;
+            return compareNullable(af, bf) * mul;   // timestamp ISO → perbandingan string = kronologis
+        });
+    }
+
+    /** Urut "Pembelian terakhir" arah desc (terbaru dulu); manual tetap terpin. Asc = urutan DAO. */
+    private static void sortByLastPurchase(List<Customer> list, boolean desc) {
+        final int mul = desc ? -1 : 1;
+        java.util.Collections.sort(list, (a, b) -> {
+            boolean am = a.getFollowupManualAt() != null;
+            boolean bm = b.getFollowupManualAt() != null;
+            if (am != bm) return am ? -1 : 1;
+            if (am) return compareNullable(b.getFollowupManualAt(), a.getFollowupManualAt());
+            // getCreatedAt di kandidat follow-up = timestamp pembelian terakhir (overloaded, lihat DAO).
+            return compareNullable(a.getCreatedAt(), b.getCreatedAt()) * mul;
+        });
+    }
+
+    private static int compareNullable(String a, String b) {
+        if (a == null && b == null) return 0;
+        if (a == null) return -1;
+        if (b == null) return 1;
+        return a.compareTo(b);
     }
 
     /** Buka Google Maps dengan pin pada koordinat pelanggan, label = nama. */
@@ -279,7 +400,23 @@ public class FollowUpActivity extends AppCompatActivity {
 
             long days = daysSince(c.getCreatedAt()); // overloaded: last purchase
             h.tvDays.setText(String.valueOf(days));
-            h.tvLastPurchase.setText("Terakhir beli: " + formatDate(c.getCreatedAt()));
+            // Baris info: "Terakhir beli", perkiraan order lagi (dari konsumsi galon/hari), + catatan.
+            StringBuilder info = new StringBuilder("Terakhir beli: " + formatDate(c.getCreatedAt()));
+            String reorder = c.getFollowUpReorderDay();
+            if (reorder != null && !reorder.isEmpty()) {
+                info.append("\n🔮 Perkiraan order lagi: ").append(formatDate(reorder));
+                if (c.getFollowUpRate() > 0) {
+                    info.append(" (±").append(fmtRate(c.getFollowUpRate())).append(" gln/hari)");
+                }
+                long over = daysSince(reorder);   // sudah lewat berapa hari dari perkiraan
+                if (over > 0) info.append(" · lewat ").append(over).append(" hari");
+            }
+            String note = c.getFollowupNote();
+            if (note != null && !note.trim().isEmpty()) {
+                info.append("\n📝 ").append(note.trim());
+            }
+            h.tvLastPurchase.setMaxLines(4);
+            h.tvLastPurchase.setText(info.toString());
             int saldo = c.getSaldoGalon();
             h.tvGalon.setText(saldo + " galon");
             h.tvGalon.setVisibility(saldo > 0 ? View.VISIBLE : View.GONE);
@@ -324,14 +461,25 @@ public class FollowUpActivity extends AppCompatActivity {
 
     /** Dialog pilihan aksi saat card pelanggan ditekan (bukan tombolnya). */
     private void showActionDialog(Customer c) {
+        // "Kunjungi Urgent" hanya untuk ADMIN — cermin web, di mana penandaan dilakukan dari
+        // dashboard. Staf lapangan MENGERJAKAN daftarnya, bukan mengisinya sendiri.
+        final boolean canFlag = UserDao.isCurrentUserAdmin(this);
+        final boolean flagged = c.needsUrgentVisit();
+
+        java.util.List<CharSequence> items = new java.util.ArrayList<>(java.util.Arrays.asList(
+                "Kirim Pesan Follow Up (WhatsApp)",
+                "Navigasi (Google Maps)",
+                "Buat Transaksi",
+                "Lihat Detail Pelanggan"));
+        if (canFlag) {
+            items.add(flagged ? "🚩 Batal Kunjungi Urgent" : "🚩 Tandai Kunjungi Urgent");
+        }
+
         new AlertDialog.Builder(this)
                 .setTitle(c.getName() != null ? c.getName() : "Pelanggan")
-                .setItems(new CharSequence[]{
-                        "Kirim Pesan Follow Up (WhatsApp)",
-                        "Navigasi (Google Maps)",
-                        "Buat Transaksi",
-                        "Lihat Detail Pelanggan"
-                }, (dialog, which) -> {
+                // Tak ada lagi item "+ Pantun" terpisah: pantun kini jadi ISI BAWAAN follow-up
+                // (lihat WhatsAppFollowUp.open), jadi item pertama sudah pantun dengan sendirinya.
+                .setItems(items.toArray(new CharSequence[0]), (dialog, which) -> {
                     if (which == 0) {
                         openWhatsAppForFollowUp(c);
                     } else if (which == 1) {
@@ -342,14 +490,37 @@ public class FollowUpActivity extends AppCompatActivity {
                         i.putExtra("type", Transaction.TYPE_JUAL);
                         i.putExtra("customer_id", c.getId());
                         startActivity(i);
-                    } else {
+                    } else if (which == 3) {
                         Intent i = new Intent(this, CustomerDetailActivity.class);
                         i.putExtra("customer_id", c.getId());
                         startActivity(i);
+                    } else {
+                        toggleVisitUrgent(c, flagged);
                     }
                 })
                 .setNegativeButton("Batal", null)
                 .show();
+    }
+
+    /** Tandai / lepas "Kunjungi Urgent" (admin). Tersinkron — muncul di Daftar Kunjungan Urgent. */
+    private void toggleVisitUrgent(Customer c, boolean flagged) {
+        new Thread(() -> {
+            if (flagged) {
+                customerDao.markVisitUrgentDone(c.getId(), "Dibatalkan admin dari Follow Up");
+            } else {
+                String by = settingsDao.getCurrentUserName();
+                customerDao.markVisitUrgent(c.getId(), by != null && !by.trim().isEmpty() ? by.trim() : null);
+            }
+            com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(this, flagged
+                                ? "Tanda kunjungan urgent dilepas"
+                                : "🚩 Masuk Daftar Kunjungan Urgent",
+                        Toast.LENGTH_SHORT).show();
+                loadData();
+            });
+        }).start();
     }
 
     /**
@@ -383,66 +554,33 @@ public class FollowUpActivity extends AppCompatActivity {
             Date d = SDF_PARSE_FULL.parse(ts);
             return d != null ? SDF_OUT_DATE.format(d) : ts;
         } catch (Exception e) {
-            return ts.length() >= 10 ? ts.substring(0, 10) : ts;
-        }
-    }
-
-    private void openWhatsAppForFollowUp(Customer c) {
-        String phone = c != null ? c.getPhone() : null;
-        if (phone == null || phone.isEmpty()) {
-            Toast.makeText(this, "Pelanggan belum memiliki nomor WhatsApp", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        String normalized = phone.replaceAll("[^0-9]", "");
-        if (normalized.startsWith("0")) normalized = "62" + normalized.substring(1);
-        else if (!normalized.startsWith("62")) normalized = "62" + normalized;
-
-        String lastTs = c.getCreatedAt();
-        String hari = formatDayName(lastTs);
-        String tanggal = formatDate(lastTs);
-        long days = daysSince(lastTs);
-
-        // Template configurable dari Pengaturan. Placeholder:
-        //   {nama} {hari} {tanggal} {hari_lalu}
-        String template = settingsDao.getFollowUpTemplate();
-        String msg = template
-                .replace("{nama}", c.getName() != null ? c.getName() : "")
-                .replace("{hari}", hari)
-                .replace("{tanggal}", tanggal)
-                .replace("{hari_lalu}", String.valueOf(days));
-
-        try {
-            Intent i = new Intent(Intent.ACTION_VIEW,
-                    Uri.parse("https://wa.me/" + normalized +
-                            "?text=" + Uri.encode(msg)));
-            try {
-                getPackageManager().getPackageInfo("com.whatsapp", 0);
-                i.setPackage("com.whatsapp");
-            } catch (Exception ignored) {
-                try {
-                    getPackageManager().getPackageInfo("com.whatsapp.w4b", 0);
-                    i.setPackage("com.whatsapp.w4b");
-                } catch (Exception ignored2) {}
-            }
-            startActivity(i);
-            // Catat: pelanggan ini di-follow-up hari ini (untuk laporan harian).
-            customerDao.markFollowedUp(c.getId());
-        } catch (Exception e) {
-            Toast.makeText(this, "Tidak dapat membuka WhatsApp", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    /** Nama hari dalam Bahasa Indonesia (Senin, Selasa, dst.) */
-    private String formatDayName(String ts) {
-        if (ts == null || ts.isEmpty()) return "-";
-        try {
-            Date d = SDF_PARSE_FULL.parse(ts);
-            return d != null ? SDF_OUT_DAY.format(d) : "-";
-        } catch (Exception e) {
-            try {
+            try {   // ts bisa "yyyy-MM-dd" saja (mis. perkiraan order lagi) → parse tanggal.
                 Date d2 = SDF_PARSE_DATE.parse(ts.substring(0, Math.min(10, ts.length())));
-                return d2 != null ? SDF_OUT_DAY.format(d2) : "-";
-            } catch (Exception ignored) { return "-"; }
+                return d2 != null ? SDF_OUT_DATE.format(d2) : ts;
+            } catch (Exception ignored) {
+                return ts.length() >= 10 ? ts.substring(0, 10) : ts;
+            }
         }
+    }
+
+    /** Rate galon/hari: 1 desimal, buang ".0" (mis. "3", "2.5"). */
+    private static String fmtRate(double rate) {
+        return rate == Math.floor(rate)
+                ? String.valueOf((long) rate)
+                : String.format(Locale.US, "%.1f", rate);
+    }
+
+    /** Follow-up WA. Isinya PANTUN secara bawaan; kalau paket pantun belum terunduh atau Nama Merek
+     *  belum diatur di Konfigurasi, WhatsAppFollowUp diam-diam memakai template biasa — staf diberi
+     *  tahu sekali supaya tak mengira fiturnya rusak. */
+    private void openWhatsAppForFollowUp(Customer c) {
+        // isReady(), BUKAN mengambil pantunnya: mengambil di sini akan memajukan kursor rotasi
+        // sehingga satu pantun terlewat tanpa pernah terkirim.
+        if (!PantunPicker.isReady(settingsDao)) {
+            Toast.makeText(this,
+                    "Pantun belum siap (paket belum tersinkron / Nama Merek belum diatur) — dikirim tanpa pantun.",
+                    Toast.LENGTH_LONG).show();
+        }
+        WhatsAppFollowUp.open(this, c, settingsDao, customerDao);
     }
 }

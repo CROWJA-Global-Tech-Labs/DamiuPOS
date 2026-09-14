@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pemisah antara kelompok "belum disapa" (atas) dan "sudah disapa" (bawah). -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/tvHeader"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingStart="14dp"
+    android:paddingEnd="14dp"
+    android:paddingTop="16dp"
+    android:paddingBottom="6dp"
+    android:textColor="#78909C"
+    android:textSize="12sp"
+    android:textStyle="bold" />

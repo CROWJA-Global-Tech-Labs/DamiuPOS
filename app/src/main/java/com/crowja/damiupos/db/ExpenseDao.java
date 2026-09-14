@@ -19,29 +19,140 @@ public class ExpenseDao {
 
     public long insert(Expense e) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        ContentValues v = new ContentValues();
-        v.put(DatabaseHelper.COL_EXPENSE_NAME, e.getName());
-        v.put(DatabaseHelper.COL_EXPENSE_AMOUNT, e.getAmount());
-        v.put(DatabaseHelper.COL_EXPENSE_PHOTO_PATH, e.getPhotoPath());
-        v.put(DatabaseHelper.COL_EXPENSE_NOTE, e.getNote());
-        return db.insert(DatabaseHelper.TABLE_EXPENSES, null, v);
+        ContentValues v = toValues(e);
+        // Atribusi pembuat: operator yang sedang login (kosong di mode single-user/owner).
+        String operator = new SettingsDao(dbHelper).getCurrentUserName();
+        if (operator != null && !operator.isEmpty()) {
+            v.put(DatabaseHelper.COL_EXPENSE_CREATED_BY, operator);
+        }
+        return dbHelper.syncInsert(db, DatabaseHelper.TABLE_EXPENSES, v);
     }
 
     public int update(Expense e) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
+        return dbHelper.syncUpdate(db, DatabaseHelper.TABLE_EXPENSES, toValues(e),
+                DatabaseHelper.COL_EXPENSE_ID + "=?",
+                new String[]{String.valueOf(e.getId())});
+    }
+
+    private static ContentValues toValues(Expense e) {
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_EXPENSE_NAME, e.getName());
         v.put(DatabaseHelper.COL_EXPENSE_AMOUNT, e.getAmount());
         v.put(DatabaseHelper.COL_EXPENSE_PHOTO_PATH, e.getPhotoPath());
         v.put(DatabaseHelper.COL_EXPENSE_NOTE, e.getNote());
-        return db.update(DatabaseHelper.TABLE_EXPENSES, v,
-                DatabaseHelper.COL_EXPENSE_ID + "=?",
-                new String[]{String.valueOf(e.getId())});
+        v.put(DatabaseHelper.COL_EXPENSE_CATEGORY, e.getCategory());
+        v.put(DatabaseHelper.COL_EXPENSE_LITERS, e.getLiters());
+        v.put(DatabaseHelper.COL_EXPENSE_PCS, e.getPcs());
+        return v;
     }
+
+    /**
+     * Kosongkan photo_url (URL foto nota di server) supaya foto baru di-upload ulang.
+     * Dipakai saat foto nota pengeluaran diganti; MediaUploader jalan sebelum push,
+     * jadi URL di dashboard tetap mutakhir. Baris sudah dirty dari update() sebelumnya.
+     */
+    public void clearPhotoUrl(long expenseId) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_PHOTO_URL, "");
+        db.update(DatabaseHelper.TABLE_EXPENSES, v,
+                DatabaseHelper.COL_EXPENSE_ID + "=?", new String[]{String.valueOf(expenseId)});
+    }
+
+    /** Total nominal (Rp) untuk satu kategori, sepanjang waktu. */
+    public double getTotalAmountByCategory(String category) {
+        return scalar("SELECT COALESCE(SUM(" + DatabaseHelper.COL_EXPENSE_AMOUNT + "),0) FROM "
+                + DatabaseHelper.TABLE_EXPENSES + " WHERE " + DatabaseHelper.COL_EXPENSE_CATEGORY
+                + "=?", category);
+    }
+
+    /** Total liter untuk satu kategori (mis. AIR_BAKU), sepanjang waktu. */
+    public double getTotalLitersByCategory(String category) {
+        return scalar("SELECT COALESCE(SUM(" + DatabaseHelper.COL_EXPENSE_LITERS + "),0) FROM "
+                + DatabaseHelper.TABLE_EXPENSES + " WHERE " + DatabaseHelper.COL_EXPENSE_CATEGORY
+                + "=?", category);
+    }
+
+    /** Total pcs untuk satu kategori (mis. SEGEL / TUTUP), sepanjang waktu. */
+    public double getTotalPcsByCategory(String category) {
+        return scalar("SELECT COALESCE(SUM(" + DatabaseHelper.COL_EXPENSE_PCS + "),0) FROM "
+                + DatabaseHelper.TABLE_EXPENSES + " WHERE " + DatabaseHelper.COL_EXPENSE_CATEGORY
+                + "=?", category);
+    }
+
+    /**
+     * Harga satuan TERBARU untuk satu kategori: amount ÷ {@code divisorCol} dari
+     * entry paling baru (yang {@code divisorCol}&gt;0). Dipakai prediksi laba
+     * supaya ikut menyesuaikan kalau harga beli berubah. 0 kalau belum ada data.
+     * {@code divisorCol} = COL_EXPENSE_LITERS (air baku, → Rp/liter) atau
+     * COL_EXPENSE_PCS (segel/tutup, → Rp/pcs).
+     */
+    public double getLatestUnitPrice(String category, String divisorCol) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT " + DatabaseHelper.COL_EXPENSE_AMOUNT + ", " + divisorCol
+                + " FROM " + DatabaseHelper.TABLE_EXPENSES
+                + " WHERE " + DatabaseHelper.COL_EXPENSE_CATEGORY + "=? AND " + divisorCol + ">0"
+                + " ORDER BY datetime(" + DatabaseHelper.COL_EXPENSE_CREATED_AT + ") DESC, "
+                + DatabaseHelper.COL_EXPENSE_ID + " DESC LIMIT 1", new String[]{category});
+        double price = 0;
+        if (c.moveToFirst()) {
+            double amount = c.getDouble(0);
+            double divisor = c.getDouble(1);
+            if (divisor > 0) price = amount / divisor;
+        }
+        c.close();
+        return price;
+    }
+
+    /** Tanggal ("yyyy-MM-dd") pembelian air baku PALING AWAL (liter>0), null kalau belum ada. */
+    public String getEarliestDateByCategory(String category) {
+        return earliestDateWhere(category, DatabaseHelper.COL_EXPENSE_LITERS);
+    }
+
+    /** Tanggal pembelian PALING AWAL untuk kategori pcs (pcs>0), null kalau belum ada. */
+    public String getEarliestDateByCategoryPcs(String category) {
+        return earliestDateWhere(category, DatabaseHelper.COL_EXPENSE_PCS);
+    }
+
+    private String earliestDateWhere(String category, String positiveCol) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.rawQuery("SELECT MIN(" + localDate(DatabaseHelper.COL_EXPENSE_CREATED_AT) + ") FROM "
+                + DatabaseHelper.TABLE_EXPENSES + " WHERE " + DatabaseHelper.COL_EXPENSE_CATEGORY
+                + "=? AND " + positiveCol + ">0", new String[]{category});
+        String d = null;
+        if (c.moveToFirst()) d = c.getString(0);
+        c.close();
+        return d;
+    }
+
+    private double scalar(String sql, String arg) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.rawQuery(sql, new String[]{arg});
+        double v = 0;
+        if (c.moveToFirst()) v = c.getDouble(0);
+        c.close();
+        return v;
+    }
+
+    // -- created_at: campuran 2 format --
+    // created_at bisa tersimpan sebagai UTC ISO ("…Z", hasil sinkron dari server) ATAU
+    // wall-clock LOKAL "yyyy-MM-dd HH:mm:ss" (dibuat langsung di perangkat). Untuk
+    // pengelompokan "hari ini"/rentang tanggal/bulan, baris UTC HARUS dikonversi ke waktu
+    // lokal dulu — kalau tidak, pengeluaran sore (yang di UTC jatuh ke tanggal kemarin)
+    // hilang dari filter "Hari Ini". Baris lokal dibiarkan apa adanya. Cermin dari
+    // TransactionDao.localDt/localDate/localMonth.
+    private static String localDt(String col) {
+        return "(CASE WHEN " + col + " LIKE '%Z' THEN datetime(" + col + ",'localtime') ELSE " + col + " END)";
+    }
+    /** date() atas wall-clock lokal kolom tanggal (lihat {@link #localDt}). */
+    private static String localDate(String col) { return "date(" + localDt(col) + ")"; }
+    /** strftime('%Y-%m') atas wall-clock lokal kolom tanggal. */
+    private static String localMonth(String col) { return "strftime('%Y-%m'," + localDt(col) + ")"; }
 
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
-        return db.delete(DatabaseHelper.TABLE_EXPENSES,
+        return dbHelper.syncDelete(db, DatabaseHelper.TABLE_EXPENSES, "expenses",
                 DatabaseHelper.COL_EXPENSE_ID + "=?",
                 new String[]{String.valueOf(id)});
     }
@@ -64,6 +175,11 @@ public class ExpenseDao {
         return query(null, null);
     }
 
+    /** Pengeluaran yang DIINPUT operator ini saja (created_by_name = nama), terbaru dulu. */
+    public List<Expense> getAllBy(String creator) {
+        return query(DatabaseHelper.COL_EXPENSE_CREATED_BY + " = ?", new String[]{creator});
+    }
+
     /** Search by name (case-insensitive contains). */
     public List<Expense> search(String keyword) {
         if (keyword == null || keyword.trim().isEmpty()) return getAll();
@@ -71,10 +187,34 @@ public class ExpenseDao {
                 new String[]{"%" + keyword.trim() + "%"});
     }
 
+    /** Search dibatasi pengeluaran yang diinput operator ini. */
+    public List<Expense> searchBy(String keyword, String creator) {
+        if (keyword == null || keyword.trim().isEmpty()) return getAllBy(creator);
+        return query(DatabaseHelper.COL_EXPENSE_NAME + " LIKE ? AND "
+                        + DatabaseHelper.COL_EXPENSE_CREATED_BY + " = ?",
+                new String[]{"%" + keyword.trim() + "%", creator});
+    }
+
     /** All expenses within a date range (inclusive), newest first. Used by reports. */
     public List<Expense> getByDateRange(String startDate, String endDate) {
-        return query("date(" + DatabaseHelper.COL_EXPENSE_CREATED_AT + ") BETWEEN date(?) AND date(?)",
+        return query(localDate(DatabaseHelper.COL_EXPENSE_CREATED_AT) + " BETWEEN date(?) AND date(?)",
                 new String[]{startDate, endDate});
+    }
+
+    /** Total hari ini KHUSUS input operator ini (ringkasan daftar per-staf). */
+    public double getTotalTodayBy(String creator) {
+        return scalar("SELECT COALESCE(SUM(" + DatabaseHelper.COL_EXPENSE_AMOUNT + "),0) FROM "
+                + DatabaseHelper.TABLE_EXPENSES + " WHERE "
+                + localDate(DatabaseHelper.COL_EXPENSE_CREATED_AT) + " = date('now','localtime') AND "
+                + DatabaseHelper.COL_EXPENSE_CREATED_BY + " = ?", creator);
+    }
+
+    /** Total bulan ini KHUSUS input operator ini. */
+    public double getTotalThisMonthBy(String creator) {
+        return scalar("SELECT COALESCE(SUM(" + DatabaseHelper.COL_EXPENSE_AMOUNT + "),0) FROM "
+                + DatabaseHelper.TABLE_EXPENSES + " WHERE "
+                + localMonth(DatabaseHelper.COL_EXPENSE_CREATED_AT) + " = strftime('%Y-%m','now','localtime') AND "
+                + DatabaseHelper.COL_EXPENSE_CREATED_BY + " = ?", creator);
     }
 
     /** Total pengeluaran hari ini (untuk dashboard). */
@@ -82,7 +222,7 @@ public class ExpenseDao {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String q = "SELECT COALESCE(SUM(" + DatabaseHelper.COL_EXPENSE_AMOUNT + "),0) " +
                 "FROM " + DatabaseHelper.TABLE_EXPENSES + " " +
-                "WHERE date(" + DatabaseHelper.COL_EXPENSE_CREATED_AT + ") = date('now','localtime')";
+                "WHERE " + localDate(DatabaseHelper.COL_EXPENSE_CREATED_AT) + " = date('now','localtime')";
         Cursor c = db.rawQuery(q, null);
         double total = 0;
         if (c.moveToFirst()) total = c.getDouble(0);
@@ -95,7 +235,7 @@ public class ExpenseDao {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String q = "SELECT COALESCE(SUM(" + DatabaseHelper.COL_EXPENSE_AMOUNT + "),0) " +
                 "FROM " + DatabaseHelper.TABLE_EXPENSES + " " +
-                "WHERE strftime('%Y-%m', " + DatabaseHelper.COL_EXPENSE_CREATED_AT + ") " +
+                "WHERE " + localMonth(DatabaseHelper.COL_EXPENSE_CREATED_AT) + " " +
                 "    = strftime('%Y-%m','now','localtime')";
         Cursor c = db.rawQuery(q, null);
         double total = 0;
@@ -122,8 +262,18 @@ public class ExpenseDao {
         e.setAmount(c.getDouble(c.getColumnIndexOrThrow(DatabaseHelper.COL_EXPENSE_AMOUNT)));
         int photoIdx = c.getColumnIndex(DatabaseHelper.COL_EXPENSE_PHOTO_PATH);
         if (photoIdx >= 0 && !c.isNull(photoIdx)) e.setPhotoPath(c.getString(photoIdx));
+        int photoUrlIdx = c.getColumnIndex(DatabaseHelper.COL_PHOTO_URL);
+        if (photoUrlIdx >= 0 && !c.isNull(photoUrlIdx)) e.setPhotoUrl(c.getString(photoUrlIdx));
         int noteIdx = c.getColumnIndex(DatabaseHelper.COL_EXPENSE_NOTE);
         if (noteIdx >= 0 && !c.isNull(noteIdx)) e.setNote(c.getString(noteIdx));
+        int catIdx = c.getColumnIndex(DatabaseHelper.COL_EXPENSE_CATEGORY);
+        if (catIdx >= 0 && !c.isNull(catIdx)) e.setCategory(c.getString(catIdx));
+        int litIdx = c.getColumnIndex(DatabaseHelper.COL_EXPENSE_LITERS);
+        if (litIdx >= 0) e.setLiters(c.getDouble(litIdx));
+        int pcsIdx = c.getColumnIndex(DatabaseHelper.COL_EXPENSE_PCS);
+        if (pcsIdx >= 0) e.setPcs(c.getInt(pcsIdx));
+        int byIdx = c.getColumnIndex(DatabaseHelper.COL_EXPENSE_CREATED_BY);
+        if (byIdx >= 0 && !c.isNull(byIdx)) e.setCreatedByName(c.getString(byIdx));
         e.setCreatedAt(c.getString(c.getColumnIndexOrThrow(DatabaseHelper.COL_EXPENSE_CREATED_AT)));
         return e;
     }

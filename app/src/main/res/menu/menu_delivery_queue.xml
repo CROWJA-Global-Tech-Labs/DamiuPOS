@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <item
+        android:id="@+id/action_view_other_device"
+        android:title="Lihat Antrian Perangkat Lain"
+        app:showAsAction="never" />
+
+    <item
+        android:id="@+id/action_delivery_map"
+        android:title="🗺 Peta Antrian Delivery"
+        app:showAsAction="never" />
+
+    <!-- Ikonnya EMOJI, bukan android:icon: baris menu overflow pada tema Material 2 aplikasi ini
+         tak pernah merender drawable (getOptionalIconsVisible=false, tanpa atribut tema untuk
+         mengubahnya) — memaksanya butuh API @RestrictTo yang menggagalkan lintVitalRelease.
+         Seluruh app konsisten memakai pola ini; lihat "🗺 Peta Antrian Delivery" di atas.
+         🚧 dipilih, BUKAN ⚠️ yang sudah dipakai "Tandai Bermasalah" (fitur pelanggan, beda hal). -->
+    <item
+        android:id="@+id/action_report_obstacle"
+        android:title="🚧 Laporkan Kendala Pengiriman"
+        app:showAsAction="never" />
+
+    <!-- 📜 dipilih karena 🗺 🚧 ⚠️ 🏁 🎲 sudah dipakai fitur lain. TIDAK di-gate per-tab: riwayat
+         lokal ini milik perangkat ini di tab mana pun, jadi menyembunyikannya di tab 2/3 justru
+         membingungkan (beda dari 🚧 yang memang soal antrian perangkat ini). -->
+    <item
+        android:id="@+id/action_delivery_history"
+        android:title="📜 Riwayat Pengiriman"
+        app:showAsAction="never" />
+
+    <!-- Label & 👁/🙈 diganti runtime (onPrepareOptionsMenu) sesuai state tersimpan — GATE tab 0
+         saja: kartunya cuma ada di Antrean Saya, menampilkannya di tab lain cuma membingungkan. -->
+    <item
+        android:id="@+id/action_toggle_strategy"
+        android:title="👁 Sembunyikan Strategi Pengiriman"
+        app:showAsAction="never" />
+</menu>

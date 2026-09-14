@@ -12,6 +12,9 @@ public class Attendance {
     private String event;
     private String ts; // "yyyy-MM-dd HH:mm:ss"
     private String photoPath; // selfie wajah saat IN/OUT (nullable)
+    private boolean outOfRadius;   // absen di luar area geofence cabang
+    private int distanceM = -1;    // jarak dari pusat geofence (m); -1 = tak terukur
+    private String radiusReason;   // alasan wajib saat absen di luar area (nullable)
 
     public Attendance() {}
 
@@ -35,4 +38,13 @@ public class Attendance {
 
     public String getPhotoPath() { return photoPath; }
     public void setPhotoPath(String photoPath) { this.photoPath = photoPath; }
+
+    public boolean isOutOfRadius() { return outOfRadius; }
+    public void setOutOfRadius(boolean outOfRadius) { this.outOfRadius = outOfRadius; }
+
+    public int getDistanceM() { return distanceM; }
+    public void setDistanceM(int distanceM) { this.distanceM = distanceM; }
+
+    public String getRadiusReason() { return radiusReason; }
+    public void setRadiusReason(String radiusReason) { this.radiusReason = radiusReason; }
 }

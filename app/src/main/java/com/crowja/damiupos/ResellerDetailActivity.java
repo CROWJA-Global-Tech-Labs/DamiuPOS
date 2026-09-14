@@ -1,6 +1,7 @@
 package com.crowja.damiupos;
 
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
@@ -14,6 +15,7 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
+import androidx.core.content.FileProvider;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -32,6 +34,7 @@ import com.google.android.material.button.MaterialButtonToggleGroup;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
+import java.io.File;
 import java.text.NumberFormat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -57,6 +60,7 @@ public class ResellerDetailActivity extends AppCompatActivity {
 
     private double saldo; // saldo komisi terkini (untuk validasi cairkan)
     private String resellerName = ""; // untuk label expense pencairan
+    private Customer currentReseller; // reseller yang sedang dilihat (untuk PDF rekap)
     private com.google.android.material.checkbox.MaterialCheckBox cbKomisiKeHarga;
     private boolean bindingCb = false; // suppress listener saat set state dari DB
 
@@ -91,13 +95,37 @@ public class ResellerDetailActivity extends AppCompatActivity {
         RecyclerView rvKomisi = findViewById(R.id.rvKomisi);
         rvKomisi.setLayoutManager(new LinearLayoutManager(this));
 
-        findViewById(R.id.btnCairkan).setOnClickListener(v -> showCairkanDialog());
-        findViewById(R.id.btnAturKomisi).setOnClickListener(v -> showAturKomisiDialog());
+        // Kelola reseller (Pencairan komisi + Atur Komisi): hanya Admin/SPV. Staf/Marketing/Viewer
+        // hanya boleh MELIHAT detail → tombol pengubah disembunyikan.
+        boolean canManage = canManageReseller();
+        android.view.View btnCair = findViewById(R.id.btnCairkan);
+        android.view.View btnAtur = findViewById(R.id.btnAturKomisi);
+        if (canManage) {
+            // Pencairan komisi: reuse layar Transaksi Baru dalam mode payout (bukan dialog).
+            btnCair.setOnClickListener(v -> {
+                if (saldo <= 0) {
+                    Toast.makeText(this, "Saldo komisi belum ada untuk dicairkan", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                startActivity(new Intent(this, TransactionActivity.class)
+                        .putExtra(TransactionActivity.EXTRA_KOMISI_PAYOUT, true)
+                        .putExtra(TransactionActivity.EXTRA_RESELLER_ID, customerId)
+                        .putExtra(TransactionActivity.EXTRA_KOMISI_SALDO, saldo)
+                        .putExtra(TransactionActivity.EXTRA_RESELLER_NAME, resellerName));
+            });
+            btnAtur.setOnClickListener(v -> showAturKomisiDialog());
+        } else {
+            btnCair.setVisibility(android.view.View.GONE);
+            btnAtur.setVisibility(android.view.View.GONE);
+        }
 
         // Buat transaksi baru dengan reseller ini sudah ter-set sebagai afiliasi.
         findViewById(R.id.btnBuatTransaksi).setOnClickListener(v ->
                 startActivity(new Intent(this, TransactionActivity.class)
                         .putExtra(TransactionActivity.EXTRA_RESELLER_ID, customerId)));
+
+        // Kirim rekap pendapatan (PDF, 30 hari terakhir).
+        findViewById(R.id.btnKirimRekap).setOnClickListener(v -> kirimRekapPdf());
 
         // Checkbox "Tambahkan Komisi ke Harga Jual" — simpan langsung ke DB.
         cbKomisiKeHarga = findViewById(R.id.cbKomisiKeHarga);
@@ -115,8 +143,9 @@ public class ResellerDetailActivity extends AppCompatActivity {
 
     private void refresh() {
         // Cari reseller ini (dengan komisi_galon) dari query agregat.
+        List<Customer> allResellers = customerDao.getResellers();
         Customer me = null;
-        for (Customer c : customerDao.getResellers()) {
+        for (Customer c : allResellers) {
             if (c.getId() == customerId) { me = c; break; }
         }
         if (me == null) {
@@ -126,15 +155,32 @@ public class ResellerDetailActivity extends AppCompatActivity {
             return;
         }
 
-        // Hitung dengan calculator — mendukung rate per jenis air minum.
-        ResellerKomisiCalculator.Result res = ResellerKomisiCalculator.hitung(dbHelper, me);
-        double earned = res.totalKomisi;
-        double withdrawn = wdDao.getTotalWithdrawn(customerId);
-        saldo = earned - withdrawn;
-
+        // Grup dedup orang ini (salinan lintas-perangkat, kunci sama dengan web) — saldo
+        // OTORITATIF = Σ srv_saldo salinan (angka ResellerSaldo dashboard, lintas SEMUA
+        // perangkat). Kalkulator lokal hanya melihat transaksi perangkat ini, jadi dipakai
+        // untuk rincian info + fallback offline saja.
+        String key = com.crowja.damiupos.db.CustomerDao.dedupKey(me);
+        double saldoSrv = 0, earned = 0, withdrawn = 0, deposits = 0;
         int totalGalon = 0;
-        for (ResellerKomisiCalculator.Entry e : res.entries) totalGalon += e.totalGalon;
+        ResellerKomisiCalculator.Result res = null;   // rincian per-transaksi utk salinan INI
+        for (Customer c : allResellers) {
+            if (!com.crowja.damiupos.db.CustomerDao.dedupKey(c).equals(key)) continue;
+            saldoSrv += c.getSrvSaldo();
+            ResellerKomisiCalculator.Result r = ResellerKomisiCalculator.hitung(dbHelper, c);
+            if (c.getId() == customerId) res = r;
+            earned += r.totalKomisi;
+            for (ResellerKomisiCalculator.Entry e : r.entries) totalGalon += e.totalGalon;
+            // Pisahkan pencairan (amount > 0) dari "tambah saldo" dashboard (amount < 0 = kredit).
+            for (ResellerWithdrawalDao.Withdrawal w : wdDao.getByCustomer(c.getId())) {
+                if (w.amount < 0) deposits += -w.amount;
+                else withdrawn += w.amount;
+            }
+        }
+        if (res == null) res = ResellerKomisiCalculator.hitung(dbHelper, me);
+        boolean online = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled();
+        saldo = online ? saldoSrv : (earned + deposits - withdrawn);
 
+        currentReseller = me;
         resellerName = me.getName() != null ? me.getName() : "";
         // Sinkronkan checkbox komisi-ke-harga dengan state DB (tanpa trigger listener).
         bindingCb = true;
@@ -146,6 +192,13 @@ public class ResellerDetailActivity extends AppCompatActivity {
         ((TextView) findViewById(R.id.tvTotalKomisi)).setText("Rp " + NF.format(Math.round(earned)));
         ((TextView) findViewById(R.id.tvDicairkan)).setText("Rp " + NF.format(Math.round(withdrawn)));
         ((TextView) findViewById(R.id.tvSaldo)).setText("Rp " + NF.format(Math.round(saldo)));
+        TextView tvTambahSaldo = findViewById(R.id.tvTambahSaldo);
+        if (deposits > 0) {
+            tvTambahSaldo.setText("➕ Tambah saldo (dari dashboard): Rp " + NF.format(Math.round(deposits)));
+            tvTambahSaldo.setVisibility(View.VISIBLE);
+        } else {
+            tvTambahSaldo.setVisibility(View.GONE);
+        }
         ((TextView) findViewById(R.id.tvKomisiInfo)).setText(
                 totalGalon + " galon terjual sejak jadi reseller  ·  default Rp "
                         + NF.format(Math.round(settingsDao.getResellerKomisi()))
@@ -158,6 +211,7 @@ public class ResellerDetailActivity extends AppCompatActivity {
                 res.entries.isEmpty() ? View.VISIBLE : View.GONE);
         rvKomisi.setVisibility(res.entries.isEmpty() ? View.GONE : View.VISIBLE);
 
+        // Riwayat pencairan/top-up salinan INI (baris riwayat tetap per-copy seperti semula).
         List<ResellerWithdrawalDao.Withdrawal> wds = wdDao.getByCustomer(customerId);
         RecyclerView rv = findViewById(R.id.rvWithdrawals);
         rv.setAdapter(new WdAdapter(wds));
@@ -168,6 +222,16 @@ public class ResellerDetailActivity extends AppCompatActivity {
     // =======================================================================
     // Atur komisi per jenis air minum
     // =======================================================================
+
+    /** Admin/SPV boleh kelola reseller; selain itu lihat-saja. Single-user (tanpa login) = penuh. */
+    private boolean canManageReseller() {
+        long uid = settingsDao.getCurrentUserId();
+        if (uid <= 0) {
+            return true;
+        }
+        com.crowja.damiupos.model.User u = new com.crowja.damiupos.db.UserDao(dbHelper).getById(uid);
+        return u == null || u.canManageReseller();
+    }
 
     private void showAturKomisiDialog() {
         List<Product> products = productDao.getAll();
@@ -346,6 +410,43 @@ public class ResellerDetailActivity extends AppCompatActivity {
         return expenseDao.insert(new Expense(name, amount, null, n.toString()));
     }
 
+    /**
+     * Buat PDF rekap pendapatan reseller (komisi + riwayat 30 hari terakhir) di
+     * background, lalu buka share sheet untuk dikirim (mis. WhatsApp ke reseller).
+     */
+    private void kirimRekapPdf() {
+        final Customer r = currentReseller;
+        if (r == null) {
+            Toast.makeText(this, "Data reseller belum siap", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Toast.makeText(this, "Menyiapkan rekap PDF…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            File pdf = ResellerRecapPdf.build(getApplicationContext(), dbHelper, r, 30);
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (pdf != null && pdf.exists()) sharePdf(pdf, r);
+                else Toast.makeText(this, "Gagal membuat rekap PDF", Toast.LENGTH_LONG).show();
+            });
+        }, "reseller-recap-pdf").start();
+    }
+
+    private void sharePdf(File file, Customer r) {
+        try {
+            Uri uri = FileProvider.getUriForFile(this,
+                    getApplicationContext().getPackageName() + ".fileprovider", file);
+            Intent share = new Intent(Intent.ACTION_SEND);
+            share.setType("application/pdf");
+            share.putExtra(Intent.EXTRA_STREAM, uri);
+            share.putExtra(Intent.EXTRA_SUBJECT, "Rekap Pendapatan Reseller - "
+                    + (r.getName() != null ? r.getName() : ""));
+            share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(Intent.createChooser(share, "Kirim Rekap Pendapatan"));
+        } catch (Throwable t) {
+            Toast.makeText(this, "Gagal membagikan PDF", Toast.LENGTH_LONG).show();
+        }
+    }
+
     private static int parseIntSafe(TextInputEditText et, int def) {
         if (et == null || et.getText() == null) return def;
         try { return Integer.parseInt(et.getText().toString().trim()); }
@@ -429,22 +530,31 @@ public class ResellerDetailActivity extends AppCompatActivity {
         @Override
         public void onBindViewHolder(@NonNull VH h, int position) {
             ResellerWithdrawalDao.Withdrawal w = data.get(position);
+            boolean deposit = w.amount < 0;   // negatif = tambah saldo (dikirim admin via dashboard)
             boolean air = ResellerWithdrawalDao.TYPE_AIR.equals(w.type);
-            h.tvIcon.setText(air ? "💧" : "💵");
-            h.tvTitle.setText(air
-                    ? "Air minum — " + w.galonQty + " galon"
-                    : "Uang tunai");
+            double absAmount = Math.abs(w.amount);
+            if (deposit) {
+                h.tvIcon.setText("➕");
+                h.tvTitle.setText("Tambah saldo");
+            } else {
+                h.tvIcon.setText(air ? "💧" : "💵");
+                h.tvTitle.setText(air
+                        ? "Air minum — " + w.galonQty + " galon"
+                        : "Uang tunai");
+            }
             String meta = formatDate(w.createdAt);
             if (w.note != null && !w.note.isEmpty()) meta += "  ·  " + w.note;
             h.tvMeta.setText(meta);
-            h.tvAmount.setText("- Rp " + NF.format(Math.round(w.amount)));
+            h.tvAmount.setText((deposit ? "+ Rp " : "- Rp ") + NF.format(Math.round(absAmount)));
 
-            // Long-press → hapus pencairan (koreksi salah input)
+            // Long-press → hapus baris (koreksi salah input)
             h.itemView.setOnLongClickListener(v -> {
                 new AlertDialog.Builder(ResellerDetailActivity.this)
-                        .setTitle("Hapus pencairan?")
-                        .setMessage("Saldo komisi akan dikembalikan sebesar Rp "
-                                + NF.format(Math.round(w.amount)) + ".")
+                        .setTitle(deposit ? "Hapus tambah saldo?" : "Hapus pencairan?")
+                        .setMessage((deposit
+                                ? "Saldo akan berkurang sebesar Rp "
+                                : "Saldo komisi akan dikembalikan sebesar Rp ")
+                                + NF.format(Math.round(absAmount)) + ".")
                         .setPositiveButton("Hapus", (d, which) -> {
                             wdDao.delete(w.id);
                             // Hapus juga expense (pengeluaran) terkait pencairan ini.

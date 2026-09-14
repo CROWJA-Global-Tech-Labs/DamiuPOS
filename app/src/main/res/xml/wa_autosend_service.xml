@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Asisten WA: auto-kirim struk + tombol melayang "+ Trx". packageNames HANYA membatasi
+     pengiriman EVENT (dipakai jalur auto-kirim), BUKAN getRootInActiveWindow(). Saat bubble ditap,
+     paket aplikasi depan diperiksa; isi layar hanya dibaca bila WhatsApp (judul chat saja). -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/wa_autosend_desc"
+    android:notificationTimeout="100"
+    android:packageNames="com.whatsapp,com.whatsapp.w4b" />

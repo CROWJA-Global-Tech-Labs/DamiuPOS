@@ -11,6 +11,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.text.TextUtils;
+import android.view.View;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.Toast;
@@ -35,6 +36,7 @@ import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import com.crowja.damiupos.util.CameraIntents;
 
 /**
  * Form tambah/edit pengeluaran:
@@ -56,10 +58,13 @@ public class ExpenseFormActivity extends AppCompatActivity {
     private static final int REQUEST_PICK_IMAGE = 4202;
     private static final int REQUEST_PERMISSION_CAMERA = 4203;
 
-    private EditText etName, etAmount, etNote;
+    private EditText etName, etAmount, etNote, etLiter, etPcs;
     private ImageView ivFoto;
+    private com.google.android.material.button.MaterialButtonToggleGroup toggleKategori;
+    private View tilName, tilLiter, tilPcs;
     private ExpenseDao expenseDao;
     private String currentPhotoPath;
+    private String originalPhotoPath;   // foto nota saat form dibuka (edit) — utk deteksi penggantian
     private long editingId = 0;
 
     @Override
@@ -76,7 +81,23 @@ public class ExpenseFormActivity extends AppCompatActivity {
         etName = findViewById(R.id.etName);
         etAmount = findViewById(R.id.etAmount);
         etNote = findViewById(R.id.etNote);
+        etLiter = findViewById(R.id.etLiter);
+        etPcs = findViewById(R.id.etPcs);
         ivFoto = findViewById(R.id.ivFotoStruk);
+        // Tint abu-abu HANYA untuk ikon placeholder kamera. Jangan taruh app:tint di XML —
+        // tint ikut mewarnai setImageBitmap() sehingga foto struk tampil abu-abu solid.
+        // showFotoPreview() meng-clear tint ini begitu foto asli dipasang.
+        ivFoto.setImageTintList(android.content.res.ColorStateList.valueOf(
+                getResources().getColor(R.color.grey_medium)));
+        toggleKategori = findViewById(R.id.toggleKategori);
+        tilName = findViewById(R.id.tilName);
+        tilLiter = findViewById(R.id.tilLiter);
+        tilPcs = findViewById(R.id.tilPcs);
+        // Input yang relevan tergantung kategori: Air Baku→liter, Segel/Tutup→pcs,
+        // Umum→nama. Nama disembunyikan untuk kategori non-Umum.
+        toggleKategori.addOnButtonCheckedListener((g, id, checked) -> {
+            if (checked) applyCategoryUi(id);
+        });
 
         // Prefill kalau edit mode
         editingId = getIntent().getLongExtra(EXTRA_EXPENSE_ID, 0);
@@ -87,12 +108,29 @@ public class ExpenseFormActivity extends AppCompatActivity {
                 etName.setText(e.getName());
                 etAmount.setText(String.valueOf(Math.round(e.getAmount())));
                 etNote.setText(e.getNote() != null ? e.getNote() : "");
+                if (e.isAirBaku()) {
+                    toggleKategori.check(R.id.btnKatAirBaku);
+                    if (e.getLiters() > 0) etLiter.setText(trimLiters(e.getLiters()));
+                } else if (e.isSegel()) {
+                    toggleKategori.check(R.id.btnKatSegel);
+                    if (e.getPcs() > 0) etPcs.setText(String.valueOf(e.getPcs()));
+                } else if (e.isTutup()) {
+                    toggleKategori.check(R.id.btnKatTutup);
+                    if (e.getPcs() > 0) etPcs.setText(String.valueOf(e.getPcs()));
+                } else if (e.isKendaraan()) {
+                    toggleKategori.check(R.id.btnKatKendaraan);
+                } else {
+                    toggleKategori.check(R.id.btnKatUmum);
+                }
                 if (e.getPhotoPath() != null && !e.getPhotoPath().isEmpty()) {
                     currentPhotoPath = e.getPhotoPath();
-                    ivFoto.setImageBitmap(loadRotatedBitmap(currentPhotoPath));
+                    originalPhotoPath = currentPhotoPath;   // deteksi ganti foto saat simpan
+                    showFotoPreview(loadRotatedBitmap(currentPhotoPath));
                 }
             }
         }
+        // Sinkronkan tampilan dengan kategori terpilih (default: Air Baku).
+        applyCategoryUi(toggleKategori.getCheckedButtonId());
 
         findViewById(R.id.btnFoto).setOnClickListener(v -> takePhoto());
         findViewById(R.id.btnPickGallery).setOnClickListener(v -> pickFromGallery());
@@ -106,7 +144,7 @@ public class ExpenseFormActivity extends AppCompatActivity {
                     new String[]{Manifest.permission.CAMERA}, REQUEST_PERMISSION_CAMERA);
             return;
         }
-        Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+        Intent intent = CameraIntents.preferBackCamera(new Intent(MediaStore.ACTION_IMAGE_CAPTURE));
         if (intent.resolveActivity(getPackageManager()) == null) {
             Toast.makeText(this, "Tidak ada app kamera", Toast.LENGTH_SHORT).show();
             return;
@@ -127,11 +165,13 @@ public class ExpenseFormActivity extends AppCompatActivity {
     }
 
     private void pickFromGallery() {
-        Intent intent = new Intent(Intent.ACTION_PICK,
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
+        // ACTION_GET_CONTENT (document/photo picker) — andal di semua versi Android & tanpa izin
+        // storage. (ACTION_PICK + setType sebelumnya saling meniadakan data/type → picker gagal.)
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.setType("image/*");
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
         try {
-            startActivityForResult(intent, REQUEST_PICK_IMAGE);
+            startActivityForResult(Intent.createChooser(intent, "Pilih foto"), REQUEST_PICK_IMAGE);
         } catch (Exception ex) {
             Toast.makeText(this, "Tidak dapat membuka galeri", Toast.LENGTH_SHORT).show();
         }
@@ -164,7 +204,7 @@ public class ExpenseFormActivity extends AppCompatActivity {
 
         if (requestCode == REQUEST_CAMERA) {
             if (currentPhotoPath != null) {
-                ivFoto.setImageBitmap(loadRotatedBitmap(currentPhotoPath));
+                showFotoPreview(loadRotatedBitmap(currentPhotoPath));
             }
         } else if (requestCode == REQUEST_PICK_IMAGE && data != null) {
             Uri uri = data.getData();
@@ -172,12 +212,28 @@ public class ExpenseFormActivity extends AppCompatActivity {
             try {
                 File dest = createImageFile();
                 copyUriToFile(uri, dest);
-                ivFoto.setImageBitmap(loadRotatedBitmap(currentPhotoPath));
+                showFotoPreview(loadRotatedBitmap(currentPhotoPath));
             } catch (Exception ex) {
                 Toast.makeText(this, "Gagal salin foto: " + ex.getMessage(),
                         Toast.LENGTH_SHORT).show();
                 currentPhotoPath = null;
             }
+        }
+    }
+
+    /**
+     * Tampilkan foto struk di preview. Tint placeholder WAJIB di-clear dulu — kalau tidak,
+     * bitmap ikut diwarnai tint (SRC_IN) dan tampil sebagai kotak abu-abu solid (bug
+     * "foto struk abu-abu"). Bitmap null (decode gagal) → kembali ke ikon placeholder ber-tint.
+     */
+    private void showFotoPreview(Bitmap photo) {
+        if (photo != null) {
+            ivFoto.setImageTintList(null);
+            ivFoto.setImageBitmap(photo);
+        } else {
+            ivFoto.setImageTintList(android.content.res.ColorStateList.valueOf(
+                    getResources().getColor(R.color.grey_medium)));
+            ivFoto.setImageResource(android.R.drawable.ic_menu_camera);
         }
     }
 
@@ -191,13 +247,52 @@ public class ExpenseFormActivity extends AppCompatActivity {
         }
     }
 
+    /** Atur visibilitas input nama/liter/pcs sesuai kategori terpilih. */
+    private void applyCategoryUi(int checkedId) {
+        boolean airBaku = checkedId == R.id.btnKatAirBaku;
+        boolean pcsCat = checkedId == R.id.btnKatSegel || checkedId == R.id.btnKatTutup;
+        boolean needsName = checkedId == R.id.btnKatUmum || checkedId == R.id.btnKatKendaraan;
+        tilName.setVisibility(needsName ? View.VISIBLE : View.GONE);
+        tilLiter.setVisibility(airBaku ? View.VISIBLE : View.GONE);
+        tilPcs.setVisibility(pcsCat ? View.VISIBLE : View.GONE);
+    }
+
+    private String categoryFromToggle() {
+        int id = toggleKategori.getCheckedButtonId();
+        if (id == R.id.btnKatAirBaku) return Expense.CAT_AIR_BAKU;
+        if (id == R.id.btnKatSegel) return Expense.CAT_SEGEL;
+        if (id == R.id.btnKatTutup) return Expense.CAT_TUTUP;
+        if (id == R.id.btnKatKendaraan) return Expense.CAT_KENDARAAN;
+        return Expense.CAT_UMUM;
+    }
+
+    /** Nama otomatis untuk kategori non-Umum (pakai label kategori). */
+    private static String autoName(String category) {
+        Expense tmp = new Expense();
+        tmp.setCategory(category);
+        return tmp.getCategoryLabel();
+    }
+
     private void save() {
-        String name = etName.getText().toString().trim();
-        if (TextUtils.isEmpty(name)) {
-            Toast.makeText(this, "Nama pengeluaran wajib diisi", Toast.LENGTH_SHORT).show();
-            etName.requestFocus();
-            return;
+        String category = categoryFromToggle();
+        boolean isUmum = Expense.CAT_UMUM.equals(category);
+        boolean isKendaraan = Expense.CAT_KENDARAAN.equals(category);
+        boolean isAirBaku = Expense.CAT_AIR_BAKU.equals(category);
+        boolean isPcsCat = Expense.CAT_SEGEL.equals(category) || Expense.CAT_TUTUP.equals(category);
+
+        // Nama: manual untuk Umum & Kendaraan (bensin/service/oli beda-beda); kategori lain pakai label kategori.
+        String name;
+        if (isUmum || isKendaraan) {
+            name = etName.getText().toString().trim();
+            if (TextUtils.isEmpty(name)) {
+                Toast.makeText(this, "Nama pengeluaran wajib diisi", Toast.LENGTH_SHORT).show();
+                etName.requestFocus();
+                return;
+            }
+        } else {
+            name = autoName(category);
         }
+
         String amountStr = etAmount.getText().toString().trim();
         double amount;
         try {
@@ -212,15 +307,55 @@ public class ExpenseFormActivity extends AppCompatActivity {
             return;
         }
 
+        double liters = 0;
+        int pcs = 0;
+        if (isAirBaku) {
+            String ls = etLiter.getText() != null ? etLiter.getText().toString().trim() : "";
+            try {
+                liters = ls.isEmpty() ? 0 : Double.parseDouble(ls);
+            } catch (NumberFormatException ex) {
+                liters = 0;
+            }
+            if (liters <= 0) {
+                etLiter.setError("Isi jumlah liter air baku");
+                etLiter.requestFocus();
+                return;
+            }
+        } else if (isPcsCat) {
+            String ps = etPcs.getText() != null ? etPcs.getText().toString().trim() : "";
+            try {
+                pcs = ps.isEmpty() ? 0 : Integer.parseInt(ps);
+            } catch (NumberFormatException ex) {
+                pcs = 0;
+            }
+            if (pcs <= 0) {
+                etPcs.setError("Isi jumlah pcs");
+                etPcs.requestFocus();
+                return;
+            }
+        }
+
         Expense e = editingId > 0 ? expenseDao.getById(editingId) : new Expense();
         if (e == null) e = new Expense();
         e.setName(name);
         e.setAmount(amount);
         e.setPhotoPath(currentPhotoPath);
         e.setNote(etNote.getText().toString().trim());
+        e.setCategory(category);
+        e.setLiters(liters);
+        e.setPcs(pcs);
 
         if (editingId > 0) {
             expenseDao.update(e);
+            // Foto nota diganti → kosongkan URL server yang basi supaya file baru di-upload ulang
+            // (MediaUploader jalan sebelum push, jadi nota di dashboard tetap mutakhir).
+            if (currentPhotoPath != null && !currentPhotoPath.equals(originalPhotoPath)) {
+                expenseDao.clearPhotoUrl(editingId);
+                // Foto lama tak lagi direferensikan — hapus supaya storage HP tidak membengkak.
+                if (originalPhotoPath != null) {
+                    try { new File(originalPhotoPath).delete(); } catch (Exception ignored) {}
+                }
+            }
             Toast.makeText(this, "Pengeluaran diupdate", Toast.LENGTH_SHORT).show();
         } else {
             long id = expenseDao.insert(e);
@@ -231,7 +366,15 @@ public class ExpenseFormActivity extends AppCompatActivity {
                 return;
             }
         }
+        // Kirim segera ke web (unggah foto nota + push baris) tanpa menunggu worker 15-menit —
+        // struk pengeluaran langsung persistent di storage web begitu dibuat dari HP.
+        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
         finish();
+    }
+
+    /** Tampilkan liter tanpa ".0" kalau bulat. */
+    private static String trimLiters(double v) {
+        return v == Math.floor(v) ? String.valueOf((long) v) : String.valueOf(v);
     }
 
     /** Preview foto hemat memori (downsample + RGB_565 + EXIF). */
