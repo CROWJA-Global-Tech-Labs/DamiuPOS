@@ -58,6 +58,8 @@ public class ReceiptActivity extends AppCompatActivity {
     public static final String EXTRA_TOTAL_HARGA = "total_harga";
     public static final String EXTRA_CATATAN = "catatan";
     public static final String EXTRA_PAYMENT_METHOD = "payment_method";
+    /** Cash bon (HUTANG) sudah dilunasi — dipakai supaya label struk tampilkan "· LUNAS". */
+    public static final String EXTRA_PAYMENT_CONFIRMED = "payment_confirmed";
     public static final String EXTRA_POINTS_ENABLED = "points_enabled";
     public static final String EXTRA_POINTS_EARNED = "points_earned";
     public static final String EXTRA_POINTS_TOTAL = "points_total";
@@ -344,6 +346,7 @@ public class ReceiptActivity extends AppCompatActivity {
             i.putExtra(EXTRA_CATATAN, "Transaksi dibuat di DAMIU Web Dashboard " + trxTime(t.getTanggal()));
         }
         if (t.getPaymentMethod() != null) i.putExtra(EXTRA_PAYMENT_METHOD, t.getPaymentMethod());
+        if (t.isPaymentConfirmed()) i.putExtra(EXTRA_PAYMENT_CONFIRMED, true);
         if (t.getItems() != null && !t.getItems().isEmpty()) {
             i.putExtra(EXTRA_ITEMS_JSON, TransactionItem.listToJson(t.getItems()));
         }
@@ -708,7 +711,7 @@ public class ReceiptActivity extends AppCompatActivity {
         cardText(R.id.rcTotalValue, "Rp " + nf.format(totalHarga));
 
         // Metode pembayaran
-        String payLabel = paymentLabel(in.getStringExtra(EXTRA_PAYMENT_METHOD));
+        String payLabel = paymentLabel(in.getStringExtra(EXTRA_PAYMENT_METHOD), in.getBooleanExtra(EXTRA_PAYMENT_CONFIRMED, false));
         if (!payLabel.isEmpty()) {
             cardText(R.id.rcPaymentPill, payLabel);
             show(R.id.rcPaymentRow);
@@ -1116,7 +1119,7 @@ public class ReceiptActivity extends AppCompatActivity {
         sb.append(line('=')).append("\n");
 
         // Metode pembayaran (kalau ada — transaksi JUAL)
-        String payLabel = paymentLabel(getIntent().getStringExtra(EXTRA_PAYMENT_METHOD));
+        String payLabel = paymentLabel(getIntent().getStringExtra(EXTRA_PAYMENT_METHOD), getIntent().getBooleanExtra(EXTRA_PAYMENT_CONFIRMED, false));
         if (!payLabel.isEmpty()) {
             sb.append(leftRight("Pembayaran dengan", payLabel)).append("\n");
             sb.append(line('-')).append("\n");
@@ -1260,10 +1263,22 @@ public class ReceiptActivity extends AppCompatActivity {
 
     /** Map kode metode bayar ke label struk; "" kalau kosong/tidak dikenal. */
     private static String paymentLabel(String code) {
-        if (com.crowja.damiupos.model.Transaction.PAY_TUNAI.equals(code)) return "Tunai";
-        if (com.crowja.damiupos.model.Transaction.PAY_QRIS.equals(code)) return "QRIS";
-        if (com.crowja.damiupos.model.Transaction.PAY_TRANSFER.equals(code)) return "Transfer";
-        return "";
+        return paymentLabel(code, false);
+    }
+
+    /** Map kode metode bayar ke label struk, tambah "· LUNAS" kalau cash bon sudah dikonfirmasi lunas. */
+    private static String paymentLabel(String code, boolean confirmed) {
+        String label;
+        if (com.crowja.damiupos.model.Transaction.PAY_TUNAI.equals(code)) {
+            label = "Tunai";
+        } else if (com.crowja.damiupos.model.Transaction.PAY_QRIS.equals(code)) {
+            label = "QRIS";
+        } else if (com.crowja.damiupos.model.Transaction.PAY_TRANSFER.equals(code)) {
+            label = "Transfer";
+        } else {
+            return "";
+        }
+        return confirmed ? label.concat(" · LUNAS") : label;
     }
 
     private String center(String text) {
@@ -1663,10 +1678,14 @@ public class ReceiptActivity extends AppCompatActivity {
             // dua hal berbeda, jadi tak dilabeli satu metode bayar saja. Cermin App\Support\StrukWa
             // ::rincian di web.
             String pay = in.getStringExtra(EXTRA_PAYMENT_METHOD);
+            // Cash bon (HUTANG) yang sudah dikonfirmasi lunas dilabeli "LUNAS via X", bukan "Bayar X",
+            // supaya pesan WA langsung menegaskan status pelunasan ke pelanggan.
+            boolean payConfirmed = in.getBooleanExtra(EXTRA_PAYMENT_CONFIRMED, false);
             String payLabel = null;
             if (pay != null && !pay.isEmpty()) {
-                payLabel = " (Bayar " + pay.substring(0, 1).toUpperCase()
-                        + pay.substring(1).toLowerCase(java.util.Locale.ROOT) + ")";
+                String payCap = pay.substring(0, 1).toUpperCase()
+                        + pay.substring(1).toLowerCase(java.util.Locale.ROOT);
+                payLabel = payConfirmed ? " (LUNAS via " + payCap + ")" : " (Bayar " + payCap + ")";
             }
             long custIdForDebt = in.getLongExtra(EXTRA_CUSTOMER_ID, -1);
             // PELUNASAN HUTANG LAMA lewat transaksi ini ("Sekalian Lunasi Hutang" saat checkout, atau

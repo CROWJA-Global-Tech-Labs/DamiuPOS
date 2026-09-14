@@ -174,6 +174,8 @@ public class SyncEngine {
                     DatabaseHelper.COL_ONGKIR, DatabaseHelper.COL_ONGKIR_TYPE,
                     DatabaseHelper.COL_ITEMS_JSON, DatabaseHelper.COL_GALON_OWNERSHIP,
                     DatabaseHelper.COL_HARGA_BOTOL, DatabaseHelper.COL_PAYMENT_METHOD,
+                    // Cash bon (HUTANG) — stempel pelunasan + URL foto bukti, dua arah.
+                    DatabaseHelper.COL_PAYMENT_CONFIRMED_AT, DatabaseHelper.COL_PAYMENT_PROOF_URL,
                     DatabaseHelper.COL_DELIVERY_STATUS, DatabaseHelper.COL_DELIVERY_QUEUED_AT,
                     // Pesanan Tertunda — cermin App\Support\TertundaSchedule di web (dua arah: HP bisa
                     // membuatnya, web bisa menjadwalkan ulang/melanjutkannya).

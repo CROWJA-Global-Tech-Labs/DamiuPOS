@@ -75,6 +75,8 @@ public class Transaction {
     private String galonOwnership = OWNERSHIP_PINJAM;
     private double hargaBotolGalon; // harga beli botol galon saat ownership=BELI
     private String paymentMethod;   // TUNAI | QRIS | TRANSFER (untuk JUAL)
+    private String paymentConfirmedAt; // stempel waktu pelunasan cash bon (HUTANG) dikonfirmasi — null/kosong = belum lunas
+    private String paymentProofUrl;    // URL foto bukti pelunasan cash bon yang sudah diunggah
     private long resellerId;        // reseller afiliasi yg dapat komisi (0 = tidak ada)
     private String tanggal;
     private String editedAt; // stempel sinkron (UTC ISO) — kunci urutan kronologis yang konsisten
@@ -211,13 +213,32 @@ public class Transaction {
     public String getPaymentMethod() { return paymentMethod; }
     public void setPaymentMethod(String v) { this.paymentMethod = v; }
 
-    /** Label ramah metode pembayaran ("Tunai"/"QRIS"/"Transfer"/"Hutang"), "" kalau kosong. */
+    public String getPaymentConfirmedAt() { return paymentConfirmedAt; }
+    public void setPaymentConfirmedAt(String v) { this.paymentConfirmedAt = v; }
+
+    public String getPaymentProofUrl() { return paymentProofUrl; }
+    public void setPaymentProofUrl(String v) { this.paymentProofUrl = v; }
+
+    /** True kalau cash bon (HUTANG) ini sudah dilunasi — ditandai lewat pengisian paymentConfirmedAt. */
+    public boolean isPaymentConfirmed() {
+        return paymentConfirmedAt != null && !paymentConfirmedAt.isEmpty();
+    }
+
+    /** Label ramah metode pembayaran ("Tunai"/"QRIS"/"Transfer"/"Hutang"), "" kalau kosong; tambah "· LUNAS" kalau cash bon sudah dikonfirmasi. */
     public String getPaymentMethodLabel() {
-        if (PAY_TUNAI.equals(paymentMethod)) return "Tunai";
-        if (PAY_QRIS.equals(paymentMethod)) return "QRIS";
-        if (PAY_TRANSFER.equals(paymentMethod)) return "Transfer";
-        if (PAY_HUTANG.equals(paymentMethod)) return "Hutang";
-        return "";
+        String label;
+        if (PAY_TUNAI.equals(paymentMethod)) {
+            label = "Tunai";
+        } else if (PAY_QRIS.equals(paymentMethod)) {
+            label = "QRIS";
+        } else if (PAY_TRANSFER.equals(paymentMethod)) {
+            label = "Transfer";
+        } else if (PAY_HUTANG.equals(paymentMethod)) {
+            label = "Hutang";
+        } else {
+            return "";
+        }
+        return isPaymentConfirmed() ? label.concat(" · LUNAS") : label;
     }
 
     public long getResellerId() { return resellerId; }

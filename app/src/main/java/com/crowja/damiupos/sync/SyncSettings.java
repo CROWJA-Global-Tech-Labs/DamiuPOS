@@ -89,6 +89,8 @@ public class SyncSettings {
     // JSON array INDEX sektor wilayah yang ia tangani ("[]"/kosong = semua wilayah).
     private static final String K_INTRO_WA = "sync_intro_wa";
     private static final String K_INTRO_WA_ZONES = "sync_intro_wa_zones";
+    /** Perangkat ini "Pengiriman Terpandu" (dicentang admin di web → /api/me). */
+    private static final String K_GUIDED_DELIVERY = "sync_guided_delivery";
 
     // Track this device's staff location while clocked in (default on when enrolled).
     private static final String K_LOC_ENABLED = "sync_loc_enabled";
@@ -170,6 +172,9 @@ public class SyncSettings {
     /** INDEX sektor wilayah yang ditangani (JSON array int); "" / "[]" = SEMUA wilayah. */
     public String getIntroWaZones()       { return settings.get(K_INTRO_WA_ZONES, ""); }
     public void setIntroWaZones(String v) { settings.set(K_INTRO_WA_ZONES, v != null ? v : ""); }
+
+    public boolean isGuidedDeliveryDevice()        { return "1".equals(settings.get(K_GUIDED_DELIVERY, "0")); }
+    public void setGuidedDeliveryDevice(boolean v) { settings.set(K_GUIDED_DELIVERY, v ? "1" : "0"); }
 
     // Throttle cek versi/config: hemat request pada HP 24/7 (pull sudah membawa data + heartbeat).
     public long getVersionCheckAt() { return parseLong(settings.get(K_VERSION_CHECK_AT, "0")); }

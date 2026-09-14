@@ -39,6 +39,11 @@ public final class VersionUpdater {
     /** 1-hour snooze for "Tunda 1 jam". */
     public static final long SNOOZE_MS = 60 * 60 * 1000L;
 
+    /** Dialog Pembaruan Wajib / Versi Dinonaktifkan yang sedang tampil, kalau ada — dijaga
+     *  supaya {@link #maybePrompt} dan {@link #maybePromptBlocked} tidak menumpuk dialog kedua
+     *  saat keduanya dipicu berdekatan (mis. checkAndPrompt jalan lagi sebelum dialog ditutup). */
+    private static AlertDialog activeDialog;
+
     /** Background REST check → store the published APK → pre-download → prompt on the UI thread. */
     public static void checkAndPrompt(Activity activity) {
         Context app = activity.getApplicationContext();
@@ -88,6 +93,7 @@ public final class VersionUpdater {
     /** Show the mandatory update dialog if an update is needed and not currently snoozed. */
     public static void maybePrompt(Activity activity) {
         if (activity.isFinishing() || activity.isDestroyed()) return;
+        if (activeDialog != null && activeDialog.isShowing()) return;   // sudah ada dialog tampil
         Context app = activity.getApplicationContext();
         SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(app)));
         if (!updateNeeded(app, cfg)) return;
@@ -99,7 +105,7 @@ public final class VersionUpdater {
         String msg = "Versi baru aplikasi wajib dipasang untuk melanjutkan."
                 + (ready ? "\nSudah terunduh & siap dipasang." : "");
 
-        new AlertDialog.Builder(activity)
+        activeDialog = new AlertDialog.Builder(activity)
                 .setTitle("Pembaruan Wajib")
                 .setMessage(msg)
                 .setCancelable(false)
@@ -128,6 +134,7 @@ public final class VersionUpdater {
      */
     public static void maybePromptBlocked(Activity activity) {
         if (activity.isFinishing() || activity.isDestroyed()) return;
+        if (activeDialog != null && activeDialog.isShowing()) return;   // sudah ada dialog tampil
         Context app = activity.getApplicationContext();
         SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(app)));
         if (!cfg.isEnrolled()) return;
@@ -140,7 +147,7 @@ public final class VersionUpdater {
                 + ") telah DINONAKTIFKAN dari dashboard."
                 + (note != null && !note.isEmpty() ? "\n\nCatatan admin: " + note : "")
                 + "\n\nSilakan update aplikasi untuk melanjutkan bekerja.";
-        new AlertDialog.Builder(activity)
+        activeDialog = new AlertDialog.Builder(activity)
                 .setTitle("⚠️ Versi Dinonaktifkan")
                 .setMessage(msg)
                 .setCancelable(false)
