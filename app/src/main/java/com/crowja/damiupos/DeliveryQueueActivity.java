@@ -2598,8 +2598,22 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          Toast.makeText(this, "Pesanan ditunda 15 menit — pelanggan tak punya nomor WA tersimpan", Toast.LENGTH_LONG).show();
          return;
       }
-      this.openWhatsApp(phone, "Assalamualaikum, Pelanggan Yth.\n\nMohon maaf, pesanan air minum Anda "
-            + "sedikit tertunda dari perkiraan. Kami akan segera mengantarnya. Terima kasih atas kesabarannya 🙏");
+      String msg = "Assalamualaikum, Pelanggan Yth.\n\nMohon maaf, pesanan air minum Anda "
+            + "sedikit tertunda dari perkiraan. Kami akan segera mengantarnya. Terima kasih atas kesabarannya 🙏";
+
+      // Dashboard bisa meminta auto-kirim langsung (tanpa membuka intent WhatsApp ke staf lebih
+      // dulu). Gagal/tak terkonfirmasi → jatuh ke intent manual lama seperti sebelum flag ini ada.
+      SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
+      if (autoSettings.isAutoSendOrderHoldWa()) {
+         new Thread(() -> {
+            String outcome = com.crowja.damiupos.wa.WaGateway.send(getApplicationContext(), phone, msg);
+            if (!com.crowja.damiupos.wa.WaGateway.SENT.equals(outcome)) {
+               runOnUiThread(() -> this.openWhatsApp(phone, msg));
+            }
+         }).start();
+         return;
+      }
+      this.openWhatsApp(phone, msg);
    }
 
    private void scrollToOrder(Transaction t) {

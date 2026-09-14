@@ -327,6 +327,14 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
 
     /** Konfirmasi yang JUJUR: sebutkan bahwa staf menekan Kirim sendiri di tiap chat. */
     private void confirmNotify(List<Customer> targets) {
+        // Auto-kirim dashboard hanya berlaku untuk varian TANPA foto (lihat javadoc kelas ini —
+        // verifikasi tujuan gateway tak berlaku pada layar pratinjau media). Dengan foto, atau
+        // saat flag mati, tetap pakai alur konfirmasi + per-pelanggan yang lama.
+        SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
+        if (autoSettings.isAutoSendDeliveryIssueWa() && savedPhotoPath.isEmpty()) {
+            autoNotifyAll(targets);
+            return;
+        }
         new AlertDialog.Builder(this)
                 .setTitle("Beritahu Konsumen?")
                 .setMessage(targets.size() + " pelanggan akan diberitahu lewat WhatsApp.\n\n"
@@ -354,6 +362,42 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
                 })
                 .setCancelable(false)
                 .show();
+    }
+
+    /**
+     * Coba kirim teks kendala ke semua {@code targets} otomatis lewat {@link com.crowja.damiupos.wa.WaGateway}
+     * — tanpa dialog konfirmasi/pratinjau. Pelanggan yang GAGAL/tak terkonfirmasi jatuh ke alur
+     * manual lama ({@link #stepNotify()}) supaya tak ada yang benar-benar tak diberitahu.
+     */
+    private void autoNotifyAll(List<Customer> targets) {
+        String text = "Mohon maaf, pengiriman pesanan Anda hari ini terkendala.\n\n"
+                + savedReason + "\n\nKami segera menindaklanjuti. Terima kasih atas pengertiannya 🙏";
+        new Thread(() -> {
+            int sent = 0;
+            List<Customer> failed = new ArrayList<>();
+            for (Customer c : targets) {
+                String outcome = com.crowja.damiupos.wa.WaGateway.send(getApplicationContext(), c.getPhone(), text);
+                if (com.crowja.damiupos.wa.WaGateway.SENT.equals(outcome)) sent++;
+                else failed.add(c);
+            }
+            int finalSent = sent;
+            runOnUiThread(() -> {
+                notifySent = finalSent;
+                if (failed.isEmpty()) {
+                    notifyQueue = targets;
+                    finishNotify();
+                    return;
+                }
+                // Sisa yang gagal/tak terkonfirmasi tetap harus diberitahu → jatuh ke alur manual
+                // per-pelanggan yang lama, mulai dari yang pertama gagal.
+                Toast.makeText(this, "Auto-kirim: " + finalSent + " terkirim, "
+                        + failed.size() + " perlu dikirim manual.", Toast.LENGTH_LONG).show();
+                notifyQueue = failed;
+                notifyIndex = 0;
+                notifyRunning = true;
+                stepNotify();
+            });
+        }).start();
     }
 
     /** Tampilkan pelanggan ke-N + tombol buka WhatsApp; dipanggil ulang tiap staf kembali. */

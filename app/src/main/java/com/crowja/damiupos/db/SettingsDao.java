@@ -184,6 +184,23 @@ public class SettingsDao {
      *  Dashboard-authoritative; harus cocok dgn key server. Cermin App\Support\StrukWa. */
     public static final String KEY_WA_STRUK_NO_EMOJI = "wa_struk_no_emoji";
 
+    /** Kirim WA struk otomatis lewat {@link com.crowja.damiupos.wa.WaGateway} tanpa pratinjau
+     *  teks — staf tak lagi melihat kartu teks/tombol Kirim, hanya notifikasi hasilnya. Bila
+     *  gateway gagal/tak tersedia, alur pratinjau+kirim manual lama tetap dipakai sebagai jatuhan.
+     *  Dashboard-authoritative. */
+    public static final String KEY_AUTO_SEND_STRUK_WA = "auto_send_struk_wa";
+
+    /** Kirim WA "kendala pengiriman" otomatis (hanya varian TANPA foto — lihat javadoc
+     *  {@link com.crowja.damiupos.DeliveryObstacleActivity}) tanpa dialog konfirmasi/pratinjau
+     *  per-pelanggan. Jatuh ke alur manual lama bila gateway gagal/tak tersedia atau ada foto.
+     *  Dashboard-authoritative. */
+    public static final String KEY_AUTO_SEND_DELIVERY_ISSUE_WA = "auto_send_delivery_issue_wa";
+
+    /** Kirim WA "pesanan ditunda" otomatis (mis. saat tunda alarm pesanan terlambat) tanpa
+     *  menampilkan intent WhatsApp ke staf lebih dulu. Jatuh ke intent manual lama bila gateway
+     *  gagal/tak tersedia. Dashboard-authoritative. */
+    public static final String KEY_AUTO_SEND_ORDER_HOLD_WA = "auto_send_order_hold_wa";
+
     /**
      * Kunci konfigurasi bisnis BRANCH yang aman disinkronkan lintas perangkat
      * (app_settings). ALLOWLIST — apa pun di luar daftar ini TIDAK PERNAH dikirim
@@ -209,7 +226,8 @@ public class SettingsDao {
             KEY_REVOKE_CREDIT_INCOMPLETE, KEY_BLOCK_DELIVERY_ON_ISSUE,
             KEY_DELIVERY_PROOF_REQUIRED, KEY_DELIVERY_PROOF_OPTIONAL,
             KEY_DELIVERY_MAX_AGE_MINUTES, KEY_REVOKE_CREDIT_LATE_DELIVERY,
-            KEY_WA_STRUK_NO_EMOJI
+            KEY_WA_STRUK_NO_EMOJI,
+            KEY_AUTO_SEND_STRUK_WA, KEY_AUTO_SEND_DELIVERY_ISSUE_WA, KEY_AUTO_SEND_ORDER_HOLD_WA
     ));
 
     private final DatabaseHelper dbHelper;
@@ -836,6 +854,24 @@ public class SettingsDao {
      */
     public boolean isWaStrukNoEmoji() {
         return "1".equals(get(KEY_WA_STRUK_NO_EMOJI, "0"));
+    }
+
+    /** Kirim WA struk otomatis (tanpa pratinjau teks) via {@link com.crowja.damiupos.wa.WaGateway}?
+     *  Default mati — sampai admin menyalakannya di dashboard. */
+    public boolean isAutoSendStrukWa() {
+        return "1".equals(get(KEY_AUTO_SEND_STRUK_WA, "0"));
+    }
+
+    /** Kirim WA "kendala pengiriman" (varian tanpa foto) otomatis tanpa dialog konfirmasi?
+     *  Default mati. */
+    public boolean isAutoSendDeliveryIssueWa() {
+        return "1".equals(get(KEY_AUTO_SEND_DELIVERY_ISSUE_WA, "0"));
+    }
+
+    /** Kirim WA "pesanan ditunda" otomatis tanpa menampilkan intent WhatsApp lebih dulu?
+     *  Default mati. */
+    public boolean isAutoSendOrderHoldWa() {
+        return "1".equals(get(KEY_AUTO_SEND_ORDER_HOLD_WA, "0"));
     }
 
     /** Foto bukti DITAWARKAN (boleh dilewati; dashboard-authoritative, HP hanya baca). Default

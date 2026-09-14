@@ -461,6 +461,13 @@ public class ReceiptActivity extends AppCompatActivity {
     private void populateStrukTeksPreview() {
         TextView tv = findViewById(R.id.tvStrukTeks);
         if (tv == null) return;
+        SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
+        if (autoSettings.isAutoSendStrukWa()) {
+            // Dashboard minta auto-kirim langsung → isi pesan tak perlu ditampilkan ke staf;
+            // sendStrukWithTracking() yang akan mengirimnya (atau jatuh ke manual bila gagal).
+            tv.setText("Struk akan dikirim otomatis via WhatsApp saat tombol \"Bagikan\" ditekan.");
+            return;
+        }
         tv.setText(composeTrackingCaption(getIntent().getStringExtra(EXTRA_CUSTOMER_NAME)));
         // Jawaban server bisa tiba setelah layar tergambar → gambar ulang preview supaya yang
         // dilihat staf identik dengan yang akan terkirim.
@@ -2025,6 +2032,27 @@ public class ReceiptActivity extends AppCompatActivity {
             return;
         }
         String caption = composeTrackingCaption(getIntent().getStringExtra(EXTRA_CUSTOMER_NAME));
+        String phone = getIntent().getStringExtra(EXTRA_CUSTOMER_PHONE);
+
+        // Dashboard bisa mematikan pratinjau teks & meminta gateway auto-kirim langsung. Kalau
+        // gateway gagal/tak tersedia, alur intent manual di bawah tetap jalan sebagai jatuhan —
+        // staf tak pernah "tergantung" tanpa cara mengirim.
+        SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
+        if (autoSettings.isAutoSendStrukWa() && phone != null && !phone.trim().isEmpty()) {
+            new Thread(() -> {
+                String outcome = com.crowja.damiupos.wa.WaGateway.send(getApplicationContext(), phone, caption);
+                if (!com.crowja.damiupos.wa.WaGateway.SENT.equals(outcome)) {
+                    runOnUiThread(() -> sendStrukWithTrackingManual(caption));
+                }
+            }).start();
+            return;
+        }
+        sendStrukWithTrackingManual(caption);
+    }
+
+    /** Alur manual (intent WhatsApp langsung/chooser) — dipakai sebagai jalur utama saat auto-kirim
+     *  dashboard mati, dan sebagai jatuhan saat auto-kirim gagal/tak terkonfirmasi. */
+    private void sendStrukWithTrackingManual(String caption) {
         String waPackage = pickWaPackage();
 
         Intent send = new Intent(Intent.ACTION_SEND);
