@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 95;
+    private static final int DATABASE_VERSION = 96;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -38,6 +38,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     /** Server URL of the uploaded photo (set after a successful media upload;
      *  synced so the web dashboard can show it). Reused for customers + attendance. */
     public static final String COL_PHOTO_URL = "photo_url";
+    public static final String COL_PAYMENT_CONFIRMED_AT = "payment_confirmed_at";
+    public static final String COL_PAYMENT_PROOF_URL = "payment_proof_url";
     /** ID transaksi unik struk (<KODE>-DDMMYY-<COUNTER>) — cermin App\Support\ReceiptNumber. */
     public static final String COL_RECEIPT_NO = "receipt_no";
     public static final String COL_LATITUDE = "latitude";
@@ -603,6 +605,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_GALON_OWNERSHIP + " TEXT DEFAULT 'PINJAM', " +
                     COL_HARGA_BOTOL + " REAL DEFAULT 0, " +
                     COL_PAYMENT_METHOD + " TEXT, " +
+                    COL_PAYMENT_CONFIRMED_AT + " TEXT, " +
+                    COL_PAYMENT_PROOF_URL + " TEXT, " +
                     COL_TRX_RESELLER_ID + " INTEGER DEFAULT 0, " +
                     COL_DELIVERY_STATUS + " TEXT, " +
                     COL_DELIVERY_QUEUED_AT + " TEXT, " +
@@ -1699,6 +1703,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (oldVersion < 95) {
             // Gift "dilekatkan tapi belum Selesai" — cermin App\Support\Gifts pending_transaction_uuid.
             tryExec(db, "ALTER TABLE " + TABLE_CUSTOMER_GIFTS + " ADD COLUMN " + COL_GIFT_PENDING_TRX_UUID + " TEXT");
+        }
+        if (oldVersion < 96) {
+            // Alur cash bon — foto bukti pembayaran wajib sebelum struk/WA dikirim ke pelanggan.
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_PAYMENT_CONFIRMED_AT + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_PAYMENT_PROOF_URL + " TEXT");
         }
     }
 
