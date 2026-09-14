@@ -463,9 +463,16 @@ public class ReceiptActivity extends AppCompatActivity {
         if (tv == null) return;
         SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
         if (autoSettings.isAutoSendStrukWa()) {
-            // Dashboard minta auto-kirim langsung → isi pesan tak perlu ditampilkan ke staf;
-            // sendStrukWithTracking() yang akan mengirimnya (atau jatuh ke manual bila gagal).
-            tv.setText("Struk akan dikirim otomatis via WhatsApp saat tombol \"Bagikan\" ditekan.");
+            // Dashboard minta auto-kirim, tapi cuma kalau bridge WA (FREZ WA Bridge, server
+            // terpisah) benar-benar terhubung — kalau putus, tampilkan pratinjau manual biasa
+            // (staf tetap kirim sendiri lewat tombol "Bagikan").
+            checkWaBridge(bridgeOk -> {
+                if (bridgeOk) {
+                    tv.setText("Struk akan dikirim otomatis via WhatsApp saat tombol \"Bagikan\" ditekan.");
+                } else {
+                    tv.setText(composeTrackingCaption(getIntent().getStringExtra(EXTRA_CUSTOMER_NAME)));
+                }
+            });
             return;
         }
         tv.setText(composeTrackingCaption(getIntent().getStringExtra(EXTRA_CUSTOMER_NAME)));
@@ -474,6 +481,25 @@ public class ReceiptActivity extends AppCompatActivity {
         if (!serverCampaignsSettled) {
             withServerCampaigns(this::populateStrukTeksPreview);
         }
+    }
+
+    /** Tanya status FREZ WA Bridge server (background) — callback selalu di UI thread. */
+    private void checkWaBridge(java.util.function.Consumer<Boolean> callback) {
+        new Thread(() -> {
+            boolean bridgeOk = false;
+            try {
+                com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                        new SettingsDao(DatabaseHelper.getInstance(this)));
+                if (cfg.isEnrolled()) {
+                    org.json.JSONObject res = new com.crowja.damiupos.sync.SyncApi(cfg).waBridgeStatus();
+                    bridgeOk = res != null && res.optBoolean("configured", false) && res.optBoolean("ok", false);
+                }
+            } catch (Exception ignored) {
+                // Bridge tak terjangkau/timeout → anggap putus, jatuh ke jalur manual.
+            }
+            final boolean finalOk = bridgeOk;
+            runOnUiThread(() -> callback.accept(finalOk));
+        }).start();
     }
 
     /** Toggle tab "Teks" ⇄ "Gambar" di atas struk — default Teks (lihat activity_receipt.xml). */
@@ -2034,17 +2060,24 @@ public class ReceiptActivity extends AppCompatActivity {
         String caption = composeTrackingCaption(getIntent().getStringExtra(EXTRA_CUSTOMER_NAME));
         String phone = getIntent().getStringExtra(EXTRA_CUSTOMER_PHONE);
 
-        // Dashboard bisa mematikan pratinjau teks & meminta gateway auto-kirim langsung. Kalau
-        // gateway gagal/tak tersedia, alur intent manual di bawah tetap jalan sebagai jatuhan —
-        // staf tak pernah "tergantung" tanpa cara mengirim.
+        // Dashboard bisa mematikan pratinjau teks & meminta gateway auto-kirim langsung — tapi
+        // cuma kalau bridge WA server benar-benar terhubung (lihat checkWaBridge). Kalau bridge
+        // putus, atau gateway gagal/tak tersedia, alur intent manual di bawah tetap jalan sebagai
+        // jatuhan — staf tak pernah "tergantung" tanpa cara mengirim.
         SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
         if (autoSettings.isAutoSendStrukWa() && phone != null && !phone.trim().isEmpty()) {
-            new Thread(() -> {
-                String outcome = com.crowja.damiupos.wa.WaGateway.send(getApplicationContext(), phone, caption);
-                if (!com.crowja.damiupos.wa.WaGateway.SENT.equals(outcome)) {
-                    runOnUiThread(() -> sendStrukWithTrackingManual(caption));
+            checkWaBridge(bridgeOk -> {
+                if (!bridgeOk) {
+                    sendStrukWithTrackingManual(caption);
+                    return;
                 }
-            }).start();
+                new Thread(() -> {
+                    String outcome = com.crowja.damiupos.wa.WaGateway.send(getApplicationContext(), phone, caption);
+                    if (!com.crowja.damiupos.wa.WaGateway.SENT.equals(outcome)) {
+                        runOnUiThread(() -> sendStrukWithTrackingManual(caption));
+                    }
+                }).start();
+            });
             return;
         }
         sendStrukWithTrackingManual(caption);
