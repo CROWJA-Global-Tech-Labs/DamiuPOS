@@ -38,5 +38,6 @@
     <string name="pilih_pelanggan">Pilih Pelanggan</string>
     <string name="wa_tidak_tersedia">WhatsApp tidak terinstall</string>
     <string name="no_telepon_kosong">Nomor telepon pelanggan kosong</string>
-    <string name="wa_autosend_desc">Dua fitur: (1) Otomatis menekan tombol "Kirim" di WhatsApp tepat setelah DAMIU POS membagikan struk ke pelanggan; (2) Tombol melayang "+ Trx" yang membuka Transaksi Baru untuk pelanggan pada chat WhatsApp yang sedang dibuka. Layanan memeriksa aplikasi apa yang sedang terbuka, dan hanya membaca judul chat bila itu WhatsApp — isi percakapan dan aplikasi lain tidak dibaca.</string>
+    <string name="wa_autosend_desc">Otomatis menekan tombol "Kirim" di WhatsApp tepat setelah DAMIU POS membagikan struk/laporan kendala ke pelanggan. Layanan dibatasi ke paket WhatsApp saja — tidak pernah membaca layar aplikasi lain.</string>
+    <string name="wa_trxbubble_desc">Tombol melayang "+ Trx" yang membuka Transaksi Baru untuk pelanggan pada chat WhatsApp yang sedang dibuka. Layanan memeriksa aplikasi apa yang sedang terbuka, dan hanya membaca judul chat bila itu WhatsApp — isi percakapan dan aplikasi lain tidak dibaca.</string>
 </resources>

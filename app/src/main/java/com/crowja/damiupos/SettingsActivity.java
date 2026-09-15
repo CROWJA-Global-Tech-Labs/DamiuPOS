@@ -63,7 +63,7 @@ public class SettingsActivity extends AppCompatActivity {
     private TextInputEditText etHargaBotolGalon, etResellerKomisi;
     private TextInputEditText etReplyTemplate, etAutoArchiveHours;
     private SwitchMaterial switchPoints, switchWaAutoSend;
-    private LinearLayout pointsConfigContainer, waAutoSendConfig;
+    private LinearLayout pointsConfigContainer, waAutoSendConfig, trxBubbleConfig;
     private TextView tvRingtoneName;
     private SettingsDao settingsDao;
     private UserDao userDao;
@@ -155,22 +155,35 @@ public class SettingsActivity extends AppCompatActivity {
         });
         if (autoSendOn) updateAccessibilityStatus();
 
-        // --- Tombol Melayang "+ Trx" (menumpang layanan Aksesibilitas yang sama) ---
+        // --- Tombol Melayang "+ Trx" (AccessibilityService sendiri, terpisah dari Auto-Kirim) ---
         com.google.android.material.switchmaterial.SwitchMaterial switchTrxBubble =
                 findViewById(R.id.switchTrxBubble);
-        switchTrxBubble.setChecked(com.crowja.damiupos.wa.TrxBubble.isEnabled(this));
+        trxBubbleConfig = findViewById(R.id.trxBubbleConfig);
+        boolean trxBubbleOn = com.crowja.damiupos.wa.TrxBubble.isEnabled(this);
+        switchTrxBubble.setChecked(trxBubbleOn);
+        trxBubbleConfig.setVisibility(trxBubbleOn ? View.VISIBLE : View.GONE);
         switchTrxBubble.setOnCheckedChangeListener((b, checked) -> {
             com.crowja.damiupos.wa.TrxBubble.setEnabled(this, checked);
-            com.crowja.damiupos.wa.WaAutoSendService.refreshBubble();
-            if (checked && !com.crowja.damiupos.wa.WaAutoSendService.isAccessibilityGranted(this)) {
-                Toast.makeText(this,
-                        "Aktifkan layanan Aksesibilitas DAMIU POS dulu agar tombol \"+ Trx\" muncul.",
-                        Toast.LENGTH_LONG).show();
-                try {
-                    startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-                } catch (android.content.ActivityNotFoundException ignored) { }
+            com.crowja.damiupos.wa.TrxBubbleService.refreshBubble();
+            trxBubbleConfig.setVisibility(checked ? View.VISIBLE : View.GONE);
+            if (checked) {
+                updateTrxBubbleAccessibilityStatus();
+                if (!com.crowja.damiupos.wa.TrxBubbleService.isAccessibilityGranted(this)) {
+                    Toast.makeText(this,
+                            "Aktifkan layanan Aksesibilitas DAMIU POS agar tombol \"+ Trx\" muncul.",
+                            Toast.LENGTH_LONG).show();
+                }
             }
         });
+        findViewById(R.id.btnGrantAccessibilityTrx).setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+            } catch (android.content.ActivityNotFoundException e) {
+                Toast.makeText(this, "Tidak bisa buka pengaturan Aksesibilitas: "
+                        + e.getMessage(), Toast.LENGTH_LONG).show();
+            }
+        });
+        if (trxBubbleOn) updateTrxBubbleAccessibilityStatus();
 
         // Ringtone picker
         tvRingtoneName = findViewById(R.id.tvRingtoneName);
@@ -601,6 +614,9 @@ public class SettingsActivity extends AppCompatActivity {
         if (com.crowja.damiupos.wa.WaAutoSendService.isEnabled(this)) {
             updateAccessibilityStatus();
         }
+        if (com.crowja.damiupos.wa.TrxBubble.isEnabled(this)) {
+            updateTrxBubbleAccessibilityStatus();
+        }
     }
 
     private void updateAccessibilityStatus() {
@@ -608,6 +624,18 @@ public class SettingsActivity extends AppCompatActivity {
         if (tv == null) return;
         if (com.crowja.damiupos.wa.WaAutoSendService.isAccessibilityGranted(this)) {
             tv.setText("✅ Layanan Aksesibilitas aktif — struk akan auto-terkirim");
+            tv.setTextColor(getResources().getColor(R.color.green));
+        } else {
+            tv.setText("⚠ Layanan Aksesibilitas belum diaktifkan — tap tombol di atas");
+            tv.setTextColor(getResources().getColor(R.color.red));
+        }
+    }
+
+    private void updateTrxBubbleAccessibilityStatus() {
+        TextView tv = findViewById(R.id.tvTrxBubbleStatus);
+        if (tv == null) return;
+        if (com.crowja.damiupos.wa.TrxBubbleService.isAccessibilityGranted(this)) {
+            tv.setText("✅ Layanan Aksesibilitas aktif — tombol \"+ Trx\" akan muncul");
             tv.setTextColor(getResources().getColor(R.color.green));
         } else {
             tv.setText("⚠ Layanan Aksesibilitas belum diaktifkan — tap tombol di atas");

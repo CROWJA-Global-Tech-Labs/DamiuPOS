@@ -843,7 +843,7 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- Tombol Melayang "+ Trx" (menumpang layanan Aksesibilitas Auto-Kirim) -->
+            <!-- Tombol Melayang "+ Trx" (AccessibilityService sendiri, terpisah dari Auto-Kirim) -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -882,9 +882,38 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:text="Tombol &quot;+ Trx&quot; selalu tampil melayang di atas layar (bisa digeser). Di layar chat WhatsApp: langsung membuka Transaksi Baru untuk pelanggan chat itu (dicocokkan dari nomor/nama di judul chat; belum terdaftar → form Tambah Pelanggan terisi otomatis). Di layar lain: membuka Transaksi Baru biasa. Memakai layanan Aksesibilitas yang sama dengan Auto-Kirim Struk."
+                        android:text="Tombol &quot;+ Trx&quot; selalu tampil melayang di atas layar (bisa digeser). Di layar chat WhatsApp: langsung membuka Transaksi Baru untuk pelanggan chat itu (dicocokkan dari nomor/nama di judul chat; belum terdaftar → form Tambah Pelanggan terisi otomatis). Di layar lain: membuka Transaksi Baru biasa. Izin Aksesibilitas terpisah dari Auto-Kirim Struk/Kendala."
                         android:textColor="@color/text_secondary"
                         android:textSize="13sp" />
+
+                    <LinearLayout
+                        android:id="@+id/trxBubbleConfig"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:visibility="gone">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnGrantAccessibilityTrx"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:text="Buka Pengaturan Aksesibilitas"
+                            android:textAllCaps="false"
+                            app:cornerRadius="12dp"
+                            app:icon="@android:drawable/ic_menu_manage"
+                            app:iconGravity="textStart" />
+
+                        <TextView
+                            android:id="@+id/tvTrxBubbleStatus"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:text=""
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 

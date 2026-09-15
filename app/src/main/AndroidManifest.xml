@@ -153,14 +153,16 @@
             android:windowSoftInputMode="stateAlwaysHidden" />
 
         <!--
-            Auto-kirim struk WhatsApp: menekan tombol "Kirim" otomatis setelah struk dibagikan
-            ke chat pelanggan. AccessibilityService dibatasi ke paket WhatsApp saja
-            (res/xml/wa_autosend_service.xml) & hanya aktif beberapa detik setelah share.
+            Auto-kirim struk/kendala WhatsApp: menekan tombol "Kirim" otomatis setelah pesan
+            dibagikan ke chat pelanggan. AccessibilityService dibatasi ke paket WhatsApp saja
+            (res/xml/wa_autosend_service.xml) & hanya aktif beberapa detik setelah share. Izin
+            Aksesibilitas TERPISAH dari tombol "+ Trx" (lihat TrxBubbleService di bawah) supaya
+            bisa dicabut/diberikan independen.
         -->
         <service
             android:name=".wa.WaAutoSendService"
             android:exported="false"
-            android:label="DAMIU POS — Asisten WA (Auto-Kirim Struk &amp; Tombol + Trx)"
+            android:label="DAMIU POS — Auto-Kirim WA"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -168,6 +170,24 @@
             <meta-data
                 android:name="android.accessibilityservice"
                 android:resource="@xml/wa_autosend_service" />
+        </service>
+
+        <!--
+            Tombol melayang "+ Trx": membuka Transaksi Baru untuk pelanggan dari chat WhatsApp
+            yang sedang dibuka. Service TERPISAH dari WaAutoSendService (lihat di atas) supaya
+            izin Aksesibilitas kedua fitur independen.
+        -->
+        <service
+            android:name=".wa.TrxBubbleService"
+            android:exported="false"
+            android:label="DAMIU POS — Tombol + Trx"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/trxbubble_service" />
         </service>
 
         <!--

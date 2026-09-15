@@ -26,6 +26,9 @@ import java.util.concurrent.TimeUnit;
  * lain. Ia hanya aktif selama ada permintaan di {@linkplain Req slot} dan langsung nonaktif setelah
  * satu kali klik.</p>
  *
+ * <p>Tombol melayang "+ Trx" ({@link TrxBubble}) dulu menumpang service ini (satu izin Aksesibilitas
+ * untuk dua fitur) — sekarang punya service &amp; izin sendiri, lihat {@link TrxBubbleService}.</p>
+ *
  * <p><b>Satu slot, bukan flag bebas.</b> Dulu status "armed" berupa dua static longgar sehingga dua
  * alur bisa saling menimpa (satu pesan hilang diam-diam) dan status ter-arm yang menggantung bisa
  * menekan Kirim di chat MANA PUN yang kebetulan dibuka staf. Sekarang hanya ada SATU permintaan
@@ -38,23 +41,18 @@ public class WaAutoSendService extends AccessibilityService {
     private static final String PREFS = "damiu_wa";
     private static final String KEY_ENABLED = "autosend_enabled";
 
-    /** Tombol melayang "+ Trx" ({@link TrxBubble}) menumpang layanan ini — satu izin
-     *  Aksesibilitas untuk dua fitur. Instance statis dipakai {@link #refreshBubble()}
-     *  agar toggle di Pengaturan langsung memunculkan/menyembunyikan bubble. */
+    /** Instance statis dipakai {@link #serviceContext()} agar {@link WaGateway} bisa meluncurkan
+     *  Activity dari konteks service ini (lolos pembatasan Background Activity Launch). */
     private static volatile WaAutoSendService instance;
-    private TrxBubble bubble;
 
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
-        bubble = new TrxBubble(this);
-        bubble.refresh();
     }
 
     @Override
     public void onDestroy() {
-        if (bubble != null) bubble.detach();
         instance = null;
         // Layanan mati selagi ada permintaan menggantung → bebaskan penunggunya, jangan biarkan
         // WaGateway menunggu sampai batas waktu untuk sesuatu yang tak mungkin lagi terjadi.
@@ -63,20 +61,14 @@ public class WaAutoSendService extends AccessibilityService {
         super.onDestroy();
     }
 
-    /** Dipanggil SettingsActivity setelah toggle bubble diubah. No-op bila layanan belum aktif. */
-    public static void refreshBubble() {
-        WaAutoSendService s = instance;
-        if (s != null && s.bubble != null) s.bubble.refresh();
-    }
-
     /**
      * Konteks layanan ini bila sedang hidup, else null.
      *
      * <p>Dipakai {@link WaGateway} untuk membuka WhatsApp: AccessibilityService di-bind oleh sistem,
      * jadi peluncuran Activity darinya LOLOS pembatasan Background Activity Launch (Android 10+) —
      * sedangkan {@code startActivity} dari konteks aplikasi biasa (WorkManager / LocationService)
-     * ditahan sistem DIAM-DIAM tanpa melempar exception. {@link TrxBubble#launch} sudah memakai
-     * jalur yang sama di produksi.</p>
+     * ditahan sistem DIAM-DIAM tanpa melempar exception. {@link TrxBubble#launch} lewat
+     * {@link TrxBubbleService} memakai jalur yang sama.</p>
      */
     public static Context serviceContext() {
         return instance;

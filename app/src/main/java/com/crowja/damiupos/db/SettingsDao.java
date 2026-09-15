@@ -202,6 +202,31 @@ public class SettingsDao {
     public static final String KEY_AUTO_SEND_ORDER_HOLD_WA = "auto_send_order_hold_wa";
 
     /**
+     * Mirror BACA-SAJA dari setting server {@code App\Support\WaAutoSend::obstacleEnabled} — beda
+     * dari {@link #KEY_AUTO_SEND_DELIVERY_ISSUE_WA} di atas! Kunci ini menandakan server SENDIRI
+     * (lewat {@code ObstacleWa} + FREZ WA Bridge) akan otomatis mengirim WA kendala pengiriman
+     * (TERMASUK foto) begitu baris {@code delivery_obstacles} tersinkron — HP tidak perlu (dan
+     * TIDAK BOLEH) ikut mengirim manual/otomatis sendiri saat ini aktif, supaya pelanggan tak
+     * menerima pesan dobel. Auto-kirim lokal HP ({@link #KEY_AUTO_SEND_DELIVERY_ISSUE_WA}) hanya
+     * jadi FALLBACK saat setting ini OFF atau bridge WA putus — lihat
+     * {@link com.crowja.damiupos.DeliveryObstacleActivity#confirmNotify}. HP tidak pernah menulis
+     * kunci ini sendiri (diatur dari halaman "Akun WhatsApp" dashboard).
+     */
+    public static final String KEY_SERVER_AUTO_OBSTACLE_WA = "wa_auto_obstacle_enabled";
+
+    /**
+     * Mirror BACA-SAJA dari setting server {@code App\Support\WaAutoSend::strukEnabled} — beda dari
+     * {@link #KEY_AUTO_SEND_STRUK_WA} di atas! Server SENDIRI (lewat
+     * {@code SyncController::applyRow} + FREZ WA Bridge) otomatis mengirim WA struk begitu baris
+     * transaksi JUAL baru tersinkron naik — HP tidak boleh ikut kirim sendiri saat ini aktif,
+     * supaya pelanggan tak menerima struk dobel. Auto-kirim lokal HP
+     * ({@link #KEY_AUTO_SEND_STRUK_WA}) hanya jadi FALLBACK saat setting ini OFF atau bridge WA
+     * putus — lihat {@code ReceiptActivity#sendStrukWithTracking}. HP tidak pernah menulis kunci
+     * ini sendiri (diatur dari halaman "Akun WhatsApp" dashboard).
+     */
+    public static final String KEY_SERVER_AUTO_STRUK_WA = "wa_auto_struk_enabled";
+
+    /**
      * Kunci konfigurasi bisnis BRANCH yang aman disinkronkan lintas perangkat
      * (app_settings). ALLOWLIST — apa pun di luar daftar ini TIDAK PERNAH dikirim
      * ke server. Sengaja EXCLUDE: rahasia (sync_*, pro_*), state
@@ -227,7 +252,8 @@ public class SettingsDao {
             KEY_DELIVERY_PROOF_REQUIRED, KEY_DELIVERY_PROOF_OPTIONAL,
             KEY_DELIVERY_MAX_AGE_MINUTES, KEY_REVOKE_CREDIT_LATE_DELIVERY,
             KEY_WA_STRUK_NO_EMOJI,
-            KEY_AUTO_SEND_STRUK_WA, KEY_AUTO_SEND_DELIVERY_ISSUE_WA, KEY_AUTO_SEND_ORDER_HOLD_WA
+            KEY_AUTO_SEND_STRUK_WA, KEY_AUTO_SEND_DELIVERY_ISSUE_WA, KEY_AUTO_SEND_ORDER_HOLD_WA,
+            KEY_SERVER_AUTO_OBSTACLE_WA, KEY_SERVER_AUTO_STRUK_WA
     ));
 
     private final DatabaseHelper dbHelper;
@@ -866,6 +892,18 @@ public class SettingsDao {
      *  Default mati. */
     public boolean isAutoSendDeliveryIssueWa() {
         return "1".equals(get(KEY_AUTO_SEND_DELIVERY_ISSUE_WA, "0"));
+    }
+
+    /** Server SENDIRI sudah/akan otomatis mengirim WA kendala pengiriman (termasuk foto) begitu
+     *  laporan ini tersinkron? Lihat {@link #KEY_SERVER_AUTO_OBSTACLE_WA}. Default mati. */
+    public boolean isServerAutoObstacleWa() {
+        return "1".equals(get(KEY_SERVER_AUTO_OBSTACLE_WA, "0"));
+    }
+
+    /** Server SENDIRI sudah/akan otomatis mengirim WA struk begitu transaksi JUAL ini tersinkron?
+     *  Lihat {@link #KEY_SERVER_AUTO_STRUK_WA}. Default mati. */
+    public boolean isServerAutoStrukWa() {
+        return "1".equals(get(KEY_SERVER_AUTO_STRUK_WA, "0"));
     }
 
     /** Kirim WA "pesanan ditunda" otomatis tanpa menampilkan intent WhatsApp lebih dulu?

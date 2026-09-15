@@ -25,9 +25,9 @@ import com.crowja.damiupos.model.Customer;
 import java.util.List;
 
 /**
- * Tombol melayang "+ Trx" — overlay yang SELALU tampil di atas layar (ditumpangkan pada
- * {@link WaAutoSendService} sehingga cukup SATU izin Aksesibilitas untuk auto-kirim struk
- * sekaligus tombol ini; toggle terpisah di Pengaturan).
+ * Tombol melayang "+ Trx" — overlay yang SELALU tampil di atas layar, dihost oleh
+ * {@link TrxBubbleService} (AccessibilityService sendiri, izin OS terpisah dari auto-kirim
+ * struk/kendala WA — lihat {@link WaAutoSendService}).
  *
  * <p>Perilaku tap:
  * <ul>
@@ -77,7 +77,7 @@ public class TrxBubble {
     }
 
     /** Tampilkan/sembunyikan sesuai toggle Pengaturan — dipanggil saat service connect dan
-     *  tiap toggle diubah ({@link WaAutoSendService#refreshBubble()}). */
+     *  tiap toggle diubah ({@link TrxBubbleService#refreshBubble()}). */
     void refresh() {
         if (isEnabled(service)) show(); else hide();
     }

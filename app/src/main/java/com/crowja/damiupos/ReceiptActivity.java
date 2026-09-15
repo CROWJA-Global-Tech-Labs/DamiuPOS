@@ -175,12 +175,19 @@ public class ReceiptActivity extends AppCompatActivity {
             btnShare.setVisibility(View.GONE);
             if (btnExportWaView != null) btnExportWaView.setVisibility(View.GONE);
             SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
-            if (autoSettings.isAutoSendStrukWa()) {
-                // Prompt "Lanjutkan & Kirim Struk" HANYA muncul kalau toggle web OFF atau bridge
-                // WA putus — kalau toggle ON dan bridge siap, kirim langsung tanpa staf menekan
-                // apa pun; "Selesai" tetap tombol biasa.
+            // Server SENDIRI (SyncController::applyRow + FREZ WA Bridge) bisa auto-kirim struk
+            // begitu transaksi JUAL ini tersinkron naik (lihat KEY_SERVER_AUTO_STRUK_WA) — itu
+            // prioritas: kalau aktif & bridge terhubung, HP tak ikut kirim (dobel ke pelanggan).
+            // Auto-kirim lokal HP (KEY_AUTO_SEND_STRUK_WA) cuma FALLBACK saat server OFF atau
+            // bridge putus; prompt manual jadi fallback terakhir.
+            boolean serverAuto = autoSettings.isServerAutoStrukWa();
+            boolean localAutoEligible = autoSettings.isAutoSendStrukWa();
+            if (serverAuto || localAutoEligible) {
                 checkWaBridge(bridgeOk -> {
-                    if (bridgeOk) {
+                    if (serverAuto && bridgeOk) {
+                        // Server sudah/akan kirim otomatis begitu transaksi ini tersinkron — HP
+                        // tak ikut kirim apa pun; "Selesai" tetap tombol biasa.
+                    } else if (localAutoEligible && bridgeOk) {
                         sendStrukWithTracking();
                     } else {
                         manualSendOnDone[0] = true;
@@ -476,13 +483,16 @@ public class ReceiptActivity extends AppCompatActivity {
         TextView tv = findViewById(R.id.tvStrukTeks);
         if (tv == null) return;
         SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
-        if (autoSettings.isAutoSendStrukWa()) {
-            // Dashboard minta auto-kirim, tapi cuma kalau bridge WA (FREZ WA Bridge, server
+        boolean serverAuto = autoSettings.isServerAutoStrukWa();
+        boolean localAutoEligible = autoSettings.isAutoSendStrukWa();
+        if (serverAuto || localAutoEligible) {
+            // Auto-kirim (server ATAU lokal HP), tapi cuma kalau bridge WA (FREZ WA Bridge, server
             // terpisah) benar-benar terhubung — kalau putus, tampilkan pratinjau manual biasa
             // (staf tetap kirim sendiri lewat tombol "Bagikan").
             checkWaBridge(bridgeOk -> {
                 if (bridgeOk) {
-                    tv.setText("Struk akan dikirim otomatis via WhatsApp saat tombol \"Bagikan\" ditekan.");
+                    tv.setText("Struk akan dikirim otomatis via WhatsApp"
+                            + (serverAuto ? "." : " saat tombol \"Bagikan\" ditekan."));
                 } else {
                     tv.setText(composeTrackingCaption(getIntent().getStringExtra(EXTRA_CUSTOMER_NAME)));
                 }
