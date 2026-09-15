@@ -164,22 +164,33 @@ public class ReceiptActivity extends AppCompatActivity {
         boolean hasTracking = getIntent().getStringExtra(EXTRA_DELIVERY_TOKEN) != null
                 && !getIntent().getStringExtra(EXTRA_DELIVERY_TOKEN).isEmpty();
         View btnExportWaView = findViewById(R.id.btnExportWa);
+        // true = tombol "Selesai" masih perlu MENGIRIM struk sendiri saat ditekan (jalur manual).
+        // Auto-kirim yang berhasil (toggle ON + bridge OK) membuat ini tetap false — WA sudah
+        // terkirim di background, "Selesai" tinggal menutup layar seperti biasa.
+        final boolean[] manualSendOnDone = {false};
         if (deferCustomerSend) {
-            // Struk penjualan baru: tombol akhir langsung MENGIRIM struk (gambar) + link lacak
-            // ke pelanggan via WhatsApp, lalu kembali ke Beranda. Tombol bagi/ekspor manual
-            // disembunyikan karena pengiriman sudah ditangani tombol akhir.
+            // Struk penjualan baru: tombol akhir MENGIRIM struk + link lacak ke pelanggan via
+            // WhatsApp, lalu kembali ke Beranda. Tombol bagi/ekspor manual disembunyikan karena
+            // pengiriman sudah ditangani tombol akhir (atau otomatis, lihat di bawah).
             btnShare.setVisibility(View.GONE);
             if (btnExportWaView != null) btnExportWaView.setVisibility(View.GONE);
-            TextView note = findViewById(R.id.tvDeferNote);
-            if (note != null) {
-                note.setText(hasTracking
-                        ? "Tekan tombol di bawah untuk mengirim struk + link lacak pengiriman ke pelanggan via WhatsApp."
-                        : "Tekan tombol di bawah untuk mengirim struk ke pelanggan via WhatsApp.");
-                note.setVisibility(View.VISIBLE);
+            SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
+            if (autoSettings.isAutoSendStrukWa()) {
+                // Prompt "Lanjutkan & Kirim Struk" HANYA muncul kalau toggle web OFF atau bridge
+                // WA putus — kalau toggle ON dan bridge siap, kirim langsung tanpa staf menekan
+                // apa pun; "Selesai" tetap tombol biasa.
+                checkWaBridge(bridgeOk -> {
+                    if (bridgeOk) {
+                        sendStrukWithTracking();
+                    } else {
+                        manualSendOnDone[0] = true;
+                        showDeferSendPrompt(hasTracking);
+                    }
+                });
+            } else {
+                manualSendOnDone[0] = true;
+                showDeferSendPrompt(hasTracking);
             }
-            com.google.android.material.button.MaterialButton btnDoneSend = findViewById(R.id.btnDone);
-            btnDoneSend.setText(hasTracking
-                    ? "Lanjutkan & Kirim Struk + Tracking" : "Lanjutkan & Kirim Struk");
         }
         // Celebration dialog if customer unlocked a reward this transaction
         if (getIntent().getBooleanExtra(EXTRA_REWARD_UNLOCKED, false)) {
@@ -231,12 +242,12 @@ public class ReceiptActivity extends AppCompatActivity {
         btnShare.setOnClickListener(v -> shareReceipt());
 
         // Tombol akhir. Untuk struk penjualan baru (deferCustomerSend): kirim struk + link
-        // lacak ke pelanggan via WhatsApp, lalu kembali ke Beranda (struk ini di atas Beranda,
-        // jadi cukup finish()). Selain itu: langsung ke Beranda ("Selesai").
-        final boolean sendOnDone = deferCustomerSend;
+        // lacak ke pelanggan via WhatsApp (kalau belum terkirim otomatis — lihat manualSendOnDone
+        // di atas), lalu kembali ke Beranda (struk ini di atas Beranda, jadi cukup finish()).
+        // Selain itu: langsung ke Beranda ("Selesai").
         findViewById(R.id.btnDone).setOnClickListener(v -> {
-            if (sendOnDone) {
-                sendStrukWithTracking();
+            if (deferCustomerSend) {
+                if (manualSendOnDone[0]) sendStrukWithTracking();
                 finish();
             } else {
                 goMain();
@@ -484,6 +495,21 @@ public class ReceiptActivity extends AppCompatActivity {
         if (!serverCampaignsSettled) {
             withServerCampaigns(this::populateStrukTeksPreview);
         }
+    }
+
+    /** Tampilkan note + ubah tombol "Selesai" jadi prompt "Kirim Struk" — dipakai saat auto-kirim
+     *  dashboard OFF atau bridge WA putus (staf kirim manual, tekan tombol sendiri). */
+    private void showDeferSendPrompt(boolean hasTracking) {
+        TextView note = findViewById(R.id.tvDeferNote);
+        if (note != null) {
+            note.setText(hasTracking
+                    ? "Tekan tombol di bawah untuk mengirim struk + link lacak pengiriman ke pelanggan via WhatsApp."
+                    : "Tekan tombol di bawah untuk mengirim struk ke pelanggan via WhatsApp.");
+            note.setVisibility(View.VISIBLE);
+        }
+        com.google.android.material.button.MaterialButton btnDoneSend = findViewById(R.id.btnDone);
+        btnDoneSend.setText(hasTracking
+                ? "Lanjutkan & Kirim Struk + Tracking" : "Lanjutkan & Kirim Struk");
     }
 
     /** Tanya status FREZ WA Bridge server (background) — callback selalu di UI thread. */
