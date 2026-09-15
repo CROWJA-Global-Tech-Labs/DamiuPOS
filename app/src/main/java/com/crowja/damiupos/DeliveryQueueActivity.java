@@ -3813,6 +3813,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).show();
    }
 
+   private static final String[] RESCHEDULE_REASON_PRESETS = new String[]{"Pesanan overload", "Cuaca buruk", "Kecelakaan", "Lainnya (jelaskan)"};
+
    private void showPostponeSchedulePicker(Transaction t) {
       Calendar cal = Calendar.getInstance();
       cal.add(5, 1);
@@ -3834,7 +3836,39 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private void confirmPostpone(Transaction t, Calendar resume) {
       SimpleDateFormat fmt = new SimpleDateFormat("EEEE, d MMM yyyy HH:mm", new Locale("id", "ID"));
       String resumeLabel = fmt.format(resume.getTime());
-      AlertDialog dialog = (new AlertDialog.Builder(this)).setIcon(17301543).setTitle("Jadwalkan Ulang Order Ini?").setCancelable(false).setMessage("Order \"" + safe(t.getCustomerName()) + "\" akan keluar dari antrian aktif dan kembali otomatis pada:\n\n" + resumeLabel + "\n\nTanggal transaksinya ikut pindah ke jadwal ini.\n\nKetuk \"Jadwalkan\" dua kali untuk memastikan.").setPositiveButton("Jadwalkan", (DialogInterface.OnClickListener)null).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).create();
+
+      LinearLayout root = new LinearLayout(this);
+      root.setOrientation(1);
+      int pad = this.dp(16.0F);
+      root.setPadding(pad, this.dp(8.0F), pad, this.dp(4.0F));
+
+      TextView hint = new TextView(this);
+      hint.setText("Order \"" + safe(t.getCustomerName()) + "\" akan keluar dari antrian aktif dan kembali otomatis pada:\n\n" + resumeLabel + "\n\nTanggal transaksinya ikut pindah ke jadwal ini.");
+      hint.setTextSize(13.0F);
+      root.addView(hint);
+
+      EditText reason = new EditText(this);
+      reason.setHint("Alasan menjadwalkan ulang (opsional)…");
+      reason.setInputType(147457);
+      reason.setMinLines(2);
+      LinearLayout.LayoutParams reasonLp = new LinearLayout.LayoutParams(-1, -2);
+      reasonLp.topMargin = this.dp(10.0F);
+      reason.setLayoutParams(reasonLp);
+      root.addView(reason);
+      root.addView(DeliveryVoidDialog.buildQuickReasonRow(this, reason, RESCHEDULE_REASON_PRESETS));
+
+      TextView confirmHint = new TextView(this);
+      confirmHint.setText("Ketuk \"Jadwalkan\" dua kali untuk memastikan.");
+      confirmHint.setTextSize(12.0F);
+      LinearLayout.LayoutParams confirmLp = new LinearLayout.LayoutParams(-1, -2);
+      confirmLp.topMargin = this.dp(10.0F);
+      confirmHint.setLayoutParams(confirmLp);
+      root.addView(confirmHint);
+
+      ScrollView scroll = new ScrollView(this);
+      scroll.addView(root);
+
+      AlertDialog dialog = (new AlertDialog.Builder(this)).setIcon(17301543).setTitle("Jadwalkan Ulang Order Ini?").setCancelable(false).setView(scroll).setPositiveButton("Jadwalkan", (DialogInterface.OnClickListener)null).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).create();
       dialog.setOnShowListener((d) -> {
          Button pos = dialog.getButton(-1);
          int[] clicks = new int[]{0};
@@ -3850,14 +3884,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                   neg.setEnabled(false);
                }
 
-               this.doPostpone(dialog, pos, neg, t, resume);
+               this.doPostpone(dialog, pos, neg, t, resume, reason.getText().toString().trim());
             }
          });
       });
       dialog.show();
    }
 
-   private void doPostpone(AlertDialog dialog, Button pos, Button neg, Transaction t, Calendar resume) {
+   private void doPostpone(AlertDialog dialog, Button pos, Button neg, Transaction t, Calendar resume, String reason) {
       SyncSettings cfg = this.syncCfg();
       String trxUuid = (new TransactionDao(DatabaseHelper.getInstance(this))).getSyncUuidById(t.getId());
       if (trxUuid != null && !trxUuid.isEmpty()) {
@@ -3871,6 +3905,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                JSONObject body = new JSONObject();
                body.put("transaction_uuid", trxUuid);
                body.put("resume_at", resumeIso);
+               if (reason != null && !reason.isEmpty()) {
+                  body.put("reason", reason);
+               }
                JSONObject r = (new SyncApi(cfg)).postponeDelivery(body);
                okMsg = r.optString("message", "Order ditunda.");
             } catch (SyncApi.SyncException se) {
@@ -3933,7 +3970,39 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       SimpleDateFormat fmt = new SimpleDateFormat("EEEE, d MMM yyyy HH:mm", new Locale("id", "ID"));
       String resumeLabel = fmt.format(resume.getTime());
       String custName = safe(strJson(q, "name"));
-      AlertDialog dialog = (new AlertDialog.Builder(this)).setIcon(17301543).setTitle("Jadwalkan Ulang Order Ini?").setCancelable(false).setMessage("Order \"" + custName + "\" (antrian perangkat lain) akan keluar dari antrian aktif dan kembali otomatis pada:\n\n" + resumeLabel + "\n\nTanggal transaksinya ikut pindah ke jadwal ini.\n\nKetuk \"Jadwalkan\" dua kali untuk memastikan.").setPositiveButton("Jadwalkan", (DialogInterface.OnClickListener)null).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).create();
+
+      LinearLayout root = new LinearLayout(this);
+      root.setOrientation(1);
+      int pad = this.dp(16.0F);
+      root.setPadding(pad, this.dp(8.0F), pad, this.dp(4.0F));
+
+      TextView hint = new TextView(this);
+      hint.setText("Order \"" + custName + "\" (antrian perangkat lain) akan keluar dari antrian aktif dan kembali otomatis pada:\n\n" + resumeLabel + "\n\nTanggal transaksinya ikut pindah ke jadwal ini.");
+      hint.setTextSize(13.0F);
+      root.addView(hint);
+
+      EditText reason = new EditText(this);
+      reason.setHint("Alasan menjadwalkan ulang (opsional)…");
+      reason.setInputType(147457);
+      reason.setMinLines(2);
+      LinearLayout.LayoutParams reasonLp = new LinearLayout.LayoutParams(-1, -2);
+      reasonLp.topMargin = this.dp(10.0F);
+      reason.setLayoutParams(reasonLp);
+      root.addView(reason);
+      root.addView(DeliveryVoidDialog.buildQuickReasonRow(this, reason, RESCHEDULE_REASON_PRESETS));
+
+      TextView confirmHint = new TextView(this);
+      confirmHint.setText("Ketuk \"Jadwalkan\" dua kali untuk memastikan.");
+      confirmHint.setTextSize(12.0F);
+      LinearLayout.LayoutParams confirmLp = new LinearLayout.LayoutParams(-1, -2);
+      confirmLp.topMargin = this.dp(10.0F);
+      confirmHint.setLayoutParams(confirmLp);
+      root.addView(confirmHint);
+
+      ScrollView scroll = new ScrollView(this);
+      scroll.addView(root);
+
+      AlertDialog dialog = (new AlertDialog.Builder(this)).setIcon(17301543).setTitle("Jadwalkan Ulang Order Ini?").setCancelable(false).setView(scroll).setPositiveButton("Jadwalkan", (DialogInterface.OnClickListener)null).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).create();
       dialog.setOnShowListener((d) -> {
          Button pos = dialog.getButton(-1);
          int[] clicks = new int[]{0};
@@ -3949,14 +4018,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                   neg.setEnabled(false);
                }
 
-               this.doPostponeOther(dialog, pos, neg, q, resume);
+               this.doPostponeOther(dialog, pos, neg, q, resume, reason.getText().toString().trim());
             }
          });
       });
       dialog.show();
    }
 
-   private void doPostponeOther(AlertDialog dialog, Button pos, Button neg, JSONObject q, Calendar resume) {
+   private void doPostponeOther(AlertDialog dialog, Button pos, Button neg, JSONObject q, Calendar resume, String reason) {
       String trxUuid = strJson(q, "uuid");
       if (trxUuid.isEmpty()) {
          Toast.makeText(this, "Order ini belum punya identitas server. Coba muat ulang.", 1).show();
@@ -3973,6 +4042,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                JSONObject body = new JSONObject();
                body.put("transaction_uuid", trxUuid);
                body.put("resume_at", resumeIso);
+               if (reason != null && !reason.isEmpty()) {
+                  body.put("reason", reason);
+               }
                JSONObject r = (new SyncApi(cfg)).postponeDelivery(body);
                okMsg = r.optString("message", "Order ditunda.");
             } catch (SyncApi.SyncException se) {

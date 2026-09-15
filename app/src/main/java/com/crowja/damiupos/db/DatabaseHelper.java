@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 96;
+    private static final int DATABASE_VERSION = 97;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -281,6 +281,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     /** Jadwal lanjut otomatis Pesanan Tertunda — saat tiba, order kembali ke antrian aktif.
      *  WAJIB diisi saat delivery_status=TERTUNDA (App\Support\TertundaSchedule di web). */
     public static final String COL_DELIVERY_TERTUNDA_RESUME_AT = "delivery_tertunda_resume_at";
+    /** Alasan menjadwalkan ulang (opsional) — dipilih dari quick-action (Pesanan overload/Cuaca
+     *  buruk/Kecelakaan) atau ditulis bebas, HP maupun web. Cermin delivery_priority_reason. */
+    public static final String COL_DELIVERY_TERTUNDA_REASON = "delivery_tertunda_reason";
     /** "Pesanan Terbuka" (open-dispatch): order delivery TANPA perangkat tujuan spesifik — staf
      *  perangkat mana pun boleh mengklaimnya. Non-null = sedang/pernah terbuka; PERMANEN (tak pernah
      *  di-null-kan lagi setelah diklaim) supaya setiap perangkat yang sempat menariknya tetap
@@ -612,6 +615,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_DELIVERY_QUEUED_AT + " TEXT, " +
                     COL_DELIVERY_TERTUNDA_AT + " TEXT, " +
                     COL_DELIVERY_TERTUNDA_RESUME_AT + " TEXT, " +
+                    COL_DELIVERY_TERTUNDA_REASON + " TEXT, " +
                     COL_DELIVERY_DONE_AT + " TEXT, " +
                     COL_DELIVERY_STARTED_AT + " TEXT, " +
                     COL_DELIVERY_STARTED_CLEARED_AT + " TEXT, " +
@@ -1708,6 +1712,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             // Alur cash bon — foto bukti pembayaran wajib sebelum struk/WA dikirim ke pelanggan.
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_PAYMENT_CONFIRMED_AT + " TEXT");
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_PAYMENT_PROOF_URL + " TEXT");
+        }
+        if (oldVersion < 97) {
+            // Alasan Jadwalkan Ulang (popup + quick-action Pesanan overload/Cuaca buruk/Kecelakaan).
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_TERTUNDA_REASON + " TEXT");
         }
     }
 
