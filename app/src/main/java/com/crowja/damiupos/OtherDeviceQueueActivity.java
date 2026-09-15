@@ -170,24 +170,37 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         try {
             java.util.Date d = SDF_PARSE.parse(queuedAt.substring(0, 19));
             if (d == null) return 0;
-            return Math.max(0, System.currentTimeMillis() - d.getTime());
+            // TIDAK di-clamp ke 0: Pesanan Terjadwal menulis queued_at di MASA DEPAN, jadi selisihnya
+            // sengaja NEGATIF (hitung mundur) — lihat DeliveryQueueActivity.elapsedMillis (sumber
+            // kebenaran yang dicerminkan layar ini).
+            return System.currentTimeMillis() - d.getTime();
         } catch (Exception e) {
             return 0;
         }
     }
 
     /** Format ringkas badge timer umur pesanan — cermin PERSIS DeliveryQueueActivity.formatElapsedBadge:
-     *  &lt;1 jam "mm:ss", 1–24 jam "hh:mm:ss", &gt;24 jam "N hari hh:mm". */
+     *  &lt;1 jam "mm:ss", 1–24 jam "hh:mm:ss", &gt;24 jam "N hari hh:mm"; negatif (Pesanan Terjadwal,
+     *  hitung mundur) diberi awalan "-". */
     private static String formatElapsedBadge(long ms) {
-        long s = Math.max(0, ms) / 1000;
+        boolean future = ms < 0;
+        long s = Math.abs(ms) / 1000;
         long days = s / 86400;
+        String formatted;
         if (days > 0) {
             long h = (s % 86400) / 3600, m = (s % 3600) / 60;
-            return days + " hari " + String.format(Locale.US, "%02d:%02d", h, m);
+            formatted = days + " hari " + String.format(Locale.US, "%02d:%02d", h, m);
+        } else {
+            long h = s / 3600, m = (s % 3600) / 60, sec = s % 60;
+            formatted = h > 0 ? String.format(Locale.US, "%02d:%02d:%02d", h, m, sec) : String.format(Locale.US, "%02d:%02d", m, sec);
         }
-        long h = s / 3600, m = (s % 3600) / 60, sec = s % 60;
-        if (h > 0) return String.format(Locale.US, "%02d:%02d:%02d", h, m, sec);
-        return String.format(Locale.US, "%02d:%02d", m, sec);
+        return future ? "-" + formatted : formatted;
+    }
+
+    /** Prefiks emoji badge: 🗓️ Pesanan Terjadwal (hitung mundur), 🚨 telat, ⏱ normal. */
+    private static String elapsedPrefix(long ms) {
+        if (ms < 0) return "🗓️ ";
+        return (lateMs > 0 && ms >= lateMs) ? "🚨 " : "⏱ ";
     }
 
     /** Ambang peringatan lama menunggu — sama dengan Antrian Saya & dashboard web. */
@@ -203,7 +216,10 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
      *  hanya warna netral: hijau di sini vs abu-abu di Antrian Saya — layar ini tak punya makna
      *  "baru masuk, belum perlu perhatian" netral yang sama, jadi hijau eksplisit lebih jelas). */
     private static void applyQueueTimerState(TextView tv, long elapsedMs) {
-        final int level = lateMs > 0 && elapsedMs >= lateMs ? 3
+        // level -1 = Pesanan Terjadwal (elapsedMs negatif) — masih hitung mundur, bukan "menunggu",
+        // jadi tak ikut ambang kuning/merah/telat. Cermin DeliveryQueueActivity.applyQueueTimerState.
+        final int level = elapsedMs < 0 ? -1
+                : lateMs > 0 && elapsedMs >= lateMs ? 3
                 : elapsedMs >= QUEUE_LATE_MS ? 2 : (elapsedMs >= QUEUE_WARN_MS ? 1 : 0);
         Object prev = tv.getTag(R.id.tvQueued);
         boolean changed = !(prev instanceof Integer) || (Integer) prev != level;
@@ -212,9 +228,10 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
             tv.setBackgroundResource(level == 3 ? R.drawable.bg_queue_timer_danger
                     : level == 2 ? R.drawable.bg_pending_badge
                     : level == 1 ? R.drawable.bg_queue_timer_warn
+                    : level == -1 ? R.drawable.bg_queue_timer_scheduled
                     : R.drawable.bg_queue_timer_ok_green);
         }
-        if (level == 0) {
+        if (level <= 0) {
             tv.clearAnimation();
             tv.setAlpha(1f);
             return;
@@ -434,7 +451,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
                 int pos = vh.getAdapterPosition();
                 if (pos >= 0 && pos < data.size() && vh instanceof VH) {
                     long ms = elapsedMillis(data.get(pos).optString("queued_at", null));
-                    ((VH) vh).tvQueued.setText((lateMs > 0 && ms >= lateMs ? "🚨 " : "⏱ ") + formatElapsedBadge(ms));
+                    ((VH) vh).tvQueued.setText(elapsedPrefix(ms) + formatElapsedBadge(ms));
                     applyQueueTimerState(((VH) vh).tvQueued, ms);
                 }
             }
@@ -502,7 +519,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
             }
 
             long queuedMs = elapsedMillis(q.optString("queued_at", null));
-            h.tvQueued.setText((lateMs > 0 && queuedMs >= lateMs ? "🚨 " : "⏱ ") + formatElapsedBadge(queuedMs));
+            h.tvQueued.setText(elapsedPrefix(queuedMs) + formatElapsedBadge(queuedMs));
             applyQueueTimerState(h.tvQueued, queuedMs);
 
             // Jarak dari posisi kurir ini ke titik antar order.

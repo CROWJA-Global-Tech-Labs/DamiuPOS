@@ -514,6 +514,8 @@ public class TransactionDao {
                 t.setTotalHarga(getDouble(c, DatabaseHelper.COL_TOTAL_HARGA));
                 t.setOngkir(getDouble(c, DatabaseHelper.COL_ONGKIR));
                 t.setPaymentMethod(getStr(c, DatabaseHelper.COL_PAYMENT_METHOD));
+                t.setPaymentConfirmedAt(getStr(c, DatabaseHelper.COL_PAYMENT_CONFIRMED_AT));
+                t.setPaymentProofUrl(getStr(c, DatabaseHelper.COL_PAYMENT_PROOF_URL));
                 t.setGalonOwnership(getStr(c, DatabaseHelper.COL_GALON_OWNERSHIP));
                 t.setCatatan(getStr(c, DatabaseHelper.COL_CATATAN));
                 t.setDeliveryStatus(getStr(c, DatabaseHelper.COL_DELIVERY_STATUS));
@@ -1576,6 +1578,14 @@ public class TransactionDao {
         int payIdx = cursor.getColumnIndex(DatabaseHelper.COL_PAYMENT_METHOD);
         if (payIdx >= 0) {
             t.setPaymentMethod(cursor.getString(payIdx));
+        }
+        int payConfIdx = cursor.getColumnIndex(DatabaseHelper.COL_PAYMENT_CONFIRMED_AT);
+        if (payConfIdx >= 0) {
+            t.setPaymentConfirmedAt(cursor.getString(payConfIdx));
+        }
+        int payProofIdx = cursor.getColumnIndex(DatabaseHelper.COL_PAYMENT_PROOF_URL);
+        if (payProofIdx >= 0) {
+            t.setPaymentProofUrl(cursor.getString(payProofIdx));
         }
         int resIdx = cursor.getColumnIndex(DatabaseHelper.COL_TRX_RESELLER_ID);
         if (resIdx >= 0) {

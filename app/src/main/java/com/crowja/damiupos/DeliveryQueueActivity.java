@@ -4341,7 +4341,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          return 0L;   // tak terurai -> anggap baru masuk, jangan memicu alarm palsu
       }
 
-      return Math.max(0L, System.currentTimeMillis() - t);
+      // TIDAK di-clamp ke 0: Pesanan Terjadwal menulis delivery_queued_at di MASA DEPAN (jam buka
+      // cabang / jadwal yang diminta pelanggan), jadi selisihnya sengaja NEGATIF — itulah hitung
+      // mundurnya. bindElapsedBadge/applyQueueTimerState membaca tanda negatif ini untuk menampilkan
+      // badge "terjadwal" (🗓️, biru) alih-alih badge umur antrean biasa.
+      return System.currentTimeMillis() - t;
    }
 
    private static String formatDuration(long ms) {
@@ -4357,18 +4361,24 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private static String formatElapsedBadge(long ms) {
-      long s = Math.max(0L, ms) / 1000L;
+      // Negatif = hitung mundur Pesanan Terjadwal (lihat elapsedMillis) -- nilainya diabsolutkan untuk
+      // diformat lalu diberi awalan "-" supaya badge terbaca "-01:30" (masih 1,5 jam lagi), bukan
+      // durasi negatif yang membingungkan.
+      boolean future = ms < 0L;
+      long s = Math.abs(ms) / 1000L;
       long days = s / 86400L;
+      String formatted;
       if (days > 0L) {
          long h = s % 86400L / 3600L;
          long m = s % 3600L / 60L;
-         return days + " hari " + String.format(Locale.US, "%02d:%02d", h, m);
+         formatted = days + " hari " + String.format(Locale.US, "%02d:%02d", h, m);
       } else {
          long h = s / 3600L;
          long m = s % 3600L / 60L;
          long sec = s % 60L;
-         return h > 0L ? String.format(Locale.US, "%02d:%02d:%02d", h, m, sec) : String.format(Locale.US, "%02d:%02d", m, sec);
+         formatted = h > 0L ? String.format(Locale.US, "%02d:%02d:%02d", h, m, sec) : String.format(Locale.US, "%02d:%02d", m, sec);
       }
+      return future ? "-" + formatted : formatted;
    }
 
    /**
@@ -4378,15 +4388,18 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * ikut jadi setelan -- staf sudah hafal keduanya; ini murni tingkat tambahan di atasnya.
     */
    private static void applyQueueTimerState(TextView tv, long elapsedMs, long lateMs) {
-      int level = lateMs > 0L && elapsedMs >= lateMs ? 3 : (elapsedMs >= QUEUE_LATE_MS ? 2 : (elapsedMs >= QUEUE_WARN_MS ? 1 : 0));
+      // level -1 = Pesanan Terjadwal (elapsedMs negatif, lihat elapsedMillis) -- masih hitung mundur
+      // ke jam yang diminta, jadi BUKAN "sudah menunggu" dan tak boleh ikut ambang kuning/merah/telat.
+      int level = elapsedMs < 0L ? -1
+            : (lateMs > 0L && elapsedMs >= lateMs ? 3 : (elapsedMs >= QUEUE_LATE_MS ? 2 : (elapsedMs >= QUEUE_WARN_MS ? 1 : 0)));
       Object prev = tv.getTag(id.tvElapsed);
       boolean changed = !(prev instanceof Integer) || (Integer)prev != level;
       if (changed) {
          tv.setTag(id.tvElapsed, level);
-         tv.setBackgroundResource(level == 3 ? drawable.bg_queue_timer_danger : (level == 2 ? drawable.bg_pending_badge : (level == 1 ? drawable.bg_queue_timer_warn : drawable.bg_queue_timer_ok)));
+         tv.setBackgroundResource(level == 3 ? drawable.bg_queue_timer_danger : (level == 2 ? drawable.bg_pending_badge : (level == 1 ? drawable.bg_queue_timer_warn : (level == -1 ? drawable.bg_queue_timer_scheduled : drawable.bg_queue_timer_ok))));
       }
 
-      if (level == 0) {
+      if (level <= 0) {
          tv.clearAnimation();
          tv.setAlpha(1.0F);
       } else if (changed || tv.getAnimation() == null) {
@@ -4405,7 +4418,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     */
    private static void bindElapsedBadge(TextView tv, long elapsedMs) {
       boolean late = lateMs > 0L && elapsedMs >= lateMs;
-      tv.setText((late ? "\ud83d\udea8 " : "\u23f1 ") + formatElapsedBadge(elapsedMs));
+      // \ud83d\uddd3\ufe0f Pesanan Terjadwal (masih hitung mundur, elapsedMs negatif) menang atas \ud83d\udea8/\u23f1 biasa --
+      // lihat elapsedMillis & applyQueueTimerState.
+      String prefix = elapsedMs < 0L ? "\ud83d\uddd3\ufe0f " : (late ? "\ud83d\udea8 " : "\u23f1 ");
+      tv.setText(prefix + formatElapsedBadge(elapsedMs));
       applyQueueTimerState(tv, elapsedMs, lateMs);
    }
 

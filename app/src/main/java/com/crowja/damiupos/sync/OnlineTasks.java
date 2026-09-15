@@ -48,6 +48,29 @@ public final class OnlineTasks {
         }
     }
 
+    /** Segarkan /api/me SEKARANG, melewati throttle 15 menit normal — dipanggil layar
+     *  Pengaturan Sinkronisasi saat pengguna menekan "Segarkan Sekarang" setelah admin
+     *  mengubah sesuatu di dashboard. Jalan di thread terpisah (bukan main thread);
+     *  {@code onDone} selalu dipanggil saat selesai, berhasil atau gagal, supaya UI bisa
+     *  menyembunyikan indikator loading-nya. */
+    public static void forceConfigRefreshNow(Context ctx, Runnable onDone) {
+        new Thread(() -> {
+            try {
+                SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(ctx)));
+                if (cfg.isEnrolled() && RUNNING.compareAndSet(false, true)) {
+                    try {
+                        refreshConfig(ctx, cfg, new SyncApi(cfg));
+                        cfg.setConfigCheckAt(System.currentTimeMillis());
+                    } finally {
+                        RUNNING.set(false);
+                    }
+                }
+            } finally {
+                if (onDone != null) onDone.run();
+            }
+        }).start();
+    }
+
     private static void tickLocked(Context ctx, SyncSettings cfg) {
         SyncApi api = new SyncApi(cfg);
         long now = System.currentTimeMillis();

@@ -361,6 +361,24 @@ public class SyncApi {
     }
 
     /**
+     * Kartu "📊 Status Pencapaian" (Asisten Operasional, layar Selesai — Pulang guided delivery) —
+     * target penjualan periode potong gaji BERJALAN &amp; lalu untuk SATU karyawan, plus galon pekan
+     * ini/lalu. Dihitung DI SERVER (sama seperti {@link #salesAchievement}) supaya HP tak perlu tahu
+     * aturan target sama sekali. Balas {@code {"target_enabled":bool,"current":{...},"previous":{...},
+     * "week":{"galon":N},"week_prev":{"galon":N}}} — {@code current}/{@code previous} null bila target
+     * belum diset untuk karyawan itu. Branch-scoped by the token.
+     *
+     * @param staffUuid karyawan yang capaiannya ditanyakan (staf yang sedang login di perangkat ini)
+     */
+    public JSONObject salesTarget(String staffUuid) throws Exception {
+        okhttp3.HttpUrl built = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/sales/target")
+                .newBuilder()
+                .addQueryParameter("staff_uuid", staffUuid != null ? staffUuid : "")
+                .build();
+        return get(built.toString(), cfg.getToken());
+    }
+
+    /**
      * "Rekor Pengiriman": hari &amp; bulan TERBAIK tiap perangkat + capaian berjalan, se-cabang.
      * Perakitnya di server SAMA dengan kartu di halaman Delivery web (App\Support\DeliveryRecord),
      * jadi rekor yang dilihat kurir identik dengan yang dilihat owner. Tak ada parameter: rekor
@@ -443,6 +461,11 @@ public class SyncApi {
             url += "?transaction_uuid=" + android.net.Uri.encode(trxUuid);
         }
         return get(url, cfg.getToken());
+    }
+
+    /** Status FREZ WA Bridge server ({@code ok}+{@code configured}) — dipakai sebagai syarat auto-kirim WA. */
+    public JSONObject waBridgeStatus() throws Exception {
+        return get(cfg.getBaseUrl() + "/api/wa-bridge/status", cfg.getToken());
     }
 
     private JSONObject get(String url, String token) throws Exception {

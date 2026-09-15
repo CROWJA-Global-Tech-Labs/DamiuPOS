@@ -58,6 +58,11 @@ import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
 
+    /** Extra intent: dikirim DeliveryQueueActivity (mode kurir/Guided Delivery Device) saat kurir
+     *  menekan "Pulang" di sana — alur selfie+catat OUT tetap tinggal di MainActivity (satu sumber
+     *  kebenaran), jadi layar itu cuma melempar ke sini alih-alih menduplikasi alurnya sendiri. */
+    public static final String EXTRA_AUTO_CLOCKOUT = "auto_clockout";
+
     private TextView tvPendapatan, tvGalonTerjual, tvTransaksiHariIni;
     private TextView tvGalonBeredar, tvTotalPelanggan;
     private TextView tvPendapatanTrend, tvGalonTerjualTrend, tvTransaksiTrend;
@@ -130,6 +135,22 @@ public class MainActivity extends AppCompatActivity {
         // Gate multi user & absensi: wajib login (clock in) sebelum pakai app.
         if (settingsDao.isMultiUserEnabled() && settingsDao.getCurrentUserId() <= 0) {
             startActivity(new Intent(this, LoginActivity.class));
+            finish();
+            return;
+        }
+
+        // Datang dari DeliveryQueueActivity (mode kurir) yang tadi menekan "Pulang" → langsung
+        // lanjutkan ke alur selfie+clock-out yang sudah ada di sini, jangan render beranda dulu.
+        if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_AUTO_CLOCKOUT, false)) {
+            startSelfieThenClockOut();
+            return;
+        }
+
+        // Guided Delivery Device: perangkat kurir yang dikunci admin ke mode Antrian Delivery —
+        // beranda ini cuma transit, langsung lempar ke sana (cek yang sama diulang di onResume
+        // untuk kasus togglenya baru aktif SAAT app sedang di background).
+        if (new com.crowja.damiupos.sync.SyncSettings(settingsDao).isGuidedDeliveryDevice()) {
+            startActivity(new Intent(this, DeliveryQueueActivity.class));
             finish();
             return;
         }
@@ -415,10 +436,11 @@ public class MainActivity extends AppCompatActivity {
     /** Konfirmasi sebelum Pulang (clock out) — gate selfie + pencatatan OUT. */
     /**
      * Gerbang sebelum Konfirmasi Pulang: kalau HP ini masih punya order di Antrian Delivery
-     * (PENDING, belum diselesaikan/ditunda), tampilkan peringatan seru dulu — staf gampang lupa
-     * ada pengiriman menggantung saat buru-buru pulang, dan order itu akan tertinggal di HP sampai
-     * staf berikutnya (atau dia sendiri besok) membukanya lagi. "Tetap Pulang" tetap tersedia
-     * (bukan blokir keras — order boleh dilanjutkan staf shift berikutnya), hanya diingatkan dulu.
+     * (PENDING, belum diselesaikan/ditunda), BLOKIR pulang — bukan sekadar peringatan. Order yang
+     * ditinggal begitu saja gampang terlupakan (baru ketahuan staf shift berikutnya, atau malah
+     * tak ketahuan sama sekali), jadi antreannya wajib nol dulu: dijadwalkan ulang (Tertunda),
+     * dibatalkan (void), diselesaikan, atau dioper ke HP lain — satu per satu — baru tombol Pulang
+     * boleh dipakai lagi.
      */
     private void warnIncompleteDeliveryThenConfirmPulang() {
         int pending = 0;
@@ -432,15 +454,17 @@ public class MainActivity extends AppCompatActivity {
 
         IncompleteCustomerDialog.playAlarm(this);
         new AlertDialog.Builder(this)
+                .setCancelable(false)
                 .setIcon(android.R.drawable.ic_dialog_alert)
-                .setTitle("⚠️ Masih Ada Pengiriman Belum Selesai!")
-                .setMessage("Antrian Delivery HP ini masih ada " + pending
-                        + " pesanan yang belum diselesaikan/ditunda.\n\n"
-                        + "Yakin mau Pulang sekarang? Order yang tersisa akan menunggu "
-                        + "sampai dilanjutkan (oleh kamu lagi atau staf shift berikutnya).")
-                .setPositiveButton("Lihat Antrian Dulu", (d, w) ->
+                .setTitle("‼️ TIDAK BISA PULANG — Antrean Belum 0!")
+                .setMessage("Antrean Delivery HP ini masih ada " + pending
+                        + " pesanan yang belum tuntas.\n\n"
+                        + "WAJIB diselesaikan dulu — dijadwalkan ulang (Tertunda), dibatalkan (void), "
+                        + "diselesaikan, atau dioper ke HP lain — SATU PER SATU sampai antreannya 0. "
+                        + "Baru setelah itu boleh Pulang.")
+                .setPositiveButton("Selesaikan Antrean Sekarang", (d, w) ->
                         startActivity(new Intent(this, DeliveryQueueActivity.class)))
-                .setNegativeButton("Tetap Pulang", (d, w) -> confirmPulang())
+                .setNegativeButton("Batal", null)
                 .show();
     }
 
@@ -1026,6 +1050,14 @@ public class MainActivity extends AppCompatActivity {
         // Guard isFinishing() so we don't double-launch when onCreate already gated + finished.
         if (!isFinishing() && settingsDao.isMultiUserEnabled() && settingsDao.getCurrentUserId() <= 0) {
             startActivity(new Intent(this, LoginActivity.class));
+            finish();
+            return;
+        }
+        // Guided Delivery Device: togglenya bisa diaktifkan admin SAAT app ini sedang terbuka di
+        // beranda (mis. staf baru dipindah ke mode kurir) — cek ulang di sini, bukan cuma onCreate,
+        // supaya efeknya langsung terasa begitu layar ini kembali ke foreground.
+        if (!isFinishing() && new com.crowja.damiupos.sync.SyncSettings(settingsDao).isGuidedDeliveryDevice()) {
+            startActivity(new Intent(this, DeliveryQueueActivity.class));
             finish();
             return;
         }

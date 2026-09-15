@@ -58,6 +58,8 @@ public class ReceiptActivity extends AppCompatActivity {
     public static final String EXTRA_TOTAL_HARGA = "total_harga";
     public static final String EXTRA_CATATAN = "catatan";
     public static final String EXTRA_PAYMENT_METHOD = "payment_method";
+    /** Cash bon (HUTANG) sudah dilunasi — dipakai supaya label struk tampilkan "· LUNAS". */
+    public static final String EXTRA_PAYMENT_CONFIRMED = "payment_confirmed";
     public static final String EXTRA_POINTS_ENABLED = "points_enabled";
     public static final String EXTRA_POINTS_EARNED = "points_earned";
     public static final String EXTRA_POINTS_TOTAL = "points_total";
@@ -162,22 +164,33 @@ public class ReceiptActivity extends AppCompatActivity {
         boolean hasTracking = getIntent().getStringExtra(EXTRA_DELIVERY_TOKEN) != null
                 && !getIntent().getStringExtra(EXTRA_DELIVERY_TOKEN).isEmpty();
         View btnExportWaView = findViewById(R.id.btnExportWa);
+        // true = tombol "Selesai" masih perlu MENGIRIM struk sendiri saat ditekan (jalur manual).
+        // Auto-kirim yang berhasil (toggle ON + bridge OK) membuat ini tetap false — WA sudah
+        // terkirim di background, "Selesai" tinggal menutup layar seperti biasa.
+        final boolean[] manualSendOnDone = {false};
         if (deferCustomerSend) {
-            // Struk penjualan baru: tombol akhir langsung MENGIRIM struk (gambar) + link lacak
-            // ke pelanggan via WhatsApp, lalu kembali ke Beranda. Tombol bagi/ekspor manual
-            // disembunyikan karena pengiriman sudah ditangani tombol akhir.
+            // Struk penjualan baru: tombol akhir MENGIRIM struk + link lacak ke pelanggan via
+            // WhatsApp, lalu kembali ke Beranda. Tombol bagi/ekspor manual disembunyikan karena
+            // pengiriman sudah ditangani tombol akhir (atau otomatis, lihat di bawah).
             btnShare.setVisibility(View.GONE);
             if (btnExportWaView != null) btnExportWaView.setVisibility(View.GONE);
-            TextView note = findViewById(R.id.tvDeferNote);
-            if (note != null) {
-                note.setText(hasTracking
-                        ? "Tekan tombol di bawah untuk mengirim struk + link lacak pengiriman ke pelanggan via WhatsApp."
-                        : "Tekan tombol di bawah untuk mengirim struk ke pelanggan via WhatsApp.");
-                note.setVisibility(View.VISIBLE);
+            SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
+            if (autoSettings.isAutoSendStrukWa()) {
+                // Prompt "Lanjutkan & Kirim Struk" HANYA muncul kalau toggle web OFF atau bridge
+                // WA putus — kalau toggle ON dan bridge siap, kirim langsung tanpa staf menekan
+                // apa pun; "Selesai" tetap tombol biasa.
+                checkWaBridge(bridgeOk -> {
+                    if (bridgeOk) {
+                        sendStrukWithTracking();
+                    } else {
+                        manualSendOnDone[0] = true;
+                        showDeferSendPrompt(hasTracking);
+                    }
+                });
+            } else {
+                manualSendOnDone[0] = true;
+                showDeferSendPrompt(hasTracking);
             }
-            com.google.android.material.button.MaterialButton btnDoneSend = findViewById(R.id.btnDone);
-            btnDoneSend.setText(hasTracking
-                    ? "Lanjutkan & Kirim Struk + Tracking" : "Lanjutkan & Kirim Struk");
         }
         // Celebration dialog if customer unlocked a reward this transaction
         if (getIntent().getBooleanExtra(EXTRA_REWARD_UNLOCKED, false)) {
@@ -229,12 +242,12 @@ public class ReceiptActivity extends AppCompatActivity {
         btnShare.setOnClickListener(v -> shareReceipt());
 
         // Tombol akhir. Untuk struk penjualan baru (deferCustomerSend): kirim struk + link
-        // lacak ke pelanggan via WhatsApp, lalu kembali ke Beranda (struk ini di atas Beranda,
-        // jadi cukup finish()). Selain itu: langsung ke Beranda ("Selesai").
-        final boolean sendOnDone = deferCustomerSend;
+        // lacak ke pelanggan via WhatsApp (kalau belum terkirim otomatis — lihat manualSendOnDone
+        // di atas), lalu kembali ke Beranda (struk ini di atas Beranda, jadi cukup finish()).
+        // Selain itu: langsung ke Beranda ("Selesai").
         findViewById(R.id.btnDone).setOnClickListener(v -> {
-            if (sendOnDone) {
-                sendStrukWithTracking();
+            if (deferCustomerSend) {
+                if (manualSendOnDone[0]) sendStrukWithTracking();
                 finish();
             } else {
                 goMain();
@@ -344,6 +357,7 @@ public class ReceiptActivity extends AppCompatActivity {
             i.putExtra(EXTRA_CATATAN, "Transaksi dibuat di DAMIU Web Dashboard " + trxTime(t.getTanggal()));
         }
         if (t.getPaymentMethod() != null) i.putExtra(EXTRA_PAYMENT_METHOD, t.getPaymentMethod());
+        if (t.isPaymentConfirmed()) i.putExtra(EXTRA_PAYMENT_CONFIRMED, true);
         if (t.getItems() != null && !t.getItems().isEmpty()) {
             i.putExtra(EXTRA_ITEMS_JSON, TransactionItem.listToJson(t.getItems()));
         }
@@ -463,9 +477,16 @@ public class ReceiptActivity extends AppCompatActivity {
         if (tv == null) return;
         SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
         if (autoSettings.isAutoSendStrukWa()) {
-            // Dashboard minta auto-kirim langsung → isi pesan tak perlu ditampilkan ke staf;
-            // sendStrukWithTracking() yang akan mengirimnya (atau jatuh ke manual bila gagal).
-            tv.setText("Struk akan dikirim otomatis via WhatsApp saat tombol \"Bagikan\" ditekan.");
+            // Dashboard minta auto-kirim, tapi cuma kalau bridge WA (FREZ WA Bridge, server
+            // terpisah) benar-benar terhubung — kalau putus, tampilkan pratinjau manual biasa
+            // (staf tetap kirim sendiri lewat tombol "Bagikan").
+            checkWaBridge(bridgeOk -> {
+                if (bridgeOk) {
+                    tv.setText("Struk akan dikirim otomatis via WhatsApp saat tombol \"Bagikan\" ditekan.");
+                } else {
+                    tv.setText(composeTrackingCaption(getIntent().getStringExtra(EXTRA_CUSTOMER_NAME)));
+                }
+            });
             return;
         }
         tv.setText(composeTrackingCaption(getIntent().getStringExtra(EXTRA_CUSTOMER_NAME)));
@@ -474,6 +495,40 @@ public class ReceiptActivity extends AppCompatActivity {
         if (!serverCampaignsSettled) {
             withServerCampaigns(this::populateStrukTeksPreview);
         }
+    }
+
+    /** Tampilkan note + ubah tombol "Selesai" jadi prompt "Kirim Struk" — dipakai saat auto-kirim
+     *  dashboard OFF atau bridge WA putus (staf kirim manual, tekan tombol sendiri). */
+    private void showDeferSendPrompt(boolean hasTracking) {
+        TextView note = findViewById(R.id.tvDeferNote);
+        if (note != null) {
+            note.setText(hasTracking
+                    ? "Tekan tombol di bawah untuk mengirim struk + link lacak pengiriman ke pelanggan via WhatsApp."
+                    : "Tekan tombol di bawah untuk mengirim struk ke pelanggan via WhatsApp.");
+            note.setVisibility(View.VISIBLE);
+        }
+        com.google.android.material.button.MaterialButton btnDoneSend = findViewById(R.id.btnDone);
+        btnDoneSend.setText(hasTracking
+                ? "Lanjutkan & Kirim Struk + Tracking" : "Lanjutkan & Kirim Struk");
+    }
+
+    /** Tanya status FREZ WA Bridge server (background) — callback selalu di UI thread. */
+    private void checkWaBridge(java.util.function.Consumer<Boolean> callback) {
+        new Thread(() -> {
+            boolean bridgeOk = false;
+            try {
+                com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                        new SettingsDao(DatabaseHelper.getInstance(this)));
+                if (cfg.isEnrolled()) {
+                    org.json.JSONObject res = new com.crowja.damiupos.sync.SyncApi(cfg).waBridgeStatus();
+                    bridgeOk = res != null && res.optBoolean("configured", false) && res.optBoolean("ok", false);
+                }
+            } catch (Exception ignored) {
+                // Bridge tak terjangkau/timeout → anggap putus, jatuh ke jalur manual.
+            }
+            final boolean finalOk = bridgeOk;
+            runOnUiThread(() -> callback.accept(finalOk));
+        }).start();
     }
 
     /** Toggle tab "Teks" ⇄ "Gambar" di atas struk — default Teks (lihat activity_receipt.xml). */
@@ -682,7 +737,7 @@ public class ReceiptActivity extends AppCompatActivity {
         cardText(R.id.rcTotalValue, "Rp " + nf.format(totalHarga));
 
         // Metode pembayaran
-        String payLabel = paymentLabel(in.getStringExtra(EXTRA_PAYMENT_METHOD));
+        String payLabel = paymentLabel(in.getStringExtra(EXTRA_PAYMENT_METHOD), in.getBooleanExtra(EXTRA_PAYMENT_CONFIRMED, false));
         if (!payLabel.isEmpty()) {
             cardText(R.id.rcPaymentPill, payLabel);
             show(R.id.rcPaymentRow);
@@ -1090,7 +1145,7 @@ public class ReceiptActivity extends AppCompatActivity {
         sb.append(line('=')).append("\n");
 
         // Metode pembayaran (kalau ada — transaksi JUAL)
-        String payLabel = paymentLabel(getIntent().getStringExtra(EXTRA_PAYMENT_METHOD));
+        String payLabel = paymentLabel(getIntent().getStringExtra(EXTRA_PAYMENT_METHOD), getIntent().getBooleanExtra(EXTRA_PAYMENT_CONFIRMED, false));
         if (!payLabel.isEmpty()) {
             sb.append(leftRight("Pembayaran dengan", payLabel)).append("\n");
             sb.append(line('-')).append("\n");
@@ -1234,10 +1289,22 @@ public class ReceiptActivity extends AppCompatActivity {
 
     /** Map kode metode bayar ke label struk; "" kalau kosong/tidak dikenal. */
     private static String paymentLabel(String code) {
-        if (com.crowja.damiupos.model.Transaction.PAY_TUNAI.equals(code)) return "Tunai";
-        if (com.crowja.damiupos.model.Transaction.PAY_QRIS.equals(code)) return "QRIS";
-        if (com.crowja.damiupos.model.Transaction.PAY_TRANSFER.equals(code)) return "Transfer";
-        return "";
+        return paymentLabel(code, false);
+    }
+
+    /** Map kode metode bayar ke label struk, tambah "· LUNAS" kalau cash bon sudah dikonfirmasi lunas. */
+    private static String paymentLabel(String code, boolean confirmed) {
+        String label;
+        if (com.crowja.damiupos.model.Transaction.PAY_TUNAI.equals(code)) {
+            label = "Tunai";
+        } else if (com.crowja.damiupos.model.Transaction.PAY_QRIS.equals(code)) {
+            label = "QRIS";
+        } else if (com.crowja.damiupos.model.Transaction.PAY_TRANSFER.equals(code)) {
+            label = "Transfer";
+        } else {
+            return "";
+        }
+        return confirmed ? label.concat(" · LUNAS") : label;
     }
 
     private String center(String text) {
@@ -1637,10 +1704,14 @@ public class ReceiptActivity extends AppCompatActivity {
             // dua hal berbeda, jadi tak dilabeli satu metode bayar saja. Cermin App\Support\StrukWa
             // ::rincian di web.
             String pay = in.getStringExtra(EXTRA_PAYMENT_METHOD);
+            // Cash bon (HUTANG) yang sudah dikonfirmasi lunas dilabeli "LUNAS via X", bukan "Bayar X",
+            // supaya pesan WA langsung menegaskan status pelunasan ke pelanggan.
+            boolean payConfirmed = in.getBooleanExtra(EXTRA_PAYMENT_CONFIRMED, false);
             String payLabel = null;
             if (pay != null && !pay.isEmpty()) {
-                payLabel = " (Bayar " + pay.substring(0, 1).toUpperCase()
-                        + pay.substring(1).toLowerCase(java.util.Locale.ROOT) + ")";
+                String payCap = pay.substring(0, 1).toUpperCase()
+                        + pay.substring(1).toLowerCase(java.util.Locale.ROOT);
+                payLabel = payConfirmed ? " (LUNAS via " + payCap + ")" : " (Bayar " + payCap + ")";
             }
             long custIdForDebt = in.getLongExtra(EXTRA_CUSTOMER_ID, -1);
             // PELUNASAN HUTANG LAMA lewat transaksi ini ("Sekalian Lunasi Hutang" saat checkout, atau
@@ -2034,17 +2105,24 @@ public class ReceiptActivity extends AppCompatActivity {
         String caption = composeTrackingCaption(getIntent().getStringExtra(EXTRA_CUSTOMER_NAME));
         String phone = getIntent().getStringExtra(EXTRA_CUSTOMER_PHONE);
 
-        // Dashboard bisa mematikan pratinjau teks & meminta gateway auto-kirim langsung. Kalau
-        // gateway gagal/tak tersedia, alur intent manual di bawah tetap jalan sebagai jatuhan —
-        // staf tak pernah "tergantung" tanpa cara mengirim.
+        // Dashboard bisa mematikan pratinjau teks & meminta gateway auto-kirim langsung — tapi
+        // cuma kalau bridge WA server benar-benar terhubung (lihat checkWaBridge). Kalau bridge
+        // putus, atau gateway gagal/tak tersedia, alur intent manual di bawah tetap jalan sebagai
+        // jatuhan — staf tak pernah "tergantung" tanpa cara mengirim.
         SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
         if (autoSettings.isAutoSendStrukWa() && phone != null && !phone.trim().isEmpty()) {
-            new Thread(() -> {
-                String outcome = com.crowja.damiupos.wa.WaGateway.send(getApplicationContext(), phone, caption);
-                if (!com.crowja.damiupos.wa.WaGateway.SENT.equals(outcome)) {
-                    runOnUiThread(() -> sendStrukWithTrackingManual(caption));
+            checkWaBridge(bridgeOk -> {
+                if (!bridgeOk) {
+                    sendStrukWithTrackingManual(caption);
+                    return;
                 }
-            }).start();
+                new Thread(() -> {
+                    String outcome = com.crowja.damiupos.wa.WaGateway.send(getApplicationContext(), phone, caption);
+                    if (!com.crowja.damiupos.wa.WaGateway.SENT.equals(outcome)) {
+                        runOnUiThread(() -> sendStrukWithTrackingManual(caption));
+                    }
+                }).start();
+            });
             return;
         }
         sendStrukWithTrackingManual(caption);
