@@ -215,6 +215,18 @@ public class SettingsDao {
     public static final String KEY_SERVER_AUTO_OBSTACLE_WA = "wa_auto_obstacle_enabled";
 
     /**
+     * Mirror BACA-SAJA dari setting server {@code App\Support\WaAutoSend::strukEnabled} — beda dari
+     * {@link #KEY_AUTO_SEND_STRUK_WA} di atas! Server SENDIRI (lewat
+     * {@code SyncController::applyRow} + FREZ WA Bridge) otomatis mengirim WA struk begitu baris
+     * transaksi JUAL baru tersinkron naik — HP tidak boleh ikut kirim sendiri saat ini aktif,
+     * supaya pelanggan tak menerima struk dobel. Auto-kirim lokal HP
+     * ({@link #KEY_AUTO_SEND_STRUK_WA}) hanya jadi FALLBACK saat setting ini OFF atau bridge WA
+     * putus — lihat {@code ReceiptActivity#sendStrukWithTracking}. HP tidak pernah menulis kunci
+     * ini sendiri (diatur dari halaman "Akun WhatsApp" dashboard).
+     */
+    public static final String KEY_SERVER_AUTO_STRUK_WA = "wa_auto_struk_enabled";
+
+    /**
      * Kunci konfigurasi bisnis BRANCH yang aman disinkronkan lintas perangkat
      * (app_settings). ALLOWLIST — apa pun di luar daftar ini TIDAK PERNAH dikirim
      * ke server. Sengaja EXCLUDE: rahasia (sync_*, pro_*), state
@@ -241,7 +253,7 @@ public class SettingsDao {
             KEY_DELIVERY_MAX_AGE_MINUTES, KEY_REVOKE_CREDIT_LATE_DELIVERY,
             KEY_WA_STRUK_NO_EMOJI,
             KEY_AUTO_SEND_STRUK_WA, KEY_AUTO_SEND_DELIVERY_ISSUE_WA, KEY_AUTO_SEND_ORDER_HOLD_WA,
-            KEY_SERVER_AUTO_OBSTACLE_WA
+            KEY_SERVER_AUTO_OBSTACLE_WA, KEY_SERVER_AUTO_STRUK_WA
     ));
 
     private final DatabaseHelper dbHelper;
@@ -886,6 +898,12 @@ public class SettingsDao {
      *  laporan ini tersinkron? Lihat {@link #KEY_SERVER_AUTO_OBSTACLE_WA}. Default mati. */
     public boolean isServerAutoObstacleWa() {
         return "1".equals(get(KEY_SERVER_AUTO_OBSTACLE_WA, "0"));
+    }
+
+    /** Server SENDIRI sudah/akan otomatis mengirim WA struk begitu transaksi JUAL ini tersinkron?
+     *  Lihat {@link #KEY_SERVER_AUTO_STRUK_WA}. Default mati. */
+    public boolean isServerAutoStrukWa() {
+        return "1".equals(get(KEY_SERVER_AUTO_STRUK_WA, "0"));
     }
 
     /** Kirim WA "pesanan ditunda" otomatis tanpa menampilkan intent WhatsApp lebih dulu?
