@@ -20,32 +20,70 @@
             app:title="Antrian Delivery" />
     </com.google.android.material.appbar.AppBarLayout>
 
-    <LinearLayout
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:background="@color/primary"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp"
-        android:paddingTop="10dp"
-        android:paddingBottom="12dp">
+        android:layout_height="wrap_content">
 
-        <TextView
-            android:id="@+id/tvSummary"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textColor="@color/white"
-            android:textStyle="bold"
-            android:textSize="14sp" />
+            android:orientation="vertical"
+            android:background="@color/primary"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="12dp">
 
-        <TextView
-            android:layout_width="match_parent"
+            <TextView
+                android:id="@+id/tvSummary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/white"
+                android:textStyle="bold"
+                android:textSize="14sp" />
+
+            <!-- Badge produk gabungan SELURUH rit berjalan — hanya kurir terpandu (updateGuidedProductBadges). -->
+            <HorizontalScrollView
+                android:id="@+id/guidedProductBadgesScroll"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:scrollbars="none"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:id="@+id/guidedProductBadges"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal" />
+            </HorizontalScrollView>
+
+            <TextView
+                android:id="@+id/tvSummaryCaption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="Antar/proses order, lalu tandai Selesai untuk mencatat lama proses."
+                android:textColor="#D6FFFFFF"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- Lihat semua antrean (Antrean Saya / Antrean Lain) — kurir terpandu tak punya tab atau
+             menu overflow untuk ini, jadi disediakan lewat FAB kecil pojok kanan-atas header. -->
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/fabGuidedQueue"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:text="Antar/proses order, lalu tandai Selesai untuk mencatat lama proses."
-            android:textColor="#D6FFFFFF"
-            android:textSize="12sp" />
-    </LinearLayout>
+            android:layout_gravity="end|top"
+            android:layout_margin="10dp"
+            android:contentDescription="Lihat semua antrean"
+            android:visibility="gone"
+            app:backgroundTint="@color/white"
+            app:fabSize="mini"
+            app:maxImageSize="28dp"
+            app:srcCompat="@android:drawable/ic_menu_sort_by_size"
+            app:tint="@color/primary" />
+    </FrameLayout>
 
     <!-- Tiga tab: Antrian Saya (default) / Perangkat Lain / Pesanan Terbuka — cermin pemisahan
          sumber data (dao.getDeliveryQueue() difilter open_dispatch vs queue-all vs open_dispatch
@@ -257,6 +295,16 @@
                     android:text="Antrian delivery kosong 🎉"
                     android:textColor="@color/grey_medium"
                     android:textSize="15sp"
+                    android:visibility="gone" />
+
+                <!-- Layar kerja penuh kurir terpandu — menggantikan rv/tvEmpty di atas SELURUHNYA
+                     saat guidedMode aktif (lihat DeliveryQueueActivity.applyRunModeChrome/renderGuidedInline). -->
+                <LinearLayout
+                    android:id="@+id/guidedPanel"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@color/white"
+                    android:orientation="vertical"
                     android:visibility="gone" />
             </FrameLayout>
         </LinearLayout>

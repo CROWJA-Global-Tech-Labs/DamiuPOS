@@ -41,7 +41,9 @@ import android.view.MenuItem;
 import android.view.Surface;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.animation.AlphaAnimation;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -89,9 +91,11 @@ import com.crowja.damiupos.model.Product;
 import com.crowja.damiupos.model.Transaction;
 import com.crowja.damiupos.model.TransactionItem;
 import com.crowja.damiupos.model.User;
+import com.crowja.damiupos.sync.LocationReporter;
 import com.crowja.damiupos.sync.SyncApi;
 import com.crowja.damiupos.sync.SyncScheduler;
 import com.crowja.damiupos.sync.SyncSettings;
+import com.crowja.damiupos.sync.VersionUpdater;
 import com.crowja.damiupos.util.BitmapUtils;
 import com.crowja.damiupos.util.CompassArrowView;
 import com.crowja.damiupos.util.Ts;
@@ -191,6 +195,50 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private double myLat = (double)0.0F;
    private double myLng = (double)0.0F;
 
+   // ---------------------------------------------------------------- Guided Delivery (perangkat kurir "terpandu")
+   // Perangkat yang ditandai admin (SyncSettings#isGuidedDeliveryDevice) memakai layar ini sebagai
+   // satu-satunya layar kerja penuh: tab & toolbar disembunyikan, tiap order berikutnya langsung
+   // ditampilkan sebagai panel Preview INLINE (bukan dialog) di guidedPanel, dan kurir tak pernah
+   // perlu menavigasi menu sendiri. Lihat enterGuidedChrome/renderGuidedInline/updateGuidedPanel.
+   private boolean guidedMode = false;
+   private boolean guidedDoneScreenShown = false;
+   private android.widget.FrameLayout guidedMapBox;
+   private ValueAnimator guidedMapBorderAnim;
+   private TextView guidedElapsedBadge;
+   private LinearLayout guidedPanel;
+   private LinearLayout guidedProductBadges;
+   private View guidedProductBadgesScroll;
+   private WebView guidedInlineWebView;
+   private LiveDeviceOverlay guidedInlineOverlay;
+   private AlertDialog guidedRitOffer;
+   // Auto Zoom peta guided: ON secara default; tombol di pojok peta membiarkan kurir mematikannya
+   // sementara (mis. sedang menelusuri peta manual) tanpa kehilangan setelan tiap kali preview ganti.
+   private boolean guidedAutoZoom = true;
+   // Id order terakhir yang preview-nya sudah ditampilkan otomatis — updateGuidedPanel() memakainya
+   // supaya tidak menampilkan ulang preview yang SAMA berulang kali tiap tick.
+   private long guidedPreviewShownForId = -1L;
+   // Order yang kurir pilih "Ikutkan Rit Selanjutnya" saat ditawari refill rit berjalan (lihat
+   // showGuidedRitRefillOffer) — jangan ditawarkan LAGI selama sesi rit ini masih jalan.
+   private final LinkedHashSet<Long> guidedRitRefillDeclinedIds = new LinkedHashSet<>();
+   private final Runnable guidedRitRefillTicker = new Runnable() {
+      public void run() {
+         DeliveryQueueActivity.this.checkGuidedRitRefill();
+         if (!DeliveryQueueActivity.this.isFinishing() && !DeliveryQueueActivity.this.isDestroyed()) {
+            VersionUpdater.maybePrompt(DeliveryQueueActivity.this);
+            VersionUpdater.maybePromptBlocked(DeliveryQueueActivity.this);
+         }
+         DeliveryQueueActivity.this.tick.postDelayed(this, 30000L);
+      }
+   };
+   // Menata ulang "Antrian Saya" berdasar rute (buildStrategyOrderedList) tiap menit — posisi kurir
+   // berubah sambil jalan, jadi urutan rute optimal ikut berubah walau tak ada order baru/selesai.
+   private final Runnable strategyResortTicker = new Runnable() {
+      public void run() {
+         DeliveryQueueActivity.this.reapplyStrategyOrder();
+         DeliveryQueueActivity.this.tick.postDelayed(this, 60000L);
+      }
+   };
+
    // ---------------------------------------------------------------- Preview: kompas live "arah ke tujuan"
    // Kode permintaan izin lokasi khusus panel kompas (7404) - TERPISAH dari myLat/myLng di atas,
    // yang cuma sekali-ambil saat antrean dimuat (loadData/LocationService.lastLocation) untuk
@@ -224,6 +272,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
 
          DeliveryQueueActivity.this.maybeRaiseLateAlarm();
+         DeliveryQueueActivity.this.updateGuidedElapsedBadge();
          DeliveryQueueActivity.this.tick.postDelayed(this, 1000L);
       }
    };
@@ -288,16 +337,40 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       toolbar.setNavigationOnClickListener((v) -> this.finish());
       this.dao = new TransactionDao(DatabaseHelper.getInstance(this));
       this.customerDao = new CustomerDao(DatabaseHelper.getInstance(this));
+      // Guided Delivery diputuskan SEBELUM view lain dibaca: enterGuidedChrome menyembunyikan
+      // toolbar & mengunci layar tetap menyala, jadi harus terjadi sedini mungkin di onCreate.
+      this.guidedMode = this.syncCfg().isGuidedDeliveryDevice();
+      if (this.guidedMode) {
+         this.enterGuidedChrome();
+         VersionUpdater.checkAndPrompt(this);
+      }
       this.restoreAlarmedLate();
       this.productDao = new ProductDao(DatabaseHelper.getInstance(this));
       this.rv = (RecyclerView)this.findViewById(id.rv);
       this.tvEmpty = (TextView)this.findViewById(id.tvEmpty);
       this.tvSummary = (TextView)this.findViewById(id.tvSummary);
+      this.guidedPanel = (LinearLayout)this.findViewById(id.guidedPanel);
+      this.guidedProductBadgesScroll = this.findViewById(id.guidedProductBadgesScroll);
+      this.guidedProductBadges = (LinearLayout)this.findViewById(id.guidedProductBadges);
       this.adapter = new QueueAdapter();
       this.rv.setLayoutManager(new LinearLayoutManager(this));
       this.rv.setHasFixedSize(true);
       this.rv.setAdapter(this.adapter);
       this.etSearchMine = (TextInputEditText)this.findViewById(id.etSearchMine);
+      if (this.guidedMode) {
+         // Kotak cari & keterangan tab tak berguna di layar terpandu (kurir tak pernah melihat
+         // daftar mentah) — disembunyikan, digantikan fabGuidedQueue untuk yang sesekali perlu
+         // menengok seluruh antrean.
+         View searchParent = (View)this.etSearchMine.getParent();
+         if (searchParent != null) searchParent.setVisibility(View.GONE);
+         View caption = this.findViewById(id.tvSummaryCaption);
+         if (caption != null) caption.setVisibility(View.GONE);
+         View fab = this.findViewById(id.fabGuidedQueue);
+         if (fab != null) {
+            fab.setVisibility(View.VISIBLE);
+            fab.setOnClickListener((v) -> this.showGuidedFullQueueDialog());
+         }
+      }
       this.etSearchMine.addTextChangedListener(new TextWatcher() {
          public void beforeTextChanged(CharSequence s, int a, int b, int c) {
          }
@@ -512,6 +585,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    public boolean onCreateOptionsMenu(Menu menu) {
+      // Tak ada menu overflow di layar terpandu — semua aksi kurir sudah ada di panel/tombol.
+      if (this.guidedMode) return false;
       this.getMenuInflater().inflate(R.menu.menu_delivery_queue, menu);
       return super.onCreateOptionsMenu(menu);
    }
@@ -601,6 +676,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    public void onBackPressed() {
+      // Kurir terpandu tak boleh keluar dari layar ini lewat tombol Kembali — satu-satunya jalan
+      // keluar yang sah adalah Selesai—Pulang (confirmGuidedLogout), yang absen pulang sekalian.
+      if (this.guidedMode) {
+         Toast.makeText(this, "Guided Delivery aktif — matikan dari dashboard untuk keluar.", 0).show();
+         return;
+      }
       // Mode pilih-banyak Tab 2/3 keluar lebih dulu, sama seperti mode-pilih Tab 1 — kalau tidak,
       // bar aksinya tertinggal di layar sementara pilihannya sudah tak terlihat lagi.
       if (this.claimSelectOther) {
@@ -793,6 +874,86 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    }
 
+   /** Dipanggil SEDINI mungkin di onCreate saat guidedMode — layar tetap menyala (kurir sering
+    *  menaruh HP di dudukan motor tanpa disentuh lama) & status bar/navigation bar disembunyikan
+    *  supaya panel Preview benar-benar penuh layar, tanpa toolbar. */
+   private void enterGuidedChrome() {
+      this.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+      this.getWindow().getDecorView().setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                  | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                  | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN);
+      View toolbar = this.findViewById(id.toolbar);
+      if (toolbar != null) toolbar.setVisibility(View.GONE);
+   }
+
+   /** Lawan renderGuidedInline/showGuidedDoneScreen — melepas semua yang dipasang panel guided
+    *  SEBELUMNYA (overlay peta, WebView, animasi border) sebelum panel diisi ulang, supaya tak ada
+    *  WebView atau LiveDeviceOverlay yang bocor tiap kali order berjalan berikutnya berganti. */
+   private void teardownGuidedInlinePreview() {
+      if (this.guidedInlineOverlay != null) {
+         this.guidedInlineOverlay.stop();
+         this.guidedInlineOverlay = null;
+      }
+      if (this.guidedInlineWebView != null) {
+         this.guidedInlineWebView.stopLoading();
+         this.guidedInlineWebView.destroy();
+         this.guidedInlineWebView = null;
+      }
+      this.previewMapWebView = null;
+      this.guidedElapsedBadge = null;
+      if (this.guidedMapBorderAnim != null) {
+         this.guidedMapBorderAnim.cancel();
+         this.guidedMapBorderAnim = null;
+      }
+      if (this.guidedMapBox != null) {
+         this.guidedMapBox.setForeground(null);
+         this.guidedMapBox = null;
+      }
+      this.stopCompass();
+   }
+
+   /** Dipanggil tiap detik dari {@link #ticker} saat guided — refresh badge nama+durasi di pojok
+    *  peta, dan nyalakan border peta berkedip begitu order sudah TERLAMBAT (lihat bindElapsedBadge,
+    *  yang menyimpan tingkat keterlambatan di tag view — 0=normal, 1=warn, 2=late). */
+   private void updateGuidedElapsedBadge() {
+      if (!this.guidedMode || this.guidedElapsedBadge == null) return;
+      Transaction running = this.runningTransaction();
+      if (running == null) return;
+      bindElapsedBadge(this.guidedElapsedBadge, elapsedMillis(running.getDeliveryQueuedAt()));
+      Object tag = this.guidedElapsedBadge.getTag(id.tvElapsed);
+      this.applyGuidedMapBorderState(tag instanceof Integer ? (Integer) tag : 0);
+   }
+
+   private void applyGuidedMapBorderState(int level) {
+      if (this.guidedMapBox == null) return;
+      if (level < 2) {
+         if (this.guidedMapBorderAnim != null) {
+            this.guidedMapBorderAnim.cancel();
+            this.guidedMapBorderAnim = null;
+         }
+         this.guidedMapBox.setForeground(null);
+         return;
+      }
+      GradientDrawable border = (GradientDrawable) this.guidedMapBox.getForeground();
+      if (border == null) {
+         border = new GradientDrawable();
+         border.setShape(GradientDrawable.RECTANGLE);
+         border.setStroke(this.dp(5f), -2937041);
+         this.guidedMapBox.setForeground(border);
+      }
+      if (this.guidedMapBorderAnim == null || !this.guidedMapBorderAnim.isStarted()) {
+         final GradientDrawable borderFinal = border;
+         ValueAnimator anim = ValueAnimator.ofInt(255, 60);
+         anim.setDuration(250L);
+         anim.setRepeatMode(ValueAnimator.REVERSE);
+         anim.setRepeatCount(ValueAnimator.INFINITE);
+         anim.addUpdateListener((a) -> borderFinal.setAlpha((Integer) a.getAnimatedValue()));
+         anim.start();
+         this.guidedMapBorderAnim = anim;
+      }
+   }
+
    protected void onResume() {
       super.onResume();
       SettingsDao lateCfg = new SettingsDao(DatabaseHelper.getInstance(this));
@@ -801,6 +962,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.loadData();
       this.loadOtherDevices();
       this.tick.postDelayed(this.ticker, 1000L);
+      this.tick.postDelayed(this.strategyResortTicker, 60000L);
+      if (this.guidedMode) {
+         this.tick.postDelayed(this.guidedRitRefillTicker, 30000L);
+         VersionUpdater.maybePrompt(this);
+         VersionUpdater.maybePromptBlocked(this);
+      }
       IntentFilter f = new IntentFilter("com.crowja.damiupos.action.SYNCED");
       if (VERSION.SDK_INT >= 33) {
          this.registerReceiver(this.syncedReceiver, f, 4);
@@ -813,6 +980,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    protected void onPause() {
       super.onPause();
       this.tick.removeCallbacks(this.ticker);
+      this.tick.removeCallbacks(this.strategyResortTicker);
+      this.tick.removeCallbacks(this.guidedRitRefillTicker);
 
       try {
          this.unregisterReceiver(this.syncedReceiver);
@@ -1512,7 +1681,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     *        benar-benar berlaku bila hasDev juga true; tanpa pin konteks, posisi saya yang kedip
     *        apa pun nilai parameter ini (tak ada yang lain untuk disorot).
     */
-   private static String buildMiniMapHtml(boolean hasDev, double devLat, double devLng, String devName, String devVehicle, String devColor, boolean hasDest, double destLat, double destLng, String destName, String myVehicle, String myColor, boolean blinkAssigned) {
+   private static String buildMiniMapHtml(boolean hasDev, double devLat, double devLng, String devName, String devVehicle, String devColor, boolean hasDest, double destLat, double destLng, String destName, String myVehicle, String myColor, boolean blinkAssigned, JSONArray otherPending, boolean autoZoom) {
       double centerLat = hasDest ? destLat : devLat;
       double centerLng = hasDest ? destLng : devLng;
       boolean devBlinks = hasDev && blinkAssigned;
@@ -1566,6 +1735,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (hasDev && hasDest) {
          js.append("L.polyline(fixedPts,{color:'").append(devColorSafe).append("',weight:3,opacity:.85,dashArray:'6,6'}).addTo(map);\n");
       }
+      // Order LAIN yang masih menunggu (perangkat lain, belum dikerjakan) - pin 📦 kuning, TANPA
+      // kedip, hanya untuk konteks sekeliling; ketuk memanggil GuidedMapBridge.showOtherDetail lewat
+      // jembatan JS "Android" (lihat renderGuidedInline) supaya kurir bisa intip detailnya di tempat.
+      js.append("var otherPending=").append(otherPending == null ? "[]" : otherPending.toString()).append(";\n");
+      js.append("otherPending.forEach(function(p){\n");
+      js.append("  if(!p.latitude&&!p.longitude) return;\n");
+      js.append("  var m=L.marker([p.latitude,p.longitude],{icon:pinIcon('#F59E0B','📦',false)});\n");
+      js.append("  m.on('click',function(){ if(window.Android&&Android.showOtherDetail){ Android.showOtherDetail(String(p.uuid||'')); } });\n");
+      js.append("  m.addTo(map);\n");
+      js.append("});\n");
       js.append("var myMarker=null;\n");
       js.append("function currentPts(){ var pts=fixedPts.slice(); if(myMarker) pts.push(myMarker.getLatLng()); return pts; }\n");
       js.append("function fit(){ map.invalidateSize();\n");
@@ -1575,6 +1754,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       // jarak" yang diminta: setiap kali posisi saya berubah, pts berubah, dan fit() dipanggil lagi.
       js.append("  if(pts.length>1){ map.fitBounds(pts,{padding:[36,36],maxZoom:16}); }\n");
       js.append("  else if(pts.length===1){ map.setView(pts[0],16); } }\n");
+      // autoZoomEnabled: guided menawarkan tombol "Auto Zoom" (window.setAutoZoom) untuk mematikannya
+      // sementara — begitu kurir sendiri men-drag/zoom peta, fit() otomatis DIAM 10 detik supaya
+      // tak "merebut kembali" peta dari tangan kurir yang sedang menelusurinya sendiri.
+      js.append("var autoZoomEnabled=").append(autoZoom).append(";\n");
+      js.append("var lastUserInteract=0;\n");
+      js.append("map.on('dragstart zoomstart',function(){ lastUserInteract=Date.now(); });\n");
+      js.append("map.on('dragend zoomend',function(){ lastUserInteract=Date.now(); });\n");
+      js.append("function maybeFit(){ if(autoZoomEnabled && Date.now()-lastUserInteract>=10000){ fit(); } }\n");
+      js.append("window.setAutoZoom=function(on){ autoZoomEnabled=!!on; if(autoZoomEnabled){ lastUserInteract=0; } };\n");
       js.append("window.updateMyPos=function(lat,lng){\n");
       js.append("  var ll=[lat,lng];\n");
       js.append("  if(myMarker){ myMarker.setLatLng(ll); }\n");
@@ -1582,10 +1770,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       // satu pin kedip pada satu waktu, supaya mata langsung tertuju ke yang paling relevan:
       // perangkat yang ditugaskan bila ada, atau posisi saya sendiri bila order ini belum bertuan.
       js.append("  else { myMarker=L.marker(ll,{icon:vehicleIcon('").append(myColorSafe).append("','").append(myVehicleSafe).append("',").append(!devBlinks).append(")}).addTo(map).bindPopup('Posisi Anda'); }\n");
-      js.append("  fit();\n");
+      js.append("  maybeFit();\n");
       js.append("};\n");
       js.append("window.addEventListener('load',function(){ fit(); setTimeout(fit,250); setTimeout(fit,800); });\n");
       js.append("setTimeout(fit,120);\n");
+      js.append("setInterval(maybeFit,2000);\n");
       js.append("</script></body></html>");
       return js.toString();
    }
@@ -1619,6 +1808,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                this.stopStrategyBlink();
             } else {
                this.strategyTrips = trips;
+               // Kurir terpandu tak pernah menekan "Jalankan" sendiri — begitu ada rit dan belum
+               // ada yang berjalan, rit pertama langsung dimulai otomatis.
+               if (this.guidedMode && !this.isRunning()) {
+                  this.autoStartGuidedTrip(trips.get(0));
+               }
                DeliveryPlanner.Trip first = (DeliveryPlanner.Trip)trips.get(0);
                ((TextView)this.findViewById(id.tvStrategyTitle)).setText("\ud83d\ude9a Strategi Pengiriman — Rit 1 dari " + trips.size());
                String muat = "Muat " + first.galon + " galon" + (maxLoad > 0 ? " dari " + maxLoad : "") + " · " + first.stops.size() + " pemberhentian";
@@ -1740,12 +1934,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
       }
 
-      List<Transaction> ordered = new ArrayList(list);
-      Collections.sort(ordered, (a, b) -> {
-         boolean av = a.hasPendingVoidRequest();
-         boolean bv = b.hasPendingVoidRequest();
-         return av == bv ? 0 : (av ? 1 : -1);
-      });
+      List<Transaction> ordered = this.buildStrategyOrderedList(list);
       this.adapter.setData(ordered);
       this.renderStrategy(ordered);
       this.applyRunModeChrome(list);
@@ -1765,6 +1954,42 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
       }
 
+   }
+
+   /**
+    * Urutan "Antrian Saya" untuk kartu — BUKAN cuma void-pending di akhir seperti dulu, tapi
+    * mengikuti urutan rute optimal ({@link DeliveryPlanner#plan}) yang sama dengan kartu Strategi
+    * Pengiriman, supaya urutan yang kurir LIHAT selalu cocok dengan urutan yang disarankan sistem.
+    * Order dengan permintaan void tertunda selalu diletakkan di akhir (tak ikut dihitung rute).
+    */
+   private List<Transaction> buildStrategyOrderedList(List<Transaction> list) {
+      if (list == null || list.isEmpty()) return new ArrayList<>();
+      List<Transaction> planned = new ArrayList<>();
+      List<Transaction> voidPending = new ArrayList<>();
+      for (Transaction t : list) {
+         (t.hasPendingVoidRequest() ? voidPending : planned).add(t);
+      }
+      List<Transaction> ordered = new ArrayList<>(list.size());
+      if (!planned.isEmpty()) {
+         SyncSettings cfg = this.syncCfg();
+         int maxLoad = cfg.getMaxLoad();
+         double[] depot = branchCenter(cfg);
+         for (DeliveryPlanner.Trip trip : DeliveryPlanner.plan(planned, maxLoad, depot[0], depot[1], 0)) {
+            ordered.addAll(trip.stops);
+         }
+      }
+      ordered.addAll(voidPending);
+      return ordered;
+   }
+
+   /** Dipanggil dari {@link #strategyResortTicker} tiap menit — susun ulang urutan rute TANPA
+    *  memuat ulang data dari DB, karena hanya posisi kurir yang berubah, bukan isi antreannya. */
+   private void reapplyStrategyOrder() {
+      if (this.isFinishing() || this.isDestroyed() || this.adapter == null || this.adapter.data == null
+            || this.adapter.data.isEmpty()) {
+         return;
+      }
+      this.applyList(new ArrayList<>(this.adapter.data));
    }
 
    private void refreshProductIndex() {
@@ -2087,6 +2312,18 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
    }
 
+   /** Mulai rit pertama Strategi Pengiriman otomatis untuk kurir terpandu (lihat renderStrategy) —
+    *  Pesanan Terbuka dilewati karena itu perlu diklaim satu per satu, bukan langsung dijalankan. */
+   private void autoStartGuidedTrip(DeliveryPlanner.Trip trip) {
+      List<Transaction> stops = new ArrayList<>();
+      for (Transaction t : trip.stops) {
+         if (t != null && !t.isOpenDispatch()) stops.add(t);
+      }
+      if (stops.isEmpty()) return;
+      this.guidedRitRefillDeclinedIds.clear();
+      this.doStartRuns(stops);
+   }
+
    private void confirmStopRun() {
       List<Transaction> stops = this.runStops();
       String what = stops.size() > 1 ? stops.size() + " pengiriman rit ini BELUM ditandai Selesai." : "Pengiriman untuk \"" + (stops.isEmpty() ? "Order ini" : safe(((Transaction)stops.get(0)).getCustomerName())) + "\" BELUM ditandai Selesai.";
@@ -2273,6 +2510,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.tvSummary.setText(n + " order menunggu diproses" + galonSuffix(totalGalonOf(list)));
       }
 
+      this.updateGuidedProductBadges(stops);
       Transaction run = stops.isEmpty() ? null : (Transaction)stops.get(0);
       View cardStrategy = this.findViewById(id.cardStrategy);
       if (cardStrategy != null && run != null) {
@@ -2280,14 +2518,732 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
 
       if (this.tabs != null) {
-         this.tabs.setVisibility(run != null ? 8 : 0);
+         this.tabs.setVisibility(run != null || this.guidedMode ? 8 : 0);
       }
 
       View fabNavigasiRit = this.findViewById(id.fabNavigasiRit);
       if (fabNavigasiRit != null) {
-         fabNavigasiRit.setVisibility(run != null ? 0 : 8);
+         fabNavigasiRit.setVisibility(run == null || this.guidedMode ? 8 : 0);
       }
 
+      if (this.guidedMode) {
+         // Layar terpandu tak pernah menampilkan daftar kartu mentah — rv/tvEmpty digantikan
+         // sepenuhnya oleh guidedPanel (lihat updateGuidedPanel).
+         if (this.rv != null) this.rv.setVisibility(View.GONE);
+         if (this.tvEmpty != null) this.tvEmpty.setVisibility(View.GONE);
+         this.updateGuidedPanel(n, stops);
+      }
+   }
+
+   /** Panel utama guided: order berjalan berikutnya jadi Preview inline, atau layar "Selesai" bila
+    *  antrean kosong. Dipanggil dari applyRunModeChrome tiap kali daftar berjalan berubah. */
+   private void updateGuidedPanel(int total, List<Transaction> stops) {
+      if (this.isFinishing() || this.isDestroyed()) return;
+      if (total == 0) {
+         this.guidedPreviewShownForId = -1L;
+         if (this.guidedDoneScreenShown) return;
+         this.guidedDoneScreenShown = true;
+         this.showGuidedDoneScreen();
+         return;
+      }
+      this.guidedDoneScreenShown = false;
+      if (stops.isEmpty()) return;
+      Transaction next = stops.get(0);
+      // Preview hanya dirender ULANG saat order BERIKUTNYA benar-benar berganti — bukan tiap
+      // applyRunModeChrome (dipanggil sangat sering), kalau tidak peta & kompas dimuat ulang terus.
+      if (next.getId() != this.guidedPreviewShownForId) {
+         this.guidedPreviewShownForId = next.getId();
+         this.showQueuePreview(next);
+      }
+   }
+
+   /** Layar "🎉 antrean kosong" guided: ringkasan hari ini + kartu Status Pencapaian + jalan
+    *  keluar (Trx Baru jual air minum eceran, atau Selesai—Pulang lewat confirmGuidedLogout). */
+   private void showGuidedDoneScreen() {
+      if (this.guidedPanel == null || this.isFinishing() || this.isDestroyed()) return;
+      this.teardownGuidedInlinePreview();
+      this.guidedPanel.removeAllViews();
+      this.guidedPanel.setVisibility(View.VISIBLE);
+      ScrollView scroll = new ScrollView(this);
+      LinearLayout content = new LinearLayout(this);
+      content.setOrientation(LinearLayout.VERTICAL);
+      content.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
+      content.setPadding(this.dp(24f), this.dp(32f), this.dp(24f), this.dp(32f));
+      scroll.addView(content);
+      this.guidedPanel.addView(scroll);
+
+      TextView title = new TextView(this);
+      title.setText("🎉 Antrean kosong — semua order sudah diantar.");
+      title.setTextSize(17f);
+      title.setTypeface(title.getTypeface(), android.graphics.Typeface.BOLD);
+      title.setTextColor(0xFF0F5132);
+      title.setGravity(android.view.Gravity.CENTER);
+      content.addView(title);
+
+      final TextView tvStats = new TextView(this);
+      tvStats.setText("Memuat statistik hari ini…");
+      tvStats.setTextSize(14f);
+      tvStats.setTextColor(0xFFB80A97);
+      tvStats.setGravity(android.view.Gravity.CENTER);
+      LinearLayout.LayoutParams statsLp = new LinearLayout.LayoutParams(-2, -2);
+      statsLp.topMargin = this.dp(16f);
+      tvStats.setLayoutParams(statsLp);
+      content.addView(tvStats);
+
+      final TextView tvNames = new TextView(this);
+      tvNames.setTextSize(13f);
+      tvNames.setTextColor(-10193781);
+      tvNames.setGravity(android.view.Gravity.CENTER);
+      LinearLayout.LayoutParams namesLp = new LinearLayout.LayoutParams(-2, -2);
+      namesLp.topMargin = this.dp(4f);
+      tvNames.setLayoutParams(namesLp);
+      content.addView(tvNames);
+
+      final android.widget.HorizontalScrollView chipsScroll = new android.widget.HorizontalScrollView(this);
+      chipsScroll.setHorizontalScrollBarEnabled(false);
+      final LinearLayout chipsRow = new LinearLayout(this);
+      chipsRow.setOrientation(LinearLayout.HORIZONTAL);
+      chipsScroll.addView(chipsRow);
+      LinearLayout.LayoutParams chipsLp = new LinearLayout.LayoutParams(-2, -2);
+      chipsLp.topMargin = this.dp(10f);
+      chipsLp.bottomMargin = this.dp(24f);
+      chipsScroll.setLayoutParams(chipsLp);
+      chipsScroll.setVisibility(View.GONE);
+      content.addView(chipsScroll);
+
+      LinearLayout achievementCard = new LinearLayout(this);
+      achievementCard.setOrientation(LinearLayout.VERTICAL);
+      achievementCard.setPadding(this.dp(14f), this.dp(12f), this.dp(14f), this.dp(12f));
+      GradientDrawable achBg = new GradientDrawable();
+      achBg.setShape(GradientDrawable.RECTANGLE);
+      achBg.setCornerRadius(this.dp(10f));
+      achBg.setColor(-920071);
+      achievementCard.setBackground(achBg);
+      LinearLayout.LayoutParams achLp = new LinearLayout.LayoutParams(-1, -2);
+      achLp.topMargin = this.dp(4f);
+      achLp.bottomMargin = this.dp(20f);
+      achievementCard.setLayoutParams(achLp);
+      achievementCard.setVisibility(View.GONE);
+      content.addView(achievementCard);
+      this.loadGuidedAchievementCard(achievementCard);
+
+      MaterialButton btnTrxBaru = new MaterialButton(this);
+      btnTrxBaru.setText("➕ Trx Baru");
+      btnTrxBaru.setAllCaps(false);
+      btnTrxBaru.setBackgroundTintList(android.content.res.ColorStateList.valueOf(-16553567));
+      LinearLayout.LayoutParams trxLp = new LinearLayout.LayoutParams(-2, -2);
+      trxLp.bottomMargin = this.dp(10f);
+      btnTrxBaru.setLayoutParams(trxLp);
+      btnTrxBaru.setOnClickListener((v) -> this.launchGuidedJualAirMinum());
+      content.addView(btnTrxBaru);
+
+      MaterialButton btnLogout = new MaterialButton(this);
+      btnLogout.setText("🚪 Selesai — Pulang");
+      btnLogout.setAllCaps(false);
+      btnLogout.setOnClickListener((v) -> this.confirmGuidedLogout());
+      content.addView(btnLogout);
+
+      final TransactionDao dao = this.dao;
+      new Thread(() -> {
+         List<Transaction> history = dao.getDeliveryHistory(500);
+         String today = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
+         LinkedHashSet<String> names = new LinkedHashSet<>();
+         java.util.LinkedHashMap<String, Integer> qtyByLabel = new java.util.LinkedHashMap<>();
+         java.util.LinkedHashMap<String, Integer> colorByLabel = new java.util.LinkedHashMap<>();
+         int orders = 0, galon = 0, timedCount = 0;
+         long timedSeconds = 0;
+         for (Transaction t : history) {
+            String local = Ts.local(t.getDeliveryDoneAt());
+            if (local.length() < 10 || !local.substring(0, 10).equals(today)) continue;
+            orders++;
+            galon += Math.max(0, t.getJumlahGalon());
+            names.add(safe(t.getCustomerName()));
+            long secs = TransactionAdapter.deliverySeconds(t);
+            if (secs >= 0) {
+               timedSeconds += secs;
+               timedCount++;
+            }
+            List<TransactionItem> items = t.getItems();
+            if (items != null) {
+               for (TransactionItem it : items) {
+                  if (it == null || it.jumlah <= 0) continue;
+                  String label = this.chipLabel(it);
+                  qtyByLabel.merge(label, it.jumlah, Integer::sum);
+                  colorByLabel.putIfAbsent(label, this.chipColor(it));
+               }
+            }
+         }
+         String stats = orders == 0 ? "Belum ada pengiriman yang diselesaikan hari ini."
+               : orders + " order · " + galon + " galon sudah diantar hari ini"
+                     + (timedCount > 0 ? " · rata-rata " + TransactionAdapter.formatDeliverySeconds(timedSeconds / timedCount) : "");
+         String namesLine = names.isEmpty() ? "" : "Kepada: " + android.text.TextUtils.join(", ", names);
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            tvStats.setText(stats);
+            tvNames.setText(namesLine);
+            if (qtyByLabel.isEmpty()) return;
+            chipsRow.removeAllViews();
+            for (Map.Entry<String, Integer> e : qtyByLabel.entrySet()) {
+               chipsRow.addView(this.makeDetailBadge(e.getKey() + " ×" + e.getValue(),
+                     colorByLabel.getOrDefault(e.getKey(), -10193781)));
+            }
+            chipsScroll.setVisibility(View.VISIBLE);
+         });
+      }).start();
+   }
+
+   /** Kartu "📊 Status Pencapaian" (target penjualan periode berjalan/lalu + galon pekan
+    *  ini/lalu) — dihitung server-side (SyncApi#salesTarget) supaya HP tak perlu tahu aturan target
+    *  sama sekali. Dimuat async karena butuh panggilan jaringan. */
+   private void loadGuidedAchievementCard(LinearLayout card) {
+      SyncSettings cfg = this.syncCfg();
+      String staffUuid = LocationReporter.currentStaffUuid(this);
+      if (!cfg.isEnrolled() || staffUuid == null || staffUuid.isEmpty()) return;
+      new Thread(() -> {
+         try {
+            JSONObject data = new SyncApi(cfg).salesTarget(staffUuid);
+            this.runOnUiThread(() -> {
+               if (this.isFinishing() || this.isDestroyed()) return;
+               this.renderGuidedAchievementCard(card, data);
+            });
+         } catch (Exception ignored) {
+         }
+      }).start();
+   }
+
+   private void renderGuidedAchievementCard(LinearLayout card, JSONObject data) {
+      card.removeAllViews();
+      TextView title = new TextView(this);
+      title.setText("📊 Status Pencapaian");
+      title.setTextSize(13f);
+      title.setTypeface(title.getTypeface(), android.graphics.Typeface.BOLD);
+      title.setTextColor(-13418155);
+      card.addView(title);
+      boolean any = false;
+      if (data.optBoolean("target_enabled", false)) {
+         JSONObject current = data.optJSONObject("current");
+         JSONObject previous = data.optJSONObject("previous");
+         if (current != null) {
+            card.addView(this.achievementLine("🎯 Target bulan cut-off ini", current));
+            any = true;
+         }
+         if (previous != null) {
+            card.addView(this.achievementLine("🎯 Target bulan cut-off lalu", previous));
+            any = true;
+         }
+      }
+      JSONObject week = data.optJSONObject("week");
+      JSONObject weekPrev = data.optJSONObject("week_prev");
+      if (week != null) {
+         card.addView(this.achievementGalonLine("📦 Galon pekan ini", week.optInt("galon", 0)));
+         any = true;
+      }
+      if (weekPrev != null) {
+         card.addView(this.achievementGalonLine("📦 Galon pekan lalu", weekPrev.optInt("galon", 0)));
+         any = true;
+      }
+      card.setVisibility(any ? View.VISIBLE : View.GONE);
+   }
+
+   private TextView achievementLine(String label, JSONObject o) {
+      int target = o.optInt("target", 0);
+      int actual = o.optInt("actual", 0);
+      double pct = o.optDouble("pct", 0.0);
+      boolean achieved = o.optBoolean("achieved", false);
+      String suffix = target <= 0 ? "" : (achieved ? " ✅ Tercapai" : " ⏳ Belum tercapai");
+      TextView tv = new TextView(this);
+      tv.setText(label + ": " + actual + "/" + target + " galon (" + String.format(Locale.US, "%.0f", pct) + "%)" + suffix);
+      tv.setTextSize(13f);
+      tv.setTextColor(target > 0 && achieved ? -15368131 : -12102295);
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+      lp.topMargin = this.dp(4f);
+      tv.setLayoutParams(lp);
+      return tv;
+   }
+
+   private TextView achievementGalonLine(String label, int galon) {
+      TextView tv = new TextView(this);
+      tv.setText(label + ": " + galon + " galon");
+      tv.setTextSize(13f);
+      tv.setTextColor(-12102295);
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+      lp.topMargin = this.dp(4f);
+      tv.setLayoutParams(lp);
+      return tv;
+   }
+
+   private void confirmGuidedLogout() {
+      (new AlertDialog.Builder(this)).setTitle("Selesai — Pulang?")
+            .setMessage("Antrean sudah kosong. Kamu akan absen pulang dan keluar dari perangkat ini.")
+            .setPositiveButton("Ya, Pulang", (d, w) -> this.launchGuidedClockOut())
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener)null).show();
+   }
+
+   private void launchGuidedClockOut() {
+      Intent i = new Intent(this, MainActivity.class);
+      i.putExtra(MainActivity.EXTRA_AUTO_CLOCKOUT, true);
+      i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+      this.startActivity(i);
+      this.finish();
+   }
+
+   private void launchGuidedJualAirMinum() {
+      Intent i = new Intent(this, TransactionActivity.class);
+      i.putExtra("type", "JUAL");
+      this.startActivity(i);
+   }
+
+   /** Dialog layar-penuh "lihat semua antrean" untuk kurir terpandu (fabGuidedQueue) — dua tab
+    *  dipilih lewat popup menu di judul: Antrean Saya (daftar biasa, bisa dicari) atau Antrean Lain
+    *  (gabungan order perangkat lain + Pesanan Terbuka, bisa diambil alih langsung dari sini). */
+   private void showGuidedFullQueueDialog() {
+      if (this.isFinishing() || this.isDestroyed()) return;
+      final Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+      LinearLayout root = new LinearLayout(this);
+      root.setOrientation(LinearLayout.VERTICAL);
+      root.setBackgroundColor(this.getResources().getColor(color.grey_light));
+
+      LinearLayout header = new LinearLayout(this);
+      header.setOrientation(LinearLayout.HORIZONTAL);
+      header.setGravity(android.view.Gravity.CENTER_VERTICAL);
+      header.setBackgroundColor(this.getResources().getColor(color.primary));
+      header.setPadding(this.dp(16f), this.dp(14f), this.dp(4f), this.dp(14f));
+      final TextView title = new TextView(this);
+      title.setTextColor(-1);
+      title.setTextSize(16f);
+      title.setTypeface(title.getTypeface(), android.graphics.Typeface.BOLD);
+      title.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+      header.addView(title);
+      android.widget.ImageButton btnClose = new android.widget.ImageButton(this);
+      btnClose.setImageResource(drawable.ic_arrow_back);
+      btnClose.setBackgroundColor(0);
+      btnClose.setColorFilter(-1);
+      btnClose.setOnClickListener((v) -> dialog.dismiss());
+      header.addView(btnClose);
+      root.addView(header);
+
+      final android.widget.FrameLayout body = new android.widget.FrameLayout(this);
+      body.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1f));
+      root.addView(body);
+
+      final boolean[] showingOther = {false};
+      final Runnable[] renderBody = new Runnable[1];
+      renderBody[0] = () -> {
+         body.removeAllViews();
+         if (!showingOther[0]) {
+            title.setText("Antrean Saya ▾");
+            body.addView(this.buildGuidedMyQueueBody());
+         } else {
+            title.setText("Antrean Lain ▾");
+            body.addView(this.buildGuidedOtherQueueBody(dialog));
+         }
+      };
+      title.setOnClickListener((v) -> {
+         PopupMenu menu = new PopupMenu(this, title);
+         menu.getMenu().add(0, 0, 0, "Antrean Saya");
+         menu.getMenu().add(0, 1, 1, "Antrean Lain");
+         menu.setOnMenuItemClickListener((item) -> {
+            showingOther[0] = item.getItemId() == 1;
+            renderBody[0].run();
+            return true;
+         });
+         menu.show();
+      });
+      renderBody[0].run();
+      dialog.setContentView(root);
+      dialog.show();
+   }
+
+   /** Tab "Antrean Saya" dalam showGuidedFullQueueDialog — daftar QueueAdapter BIASA tapi TERPISAH
+    *  dari adapter utama (this.adapter tetap menampilkan hanya rit berjalan), dipaksa menampilkan
+    *  SELURUH antrean via setForceShowAll + kotak cari sendiri via setOverrideQuery. */
+   private View buildGuidedMyQueueBody() {
+      LinearLayout root = new LinearLayout(this);
+      root.setOrientation(LinearLayout.VERTICAL);
+      EditText search = new EditText(this);
+      search.setHint("Cari nama / no. WA…");
+      search.setSingleLine(true);
+      search.setBackgroundColor(-1);
+      search.setPadding(this.dp(14f), this.dp(10f), this.dp(14f), this.dp(10f));
+      LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(-1, -2);
+      searchLp.setMargins(this.dp(12f), this.dp(10f), this.dp(12f), this.dp(4f));
+      search.setLayoutParams(searchLp);
+      root.addView(search);
+
+      RecyclerView rv = new RecyclerView(this);
+      rv.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1f));
+      rv.setLayoutManager(new LinearLayoutManager(this));
+      rv.setPadding(this.dp(12f), this.dp(4f), this.dp(12f), this.dp(12f));
+      rv.setClipToPadding(false);
+      QueueAdapter listAdapter = new QueueAdapter();
+      listAdapter.setForceShowAll(true);
+      listAdapter.setData(this.adapter.data);
+      rv.setAdapter(listAdapter);
+      root.addView(rv);
+
+      search.addTextChangedListener(new TextWatcher() {
+         public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+         public void afterTextChanged(Editable s) { }
+         public void onTextChanged(CharSequence s, int a, int b, int c) {
+            listAdapter.setOverrideQuery(s == null ? "" : s.toString());
+         }
+      });
+      return root;
+   }
+
+   /** Tab "Antrean Lain" dalam showGuidedFullQueueDialog — gabungan order perangkat lain (Tab 2) +
+    *  Pesanan Terbuka (Tab 3) jadi SATU daftar (buildOtherQueueRows), diurutkan Umur/Jarak, dan bisa
+    *  diambil alih langsung dari sini tanpa berpindah tab lagi. */
+   private View buildGuidedOtherQueueBody(Dialog hostDialog) {
+      LinearLayout root = new LinearLayout(this);
+      root.setOrientation(LinearLayout.VERTICAL);
+
+      LinearLayout sortRow = new LinearLayout(this);
+      sortRow.setOrientation(LinearLayout.HORIZONTAL);
+      sortRow.setPadding(this.dp(12f), this.dp(10f), this.dp(12f), this.dp(6f));
+      sortRow.setBackgroundColor(-1);
+      final MaterialButton btnAge = new MaterialButton(this);
+      btnAge.setText("⏱ Umur");
+      btnAge.setAllCaps(false);
+      LinearLayout.LayoutParams ageLp = new LinearLayout.LayoutParams(0, -2, 1f);
+      ageLp.setMarginEnd(this.dp(6f));
+      btnAge.setLayoutParams(ageLp);
+      sortRow.addView(btnAge);
+      final MaterialButton btnDist = new MaterialButton(this);
+      btnDist.setText("📍 Jarak");
+      btnDist.setAllCaps(false);
+      btnDist.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+      sortRow.addView(btnDist);
+      root.addView(sortRow);
+
+      RecyclerView rv = new RecyclerView(this);
+      rv.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1f));
+      rv.setLayoutManager(new LinearLayoutManager(this));
+      rv.setPadding(this.dp(12f), this.dp(8f), this.dp(12f), this.dp(12f));
+      rv.setClipToPadding(false);
+      root.addView(rv);
+
+      TextView empty = new TextView(this);
+      empty.setText("Tidak ada antrean lain saat ini");
+      empty.setTextColor(-7035976);
+      empty.setTextSize(14f);
+      empty.setGravity(android.view.Gravity.CENTER);
+      empty.setPadding(this.dp(24f), this.dp(32f), this.dp(24f), this.dp(24f));
+      empty.setVisibility(View.GONE);
+      root.addView(empty);
+
+      final OtherQueueRowAdapter listAdapter = new OtherQueueRowAdapter(hostDialog);
+      rv.setAdapter(listAdapter);
+      List<OtherQueueRow> rows = this.buildOtherQueueRows();
+      listAdapter.setData(rows, false);
+      empty.setVisibility(rows.isEmpty() ? View.VISIBLE : View.GONE);
+      rv.setVisibility(rows.isEmpty() ? View.GONE : View.VISIBLE);
+
+      Runnable markAge = () -> {
+         btnAge.setBackgroundTintList(android.content.res.ColorStateList.valueOf(this.getResources().getColor(color.primary)));
+         btnDist.setBackgroundTintList(android.content.res.ColorStateList.valueOf(-5194043));
+      };
+      Runnable markDist = () -> {
+         btnDist.setBackgroundTintList(android.content.res.ColorStateList.valueOf(this.getResources().getColor(color.primary)));
+         btnAge.setBackgroundTintList(android.content.res.ColorStateList.valueOf(-5194043));
+      };
+      markAge.run();
+      btnAge.setOnClickListener((v) -> {
+         markAge.run();
+         listAdapter.sort(false);
+      });
+      btnDist.setOnClickListener((v) -> {
+         markDist.run();
+         listAdapter.sort(true);
+      });
+      return root;
+   }
+
+   /** Satu baris "Antrean Lain" gabungan — sumbernya bisa order perangkat lain (json != null, dari
+    *  OtherDevicesAdapter.rawData) ATAU Pesanan Terbuka lokal (trx != null, dari
+    *  OpenDispatchAdapter.rawData); persis satu dari keduanya yang terisi. */
+   private static class OtherQueueRow {
+      final JSONObject json;
+      final Transaction trx;
+      final String badgeName;
+      final String note;
+      final String meta;
+      final boolean hasOngkir;
+      final String adminAreaText;
+      final String itemsCsv;
+      final long elapsedMs;
+      final double distKm;
+
+      OtherQueueRow(JSONObject json, Transaction trx, String badgeName, String note, String meta,
+            boolean hasOngkir, String adminAreaText, String itemsCsv, long elapsedMs, double distKm) {
+         this.json = json;
+         this.trx = trx;
+         this.badgeName = badgeName;
+         this.note = note;
+         this.meta = meta;
+         this.hasOngkir = hasOngkir;
+         this.adminAreaText = adminAreaText;
+         this.itemsCsv = itemsCsv;
+         this.elapsedMs = elapsedMs;
+         this.distKm = distKm;
+      }
+   }
+
+   /** Order perangkat lain yang MASIH menunggu (belum in_progress & punya koordinat) — dipakai
+    *  sebagai pin 📦 tambahan di peta guided (lihat buildMiniMapHtml) supaya kurir tahu ada order
+    *  lain di sekitarnya sebelum memutuskan mengambil rute mana. */
+   private JSONArray buildOtherPendingForMap() {
+      JSONArray out = new JSONArray();
+      if (this.otherDevicesAdapter != null) {
+         for (JSONObject o : this.otherDevicesAdapter.rawData) {
+            if (o.optBoolean("in_progress", false)) continue;
+            double lat = o.optDouble("latitude", 0.0);
+            double lng = o.optDouble("longitude", 0.0);
+            if (lat != 0.0 || lng != 0.0) out.put(o);
+         }
+      }
+      return out;
+   }
+
+   /** Dicari lewat GuidedMapBridge ketika kurir mengetuk pin 📦 order lain di peta. */
+   private JSONObject findOtherDeviceOrderByUuid(String uuid) {
+      if (this.otherDevicesAdapter != null && uuid != null && !uuid.isEmpty()) {
+         for (JSONObject o : this.otherDevicesAdapter.rawData) {
+            if (uuid.equals(o.optString("uuid", ""))) return o;
+         }
+      }
+      return null;
+   }
+
+   /** Jembatan JS "Android" di WebView peta guided (renderGuidedInline) — satu-satunya cara peta
+    *  (JavaScript, tak bisa memanggil method Activity langsung) meminta detail order lain diketuk. */
+   private class GuidedMapBridge {
+      @JavascriptInterface
+      public void showOtherDetail(String uuid) {
+         DeliveryQueueActivity.this.runOnUiThread(() -> {
+            if (DeliveryQueueActivity.this.isFinishing() || DeliveryQueueActivity.this.isDestroyed()) return;
+            JSONObject o = DeliveryQueueActivity.this.findOtherDeviceOrderByUuid(uuid);
+            if (o != null) DeliveryQueueActivity.this.showOtherDeviceOrderDetail(o);
+         });
+      }
+   }
+
+   private List<OtherQueueRow> buildOtherQueueRows() {
+      List<OtherQueueRow> out = new ArrayList<>();
+      HashSet<String> seen = new HashSet<>();
+      if (this.otherDevicesAdapter != null) {
+         for (JSONObject o : this.otherDevicesAdapter.rawData) {
+            String uuid = o.optString("uuid", "");
+            if (uuid.isEmpty() || seen.add(uuid)) out.add(this.rowFromJson(o));
+         }
+      }
+      if (this.openDispatchAdapter != null) {
+         for (Transaction t : this.openDispatchAdapter.rawData) {
+            String trxUuid = this.dao.getSyncUuidById(t.getId());
+            if (trxUuid == null || trxUuid.isEmpty() || seen.add(trxUuid)) out.add(this.rowFromTransaction(t));
+         }
+      }
+      return out;
+   }
+
+   private OtherQueueRow rowFromJson(JSONObject o) {
+      boolean campaignPriority = o.optBoolean(DatabaseHelper.COL_CAMP_PRIORITY, false);
+      boolean orderPriority = o.optBoolean("order_priority", false);
+      String customerUuid = o.optString("customer_uuid", "");
+      Customer c = customerUuid.isEmpty() ? null : this.customerDao.getBySyncUuid(customerUuid);
+      String badgeName = (orderPriority ? "⚡ " : "") + (campaignPriority ? "⭐ " : "")
+            + (c != null && c.isIncomplete() ? "❗ " : "") + o.optString("name", "");
+      long elapsedMs = elapsedMillis(o.optString("queued_at", null));
+      double lat = o.optDouble("latitude", 0.0);
+      double lng = o.optDouble("longitude", 0.0);
+      double distKm = (lat == 0.0 && lng == 0.0) ? Double.MAX_VALUE : this.distKmFromMe(lat, lng);
+      StringBuilder meta = new StringBuilder();
+      String deviceLabel = o.optString("device_group_label", "");
+      if (!deviceLabel.isEmpty()) meta.append("📱 ").append(deviceLabel);
+      meta.append(meta.length() > 0 ? " · " : "").append(o.optInt("galon", 0)).append(" galon");
+      double ongkir = o.optDouble("ongkir", 0.0);
+      String adminArea = c != null ? c.getAdminArea() : "";
+      return new OtherQueueRow(o, null, badgeName, o.optString("note", ""), meta.toString(),
+            ongkir > 0.0, !adminArea.isEmpty() ? "📍 " + adminArea : "", o.optString("items", ""),
+            elapsedMs, distKm);
+   }
+
+   private OtherQueueRow rowFromTransaction(Transaction t) {
+      String badgeName = (t.isOpenDispatch() ? "🎲 " : "") + (t.isCustomerPriority() ? "⭐ " : "")
+            + (t.isCustomerDataIncomplete() ? "❗ " : "") + safe(t.getCustomerName());
+      long elapsedMs = elapsedMillis(t.getDeliveryQueuedAt());
+      double distKm = distOrInf(t, this.myLat, this.myLng);
+      String meta = t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga());
+      Customer c = t.getCustomerId() > 0 ? this.customerDao.getById(t.getCustomerId()) : null;
+      String adminArea = c != null ? c.getAdminArea() : "";
+      return new OtherQueueRow(null, t, badgeName, t.getCatatan(), meta, t.getOngkir() > 0.0,
+            adminArea.isEmpty() ? "" : "📍 " + adminArea, null, elapsedMs, distKm);
+   }
+
+   private double distKmFromMe(double lat, double lng) {
+      if (this.myLat == 0.0 && this.myLng == 0.0) return Double.MAX_VALUE;
+      return haversineKm(this.myLat, this.myLng, lat, lng);
+   }
+
+   private void claimOtherQueueRow(OtherQueueRow row) {
+      if (row.json != null) {
+         this.confirmTakeOverOtherDevices(row.json);
+      } else if (row.trx != null) {
+         this.confirmAmbilAlih(row.trx);
+      }
+   }
+
+   private void openOtherQueueRowDetail(OtherQueueRow row) {
+      if (row.json != null) {
+         this.showOtherDeviceOrderDetail(row.json);
+      } else if (row.trx != null) {
+         this.showOrderDetail(row.trx);
+      }
+   }
+
+   /** Adapter "Antrean Lain" gabungan dalam showGuidedFullQueueDialog — daur ulang layout
+    *  item_other_device_compact.xml persis seperti OtherDevicesAdapter, tapi sumber datanya sudah
+    *  digabung (OtherQueueRow) sehingga satu daftar mencakup dua sumber sekaligus. */
+   private class OtherQueueRowAdapter extends RecyclerView.Adapter<OtherQueueRowAdapter.VH> {
+      private final Dialog hostDialog;
+      private List<OtherQueueRow> data = new ArrayList<>();
+
+      OtherQueueRowAdapter(Dialog hostDialog) {
+         this.hostDialog = hostDialog;
+      }
+
+      void setData(List<OtherQueueRow> rows, boolean byDistance) {
+         this.data = rows != null ? new ArrayList<>(rows) : new ArrayList<>();
+         this.sort(byDistance);
+      }
+
+      void sort(boolean byDistance) {
+         if (byDistance) {
+            this.data.sort((a, b) -> Double.compare(a.distKm, b.distKm));
+         } else {
+            this.data.sort((a, b) -> Long.compare(b.elapsedMs, a.elapsedMs));
+         }
+         this.notifyDataSetChanged();
+      }
+
+      @NonNull
+      public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+         View v = LayoutInflater.from(parent.getContext()).inflate(layout.item_other_device_compact, parent, false);
+         return new VH(v);
+      }
+
+      public void onBindViewHolder(@NonNull VH h, int position) {
+         OtherQueueRow row = this.data.get(position);
+         DeliveryQueueActivity.bindOrderNote(h.tvOrderNote, row.note);
+         h.tvCustomer.setText(row.badgeName);
+         DeliveryQueueActivity.bindElapsedBadge(h.tvElapsed, row.elapsedMs);
+         h.tvMeta.setText(row.meta);
+         h.tvOngkir.setVisibility(row.hasOngkir ? View.VISIBLE : View.GONE);
+         if (row.itemsCsv != null) {
+            DeliveryQueueActivity.this.bindOtherDeviceChips(h.productChips, row.itemsCsv);
+         } else {
+            DeliveryQueueActivity.this.bindProductChips(h.productChips, row.trx);
+         }
+         if (!row.adminAreaText.isEmpty()) {
+            h.tvAdminArea.setText(row.adminAreaText);
+            h.tvAdminArea.setVisibility(View.VISIBLE);
+         } else {
+            h.tvAdminArea.setVisibility(View.GONE);
+         }
+         h.btnMore.setVisibility(View.GONE);
+         h.btnTakeOver.setText("📥");
+         h.btnTakeOver.setOnClickListener((v) -> {
+            this.hostDialog.dismiss();
+            DeliveryQueueActivity.this.claimOtherQueueRow(row);
+         });
+         h.itemView.setOnClickListener((v) -> DeliveryQueueActivity.this.openOtherQueueRowDetail(row));
+      }
+
+      public int getItemCount() {
+         return this.data.size();
+      }
+
+      class VH extends RecyclerView.ViewHolder {
+         TextView tvCustomer, tvElapsed, tvMeta, tvOngkir, tvAdminArea, tvOrderNote;
+         LinearLayout productChips;
+         MaterialButton btnMore, btnTakeOver;
+
+         VH(View v) {
+            super(v);
+            this.tvCustomer = v.findViewById(id.tvCustomer);
+            this.tvElapsed = v.findViewById(id.tvElapsed);
+            this.tvMeta = v.findViewById(id.tvMeta);
+            this.tvOngkir = v.findViewById(id.tvOngkir);
+            this.tvAdminArea = v.findViewById(id.tvAdminArea);
+            this.tvOrderNote = v.findViewById(id.tvOrderNote);
+            this.productChips = v.findViewById(id.productChips);
+            this.btnMore = v.findViewById(id.btnMore);
+            this.btnTakeOver = v.findViewById(id.btnTakeOver);
+         }
+      }
+   }
+
+   /** Tiap 30 detik (guidedRitRefillTicker) selama rit berjalan: cek apakah order BARU sudah masuk
+    *  antrean dan rit yang sedang jalan masih cukup muatannya untuk menampungnya sekalian — kalau
+    *  ya, tawarkan lewat showGuidedRitRefillOffer alih-alih kurir harus kembali lagi nanti. */
+   private void checkGuidedRitRefill() {
+      if (!this.guidedMode || this.isFinishing() || this.isDestroyed() || !this.isRunning()) return;
+      int maxLoad = this.syncCfg().getMaxLoad();
+      if (maxLoad <= 0) return;
+      int loaded = 0;
+      for (Transaction t : this.runStops()) {
+         loaded += isPickupOnly(t) ? 0 : Math.max(0, t.getJumlahGalon());
+      }
+      if (loaded >= maxLoad) return;
+      final int loadedFinal = loaded;
+      final int maxLoadFinal = maxLoad;
+      final TransactionDao dao = this.dao;
+      new Thread(() -> {
+         List<Transaction> queue = dao.getDeliveryQueue();
+         List<Transaction> fits = new ArrayList<>();
+         int running = loadedFinal;
+         for (Transaction t : queue) {
+            if (t == null || t.isOpenDispatch() || this.runningIds.contains(t.getId())
+                  || this.guidedRitRefillDeclinedIds.contains(t.getId())) {
+               continue;
+            }
+            int next = running + (isPickupOnly(t) ? 0 : Math.max(0, t.getJumlahGalon()));
+            if (next <= maxLoadFinal) {
+               fits.add(t);
+               running = next;
+            }
+         }
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed() || fits.isEmpty()) return;
+            if (this.guidedRitOffer == null || !this.guidedRitOffer.isShowing()) {
+               this.showGuidedRitRefillOffer(fits);
+            }
+         });
+      }).start();
+   }
+
+   private void showGuidedRitRefillOffer(List<Transaction> fits) {
+      if (this.isFinishing() || this.isDestroyed()) return;
+      this.guidedRitOffer = (new AlertDialog.Builder(this)).setIcon(android.R.drawable.ic_dialog_alert)
+            .setCancelable(false).setTitle("❗ Antrean Baru Masuk")
+            .setMessage(fits.size() + " order baru masuk antrean dan rit ini masih muat:\n\n"
+                  + this.numberedNames(fits) + "\n\nTambahkan ke rit yang sedang berjalan sekarang?")
+            .setPositiveButton("YA", (d, w) -> this.acceptGuidedRitRefill(fits))
+            .setNegativeButton("Ikutkan Rit Selanjutnya", (d, w) -> {
+               for (Transaction t : fits) this.guidedRitRefillDeclinedIds.add(t.getId());
+            }).show();
+   }
+
+   private void acceptGuidedRitRefill(List<Transaction> fits) {
+      for (Transaction t : fits) {
+         this.dao.startDelivery(t.getId());
+         this.runningIds.add(t.getId());
+      }
+      this.persistRunning();
+      this.adapter.notifyDataSetChanged();
+      this.renderStrategy(this.adapter.data);
+      this.applyRunModeChrome(this.adapter.data);
+      SyncScheduler.syncNow(this.getApplicationContext());
    }
 
    private static boolean isPickupOnly(Transaction t) {
@@ -4497,6 +5453,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       String detailExtra;
       String photoLocalPath; // dicoba lebih dulu (sudah ada di disk, tanpa unduh)
       String photoUrl;       // fallback bila photoLocalPath kosong/tak ada filenya
+      String note;  // catatan transaksi (tombol Telepon & baris ini HANYA dirender saat guided)
+      String phone;
+      // guided: true -> buildPreviewContent dirender INLINE penuh layar (renderGuidedInline),
+      // bukan sebagai AlertDialog (showPreviewDialog) — lihat showQueuePreview.
+      boolean guided;
+      long guidedTrxId;
    }
 
    /** Satu badge "Detail Transaksi" — label siap-tampil + warna latar (teks dihitung kontras). */
@@ -4538,7 +5500,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             : (c != null ? c.getPhotoPath() : null);
       d.photoUrl = destLoc != null && destLoc.photo != null && !destLoc.photo.trim().isEmpty()
             ? destLoc.photo.trim() : (c != null ? c.getPhotoUrl() : null);
-      this.showPreviewDialog(d);
+      d.guided = this.guidedMode;
+      d.guidedTrxId = t.getId();
+      d.note = ReceiptActivity.customerNote(t.getCatatan());
+      d.phone = t.getCustomerPhone();
+      if (d.guided) {
+         this.renderGuidedInline(d);
+      } else {
+         this.showPreviewDialog(d);
+      }
    }
 
    /**
@@ -4567,6 +5537,97 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       int totalBg = bon ? 0xFFDC2626 : 0xFF0369A1;
       chips.add(new Chip("TOTAL " + this.rp(t.getTotalHarga()) + (payLabel != null ? " · " + payLabel : ""), totalBg));
       return chips;
+   }
+
+   /** Badge produk gabungan (SEMUA order berjalan, bukan cuma order berikutnya) di header layar
+    *  guided — kurir langsung tahu apa saja yang perlu dimuat/dibawa untuk seluruh rit, bukan
+    *  hanya satu order yang sedang di-preview. Dipanggil dari applyRunModeChrome tiap kali daftar
+    *  berjalan berubah. */
+   private void updateGuidedProductBadges(List<Transaction> stops) {
+      if (this.guidedProductBadgesScroll == null || this.guidedProductBadges == null) return;
+      if (!this.guidedMode || stops == null || stops.isEmpty()) {
+         this.guidedProductBadgesScroll.setVisibility(View.GONE);
+         return;
+      }
+      java.util.LinkedHashMap<String, Integer> qtyByLabel = new java.util.LinkedHashMap<>();
+      java.util.LinkedHashMap<String, Integer> colorByLabel = new java.util.LinkedHashMap<>();
+      for (Transaction t : stops) {
+         if (t == null) continue;
+         List<TransactionItem> items = t.getItems();
+         if (items == null) continue;
+         for (TransactionItem it : items) {
+            if (it == null || it.jumlah <= 0) continue;
+            String label = this.chipLabel(it);
+            qtyByLabel.merge(label, it.jumlah, Integer::sum);
+            colorByLabel.putIfAbsent(label, this.chipColor(it));
+         }
+      }
+      if (qtyByLabel.isEmpty()) {
+         this.guidedProductBadgesScroll.setVisibility(View.GONE);
+         return;
+      }
+      this.guidedProductBadges.removeAllViews();
+      for (Map.Entry<String, Integer> e : qtyByLabel.entrySet()) {
+         this.guidedProductBadges.addView(this.makeDetailBadge(e.getKey() + " ×" + e.getValue(),
+               colorByLabel.getOrDefault(e.getKey(), -10193781)));
+      }
+      this.guidedProductBadgesScroll.setVisibility(View.VISIBLE);
+   }
+
+   /** Kartu "Selanjutnya" di bar aksi guided — intip order SETELAH yang sedang di-preview, supaya
+    *  kurir tahu ke mana berikutnya tanpa harus menandai Selesai dulu. {@code stop == null} berarti
+    *  order ini yang terakhir di rit berjalan. */
+   private View buildGuidedNextStopCell(Transaction stop, LinearLayout.LayoutParams lp) {
+      LinearLayout cell = new LinearLayout(this);
+      cell.setOrientation(LinearLayout.VERTICAL);
+      cell.setLayoutParams(lp);
+      cell.setPadding(this.dp(8f), this.dp(6f), this.dp(8f), this.dp(6f));
+      GradientDrawable bg = new GradientDrawable();
+      bg.setShape(GradientDrawable.RECTANGLE);
+      bg.setCornerRadius(this.dp(8f));
+      bg.setColor(-920071);
+      cell.setBackground(bg);
+      TextView label = new TextView(this);
+      label.setText("Selanjutnya");
+      label.setTextSize(10f);
+      label.setTypeface(label.getTypeface(), android.graphics.Typeface.BOLD);
+      label.setTextColor(-10193781);
+      cell.addView(label);
+      if (stop == null) {
+         TextView tvLast = new TextView(this);
+         tvLast.setText("🏁 Order terakhir di rit ini");
+         tvLast.setTextSize(11f);
+         tvLast.setTextColor(-7035976);
+         tvLast.setMaxLines(2);
+         tvLast.setPadding(0, this.dp(4f), 0, 0);
+         cell.addView(tvLast);
+         return cell;
+      }
+      android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+      hs.setHorizontalScrollBarEnabled(false);
+      LinearLayout row = new LinearLayout(this);
+      row.setOrientation(LinearLayout.HORIZONTAL);
+      row.setPadding(0, this.dp(4f), 0, 0);
+      boolean any = false;
+      List<TransactionItem> items = stop.getItems();
+      if (items != null) {
+         for (TransactionItem it : items) {
+            if (it == null || it.jumlah <= 0) continue;
+            row.addView(this.makeDetailBadge(this.chipLabel(it) + " ×" + it.jumlah, this.chipColor(it)));
+            any = true;
+         }
+      }
+      if (!any) {
+         TextView tvName = new TextView(this);
+         tvName.setText(safe(stop.getCustomerName()));
+         tvName.setTextSize(11f);
+         tvName.setMaxLines(1);
+         tvName.setEllipsize(TruncateAt.END);
+         row.addView(tvName);
+      }
+      hs.addView(row);
+      cell.addView(hs);
+      return cell;
    }
 
    // ---------------------------------------------------------------- Preview: kompas "arah ke tujuan"
@@ -4857,21 +5918,29 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * Detail Transaksi - menggantikan dua dialog terpisah "Preview Peta" & "Foto" yang dulu berdiri
     * sendiri-sendiri (lihat {@link #showQueuePreview} & {@code showOtherDevicePreview}).
     */
-   private void showPreviewDialog(PreviewData d) {
-      ScrollView scroll = new ScrollView(this);
+   /**
+    * Badan visual panel Preview (Peta, alamat, Foto+Kompas, Detail Transaksi) - dipakai BAIK oleh
+    * showPreviewDialog (dialog kompak, guided=false) MAUPUN renderGuidedInline (penuh layar,
+    * guided=true), lewat SATU builder yang sama supaya keduanya tak bisa saling menyimpang. Saat
+    * guided, panel dapat elemen ekstra yang tak muat/tak perlu di dialog kompak: FAB Navigasi &amp;
+    * tombol WA mengambang di peta, badge nama+durasi di pojok kiri-atas peta, tombol Auto Zoom, dan
+    * baris catatan transaksi di atas foto.
+    * @param webViewOut  keluaran: WebView peta yang baru dibuat (dipakai pemanggil utk memuat html)
+    */
+   private LinearLayout buildPreviewContent(final PreviewData d, final WebView[] webViewOut, boolean guided) {
+      this.guidedElapsedBadge = null;
+      this.guidedMapBox = null;
       LinearLayout content = new LinearLayout(this);
       content.setOrientation(LinearLayout.VERTICAL);
-      scroll.addView(content);
 
       // ---- Peta ----
       WebView webView = new WebView(this);
-      LiveDeviceOverlay[] overlayRef = new LiveDeviceOverlay[1];
       WebSettings ws = webView.getSettings();
       ws.setJavaScriptEnabled(true);
       ws.setDomStorageEnabled(true);
       ws.setUserAgentString(MapTiles.userAgent());
       int mapSizeDp = this.dp(340f);
-      webView.setLayoutParams(new LinearLayout.LayoutParams(-1, mapSizeDp));
+      webView.setLayoutParams(new android.widget.FrameLayout.LayoutParams(-1, -1));
       webView.setBackgroundColor(-1);
       // Sentuhan di dalam peta menggeser peta, BUKAN men-scroll dialog - tanpa ini ScrollView luar
       // "mencuri" gestur pan/zoom Leaflet begitu jarinya bergerak sedikit vertikal.
@@ -4887,12 +5956,112 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
          return false;
       });
-      String html = buildMiniMapHtml(d.hasDev, d.devLat, d.devLng, safe(d.devName), d.devVehicle, d.devColor,
-            d.hasDest, d.destLat, d.destLng, safe(d.destName), this.myVehicleEmoji(), this.myVehicleColor(), d.blinkAssigned);
-      content.addView(webView);
+      webViewOut[0] = webView;
+
+      android.widget.FrameLayout mapBox = new android.widget.FrameLayout(this);
+      mapBox.setLayoutParams(new LinearLayout.LayoutParams(-1, mapSizeDp));
+      mapBox.addView(webView);
+      if (guided) this.guidedMapBox = mapBox;
+
+      if (guided && d.hasDest) {
+         com.google.android.material.floatingactionbutton.FloatingActionButton fabNav =
+               new com.google.android.material.floatingactionbutton.FloatingActionButton(this);
+         fabNav.setImageResource(android.R.drawable.ic_menu_directions);
+         fabNav.setSize(com.google.android.material.floatingactionbutton.FloatingActionButton.SIZE_MINI);
+         android.widget.FrameLayout.LayoutParams fabLp = new android.widget.FrameLayout.LayoutParams(-2, -2);
+         fabLp.gravity = android.view.Gravity.BOTTOM | android.view.Gravity.END;
+         fabLp.setMargins(0, 0, this.dp(12f), this.dp(12f));
+         fabNav.setLayoutParams(fabLp);
+         fabNav.setOnClickListener((v) -> this.openMapsNavigation(d.destLat, d.destLng));
+         mapBox.addView(fabNav);
+      }
+      if (guided && d.phone != null && !d.phone.trim().isEmpty()) {
+         // Tombol WA mengambang: kurir terpandu tak punya layar Detail Order selalu terbuka untuk
+         // menghubungi pelanggan, jadi diletakkan di peta yang SELALU terlihat.
+         TextView btnWa = new TextView(this);
+         btnWa.setText("💬");
+         btnWa.setTextSize(18f);
+         btnWa.setGravity(android.view.Gravity.CENTER);
+         GradientDrawable waBg = new GradientDrawable();
+         waBg.setShape(GradientDrawable.OVAL);
+         waBg.setColor(-14298266);
+         btnWa.setBackground(waBg);
+         btnWa.setElevation(this.dp(4f));
+         android.widget.FrameLayout.LayoutParams waLp = new android.widget.FrameLayout.LayoutParams(this.dp(40f), this.dp(40f));
+         waLp.gravity = android.view.Gravity.BOTTOM | android.view.Gravity.END;
+         waLp.setMargins(0, 0, this.dp(12f), this.dp(64f));
+         btnWa.setLayoutParams(waLp);
+         String phone = d.phone;
+         btnWa.setOnClickListener((v) -> this.openWhatsApp(phone, ""));
+         mapBox.addView(btnWa);
+      }
+      if (guided) {
+         // Badge nama + durasi antre pojok kiri-atas peta - pengganti judul dialog, yang tak ada
+         // di panel inline. this.guidedElapsedBadge diperbarui tiap detik oleh updateGuidedElapsedBadge.
+         LinearLayout badgeRow = new LinearLayout(this);
+         badgeRow.setOrientation(LinearLayout.HORIZONTAL);
+         badgeRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+         android.widget.FrameLayout.LayoutParams badgeRowLp = new android.widget.FrameLayout.LayoutParams(-2, -2);
+         badgeRowLp.gravity = android.view.Gravity.TOP | android.view.Gravity.START;
+         badgeRowLp.setMargins(0, this.dp(8f), this.dp(8f), 0);
+         badgeRow.setLayoutParams(badgeRowLp);
+         TextView tvElapsed = new TextView(this);
+         tvElapsed.setTextSize(12f);
+         tvElapsed.setTextColor(-1);
+         tvElapsed.setTypeface(tvElapsed.getTypeface(), android.graphics.Typeface.BOLD);
+         tvElapsed.setPadding(this.dp(8f), this.dp(3f), this.dp(8f), this.dp(3f));
+         badgeRow.addView(tvElapsed);
+         this.guidedElapsedBadge = tvElapsed;
+         TextView tvTitle = new TextView(this);
+         tvTitle.setText(safe(d.title));
+         tvTitle.setTextSize(12f);
+         tvTitle.setTextColor(-1);
+         tvTitle.setMaxLines(1);
+         tvTitle.setEllipsize(TruncateAt.END);
+         tvTitle.setTypeface(tvTitle.getTypeface(), android.graphics.Typeface.BOLD);
+         tvTitle.setPadding(this.dp(8f), this.dp(3f), this.dp(8f), this.dp(3f));
+         GradientDrawable titleBg = new GradientDrawable();
+         titleBg.setShape(GradientDrawable.RECTANGLE);
+         titleBg.setCornerRadius(this.dp(10f));
+         titleBg.setColor(-15374912);
+         tvTitle.setBackground(titleBg);
+         LinearLayout.LayoutParams tvTitleLp = new LinearLayout.LayoutParams(-2, -2);
+         tvTitleLp.setMarginStart(this.dp(6f));
+         tvTitle.setLayoutParams(tvTitleLp);
+         badgeRow.addView(tvTitle);
+         mapBox.addView(badgeRow);
+
+         // Tombol Auto Zoom pojok kanan-atas peta.
+         final TextView tvZoom = new TextView(this);
+         tvZoom.setTextSize(11f);
+         tvZoom.setTextColor(-1);
+         tvZoom.setTypeface(tvZoom.getTypeface(), android.graphics.Typeface.BOLD);
+         tvZoom.setPadding(this.dp(8f), this.dp(3f), this.dp(8f), this.dp(3f));
+         final GradientDrawable zoomBg = new GradientDrawable();
+         zoomBg.setShape(GradientDrawable.RECTANGLE);
+         zoomBg.setCornerRadius(this.dp(10f));
+         android.widget.FrameLayout.LayoutParams tvZoomLp = new android.widget.FrameLayout.LayoutParams(-2, -2);
+         tvZoomLp.gravity = android.view.Gravity.TOP | android.view.Gravity.END;
+         tvZoomLp.setMargins(0, this.dp(40f), this.dp(8f), 0);
+         tvZoom.setLayoutParams(tvZoomLp);
+         final Runnable refreshZoomLabel = () -> {
+            tvZoom.setText(this.guidedAutoZoom ? "🎯 Auto Zoom" : "🚫 Auto Zoom");
+            zoomBg.setColor(this.guidedAutoZoom ? -15374912 : -10193781);
+            tvZoom.setBackground(zoomBg);
+         };
+         refreshZoomLabel.run();
+         tvZoom.setOnClickListener((v) -> {
+            this.guidedAutoZoom = !this.guidedAutoZoom;
+            refreshZoomLabel.run();
+            WebView wv = webViewOut[0];
+            if (wv != null) wv.evaluateJavascript("window.setAutoZoom&&window.setAutoZoom(" + this.guidedAutoZoom + ");", null);
+         });
+         mapBox.addView(tvZoom);
+      }
+      content.addView(mapBox);
       if (d.address != null && !d.address.isEmpty()) {
          TextView tvAddress = new TextView(this);
-         tvAddress.setText("\ud83d\udccd " + d.address);
+         tvAddress.setText("📍 " + d.address);
          tvAddress.setTextSize(13.0F);
          tvAddress.setPadding(this.dp(16f), this.dp(8f), this.dp(16f), 0);
          content.addView(tvAddress);
@@ -4913,6 +6082,30 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (d.hasDest) {
          photoBox.addView(this.buildCompassOverlay());
       }
+      if (guided && d.note != null && !d.note.trim().isEmpty()) {
+         // Catatan transaksi TERTEMPEL di atas foto — panel inline tak punya baris tersendiri
+         // untuk ini, dan kurir perlu melihatnya SEBELUM mengetuk apa pun (pesan "titip di pos
+         // satpam", dsb).
+         TextView tvNote = new TextView(this);
+         tvNote.setText(d.note.trim());
+         tvNote.setTextSize(12f);
+         tvNote.setTextColor(-1);
+         tvNote.setTypeface(tvNote.getTypeface(), android.graphics.Typeface.BOLD);
+         tvNote.setMaxLines(2);
+         tvNote.setEllipsize(TruncateAt.END);
+         tvNote.setGravity(android.view.Gravity.CENTER);
+         tvNote.setPadding(this.dp(10f), this.dp(4f), this.dp(10f), this.dp(4f));
+         GradientDrawable noteBg = new GradientDrawable();
+         noteBg.setShape(GradientDrawable.RECTANGLE);
+         noteBg.setCornerRadius(this.dp(10f));
+         noteBg.setColor(0xCC000000);
+         tvNote.setBackground(noteBg);
+         android.widget.FrameLayout.LayoutParams noteLp = new android.widget.FrameLayout.LayoutParams(-2, -2);
+         noteLp.gravity = android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL;
+         noteLp.setMargins(this.dp(24f), this.dp(8f), this.dp(24f), 0);
+         tvNote.setLayoutParams(noteLp);
+         photoBox.addView(tvNote);
+      }
       content.addView(photoBox);
       TextView tvNoPhoto = new TextView(this);
       tvNoPhoto.setText("Foto rumah belum ada.");
@@ -4926,7 +6119,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       // ---- Detail Transaksi: badge slug+warna, bukan lagi baris teks panjang ----
       boolean hasChips = d.detailChips != null && !d.detailChips.isEmpty();
       boolean hasExtra = d.detailExtra != null && !d.detailExtra.trim().isEmpty();
-      if (hasChips || hasExtra) {
+      if ((hasChips || hasExtra) && !guided) {
          content.addView(this.sectionHeader("Detail Transaksi"));
       }
       if (hasChips) {
@@ -4954,16 +6147,27 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          tvExtra.setPadding(this.dp(16f), this.dp(6f), this.dp(16f), this.dp(14f));
          content.addView(tvExtra);
       }
+      return content;
+   }
 
-      AlertDialog.Builder builder = (new AlertDialog.Builder(this)).setTitle("\ud83d\udd0d Preview \u2014 " + safe(d.title))
+   private void showPreviewDialog(final PreviewData d) {
+      ScrollView scroll = new ScrollView(this);
+      WebView[] webViewOut = new WebView[1];
+      scroll.addView(this.buildPreviewContent(d, webViewOut, false));
+      final WebView webView = webViewOut[0];
+      final LiveDeviceOverlay[] overlayRef = new LiveDeviceOverlay[1];
+      final String html = buildMiniMapHtml(d.hasDev, d.devLat, d.devLng, safe(d.devName), d.devVehicle, d.devColor,
+            d.hasDest, d.destLat, d.destLng, safe(d.destName), this.myVehicleEmoji(), this.myVehicleColor(),
+            d.blinkAssigned, null, true);
+
+      AlertDialog.Builder builder = (new AlertDialog.Builder(this)).setTitle("🔍 Preview — " + safe(d.title))
             .setView(scroll).setPositiveButton("Tutup", (DialogInterface.OnClickListener) null);
       if (d.hasDest) {
-         builder.setNeutralButton("\ud83e\udded Navigasi", (dlg, w) -> this.openMapsNavigation(d.destLat, d.destLng));
+         builder.setNeutralButton("🧭 Navigasi", (dlg, w) -> this.openMapsNavigation(d.destLat, d.destLng));
       }
 
       AlertDialog dialog = builder.create();
       dialog.setOnShowListener((dlg) -> {
-         webView.setLayoutParams(new LinearLayout.LayoutParams(-1, mapSizeDp));
          dialog.getWindow().setLayout(-1, -2);
          webView.post(() -> {
             webView.onResume();
@@ -4998,6 +6202,120 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       dialog.show();
    }
 
+   /**
+    * Versi PENUH LAYAR showPreviewDialog untuk kurir terpandu — dirender langsung ke dalam
+    * guidedPanel (bukan AlertDialog), dilengkapi bar aksi (Detail Order/Selesai, "Selanjutnya"/Trx
+    * Baru) di bawah panel Preview. Dipanggil dari updateGuidedPanel setiap kali order berjalan
+    * berikutnya berganti.
+    */
+   private void renderGuidedInline(final PreviewData d) {
+      if (this.guidedPanel == null || this.isFinishing() || this.isDestroyed()) return;
+      this.teardownGuidedInlinePreview();
+      this.guidedPanel.removeAllViews();
+      this.guidedPanel.setOrientation(LinearLayout.VERTICAL);
+      this.guidedPanel.setVisibility(View.VISIBLE);
+
+      WebView[] webViewOut = new WebView[1];
+      final LinearLayout content = this.buildPreviewContent(d, webViewOut, true);
+      ScrollView scroll = new ScrollView(this);
+      scroll.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1f));
+      scroll.addView(content);
+      this.guidedPanel.addView(scroll);
+      this.updateGuidedElapsedBadge();
+
+      final LinearLayout actionBar = new LinearLayout(this);
+      actionBar.setOrientation(LinearLayout.VERTICAL);
+      actionBar.setPadding(this.dp(12f), this.dp(8f), this.dp(12f), this.dp(12f));
+      actionBar.setBackgroundColor(-1);
+      actionBar.setElevation(this.dp(8f));
+
+      LinearLayout row1 = new LinearLayout(this);
+      row1.setOrientation(LinearLayout.HORIZONTAL);
+      actionBar.addView(row1);
+      final long trxId = d.guidedTrxId;
+      MaterialButton btnDetail = new MaterialButton(this);
+      btnDetail.setText("📋 Detail Order");
+      btnDetail.setAllCaps(false);
+      btnDetail.setBackgroundTintList(android.content.res.ColorStateList.valueOf(-10193781));
+      LinearLayout.LayoutParams lp1 = new LinearLayout.LayoutParams(0, -2, 1f);
+      lp1.setMarginEnd(this.dp(4f));
+      lp1.bottomMargin = this.dp(8f);
+      btnDetail.setLayoutParams(lp1);
+      btnDetail.setOnClickListener((v) -> {
+         Transaction t = this.findQueueTrx(trxId);
+         if (t != null) this.showOrderDetail(t);
+      });
+      row1.addView(btnDetail);
+      MaterialButton btnDone = new MaterialButton(this);
+      btnDone.setText("✅ Selesai");
+      btnDone.setAllCaps(false);
+      LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(0, -2, 1f);
+      lp2.setMarginStart(this.dp(4f));
+      lp2.bottomMargin = this.dp(8f);
+      btnDone.setLayoutParams(lp2);
+      btnDone.setOnClickListener((v) -> {
+         Transaction t = this.findQueueTrx(trxId);
+         if (t != null) this.maybeWarnIncompleteThenComplete(t);
+      });
+      row1.addView(btnDone);
+
+      LinearLayout row2 = new LinearLayout(this);
+      row2.setOrientation(LinearLayout.HORIZONTAL);
+      actionBar.addView(row2);
+      List<Transaction> stops = this.runStops();
+      Transaction nextStop = stops.size() > 1 ? stops.get(1) : null;
+      LinearLayout.LayoutParams lp3 = new LinearLayout.LayoutParams(0, -2, 1f);
+      lp3.setMarginEnd(this.dp(4f));
+      row2.addView(this.buildGuidedNextStopCell(nextStop, lp3));
+      MaterialButton btnNewTrx = new MaterialButton(this);
+      btnNewTrx.setText("➕ Trx Baru");
+      btnNewTrx.setAllCaps(false);
+      btnNewTrx.setBackgroundTintList(android.content.res.ColorStateList.valueOf(-16553567));
+      LinearLayout.LayoutParams lp4 = new LinearLayout.LayoutParams(0, -2, 1f);
+      lp4.setMarginStart(this.dp(4f));
+      btnNewTrx.setLayoutParams(lp4);
+      btnNewTrx.setOnClickListener((v) -> this.launchGuidedJualAirMinum());
+      row2.addView(btnNewTrx);
+      this.guidedPanel.addView(actionBar);
+
+      final WebView webView = webViewOut[0];
+      final String html = buildMiniMapHtml(d.hasDev, d.devLat, d.devLng, safe(d.devName), d.devVehicle, d.devColor,
+            d.hasDest, d.destLat, d.destLng, safe(d.destName), this.myVehicleEmoji(), this.myVehicleColor(),
+            d.blinkAssigned, this.buildOtherPendingForMap(), this.guidedAutoZoom);
+      this.guidedInlineWebView = webView;
+      webView.addJavascriptInterface(new GuidedMapBridge(), "Android");
+      webView.post(() -> {
+         webView.onResume();
+         webView.setWebViewClient(new WebViewClient() {
+            public void onPageFinished(WebView view, String url) {
+               DeliveryQueueActivity.this.guidedInlineOverlay = new LiveDeviceOverlay(DeliveryQueueActivity.this, webView)
+                     .excluding(d.hasDev ? d.devUuid : null);
+               DeliveryQueueActivity.this.guidedInlineOverlay.start();
+               DeliveryQueueActivity.this.previewMapWebView = webView;
+               DeliveryQueueActivity.this.pushMyPosToMap();
+            }
+         });
+         webView.loadDataWithBaseURL("https://unpkg.com", html, "text/html", "UTF-8", null);
+      });
+      if (d.hasDest) this.startCompass(d.destLat, d.destLng);
+
+      // Peta dilebarkan mengisi sisa tinggi layar SETELAH tata letak final diketahui (bar aksi &
+      // baris alamat/badge produk punya tinggi variabel) — bukan angka tetap, supaya di layar kecil
+      // tetap proporsional dan di layar besar peta tak menyisakan area kosong percuma.
+      final android.widget.FrameLayout mapBoxRef = (android.widget.FrameLayout) content.getChildAt(0);
+      this.guidedPanel.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
+         public void onGlobalLayout() {
+            DeliveryQueueActivity.this.guidedPanel.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+            int height = DeliveryQueueActivity.this.guidedPanel.getHeight() - actionBar.getHeight()
+                  - (content.getHeight() - mapBoxRef.getHeight());
+            if (height > mapBoxRef.getHeight()) {
+               ViewGroup.LayoutParams lp = mapBoxRef.getLayoutParams();
+               lp.height = height;
+               mapBoxRef.setLayoutParams(lp);
+            }
+         }
+      });
+   }
    private TextView sectionHeader(String text) {
       TextView tv = new TextView(this);
       tv.setText(text);
@@ -5589,6 +6907,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       // akan diam-diam menyusutkan cakupan aksi-aksi itu tiap kali kotak cari sedang terisi.
       // Pencarian HANYA menyaring apa yang dirender, lewat shown() di bawah.
       private List<Transaction> data;
+      // Dipakai HANYA oleh instance TERPISAH di buildGuidedMyQueueBody (dialog "lihat semua
+      // antrean" kurir terpandu) — forceShowAll melewati filter "sedang berjalan" di bawah supaya
+      // dialog itu tetap menampilkan SELURUH antrean walau satu rit sedang jalan di layar utama,
+      // dan overrideQuery memakai kotak cari MILIK dialog itu sendiri, bukan searchMineQuery global.
+      private boolean forceShowAll = false;
+      private String overrideQuery = "";
 
       private QueueAdapter() {
          super();
@@ -5608,15 +6932,30 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          DeliveryQueueActivity.this.updateMineEmptyState();
       }
 
+      void setForceShowAll(boolean forceShowAll) {
+         this.forceShowAll = forceShowAll;
+      }
+
+      void setOverrideQuery(String query) {
+         this.overrideQuery = query == null ? "" : query.trim();
+         this.applyFilter();
+      }
+
       private List<Transaction> shown() {
          List<Transaction> base;
-         if (!DeliveryQueueActivity.this.selectionMode && DeliveryQueueActivity.this.isRunning()) {
-            List<Transaction> run = DeliveryQueueActivity.this.runStops();
-            base = run.isEmpty() ? this.data : run;
-         } else {
+         String q;
+         if (this.forceShowAll) {
             base = this.data;
+            q = this.overrideQuery.toLowerCase(Locale.US);
+         } else {
+            if (!DeliveryQueueActivity.this.selectionMode && DeliveryQueueActivity.this.isRunning()) {
+               List<Transaction> run = DeliveryQueueActivity.this.runStops();
+               base = run.isEmpty() ? this.data : run;
+            } else {
+               base = this.data;
+            }
+            q = DeliveryQueueActivity.this.searchMineQuery.toLowerCase(Locale.US);
          }
-         String q = DeliveryQueueActivity.this.searchMineQuery.toLowerCase(Locale.US);
          if (q.isEmpty()) {
             return base;
          }
