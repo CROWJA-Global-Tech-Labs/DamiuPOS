@@ -327,21 +327,33 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
 
     /** Konfirmasi yang JUJUR: sebutkan bahwa staf menekan Kirim sendiri di tiap chat. */
     private void confirmNotify(List<Customer> targets) {
-        // Auto-kirim dashboard hanya berlaku untuk varian TANPA foto (lihat javadoc kelas ini —
-        // verifikasi tujuan gateway tak berlaku pada layar pratinjau media). Dialog "Beritahu
-        // Konsumen?" hanya tampil kalau toggle web OFF atau bridge WA (FREZ WA Bridge, server
-        // terpisah — lihat SyncApi#waBridgeStatus) tak terhubung — kalau toggle ON dan bridge
-        // siap, langsung auto-kirim tanpa dialog.
         SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
-        if (autoSettings.isAutoSendDeliveryIssueWa() && savedPhotoPath.isEmpty()) {
-            checkBridgeThenNotify(targets);
+        // Server SENDIRI (ObstacleWa + FREZ WA Bridge) bisa auto-kirim laporan ini — TERMASUK yang
+        // berfoto — begitu tersinkron (lihat KEY_SERVER_AUTO_OBSTACLE_WA). Itu prioritas: kalau
+        // aktif & bridge terhubung, HP tak boleh ikut kirim (dobel ke pelanggan). Auto-kirim lokal
+        // HP (varian TANPA foto — verifikasi gateway tak berlaku di layar pratinjau media) cuma
+        // FALLBACK saat server OFF atau bridge putus; dialog manual jadi fallback terakhir.
+        boolean serverAuto = autoSettings.isServerAutoObstacleWa();
+        boolean localAutoEligible = autoSettings.isAutoSendDeliveryIssueWa() && savedPhotoPath.isEmpty();
+        if (!serverAuto && !localAutoEligible) {
+            showNotifyDialog(targets);
             return;
         }
-        showNotifyDialog(targets);
+        checkWaBridge(bridgeOk -> {
+            if (serverAuto && bridgeOk) {
+                Toast.makeText(this, "Laporan tersimpan. Pelanggan akan diberitahu otomatis oleh sistem.",
+                        Toast.LENGTH_LONG).show();
+                finish();
+            } else if (localAutoEligible && bridgeOk) {
+                autoNotifyAll(targets);
+            } else {
+                showNotifyDialog(targets);
+            }
+        });
     }
 
-    /** Tanya status FREZ WA Bridge ke server (background) sebelum memilih auto-kirim vs dialog manual. */
-    private void checkBridgeThenNotify(List<Customer> targets) {
+    /** Tanya status FREZ WA Bridge server (background) — callback selalu di UI thread. */
+    private void checkWaBridge(java.util.function.Consumer<Boolean> callback) {
         new Thread(() -> {
             boolean bridgeOk = false;
             try {
@@ -352,13 +364,10 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
                     bridgeOk = res != null && res.optBoolean("configured", false) && res.optBoolean("ok", false);
                 }
             } catch (Exception ignored) {
-                // Bridge tak terjangkau/timeout → anggap putus, jatuh ke dialog manual.
+                // Bridge tak terjangkau/timeout → anggap putus, jatuh ke fallback.
             }
             final boolean finalOk = bridgeOk;
-            runOnUiThread(() -> {
-                if (finalOk) autoNotifyAll(targets);
-                else showNotifyDialog(targets);
-            });
+            runOnUiThread(() -> callback.accept(finalOk));
         }).start();
     }
 
