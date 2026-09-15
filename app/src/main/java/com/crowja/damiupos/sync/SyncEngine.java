@@ -180,6 +180,7 @@ public class SyncEngine {
                     // Pesanan Tertunda — cermin App\Support\TertundaSchedule di web (dua arah: HP bisa
                     // membuatnya, web bisa menjadwalkan ulang/melanjutkannya).
                     DatabaseHelper.COL_DELIVERY_TERTUNDA_AT, DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT,
+                    DatabaseHelper.COL_DELIVERY_TERTUNDA_REASON,
                     DatabaseHelper.COL_DELIVERY_DONE_AT, DatabaseHelper.COL_DELIVERY_TOKEN,
                     // "Sedang dikerjakan" (▶ Jalankan) + stempel berhentinya — DITULIS HP, dua arah.
                     // Dua stempel karena push membuang kolom null (berhenti tak bisa dikirim NULL).
