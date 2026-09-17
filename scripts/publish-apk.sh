@@ -112,6 +112,17 @@ if [ ! -f "$APK_LOCAL" ]; then
     exit 1
 fi
 
+# Gradle happily produces an UNSIGNED apk when local.properties is missing
+# RELEASE_STORE_FILE (signingConfigs.release just ends up empty) — Android then rejects the
+# install on every device with "paket tampaknya tidak valid", but nothing above this point
+# would have caught it. jarsigner -verify is the same check `pm install` effectively does.
+echo "==> Verifying APK signature…"
+if ! jarsigner -verify "$APK_LOCAL" >/dev/null 2>&1; then
+    echo "ERROR: $APK_LOCAL is NOT signed (or signature invalid) — refusing to publish." >&2
+    echo "       Cek local.properties: RELEASE_STORE_FILE/RELEASE_KEY_ALIAS/dst harus terisi benar." >&2
+    exit 1
+fi
+
 LOCAL_SHA="$(sha256sum "$APK_LOCAL" | cut -d' ' -f1)"
 LOCAL_SIZE="$(stat -c%s "$APK_LOCAL" 2>/dev/null || stat -f%z "$APK_LOCAL")"
 TS="$(date +%Y%m%d-%H%M%S)"
