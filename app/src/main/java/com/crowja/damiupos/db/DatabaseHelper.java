@@ -2004,5 +2004,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 + " TEXT DEFAULT CURRENT_TIMESTAMP");
         tryExec(db, "UPDATE " + TABLE_TRANSACTIONS + " SET " + COL_CREATED_AT + "=" + COL_TANGGAL
                 + " WHERE " + COL_CREATED_AT + " IS NULL");
+        // Self-heal yang sama untuk users.pin_hash (hanya ada di jalur onUpgrade oldVersion<66) —
+        // device yang instal FRESH tak pernah melewati onUpgrade sama sekali, jadi kolomnya hilang
+        // total. Akibatnya SEMUA insert staf baru dari pull ("staff" entity) gagal diam-diam ("table
+        // users has no column named pin_hash") — staf itu tak pernah masuk lokal, hilang dari
+        // dropdown login walau sudah di-whitelist di dashboard (device_staff_logins tetap ke-pull,
+        // tabelnya beda). Ditemukan lewat logcat perangkat nyata (bukan grep, kolom yang hilang
+        // tak kelihatan hanya dari baca kode).
+        tryExec(db, "ALTER TABLE " + TABLE_USERS + " ADD COLUMN " + COL_USER_PIN_HASH + " TEXT");
     }
 }
