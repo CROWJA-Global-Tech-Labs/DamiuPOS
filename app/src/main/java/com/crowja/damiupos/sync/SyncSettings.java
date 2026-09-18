@@ -265,6 +265,11 @@ public class SyncSettings {
     public boolean needsStaffRepull() { return ! "1".equals(settings.get(K_REPULL_STAFF, "0")); }
     public void markStaffRepulled()   { settings.set(K_REPULL_STAFF, "1"); }
 
+    /** Self-healing: dipanggil layar login saat whitelist device_staff_logins menyebut staf yang
+     *  tak dikenal sama sekali di tabel users lokal (cursor "staff" macet/kehabisan sebelum
+     *  sampai ke baris itu) — memaksa satu tarik-ulang staf dari epoch pada sync berikutnya. */
+    public void forceStaffRepull() { settings.set(K_REPULL_STAFF, "0"); }
+
     /** One-time full re-pull of customers when the app first runs after the "customers are
      *  branch-wide" change: the local cursor sits past other devices' existing customers (older
      *  updated_at), so reset it once to fetch ALL branch customers + their is_mine flag.

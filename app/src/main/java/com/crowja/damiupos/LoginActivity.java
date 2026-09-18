@@ -72,8 +72,9 @@ public class LoginActivity extends AppCompatActivity {
 
         // Hanya staf yang BOLEH login di perangkat ini (whitelist device_staff_logins dari web);
         // tanpa whitelist = semua staf aktif. Admin selalu disertakan (jaring anti-terkunci).
-        users = userDao.getActiveForLogin(
-                new com.crowja.damiupos.sync.SyncSettings(settingsDao).getDeviceUuid());
+        String deviceUuid = new com.crowja.damiupos.sync.SyncSettings(settingsDao).getDeviceUuid();
+        healWhitelistIfStaffMissing(deviceUuid);
+        users = userDao.getActiveForLogin(deviceUuid);
         if (users.isEmpty()) {
             // Sangat tidak mungkin (ensureDefaultAdmin menambah admin aktif),
             // tapi kalau toh kosong, matikan fitur LOKAL saja supaya app tidak
@@ -209,12 +210,27 @@ public class LoginActivity extends AppCompatActivity {
         if (userDao == null || userAdapter == null || etUser == null) return;
         // Hormati whitelist "boleh login" perangkat ini (sama seperti onCreate) — jangan
         // memunculkan kembali staf yang tak diizinkan saat sinkron membawa data baru.
-        List<User> fresh = userDao.getActiveForLogin(
-                new com.crowja.damiupos.sync.SyncSettings(settingsDao).getDeviceUuid());
+        String deviceUuid = new com.crowja.damiupos.sync.SyncSettings(settingsDao).getDeviceUuid();
+        healWhitelistIfStaffMissing(deviceUuid);
+        List<User> fresh = userDao.getActiveForLogin(deviceUuid);
         users = fresh;
         userAdapter.clear();
         userAdapter.addAll(namesOf(fresh));
         userAdapter.notifyDataSetChanged();
+    }
+
+    /**
+     * Self-healing: kalau whitelist device_staff_logins menyebut staf yang tak dikenal sama sekali
+     * di tabel users lokal (mis. cursor sinkronisasi "staff" macet sebelum sampai ke barisnya —
+     * kasus RAFI yang whitelisted di dashboard tapi tak pernah muncul di dropdown login), paksa
+     * satu tarik-ulang staf dari epoch + sinkron segera. Aman dipanggil berulang: sekali sembuh,
+     * hasUnknownWhitelistedStaff berikutnya sudah false sampai staf baru lain kena kasus sama.
+     */
+    private void healWhitelistIfStaffMissing(String deviceUuid) {
+        if (userDao.hasUnknownWhitelistedStaff(deviceUuid)) {
+            new com.crowja.damiupos.sync.SyncSettings(settingsDao).forceStaffRepull();
+            com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+        }
     }
 
     private static java.util.List<String> namesOf(List<User> list) {

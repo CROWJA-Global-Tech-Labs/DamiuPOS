@@ -237,6 +237,35 @@ public class UserDao {
         return out.isEmpty() ? all : out;   // jangan pernah kosong
     }
 
+    /**
+     * True kalau ada staff_uuid di whitelist device_staff_logins perangkat ini yang TAK DIKENAL
+     * SAMA SEKALI di tabel users lokal — beda dari kasus sync_uuid lokal kosong (staf lama yang
+     * belum ke-sync ulang) yang sudah ditolerir {@link #getActiveForLogin}. Ini tanda staf itu
+     * belum pernah ke-pull ke perangkat ini (mis. cursor "staff" macet sebelum sampai ke barisnya)
+     * sehingga tak muncul di daftar login sama sekali. Dipakai LoginActivity untuk memicu
+     * {@code SyncSettings#forceStaffRepull()} sekali.
+     */
+    public boolean hasUnknownWhitelistedStaff(String deviceUuid) {
+        if (deviceUuid == null || deviceUuid.isEmpty()) return false;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        java.util.Set<String> allowed = new java.util.HashSet<>();
+        try (Cursor c = db.query(DatabaseHelper.TABLE_DEVICE_STAFF_LOGINS,
+                new String[]{DatabaseHelper.COL_DSL_STAFF_UUID},
+                DatabaseHelper.COL_DSL_DEVICE_UUID + "=?", new String[]{deviceUuid}, null, null, null)) {
+            while (c.moveToNext()) {
+                String s = c.getString(0);
+                if (s != null && !s.isEmpty()) allowed.add(s);
+            }
+        } catch (Exception ignored) { return false; }
+        for (String uuid : allowed) {
+            try (Cursor c = db.query(DatabaseHelper.TABLE_USERS, new String[]{DatabaseHelper.COL_USER_ID},
+                    DatabaseHelper.COL_SYNC_UUID + "=?", new String[]{uuid}, null, null, null)) {
+                if (!c.moveToFirst()) return true;
+            } catch (Exception ignored) {}
+        }
+        return false;
+    }
+
     /** sync_uuid (uuid server) sebuah user lokal, atau null. */
     private String syncUuidOf(long userId) {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
