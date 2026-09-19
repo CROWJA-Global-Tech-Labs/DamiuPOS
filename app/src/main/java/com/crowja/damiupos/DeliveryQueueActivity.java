@@ -1225,6 +1225,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
    }
 
+   /** Badge "\u21a9 AMBIL SAJA" \u2014 order KEMBALI (galon kosong dijemput kurir, tak ada barang diantar),
+    *  dipasang di kaki kartu antrian yang sama dengan {@link #bindOrderNote}, di KEEMPAT
+    *  adapter yang memakai item_other_device_compact.xml. */
+   static void bindPickupOnlyBadge(TextView tv, boolean pickupOnly) {
+      if (tv != null) {
+         tv.setVisibility(pickupOnly ? View.VISIBLE : View.GONE);
+      }
+   }
+
    private void bindOtherDeviceChips(LinearLayout box, String itemsCsv) {
       String[] parts = itemsCsv != null && !itemsCsv.trim().isEmpty() ? itemsCsv.split(",\\s*") : new String[0];
       int shown = 0;
@@ -2973,9 +2982,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       final String itemsCsv;
       final long elapsedMs;
       final double distKm;
+      final boolean pickupOnly;
 
       OtherQueueRow(JSONObject json, Transaction trx, String badgeName, String note, String meta,
-            boolean hasOngkir, String adminAreaText, String itemsCsv, long elapsedMs, double distKm) {
+            boolean hasOngkir, String adminAreaText, String itemsCsv, long elapsedMs, double distKm,
+            boolean pickupOnly) {
          this.json = json;
          this.trx = trx;
          this.badgeName = badgeName;
@@ -2986,6 +2997,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.itemsCsv = itemsCsv;
          this.elapsedMs = elapsedMs;
          this.distKm = distKm;
+         this.pickupOnly = pickupOnly;
       }
    }
 
@@ -3065,7 +3077,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       String adminArea = c != null ? c.getAdminArea() : "";
       return new OtherQueueRow(o, null, badgeName, o.optString("note", ""), meta.toString(),
             ongkir > 0.0, !adminArea.isEmpty() ? "📍 " + adminArea : "", o.optString("items", ""),
-            elapsedMs, distKm);
+            elapsedMs, distKm, o.optBoolean("pickup_only", false));
    }
 
    private OtherQueueRow rowFromTransaction(Transaction t) {
@@ -3077,7 +3089,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       Customer c = t.getCustomerId() > 0 ? this.customerDao.getById(t.getCustomerId()) : null;
       String adminArea = c != null ? c.getAdminArea() : "";
       return new OtherQueueRow(null, t, badgeName, t.getCatatan(), meta, t.getOngkir() > 0.0,
-            adminArea.isEmpty() ? "" : "📍 " + adminArea, null, elapsedMs, distKm);
+            adminArea.isEmpty() ? "" : "📍 " + adminArea, null, elapsedMs, distKm, isPickupOnly(t));
    }
 
    private double distKmFromMe(double lat, double lng) {
@@ -3139,6 +3151,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          DeliveryQueueActivity.bindElapsedBadge(h.tvElapsed, row.elapsedMs);
          h.tvMeta.setText(row.meta);
          h.tvOngkir.setVisibility(row.hasOngkir ? View.VISIBLE : View.GONE);
+         DeliveryQueueActivity.bindPickupOnlyBadge(h.tvPickupOnly, row.pickupOnly);
          if (row.itemsCsv != null) {
             DeliveryQueueActivity.this.bindOtherDeviceChips(h.productChips, row.itemsCsv);
          } else {
@@ -3164,7 +3177,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
 
       class VH extends RecyclerView.ViewHolder {
-         TextView tvCustomer, tvElapsed, tvMeta, tvOngkir, tvAdminArea, tvOrderNote;
+         TextView tvCustomer, tvElapsed, tvMeta, tvOngkir, tvPickupOnly, tvAdminArea, tvOrderNote;
          LinearLayout productChips;
          MaterialButton btnMore, btnTakeOver;
 
@@ -3174,6 +3187,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.tvElapsed = v.findViewById(id.tvElapsed);
             this.tvMeta = v.findViewById(id.tvMeta);
             this.tvOngkir = v.findViewById(id.tvOngkir);
+            this.tvPickupOnly = v.findViewById(id.tvPickupOnly);
             this.tvAdminArea = v.findViewById(id.tvAdminArea);
             this.tvOrderNote = v.findViewById(id.tvOrderNote);
             this.productChips = v.findViewById(id.productChips);
@@ -6878,6 +6892,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          h.tvMeta.setText(meta.toString());
          double ongkir = q.optDouble("ongkir", (double)0.0F);
          h.tvOngkir.setVisibility(ongkir > (double)0.0F ? 0 : 8);
+         DeliveryQueueActivity.bindPickupOnlyBadge(h.tvPickupOnly, q.optBoolean("pickup_only", false));
          DeliveryQueueActivity.this.bindOtherDeviceChips(h.productChips, this.str(q, "items"));
          String adminArea = c != null ? c.getAdminArea() : "";
          if (!adminArea.isEmpty()) {
@@ -6951,6 +6966,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          TextView tvElapsed;
          TextView tvMeta;
          TextView tvOngkir;
+         TextView tvPickupOnly;
          TextView tvAdminArea;
          TextView tvOrderNote;
          LinearLayout productChips;
@@ -6963,6 +6979,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.tvElapsed = (TextView)v.findViewById(id.tvElapsed);
             this.tvMeta = (TextView)v.findViewById(id.tvMeta);
             this.tvOngkir = (TextView)v.findViewById(id.tvOngkir);
+            this.tvPickupOnly = (TextView)v.findViewById(id.tvPickupOnly);
             this.tvAdminArea = (TextView)v.findViewById(id.tvAdminArea);
             this.tvOrderNote = (TextView)v.findViewById(id.tvOrderNote);
             this.productChips = (LinearLayout)v.findViewById(id.productChips);
@@ -7084,6 +7101,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             h.tvVoidTotal.setVisibility(0);
             DeliveryQueueActivity.this.bindProductChips(h.productChips, t);
             h.tvOngkir.setVisibility(t.getOngkir() > (double)0.0F ? 0 : 8);
+            h.tvPickupOnly.setVisibility(8);
             h.tvIssue.setVisibility(8);
             h.tvElapsed.setVisibility(8);
             this.stopBlink(h);
@@ -7118,6 +7136,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             h.tvMeta.setText(meta.toString());
             DeliveryQueueActivity.this.bindProductChips(h.productChips, t);
             h.tvOngkir.setVisibility(t.getOngkir() > (double)0.0F ? 0 : 8);
+            DeliveryQueueActivity.bindPickupOnlyBadge(h.tvPickupOnly, DeliveryQueueActivity.isPickupOnly(t));
             Customer cust = t.getCustomerId() > 0L ? DeliveryQueueActivity.this.customerDao.getById(t.getCustomerId()) : null;
             if (cust != null && cust.hasOpenIssue()) {
                String note = cust.getIssueNote();
@@ -7257,6 +7276,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          TextView tvNoFoto;
          TextView tvNoLokasi;
          TextView tvOngkir;
+         TextView tvPickupOnly;
          TextView tvVoidTotal;
          TextView tvIssue;
          TextView tvAdminArea;
@@ -7276,6 +7296,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.tvNoFoto = (TextView)v.findViewById(id.tvNoFoto);
             this.tvNoLokasi = (TextView)v.findViewById(id.tvNoLokasi);
             this.tvOngkir = (TextView)v.findViewById(id.tvOngkir);
+            this.tvPickupOnly = (TextView)v.findViewById(id.tvPickupOnly);
             this.tvVoidTotal = (TextView)v.findViewById(id.tvVoidTotal);
             this.tvIssue = (TextView)v.findViewById(id.tvIssue);
             this.tvAdminArea = (TextView)v.findViewById(id.tvAdminArea);
@@ -7371,6 +7392,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          meta.append(meta.length() > 0 ? " · " : "").append(t.getJumlahGalon()).append(" galon");
          h.tvMeta.setText(meta.toString());
          h.tvOngkir.setVisibility(t.getOngkir() > (double)0.0F ? 0 : 8);
+         DeliveryQueueActivity.bindPickupOnlyBadge(h.tvPickupOnly, DeliveryQueueActivity.isPickupOnly(t));
          DeliveryQueueActivity.this.bindProductChips(h.productChips, t);
          Customer custAA = t.getCustomerId() > 0L ? DeliveryQueueActivity.this.customerDao.getById(t.getCustomerId()) : null;
          String adminArea = custAA != null ? custAA.getAdminArea() : "";
@@ -7482,6 +7504,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          TextView tvCustomer;
          TextView tvMeta;
          TextView tvOngkir;
+         TextView tvPickupOnly;
          TextView tvAdminArea;
          TextView tvElapsed;
          TextView tvOrderNote;
@@ -7498,6 +7521,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.tvCustomer = (TextView)v.findViewById(id.tvCustomer);
             this.tvMeta = (TextView)v.findViewById(id.tvMeta);
             this.tvOngkir = (TextView)v.findViewById(id.tvOngkir);
+            this.tvPickupOnly = (TextView)v.findViewById(id.tvPickupOnly);
             this.tvAdminArea = (TextView)v.findViewById(id.tvAdminArea);
             this.tvOrderNote = (TextView)v.findViewById(id.tvOrderNote);
             this.tvElapsed = (TextView)v.findViewById(id.tvElapsed);
