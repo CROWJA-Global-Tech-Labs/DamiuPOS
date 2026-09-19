@@ -142,6 +142,26 @@
                         android:textStyle="bold"
                         android:visibility="gone" />
 
+                    <!-- Order "AMBIL GALON SAJA" (transaksi KEMBALI dijemput kurir, tanpa galon isi
+                         diantar) — lihat Reports::shapeQueueRow 'pickup_only' & isPickupOnly() di
+                         Java. GONE default, kartu antar biasa tidak pernah menampilkannya. -->
+                    <TextView
+                        android:id="@+id/tvPickupOnly"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        android:background="@drawable/bg_pending_badge"
+                        android:backgroundTint="#EF6C00"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:paddingTop="3dp"
+                        android:paddingBottom="3dp"
+                        android:text="↩ AMBIL SAJA"
+                        android:textColor="@color/white"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+
                     <LinearLayout
                         android:id="@+id/productChips"
                         android:layout_width="wrap_content"
