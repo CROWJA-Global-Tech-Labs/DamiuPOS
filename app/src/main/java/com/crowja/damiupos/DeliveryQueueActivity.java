@@ -618,6 +618,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       } else if (item.getItemId() == id.action_delivery_history) {
          this.startActivity(new Intent(this, DeliveryHistoryActivity.class));
          return true;
+      } else if (item.getItemId() == id.action_pending_queue) {
+         this.showTertundaQueueDialog();
+         return true;
       } else if (item.getItemId() == id.action_toggle_strategy) {
          this.toggleStrategyHidden();
          return true;
@@ -4752,6 +4755,171 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
 
       dialog.show();
+   }
+
+   /** "⏸ Antrean Tertunda" — daftar semua order TERTUNDA (bukan cuma milik perangkat ini secara
+    *  bawaan getDeliveryQueue, tapi seluruh baris lokal berstatus TERTUNDA), tiap kartu bisa dibuka
+    *  detail/preview-nya sama seperti order biasa (showOrderDetail), dijadwalkan ulang, atau di-Resume
+    *  kembali ke antrian aktif SEKARANG (di luar jadwal lanjut otomatisnya). */
+   private void showTertundaQueueDialog() {
+      if (this.isFinishing() || this.isDestroyed()) return;
+      final Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+      LinearLayout root = new LinearLayout(this);
+      root.setOrientation(LinearLayout.VERTICAL);
+      root.setBackgroundColor(this.getResources().getColor(color.grey_light));
+
+      LinearLayout header = new LinearLayout(this);
+      header.setOrientation(LinearLayout.HORIZONTAL);
+      header.setGravity(android.view.Gravity.CENTER_VERTICAL);
+      header.setBackgroundColor(this.getResources().getColor(color.primary));
+      header.setPadding(this.dp(16f), this.dp(14f), this.dp(4f), this.dp(14f));
+      TextView title = new TextView(this);
+      title.setText("⏸ Antrean Tertunda");
+      title.setTextColor(-1);
+      title.setTextSize(16f);
+      title.setTypeface(title.getTypeface(), android.graphics.Typeface.BOLD);
+      title.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+      header.addView(title);
+      android.widget.ImageButton btnClose = new android.widget.ImageButton(this);
+      btnClose.setImageResource(drawable.ic_arrow_back);
+      btnClose.setBackgroundColor(0);
+      btnClose.setColorFilter(-1);
+      btnClose.setOnClickListener((v) -> dialog.dismiss());
+      header.addView(btnClose);
+      root.addView(header);
+
+      ScrollView scroll = new ScrollView(this);
+      scroll.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1f));
+      LinearLayout list = new LinearLayout(this);
+      list.setOrientation(LinearLayout.VERTICAL);
+      int pad = this.dp(12f);
+      list.setPadding(pad, pad, pad, pad);
+      scroll.addView(list);
+      root.addView(scroll);
+
+      dialog.setContentView(root);
+      dialog.show();
+      this.reloadTertundaQueue(list, dialog);
+   }
+
+   private void reloadTertundaQueue(LinearLayout list, Dialog dialog) {
+      new Thread(() -> {
+         List<Transaction> rows = (new TransactionDao(DatabaseHelper.getInstance(this))).getTertundaQueue();
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed() || !dialog.isShowing()) return;
+            list.removeAllViews();
+            if (rows.isEmpty()) {
+               TextView empty = new TextView(this);
+               empty.setText("Tidak ada pesanan tertunda saat ini");
+               empty.setTextColor(-7035976);
+               empty.setTextSize(14f);
+               empty.setGravity(android.view.Gravity.CENTER);
+               empty.setPadding(0, this.dp(32f), 0, this.dp(32f));
+               list.addView(empty);
+               return;
+            }
+
+            for (Transaction t : rows) {
+               list.addView(this.buildTertundaRow(t, list, dialog));
+            }
+         });
+      }).start();
+   }
+
+   private View buildTertundaRow(Transaction t, LinearLayout list, Dialog dialog) {
+      LinearLayout card = new LinearLayout(this);
+      card.setOrientation(LinearLayout.VERTICAL);
+      card.setBackgroundColor(-1);
+      int padH = this.dp(14f);
+      card.setPadding(padH, this.dp(10f), padH, this.dp(10f));
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+      lp.bottomMargin = this.dp(10f);
+      card.setLayoutParams(lp);
+
+      TextView tvName = new TextView(this);
+      tvName.setText(safe(t.getCustomerName()));
+      tvName.setTextSize(15f);
+      tvName.setTypeface(tvName.getTypeface(), android.graphics.Typeface.BOLD);
+      card.addView(tvName);
+
+      TextView tvMeta = new TextView(this);
+      tvMeta.setText(t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()));
+      tvMeta.setTextSize(13f);
+      tvMeta.setTextColor(-10395295);
+      card.addView(tvMeta);
+
+      TextView tvResume = new TextView(this);
+      String resumeAt = t.getDeliveryTertundaResumeAt();
+      tvResume.setText("🕒 Lanjut: " + (resumeAt == null || resumeAt.trim().isEmpty() ? "-" : formatQueued(resumeAt)));
+      tvResume.setTextSize(13f);
+      tvResume.setTextColor(-3790808);
+      LinearLayout.LayoutParams resumeLp = new LinearLayout.LayoutParams(-2, -2);
+      resumeLp.topMargin = this.dp(4f);
+      tvResume.setLayoutParams(resumeLp);
+      card.addView(tvResume);
+
+      GridLayout actions = new GridLayout(this);
+      actions.setColumnCount(2);
+      actions.setPadding(0, this.dp(8f), 0, 0);
+      Button btnReschedule = new Button(this);
+      btnReschedule.setText("🕒 Jadwalkan Ulang");
+      btnReschedule.setAllCaps(false);
+      btnReschedule.setOnClickListener((v) -> this.showTertundaReschedulePicker(t, () -> this.reloadTertundaQueue(list, dialog)));
+      this.addGridAction(actions, btnReschedule);
+      Button btnResume = new Button(this);
+      btnResume.setText("▶ Resume");
+      btnResume.setAllCaps(false);
+      btnResume.setOnClickListener((v) -> this.confirmResumeTertunda(t, () -> this.reloadTertundaQueue(list, dialog)));
+      this.addGridAction(actions, btnResume);
+      card.addView(actions);
+
+      card.setOnClickListener((v) -> this.showOrderDetail(t));
+      return card;
+   }
+
+   /** Jadwal ulang order yang SUDAH tertunda — murni lokal (bukan lewat /api/delivery/postpone,
+    *  yang menolak baris non-PENDING): hanya menggeser delivery_tertunda_resume_at, status tetap
+    *  TERTUNDA. Perubahan terdorong ke server via sinkron biasa (syncUpdate). */
+   private void showTertundaReschedulePicker(Transaction t, Runnable onDone) {
+      Calendar cal = Calendar.getInstance();
+      cal.add(5, 1);
+      cal.set(11, 8);
+      cal.set(12, 0);
+      DatePickerDialog datePicker = new DatePickerDialog(this, (dp, year, month, day) -> {
+         cal.set(year, month, day);
+         (new TimePickerDialog(this, (tp, hour, minute) -> {
+            cal.set(11, hour);
+            cal.set(12, minute);
+            cal.set(13, 0);
+            if (cal.getTimeInMillis() <= System.currentTimeMillis()) {
+               Toast.makeText(this, "Jadwal lanjut harus di masa depan", Toast.LENGTH_SHORT).show();
+               return;
+            }
+
+            SimpleDateFormat trxDbFmtLocal = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
+            (new TransactionDao(DatabaseHelper.getInstance(this))).rescheduleTertunda(t.getId(), trxDbFmtLocal.format(cal.getTime()));
+            SyncScheduler.syncNow(this.getApplicationContext());
+            Toast.makeText(this, "Jadwal lanjut diubah.", Toast.LENGTH_SHORT).show();
+            if (onDone != null) onDone.run();
+         }, cal.get(11), cal.get(12), true)).show();
+      }, cal.get(1), cal.get(2), cal.get(5));
+      datePicker.getDatePicker().setMinDate(System.currentTimeMillis() - 1000L);
+      datePicker.show();
+   }
+
+   /** "Resume" — kembalikan order TERTUNDA ini ke antrian aktif SEKARANG, tanpa menunggu jadwal
+    *  lanjut otomatisnya. Murni lokal (delivery_status → PENDING), terdorong via sinkron biasa. */
+   private void confirmResumeTertunda(Transaction t, Runnable onDone) {
+      (new AlertDialog.Builder(this)).setTitle("Resume Pesanan Ini?")
+            .setMessage("Order \"" + safe(t.getCustomerName()) + "\" akan langsung kembali ke antrian aktif sekarang.")
+            .setPositiveButton("Ya, Resume", (d, w) -> {
+               (new TransactionDao(DatabaseHelper.getInstance(this))).resumeTertunda(t.getId());
+               SyncScheduler.syncNow(this.getApplicationContext());
+               this.loadData();
+               Toast.makeText(this, "Order dikembalikan ke antrian aktif.", Toast.LENGTH_SHORT).show();
+               if (onDone != null) onDone.run();
+            })
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
    }
 
    private void showUbahMenu(Transaction t) {

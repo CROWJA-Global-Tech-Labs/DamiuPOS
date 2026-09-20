@@ -30,6 +30,11 @@
         android:title="📜 Riwayat Pengiriman"
         app:showAsAction="never" />
 
+    <item
+        android:id="@+id/action_pending_queue"
+        android:title="⏸ Antrean Tertunda"
+        app:showAsAction="never" />
+
     <!-- Label & 👁/🙈 diganti runtime (onPrepareOptionsMenu) sesuai state tersimpan — GATE tab 0
          saja: kartunya cuma ada di Antrean Saya, menampilkannya di tab lain cuma membingungkan. -->
     <item
