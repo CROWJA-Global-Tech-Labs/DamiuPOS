@@ -440,6 +440,94 @@ public class TransactionDao {
         return list;
     }
 
+    /**
+     * "⏸ Antrean Tertunda": semua order yang sedang TERTUNDA (belum kembali ke antrian aktif),
+     * diurutkan menurut jadwal lanjut otomatis (yang paling dekat dulu). Sumbernya DB LOKAL, sama
+     * seperti {@link #getDeliveryHistory} — kolomnya sengaja diambil sepersis mungkin supaya
+     * {@code Transaction} yang dihasilkan bisa langsung dipakai untuk preview/detail biasa.
+     */
+    public List<Transaction> getTertundaQueue() {
+        List<Transaction> list = new ArrayList<>();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String sql = "SELECT t.*, "
+                + "c." + DatabaseHelper.COL_NAME + " AS cust_name, "
+                + "c." + DatabaseHelper.COL_PHONE + " AS cust_phone, "
+                + "c." + DatabaseHelper.COL_ADDRESS + " AS cust_addr, "
+                + "c." + DatabaseHelper.COL_LATITUDE + " AS cust_lat, "
+                + "c." + DatabaseHelper.COL_LONGITUDE + " AS cust_lng "
+                + "FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t "
+                + "LEFT JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c ON c."
+                + DatabaseHelper.COL_ID + " = t." + DatabaseHelper.COL_CUSTOMER_ID + " "
+                + "WHERE t." + DatabaseHelper.COL_DELIVERY_STATUS + " = ? "
+                + "GROUP BY COALESCE(t." + DatabaseHelper.COL_SYNC_UUID + ", t." + DatabaseHelper.COL_DELIVERY_TOKEN
+                + ", CAST(t." + DatabaseHelper.COL_TRX_ID + " AS TEXT)) "
+                + "ORDER BY " + DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT + " ASC, t."
+                + DatabaseHelper.COL_TRX_ID + " DESC";
+        try (Cursor c = db.rawQuery(sql, new String[]{Transaction.DELIVERY_TERTUNDA})) {
+            while (c.moveToNext()) {
+                Transaction t = new Transaction();
+                t.setId(getLong(c, DatabaseHelper.COL_TRX_ID));
+                t.setCustomerId(getLong(c, DatabaseHelper.COL_CUSTOMER_ID));
+                t.setType(getStr(c, DatabaseHelper.COL_TYPE));
+                t.setJumlahGalon((int) getLong(c, DatabaseHelper.COL_JUMLAH_GALON));
+                t.setTotalHarga(getDouble(c, DatabaseHelper.COL_TOTAL_HARGA));
+                t.setOngkir(getDouble(c, DatabaseHelper.COL_ONGKIR));
+                t.setPaymentMethod(getStr(c, DatabaseHelper.COL_PAYMENT_METHOD));
+                t.setTanggal(getStr(c, DatabaseHelper.COL_TANGGAL));
+                t.setCatatan(getStr(c, DatabaseHelper.COL_CATATAN));
+                t.setDeliveryStatus(getStr(c, DatabaseHelper.COL_DELIVERY_STATUS));
+                t.setDeliveryQueuedAt(getStr(c, DatabaseHelper.COL_DELIVERY_QUEUED_AT));
+                t.setDeliveryTertundaAt(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_AT));
+                t.setDeliveryTertundaResumeAt(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT));
+                t.setDeliveryToken(getStr(c, DatabaseHelper.COL_DELIVERY_TOKEN));
+                t.setDeliveryDestName(getStr(c, DatabaseHelper.COL_DELIVERY_DEST_NAME));
+                t.setDeliveryDestLat(getDouble(c, DatabaseHelper.COL_DELIVERY_DEST_LAT));
+                t.setDeliveryDestLng(getDouble(c, DatabaseHelper.COL_DELIVERY_DEST_LNG));
+                t.setLastManualEditAt(getStr(c, DatabaseHelper.COL_LAST_MANUAL_EDIT_AT));
+                t.setVoidRequestPendingAt(getStr(c, DatabaseHelper.COL_VOID_REQUEST_PENDING_AT));
+                String itemsJson = getStr(c, DatabaseHelper.COL_ITEMS_JSON);
+                if (itemsJson != null) t.setItems(TransactionItem.listFromJson(itemsJson));
+                t.setCustomerName(getStr(c, "cust_name"));
+                t.setCustomerPhone(getStr(c, "cust_phone"));
+                t.setCustomerAddress(getStr(c, "cust_addr"));
+                t.setCustomerLat(getDouble(c, "cust_lat"));
+                t.setCustomerLng(getDouble(c, "cust_lng"));
+                list.add(t);
+            }
+        } catch (Exception ignored) {
+            // Daftar tertunda bersifat informatif; kegagalan baca tak boleh menjatuhkan layar.
+        }
+
+        return list;
+    }
+
+    /**
+     * "Resume" dari Antrean Tertunda: kembalikan order ke antrian aktif (PENDING) SEKARANG, di luar
+     * jadwal lanjut otomatisnya. delivery_queued_at digeser ke waktu sekarang supaya posisi
+     * antriannya wajar (FIFO) — bukan menyerobot lewat jadwal lama. Ditulis lewat syncUpdate → baris
+     * jadi kotor & terdorong ke server pada sinkron berikutnya, sama seperti startDelivery/stopDelivery.
+     */
+    public void resumeTertunda(long trxId) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_DELIVERY_STATUS, Transaction.DELIVERY_PENDING);
+        v.put(DatabaseHelper.COL_DELIVERY_QUEUED_AT, DatabaseHelper.nowIso());
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
+    }
+
+    /**
+     * "Jadwalkan Ulang" dari Antrean Tertunda: geser jadwal lanjut otomatis (delivery_tertunda_resume_at)
+     * ke waktu baru TANPA mengubah status — order tetap TERTUNDA sampai jadwal barunya tiba.
+     */
+    public void rescheduleTertunda(long trxId, String resumeAtDb) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT, resumeAtDb);
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
+    }
+
     public List<Transaction> getDeliveryQueue() {
         List<Transaction> list = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
