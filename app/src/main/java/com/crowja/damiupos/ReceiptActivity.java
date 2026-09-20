@@ -533,8 +533,9 @@ public class ReceiptActivity extends AppCompatActivity {
                     org.json.JSONObject res = new com.crowja.damiupos.sync.SyncApi(cfg).waBridgeStatus();
                     bridgeOk = res != null && res.optBoolean("configured", false) && res.optBoolean("ok", false);
                 }
-            } catch (Exception ignored) {
+            } catch (Exception e) {
                 // Bridge tak terjangkau/timeout → anggap putus, jatuh ke jalur manual.
+                android.util.Log.e("DAMIU", "WA bridge status check failed", e);
             }
             final boolean finalOk = bridgeOk;
             runOnUiThread(() -> callback.accept(finalOk));
