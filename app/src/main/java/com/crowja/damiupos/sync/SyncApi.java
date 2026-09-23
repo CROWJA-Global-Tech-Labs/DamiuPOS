@@ -269,6 +269,19 @@ public class SyncApi {
         return post(cfg.getBaseUrl() + "/api/maps-link/resolve", body, cfg.getToken());
     }
 
+    /**
+     * "Hitung Ongkir": jarak tempuh (OSRM, fallback garis lurus) dari titik asal cabang ke
+     * (lat,lng) → tarif tangga ongkir cabang. Balas {@code {"km":..,"method":..,"rate":..,"outOfRange":..}}
+     * atau 422 (titik asal cabang belum diatur) / 429 (terlalu sering). Cermin tombol "Hitung Ongkir"
+     * di web ({@see App\Http\Controllers\Web\OngkirCalcController}).
+     */
+    public JSONObject calculateOngkir(double lat, double lng) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("lat", lat);
+        body.put("lng", lng);
+        return post(cfg.getBaseUrl() + "/api/ongkir/hitung", body, cfg.getToken());
+    }
+
     public JSONObject version(String baseUrl) throws Exception {
         Request.Builder b = new Request.Builder()
                 .url(trim(baseUrl) + "/api/version")

@@ -108,8 +108,9 @@ public class CustomerFormActivity extends AppCompatActivity {
         final View view;
         final TextInputEditText etName;
         final TextView tvCoord;
-        final com.google.android.material.button.MaterialButton btnGps, btnPeta, btnMaps, btnGmapsLink;
+        final com.google.android.material.button.MaterialButton btnGps, btnPeta, btnMaps, btnGmapsLink, btnHitungOngkir;
         final com.google.android.material.checkbox.MaterialCheckBox cbWajib;
+        final TextView tvHitungOngkir;
         final android.widget.ProgressBar pb;
         final android.widget.LinearLayout llFoto;
         double lat, lng;
@@ -127,6 +128,8 @@ public class CustomerFormActivity extends AppCompatActivity {
             btnMaps = v.findViewById(R.id.btnBukaMapsRow);
             btnGmapsLink = v.findViewById(R.id.btnPakaiGmapsRow);
             cbWajib = v.findViewById(R.id.cbWajibOngkirRow);
+            btnHitungOngkir = v.findViewById(R.id.btnHitungOngkirRow);
+            tvHitungOngkir = v.findViewById(R.id.tvHitungOngkirRow);
             pb = v.findViewById(R.id.pbLokasiAkurasiRow);
             llFoto = v.findViewById(R.id.llLokasiFoto);
         }
@@ -466,6 +469,7 @@ public class CustomerFormActivity extends AppCompatActivity {
         row.btnPeta.setOnClickListener(x -> pickFromMap(row));
         row.btnMaps.setOnClickListener(x -> openInGoogleMaps(row));
         row.btnGmapsLink.setOnClickListener(x -> showMapsLinkDialog(row));
+        row.btnHitungOngkir.setOnClickListener(x -> hitungOngkirForRow(row));
         v.findViewById(R.id.btnHapusLokasi).setOnClickListener(x -> removeLocationRow(row));
         llLokasi.addView(v);
         locationRows.add(row);
@@ -1046,6 +1050,54 @@ public class CustomerFormActivity extends AppCompatActivity {
                 }
             });
         }).start();
+    }
+
+    /** "Hitung Ongkir": jarak tempuh dari titik asal cabang ke koordinat baris ini → tarif tangga
+     *  ongkir cabang (server, {@see com.crowja.damiupos.sync.SyncApi#calculateOngkir}). Hanya
+     *  menampilkan hasil (jarak + estimasi tarif) untuk membantu keputusan "Wajib Ongkir" —
+     *  tak pernah mengubah checkbox-nya sendiri, supaya keputusan tetap di tangan staf. */
+    private void hitungOngkirForRow(LocationRow row) {
+        if (row.lat == 0 && row.lng == 0) {
+            Toast.makeText(this, "Isi koordinat lokasi dulu (GPS / Peta / Link Maps).", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this)));
+        if (!cfg.isEnrolled()) {
+            Toast.makeText(this, "Perangkat belum terhubung ke server.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        row.btnHitungOngkir.setEnabled(false);
+        row.tvHitungOngkir.setVisibility(View.VISIBLE);
+        row.tvHitungOngkir.setText("Menghitung…");
+        final double lat = row.lat, lng = row.lng;
+        new Thread(() -> {
+            String result = null, err = null;
+            try {
+                org.json.JSONObject r = new com.crowja.damiupos.sync.SyncApi(cfg).calculateOngkir(lat, lng);
+                double km = r.optDouble("km", 0);
+                double rate = r.optDouble("rate", 0);
+                boolean outOfRange = r.optBoolean("outOfRange", false);
+                result = String.format(Locale.getDefault(), "%.1f km · Rp %s%s",
+                        km, formatRupiah(rate),
+                        outOfRange ? " (di luar tangga jarak — konfirmasi ke tim)" : "");
+            } catch (com.crowja.damiupos.sync.SyncApi.SyncException se) {
+                try { err = new org.json.JSONObject(se.body).optString("message", null); } catch (Exception ignored) {}
+                if (err == null) err = "Gagal menghitung ongkir (kode " + se.code + ").";
+            } catch (Exception e) {
+                err = "Gagal menghitung — periksa koneksi internet.";
+            }
+            final String fResult = result, fErr = err;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                row.btnHitungOngkir.setEnabled(true);
+                row.tvHitungOngkir.setText(fResult != null ? fResult : fErr);
+            });
+        }).start();
+    }
+
+    private static String formatRupiah(double v) {
+        return String.format(Locale.getDefault(), "%,.0f", v).replace(',', '.');
     }
 
     /**
