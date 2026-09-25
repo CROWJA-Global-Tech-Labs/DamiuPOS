@@ -291,6 +291,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private long pendingProofTrxId = -1L;
    private boolean pendingProofRevoke = false;
    private String pendingProofPath;
+   /** Foto bukti jadwal ulang (sudah dikompres) untuk dialog Jadwalkan Ulang yang sedang terbuka. */
+   private String postponePhotoPath;
+   /** File tujuan kamera yang sedang berjalan untuk foto jadwal ulang. */
+   private String pendingPostponeCameraPath;
+   private android.widget.ImageView postponePhotoThumb;
+   private TextView postponePhotoStatus;
    private static final int REQ_PROOF_CAMERA = 7402;
    private static final int REQ_PERM_PROOF_CAMERA = 7403;
    private static final Pattern ITEM_LABEL_PATTERN;
@@ -1141,6 +1147,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.loadData();
       }
 
+      if (requestCode == REQ_POSTPONE_CAMERA_PERM) {
+         if (grantResults.length > 0 && grantResults[0] == 0) {
+            this.launchPostponeCamera();
+         } else {
+            Toast.makeText(this, "Izin kamera ditolak — foto kendaraan tidak bisa diambil.", 1).show();
+         }
+      }
+
       if (requestCode == 7403) {
          long trxId = this.pendingProofTrxId;
          boolean revoke = this.pendingProofRevoke;
@@ -1351,6 +1365,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
    }
 
+   /** " · 🧾 KODE-DDMMYY-N" untuk baris meta kartu antrean — ID transaksi yang sama dengan di
+    *  struk pelanggan & dashboard. Kosong bila order tak punya nomor (bukan JUAL / baris lama). */
+   static String receiptSuffix(String receiptNo) {
+      if (receiptNo == null) return "";
+      String r = receiptNo.trim();
+      return r.isEmpty() || "null".equals(r) ? "" : " · 🧾 " + r;
+   }
+
    /** Popup catatan pengiriman lengkap, satu poin per baris. */
    static void showOrderNoteDialog(android.content.Context ctx, String rawCatatan) {
       List<String> lines = orderNoteLines(rawCatatan);
@@ -1365,14 +1387,6 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             .setPositiveButton("Tutup", (DialogInterface.OnClickListener) null)
             .setNeutralButton("Salin", (d, w) -> {
                android.content.ClipboardManager cm = (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
-   /** " · 🧾 KODE-DDMMYY-N" untuk baris meta kartu antrean — ID transaksi yang sama dengan di
-    *  struk pelanggan & dashboard. Kosong bila order tak punya nomor (bukan JUAL / baris lama). */
-   static String receiptSuffix(String receiptNo) {
-      if (receiptNo == null) return "";
-      String r = receiptNo.trim();
-      return r.isEmpty() || "null".equals(r) ? "" : " · 🧾 " + r;
-   }
-
                if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("Catatan", text));
                Toast.makeText(ctx, "Catatan disalin", Toast.LENGTH_SHORT).show();
             }).show();
@@ -3405,6 +3419,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       String deviceLabel = o.optString("device_group_label", "");
       if (!deviceLabel.isEmpty()) meta.append("📱 ").append(deviceLabel);
       meta.append(meta.length() > 0 ? " · " : "").append(o.optInt("galon", 0)).append(" galon");
+      meta.append(receiptSuffix(o.optString("receipt_no", "")));
       double ongkir = o.optDouble("ongkir", 0.0);
       String adminArea = c != null ? c.getAdminArea() : "";
       return new OtherQueueRow(o, null, badgeName, o.optString("note", ""), meta.toString(),
@@ -3419,7 +3434,6 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       double distKm = distOrInf(t, this.myLat, this.myLng);
       String meta = t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + receiptSuffix(t.getReceiptNo());
       Customer c = t.getCustomerId() > 0 ? this.customerDao.getById(t.getCustomerId()) : null;
-      meta.append(receiptSuffix(o.optString("receipt_no", "")));
       String adminArea = c != null ? c.getAdminArea() : "";
       return new OtherQueueRow(null, t, badgeName, t.getCatatan(), meta, t.getOngkir() > 0.0,
             adminArea.isEmpty() ? "" : "📍 " + adminArea, null, elapsedMs, distKm, isPickupOnly(t));
@@ -4668,6 +4682,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
       super.onActivityResult(requestCode, resultCode, data);
+      if (requestCode == REQ_POSTPONE_PHOTO) {
+         this.onPostponePhotoResult(resultCode);
+         return;
+      }
       if (requestCode == 7402) {
          long trxId = this.pendingProofTrxId;
          boolean revoke = this.pendingProofRevoke;
@@ -5291,7 +5309,140 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).show();
    }
 
-   private static final String[] RESCHEDULE_REASON_PRESETS = new String[]{"Pesanan overload", "Cuaca buruk", "Kecelakaan", "Lainnya (jelaskan)"};
+   private static final String[] RESCHEDULE_REASON_PRESETS = new String[]{"Pesanan overload", "Cuaca buruk", "Kecelakaan", "Kendaraan bermasalah", "Lainnya (jelaskan)"};
+   private static final int REQ_POSTPONE_PHOTO = 7406;
+   private static final int REQ_POSTPONE_CAMERA_PERM = 7407;
+
+   /** Alasan "Kendaraan bermasalah" WAJIB berfoto — bukti untuk pelanggan (ikut WA) & dashboard. */
+   static boolean needsVehiclePhoto(String reason) {
+      return reason != null && reason.toLowerCase(Locale.ROOT).contains("kendaraan bermasalah");
+   }
+
+   /**
+    * Baris "📷 Ambil Foto Kendaraan" di dialog Jadwalkan Ulang — muncul hanya saat alasannya
+    * "Kendaraan bermasalah" (diketik atau lewat tombol preset). Foto dikompres ~1280px lalu dikirim
+    * bersama permintaan tunda; server melampirkannya ke WA pemberitahuan pelanggan.
+    */
+   private View buildPostponePhotoRow(EditText reason) {
+      this.postponePhotoPath = null;
+      LinearLayout row = new LinearLayout(this);
+      row.setOrientation(LinearLayout.VERTICAL);
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+      lp.topMargin = this.dp(8.0F);
+      row.setLayoutParams(lp);
+      row.setVisibility(View.GONE);
+
+      com.google.android.material.button.MaterialButton btn = new com.google.android.material.button.MaterialButton(this);
+      btn.setText("📷 Ambil Foto Kendaraan (wajib)");
+      btn.setAllCaps(false);
+      btn.setOnClickListener((v) -> this.launchPostponeCamera());
+      row.addView(btn);
+
+      android.widget.ImageView thumb = new android.widget.ImageView(this);
+      LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(-1, this.dp(140.0F));
+      tlp.topMargin = this.dp(6.0F);
+      thumb.setLayoutParams(tlp);
+      thumb.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+      thumb.setVisibility(View.GONE);
+      row.addView(thumb);
+
+      TextView status = new TextView(this);
+      status.setTextSize(12.0F);
+      status.setText("Foto akan dikirim ke pelanggan bersama pemberitahuan jadwal ulang.");
+      row.addView(status);
+
+      this.postponePhotoThumb = thumb;
+      this.postponePhotoStatus = status;
+      reason.addTextChangedListener(new TextWatcher() {
+         public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+         public void onTextChanged(CharSequence s, int a, int b, int c) {}
+         public void afterTextChanged(Editable s) {
+            row.setVisibility(needsVehiclePhoto(s.toString()) ? View.VISIBLE : View.GONE);
+         }
+      });
+      return row;
+   }
+
+   private void launchPostponeCamera() {
+      if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+         ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, REQ_POSTPONE_CAMERA_PERM);
+         return;
+      }
+      Intent intent = CameraIntents.preferBackCamera(new Intent("android.media.action.IMAGE_CAPTURE"));
+      if (intent.resolveActivity(this.getPackageManager()) == null) {
+         Toast.makeText(this, "Tidak ada aplikasi kamera.", 0).show();
+         return;
+      }
+      File photoFile;
+      try {
+         String ts = (new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)).format(new Date());
+         photoFile = File.createTempFile("TUNDA_" + ts, ".jpg", this.getExternalFilesDir(Environment.DIRECTORY_PICTURES));
+      } catch (IOException e) {
+         Toast.makeText(this, "Gagal membuat file foto: " + e.getMessage(), 0).show();
+         return;
+      }
+      this.pendingPostponeCameraPath = photoFile.getAbsolutePath();
+      Uri uri = FileProvider.getUriForFile(this, this.getApplicationContext().getPackageName() + ".fileprovider", photoFile);
+      intent.putExtra("output", uri);
+      this.startActivityForResult(intent, REQ_POSTPONE_PHOTO);
+   }
+
+   /** Hasil kamera foto jadwal ulang → kompres, simpan path, tampilkan pratinjau di dialog. */
+   private void onPostponePhotoResult(int resultCode) {
+      String raw = this.pendingPostponeCameraPath;
+      this.pendingPostponeCameraPath = null;
+      if (resultCode != -1 || raw == null || !(new File(raw)).exists() || (new File(raw)).length() == 0L) {
+         if (raw != null) (new File(raw)).delete();
+         return;
+      }
+      File out = new File(raw.replace(".jpg", "_c.jpg"));
+      String path = com.crowja.damiupos.util.BitmapUtils.compressForUpload(raw, out, 1280, 80) ? out.getAbsolutePath() : raw;
+      if (!path.equals(raw)) (new File(raw)).delete();
+      this.postponePhotoPath = path;
+      if (this.postponePhotoThumb != null) {
+         this.postponePhotoThumb.setImageBitmap(com.crowja.damiupos.util.BitmapUtils.decodeSampled(path, 600, 600));
+         this.postponePhotoThumb.setVisibility(View.VISIBLE);
+      }
+      if (this.postponePhotoStatus != null) {
+         this.postponePhotoStatus.setText("✓ Foto terlampir — ketuk tombol di atas untuk mengulang.");
+      }
+   }
+
+   /** Lampirkan foto (JPEG) ke body tunda sebagai base64. Gagal baca → tunda tetap jalan tanpa foto. */
+   private static void putPostponePhoto(JSONObject body, String photoPath) {
+      if (photoPath == null) return;
+      try {
+         byte[] bytes = java.nio.file.Files.readAllBytes(new File(photoPath).toPath());
+         body.put("photo_base64", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP));
+      } catch (Exception ignored) {
+      }
+   }
+
+   /**
+    * Tindak lanjut WA setelah tunda berhasil. Server mencoba mengirim lewat FREZ WA Bridge dan
+    * melaporkan hasilnya ({@code wa.status}). Bila pelanggan TIDAK sampai diberi tahu (Bridge menolak,
+    * belum tersambung, jeda antar-pesan, atau auto-kirim nonaktif) → HP mengirim sendiri: WhatsApp
+    * dibuka langsung ke chat pelanggan dengan teks yang SAMA (+ foto bila ada). Pola sama dengan WA
+    * Cash Bon — pengiriman foto tetap ditekan kurir (klik-otomatis di pratinjau media tak aman).
+    * {@code wa == null} = server lama, tak ada tindak lanjut (perilaku sebelumnya).
+    */
+   private void afterPostponeWa(String custName, JSONObject wa, String photoPath) {
+      if (wa == null) return;
+      String status = wa.optString("status", "");
+      if ("sent".equals(status) || "queued".equals(status)) {
+         Toast.makeText(this, "📨 Pelanggan diberi tahu lewat WA.", 0).show();
+         return;
+      }
+      String text = strJson(wa, "text");
+      String phone = strJson(wa, "phone");
+      if (text.isEmpty() || !WaShare.hasUsablePhone(phone)) return;   // no_phone / tanpa pelanggan
+      String why = "rejected".equals(status) ? "Bridge WA menolak pesan ini"
+            : ("deferred".equals(status) ? "Bridge WA sedang jeda antar pesan"
+            : ("disabled".equals(status) ? "Kirim otomatis WA jadwal ulang nonaktif"
+            : "Bridge WA belum tersambung"));
+      Toast.makeText(this, why + " — kirim pemberitahuan dari WhatsApp HP ini.", 1).show();
+      WaShare.sendPhotoWithCaption(this, custName, phone, photoPath, text);
+   }
 
    private void showPostponeSchedulePicker(Transaction t) {
       Calendar cal = Calendar.getInstance();
@@ -5334,6 +5485,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       reason.setLayoutParams(reasonLp);
       root.addView(reason);
       root.addView(DeliveryVoidDialog.buildQuickReasonRow(this, reason, RESCHEDULE_REASON_PRESETS));
+      root.addView(this.buildPostponePhotoRow(reason));
 
       TextView confirmHint = new TextView(this);
       confirmHint.setText("Ketuk \"Jadwalkan\" dua kali untuk memastikan.");
@@ -5353,6 +5505,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          pos.setOnClickListener((v) -> {
             if (++clicks[0] < 2) {
                pos.setText("Ketuk sekali lagi");
+            } else if (needsVehiclePhoto(reason.getText().toString()) && this.postponePhotoPath == null) {
+               clicks[0] = 1;
+               Toast.makeText(this, "Foto kendaraan wajib untuk alasan \"Kendaraan bermasalah\" — ketuk 📷 Ambil Foto.", 1).show();
             } else {
                pos.setEnabled(false);
                pos.setText("Menjadwalkan…");
@@ -5362,14 +5517,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                   neg.setEnabled(false);
                }
 
-               this.doPostpone(dialog, pos, neg, t, resume, reason.getText().toString().trim());
+               this.doPostpone(dialog, pos, neg, t, resume, reason.getText().toString().trim(), this.postponePhotoPath);
             }
          });
       });
       dialog.show();
    }
 
-   private void doPostpone(AlertDialog dialog, Button pos, Button neg, Transaction t, Calendar resume, String reason) {
+   private void doPostpone(AlertDialog dialog, Button pos, Button neg, Transaction t, Calendar resume, String reason, String photoPath) {
       SyncSettings cfg = this.syncCfg();
       String trxUuid = (new TransactionDao(DatabaseHelper.getInstance(this))).getSyncUuidById(t.getId());
       if (trxUuid != null && !trxUuid.isEmpty()) {
@@ -5378,6 +5533,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          (new Thread(() -> {
             String okMsg = null;
             String errMsg = null;
+            JSONObject wa = null;
 
             try {
                JSONObject body = new JSONObject();
@@ -5386,8 +5542,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                if (reason != null && !reason.isEmpty()) {
                   body.put("reason", reason);
                }
+               putPostponePhoto(body, photoPath);
                JSONObject r = (new SyncApi(cfg)).postponeDelivery(body);
                okMsg = r.optString("message", "Order ditunda.");
+               wa = r.optJSONObject("wa");
             } catch (SyncApi.SyncException se) {
                errMsg = extractRouteErrorMessage(se.body);
                if (errMsg == null) {
@@ -5399,12 +5557,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
             final String okMsgF = okMsg;
             final String errMsgF = errMsg;
+            final JSONObject waF = wa;
             this.runOnUiThread(() -> {
                if (!this.isFinishing() && !this.isDestroyed()) {
                   if (okMsgF != null) {
                      Toast.makeText(this, okMsgF, 1).show();
                      dialog.dismiss();
                      SyncScheduler.syncNow(this.getApplicationContext());
+                     this.afterPostponeWa(safe(t.getCustomerName()), waF, photoPath);
                      this.loadData();
                   } else {
                      Toast.makeText(this, errMsgF, 1).show();
@@ -5468,6 +5628,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       reason.setLayoutParams(reasonLp);
       root.addView(reason);
       root.addView(DeliveryVoidDialog.buildQuickReasonRow(this, reason, RESCHEDULE_REASON_PRESETS));
+      root.addView(this.buildPostponePhotoRow(reason));
 
       TextView confirmHint = new TextView(this);
       confirmHint.setText("Ketuk \"Jadwalkan\" dua kali untuk memastikan.");
@@ -5487,6 +5648,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          pos.setOnClickListener((v) -> {
             if (++clicks[0] < 2) {
                pos.setText("Ketuk sekali lagi");
+            } else if (needsVehiclePhoto(reason.getText().toString()) && this.postponePhotoPath == null) {
+               clicks[0] = 1;
+               Toast.makeText(this, "Foto kendaraan wajib untuk alasan \"Kendaraan bermasalah\" — ketuk 📷 Ambil Foto.", 1).show();
             } else {
                pos.setEnabled(false);
                pos.setText("Menjadwalkan…");
@@ -5496,14 +5660,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                   neg.setEnabled(false);
                }
 
-               this.doPostponeOther(dialog, pos, neg, q, resume, reason.getText().toString().trim());
+               this.doPostponeOther(dialog, pos, neg, q, resume, reason.getText().toString().trim(), this.postponePhotoPath);
             }
          });
       });
       dialog.show();
    }
 
-   private void doPostponeOther(AlertDialog dialog, Button pos, Button neg, JSONObject q, Calendar resume, String reason) {
+   private void doPostponeOther(AlertDialog dialog, Button pos, Button neg, JSONObject q, Calendar resume, String reason, String photoPath) {
       String trxUuid = strJson(q, "uuid");
       if (trxUuid.isEmpty()) {
          Toast.makeText(this, "Order ini belum punya identitas server. Coba muat ulang.", 1).show();
@@ -5515,6 +5679,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          (new Thread(() -> {
             String okMsg = null;
             String errMsg = null;
+            JSONObject wa = null;
 
             try {
                JSONObject body = new JSONObject();
@@ -5523,8 +5688,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                if (reason != null && !reason.isEmpty()) {
                   body.put("reason", reason);
                }
+               putPostponePhoto(body, photoPath);
                JSONObject r = (new SyncApi(cfg)).postponeDelivery(body);
                okMsg = r.optString("message", "Order ditunda.");
+               wa = r.optJSONObject("wa");
             } catch (SyncApi.SyncException se) {
                errMsg = extractRouteErrorMessage(se.body);
                if (errMsg == null) {
@@ -5536,12 +5703,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
             final String okMsgF = okMsg;
             final String errMsgF = errMsg;
+            final JSONObject waF = wa;
             this.runOnUiThread(() -> {
                if (!this.isFinishing() && !this.isDestroyed()) {
                   if (okMsgF != null) {
                      Toast.makeText(this, okMsgF, 1).show();
                      dialog.dismiss();
                      SyncScheduler.syncNow(this.getApplicationContext());
+                     this.afterPostponeWa(safe(strJson(q, "name")), waF, photoPath);
                      this.loadOtherDevices();
                   } else {
                      Toast.makeText(this, errMsgF, 1).show();
@@ -7388,6 +7557,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
          int galon = q.optInt("galon", 0);
          meta.append(meta.length() > 0 ? " · " : "").append(galon).append(" galon");
+         meta.append(DeliveryQueueActivity.receiptSuffix(this.str(q, "receipt_no")));
          h.tvMeta.setText(meta.toString());
          double ongkir = q.optDouble("ongkir", (double)0.0F);
          h.tvOngkir.setVisibility(ongkir > (double)0.0F ? 0 : 8);
@@ -7557,7 +7727,6 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
          List<Transaction> filtered = new ArrayList<>();
          for (Transaction t : base) {
-         meta.append(DeliveryQueueActivity.receiptSuffix(this.str(q, "receipt_no")));
             String name = safe(t.getCustomerName()).toLowerCase(Locale.US);
             String phone = t.getCustomerPhone() != null ? t.getCustomerPhone().toLowerCase(Locale.US) : "";
             if (name.contains(q) || phone.contains(q)) filtered.add(t);
@@ -7641,6 +7810,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             String jarak = DeliveryQueueActivity.this.myLat == (double)0.0F && DeliveryQueueActivity.this.myLng == (double)0.0F ? null : DeliveryQueueActivity.formatJarak(DeliveryQueueActivity.distOrInf(t, DeliveryQueueActivity.this.myLat, DeliveryQueueActivity.this.myLng));
             h.jarakLabel = jarak;
             meta.append(t.getJumlahGalon()).append(" galon").append(t.wasManuallyEdited() ? " ✏️" : "").append(" · Rp ").append(DeliveryQueueActivity.formatRupiah(t.getTotalHarga()));
+            meta.append(DeliveryQueueActivity.receiptSuffix(t.getReceiptNo()));
             h.tvMeta.setText(meta.toString());
             DeliveryQueueActivity.this.bindProductChips(h.productChips, t);
             h.tvOngkir.setVisibility(t.getOngkir() > (double)0.0F ? 0 : 8);
@@ -7810,7 +7980,6 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.tvAdminArea = (TextView)v.findViewById(id.tvAdminArea);
             this.tvOrderNote = (TextView)v.findViewById(id.tvOrderNote);
             this.tvElapsed = (TextView)v.findViewById(id.tvElapsed);
-            meta.append(DeliveryQueueActivity.receiptSuffix(t.getReceiptNo()));
             this.btnMore = (MaterialButton)v.findViewById(id.btnMore);
             this.btnTakeOver = (MaterialButton)v.findViewById(id.btnTakeOver);
             this.productChips = (LinearLayout)v.findViewById(id.productChips);
@@ -7899,6 +8068,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
          String jarak = DeliveryQueueActivity.this.myLat == (double)0.0F && DeliveryQueueActivity.this.myLng == (double)0.0F ? null : DeliveryQueueActivity.formatJarak(DeliveryQueueActivity.distOrInf(t, DeliveryQueueActivity.this.myLat, DeliveryQueueActivity.this.myLng));
          meta.append(meta.length() > 0 ? " · " : "").append(t.getJumlahGalon()).append(" galon");
+         meta.append(DeliveryQueueActivity.receiptSuffix(t.getReceiptNo()));
          h.tvMeta.setText(meta.toString());
          h.tvOngkir.setVisibility(t.getOngkir() > (double)0.0F ? 0 : 8);
          DeliveryQueueActivity.bindPickupOnlyBadge(h.tvPickupOnly, DeliveryQueueActivity.isPickupOnly(t));
@@ -8042,4 +8212,3 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
    }
 }
-         meta.append(DeliveryQueueActivity.receiptSuffix(t.getReceiptNo()));
