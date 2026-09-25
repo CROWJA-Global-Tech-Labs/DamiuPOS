@@ -62,6 +62,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ImageView.ScaleType;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
@@ -120,6 +121,7 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.TimeZone;
@@ -535,6 +537,123 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          btnJalankanRit.setOnClickListener((v) -> this.runStrategyTrip());
       }
 
+      View btnRefreshRit = this.findViewById(id.btnRefreshRit);
+      if (btnRefreshRit != null) {
+         btnRefreshRit.setOnClickListener((v) -> this.refreshRit(v));
+      }
+
+   }
+
+   // ------------------------------------------------------------------ Refresh RIT (rute terpendek)
+
+   /** Fix GPS sesegar ini dianggap "posisi sekarang" tanpa menunggu fix baru. */
+   private static final long RIT_FIX_FRESH_MS = 2 * 60 * 1000L;
+   /** Batas tunggu fix GPS baru sebelum tetap mengirim (server lalu memakai ping terakhir / cabang). */
+   private static final long RIT_FIX_TIMEOUT_MS = 8000L;
+
+   /**
+    * 🔄 Refresh RIT: ambil posisi HP sekarang → server menyusun ulang SELURUH antrean jadi urutan antar
+    * terpendek menurut jarak TEMPUH (OSRM), termasuk balik ke cabang tiap rit, lalu menulisnya sebagai
+    * urutan (delivery_seq). Urutan baru tiba lewat sinkron → kartu Strategi & daftar ikut berubah.
+    */
+   private void refreshRit(View btn) {
+      SyncSettings cfg = this.syncCfg();
+      if (!cfg.isEnrolled()) {
+         Toast.makeText(this, "Perangkat belum terhubung ke server.", 1).show();
+         return;
+      }
+      btn.setEnabled(false);
+      Toast.makeText(this, "Menghitung rute terpendek dari posisi Anda…", 0).show();
+      this.currentFixForRit((loc) -> this.sendRefreshRit(btn, cfg, loc));
+   }
+
+   /** Posisi sekarang: fix terakhir yang masih segar, else tunggu satu fix baru (maks 8 dtk), else null. */
+   @SuppressLint("MissingPermission")
+   private void currentFixForRit(java.util.function.Consumer<Location> done) {
+      boolean granted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == 0
+              || ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == 0;
+      LocationManager lm = (LocationManager) this.getSystemService(LOCATION_SERVICE);
+      if (!granted || lm == null) {
+         done.accept(null);
+         return;
+      }
+      Location best = null;
+      for (String p : new String[]{LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER}) {
+         try {
+            Location l = lm.getLastKnownLocation(p);
+            if (l != null && (best == null || l.getTime() > best.getTime())) best = l;
+         } catch (Exception ignored) {}
+      }
+      if (best != null && System.currentTimeMillis() - best.getTime() <= RIT_FIX_FRESH_MS) {
+         done.accept(best);
+         return;
+      }
+      final Location stale = best;
+      final boolean[] finished = {false};
+      final Handler h = new Handler(Looper.getMainLooper());
+      final LocationListener[] holder = new LocationListener[1];
+      holder[0] = new LocationListener() {
+         @Override public void onLocationChanged(@NonNull Location location) {
+            if (finished[0]) return;
+            finished[0] = true;
+            try { lm.removeUpdates(this); } catch (Exception ignored) {}
+            done.accept(location);
+         }
+         @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
+         @Override public void onProviderEnabled(@NonNull String provider) {}
+         @Override public void onProviderDisabled(@NonNull String provider) {}
+      };
+      try {
+         if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0L, 0f, holder[0], Looper.getMainLooper());
+         }
+         if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+            lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 0L, 0f, holder[0], Looper.getMainLooper());
+         }
+      } catch (Exception ignored) {}
+      h.postDelayed(() -> {
+         if (finished[0]) return;
+         finished[0] = true;
+         try { lm.removeUpdates(holder[0]); } catch (Exception ignored) {}
+         // Fix lama (≤ 30 mnt) masih lebih baik daripada titik cabang.
+         done.accept(stale != null && System.currentTimeMillis() - stale.getTime() <= 30 * 60 * 1000L ? stale : null);
+      }, RIT_FIX_TIMEOUT_MS);
+   }
+
+   private void sendRefreshRit(View btn, SyncSettings cfg, @Nullable Location loc) {
+      (new Thread(() -> {
+         String okMsg = null;
+         String errMsg = null;
+         try {
+            JSONObject body = new JSONObject();
+            if (loc != null) {
+               body.put("lat", loc.getLatitude());
+               body.put("lng", loc.getLongitude());
+            }
+            JSONObject r = (new SyncApi(cfg)).optimizeRoute(body);
+            okMsg = r.optString("message", "Rute disusun ulang.");
+         } catch (SyncApi.SyncException se) {
+            try { errMsg = (new JSONObject(se.body)).optString("message", null); } catch (Exception ignored) {}
+            if (errMsg == null) errMsg = "Gagal menyusun rute (kode " + se.code + ").";
+         } catch (Exception e) {
+            errMsg = "Gagal menyusun rute — periksa koneksi internet.";
+         }
+         final String fOk = okMsg;
+         final String fErr = errMsg;
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            btn.setEnabled(true);
+            if (fOk != null) {
+               // Pesan (jumlah rit, km, hemat berapa) cukup panjang untuk toast → dialog singkat.
+               (new AlertDialog.Builder(this)).setTitle("🔄 Rit Diperbarui").setMessage(fOk)
+                       .setPositiveButton("OK", (DialogInterface.OnClickListener) null).show();
+               // Urutan baru (delivery_seq) tiba lewat pull → syncedReceiver memuat ulang daftar.
+               SyncScheduler.syncNow(this.getApplicationContext());
+            } else {
+               Toast.makeText(this, fErr, 1).show();
+            }
+         });
+      })).start();
    }
 
    private void switchTab(int idx) {
@@ -1221,11 +1340,88 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          String note = ReceiptActivity.customerNote(rawCatatan);
          if (note.isEmpty()) {
             tv.setVisibility(View.GONE);
+            tv.setOnClickListener(null);
+            tv.setClickable(false);
          } else {
             tv.setText("\ud83d\udcdd " + note);
             tv.setVisibility(View.VISIBLE);
+            // Kartu memotong catatan panjang ("\u2026") \u2014 ketuk untuk membaca seluruhnya, per poin.
+            tv.setOnClickListener((v) -> showOrderNoteDialog(v.getContext(), rawCatatan));
          }
       }
+   }
+
+   /** Popup catatan pengiriman lengkap, satu poin per baris. */
+   static void showOrderNoteDialog(android.content.Context ctx, String rawCatatan) {
+      List<String> lines = orderNoteLines(rawCatatan);
+      if (lines.isEmpty()) return;
+      StringBuilder sb = new StringBuilder();
+      for (String l : lines) {
+         if (sb.length() > 0) sb.append("\n\n");
+         sb.append("\u2022 ").append(l);
+      }
+      final String text = sb.toString();
+      (new AlertDialog.Builder(ctx)).setTitle("\ud83d\udcdd Catatan Pengiriman").setMessage(text)
+            .setPositiveButton("Tutup", (DialogInterface.OnClickListener) null)
+            .setNeutralButton("Salin", (d, w) -> {
+               android.content.ClipboardManager cm = (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+               if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("Catatan", text));
+               Toast.makeText(ctx, "Catatan disalin", Toast.LENGTH_SHORT).show();
+            }).show();
+   }
+
+   /**
+    * Pecah catatan jadi poin. Sumber pemisah, berurutan:
+    *  1. baris baru ASLI (dipertahankan {@link ReceiptActivity#customerNoteKeepLines}), " \u00b7 ", "; ", " | ";
+    *  2. catatan FREZ AI Agent ditulis sambung tanpa pemisah ("\u2026oleh FREZ AI Agent KIRIM HARI INI, KAMIS
+    *     \u2026 08:00 WIB HARUS KIRIM SEBELUM JAM 11 \u2026") \u2014 poin baru dimulai (a) sebelum deret \u22653 kata
+    *     HURUF BESAR yang mengikuti kata berhuruf kecil (deret 2 kata seperti "FREZ AI" = nama, tak
+    *     dipecah), dan (b) setelah "WIB/WITA/WIT" bila disusul kata HURUF BESAR.
+    */
+   static List<String> orderNoteLines(String rawCatatan) {
+      List<String> out = new ArrayList<>();
+      String s = ReceiptActivity.customerNoteKeepLines(rawCatatan);
+      for (String chunk : s.split("\\r?\\n|\\s+\u00b7\\s+|\\s*;\\s+|\\s+\\|\\s+")) {
+         String[] tok = chunk.trim().split("[ \\t]+");
+         StringBuilder cur = new StringBuilder();
+         for (int i = 0; i < tok.length; i++) {
+            if (tok[i].isEmpty()) continue;
+            boolean breakHere = false;
+            if (i > 0 && cur.length() > 0) {
+               boolean prevLower = !tok[i - 1].equals(tok[i - 1].toUpperCase(Locale.ROOT));
+               boolean prevTz = tok[i - 1].replaceAll("[.,]+$", "").matches("(?i)WIB|WITA|WIT");
+               if (prevTz && isCapsWord(tok[i])) {
+                  breakHere = true;
+               } else if (prevLower && isCapsWord(tok[i])) {
+                  int run = 0;
+                  for (int j = i; j < tok.length && run < 3; j++) {
+                     if (isCapsWord(tok[j])) run++;
+                     else if (!tok[j].matches("[\\d.,:/]+")) break;
+                  }
+                  breakHere = run >= 3;
+               }
+            }
+            if (breakHere) {
+               addNoteLine(out, cur.toString());
+               cur.setLength(0);
+            }
+            if (cur.length() > 0) cur.append(' ');
+            cur.append(tok[i]);
+         }
+         addNoteLine(out, cur.toString());
+      }
+      return out;
+   }
+
+   /** Kata HURUF BESAR "sungguhan" (\u22652 huruf, tanpa huruf kecil), tanda baca di ekor diabaikan. */
+   private static boolean isCapsWord(String w) {
+      String core = w.replaceAll("[^\\p{L}]", "");
+      return core.length() >= 2 && core.equals(core.toUpperCase(Locale.ROOT));
+   }
+
+   private static void addNoteLine(List<String> out, String line) {
+      String l = line.replaceAll("^[\\s\u00b7\\-\u2013\u2014,;:]+", "").replaceAll("[\\s\u00b7\\-\u2013\u2014,;:]+$", "").trim();
+      if (!l.isEmpty()) out.add(l);
    }
 
    /** Badge "\u21a9 AMBIL SAJA" \u2014 order KEMBALI (galon kosong dijemput kurir, tak ada barang diantar),
@@ -1237,37 +1433,77 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
    }
 
-   private void bindOtherDeviceChips(LinearLayout box, String itemsCsv) {
-      String[] parts = itemsCsv != null && !itemsCsv.trim().isEmpty() ? itemsCsv.split(",\\s*") : new String[0];
-      int shown = 0;
+   /**
+    * Item order DIGABUNG per kapsul (label = slug produk): order promo menyimpan produk yang SAMA
+    * sebagai dua baris (1 berbayar + 1 gratis), jadi tanpa ini kartu menampilkan "BIO ×1  BIO ×1"
+    * alih-alih "BIO ×2". Urutan kemunculan pertama dipertahankan. Nilai = {qty, warna}.
+    */
+   private LinkedHashMap<String, int[]> mergedChipItems(List<TransactionItem> items) {
+      LinkedHashMap<String, int[]> out = new LinkedHashMap<>();
+      if (items == null) return out;
+      for (TransactionItem it : items) {
+         if (it == null || it.jumlah <= 0) continue;
+         String label = this.chipLabel(it);
+         int[] v = out.get(label);
+         if (v == null) out.put(label, new int[]{it.jumlah, this.chipColor(it)});
+         else v[0] += it.jumlah;
+      }
+      return out;
+   }
 
-      for(String part : parts) {
+   /**
+    * Versi {@link #mergedChipItems} untuk label teks server ("Nama 1×, Nama 1×" — antrean perangkat
+    * lain / Preview). Nilai = {qty (-1 = tanpa angka), warna}; label tanpa angka tak digabung.
+    */
+   private LinkedHashMap<String, int[]> mergedCsvChips(String itemsCsv) {
+      LinkedHashMap<String, int[]> out = new LinkedHashMap<>();
+      String[] parts = itemsCsv != null && !itemsCsv.trim().isEmpty() && !"null".equals(itemsCsv) ? itemsCsv.split(",\\s*") : new String[0];
+      for (String part : parts) {
          String raw = part.trim();
-         if (!raw.isEmpty()) {
-            Matcher m = ITEM_LABEL_PATTERN.matcher(raw);
-            String name = m.matches() ? m.group(1).trim() : raw;
-            String qty = m.matches() ? m.group(2) : null;
-            Product p = (Product)this.productByName.get(normProductName(name));
-            String slug = p != null ? p.getSlug() : null;
-            String label = slug != null && !slug.trim().isEmpty() ? slug.trim() : (name.length() <= 10 ? name : name.substring(0, 10).trim() + "…");
-            int bg = -6511697;
-            if (p != null && p.getColor() != null && !p.getColor().trim().isEmpty()) {
-               try {
-                  bg = Color.parseColor(p.getColor().trim());
-               } catch (IllegalArgumentException var18) {
-                  bg = TransactionAdapter.paletteColor(name);
-               }
-            } else if (p == null) {
+         if (raw.isEmpty()) continue;
+         Matcher m = ITEM_LABEL_PATTERN.matcher(raw);
+         boolean hasQty = m.matches();
+         String name = hasQty ? m.group(1).trim() : raw;
+         int qty = hasQty ? Integer.parseInt(m.group(2)) : -1;
+         Product p = (Product)this.productByName.get(normProductName(name));
+         String slug = p != null ? p.getSlug() : null;
+         String label = slug != null && !slug.trim().isEmpty() ? slug.trim() : (name.length() <= 10 ? name : name.substring(0, 10).trim() + "…");
+         int bg = -6511697;
+         if (p != null && p.getColor() != null && !p.getColor().trim().isEmpty()) {
+            try {
+               bg = Color.parseColor(p.getColor().trim());
+            } catch (IllegalArgumentException ignored) {
                bg = TransactionAdapter.paletteColor(name);
             }
-
-            TextView chip = this.chipAt(box, shown);
-            chip.setText(qty != null ? label + " ×" + qty : label);
-            chip.setTextColor(chipTextColor(bg));
-            ((GradientDrawable)chip.getBackground()).setColor(bg);
-            chip.setVisibility(0);
-            ++shown;
+         } else if (p == null) {
+            bg = TransactionAdapter.paletteColor(name);
          }
+         int[] v = hasQty ? out.get(label) : null;
+         if (v != null && v[0] >= 0) v[0] += qty;
+         else out.put(hasQty ? label : label + "\u0000" + out.size(), new int[]{qty, bg});
+      }
+      return out;
+   }
+
+   /** Label tampilan kapsul dari entri {@link #mergedCsvChips} (buang penanda unik label tanpa angka). */
+   private static String csvChipText(Map.Entry<String, int[]> e) {
+      String k = e.getKey();
+      int z = k.indexOf('\u0000');
+      String label = z >= 0 ? k.substring(0, z) : k;
+      return e.getValue()[0] >= 0 ? label + " ×" + e.getValue()[0] : label;
+   }
+
+   private void bindOtherDeviceChips(LinearLayout box, String itemsCsv) {
+      int shown = 0;
+
+      for (Map.Entry<String, int[]> e : this.mergedCsvChips(itemsCsv).entrySet()) {
+         int bg = e.getValue()[1];
+         TextView chip = this.chipAt(box, shown);
+         chip.setText(csvChipText(e));
+         chip.setTextColor(chipTextColor(bg));
+         ((GradientDrawable)chip.getBackground()).setColor(bg);
+         chip.setVisibility(0);
+         ++shown;
       }
 
       for(int i = shown; i < box.getChildCount(); ++i) {
@@ -1635,29 +1871,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     */
    private List<Chip> buildOtherDeviceDetailChips(JSONObject q) {
       List<Chip> chips = new ArrayList<>();
-      String itemsStr = q.optString("items", "");
-      if (!itemsStr.isEmpty() && !itemsStr.equals("null")) {
-         for (String part : itemsStr.split(",")) {
-            String p = part.trim();
-            if (p.isEmpty()) continue;
-            int xi = p.lastIndexOf('×');
-            String namedQty = xi > 0 ? p.substring(0, xi).trim() : p;
-            String num = xi > 0 ? p.substring(xi + 1).trim() : "";
-            int sp = namedQty.lastIndexOf(' ');
-            String name = sp > 0 ? namedQty.substring(0, sp).trim() : namedQty;
-            Product prod = this.productByName.get(normProductName(name));
-            String slug = prod != null ? prod.getSlug() : null;
-            String label = slug != null && !slug.trim().isEmpty() ? slug.trim()
-                  : (name.length() <= 10 ? name : name.substring(0, 10).trim() + "…");
-            int bg = TransactionAdapter.paletteColor(name);
-            if (prod != null && prod.getColor() != null && !prod.getColor().trim().isEmpty()) {
-               try {
-                  bg = Color.parseColor(prod.getColor().trim());
-               } catch (IllegalArgumentException ignored) {
-               }
-            }
-            chips.add(new Chip(label + (num.isEmpty() ? "" : " ×" + num), bg));
-         }
+      for (Map.Entry<String, int[]> e : this.mergedCsvChips(q.optString("items", "")).entrySet()) {
+         chips.add(new Chip(csvChipText(e), e.getValue()[1]));
       }
       chips.add(new Chip("TOTAL " + this.rp(q.optDouble("total", (double) 0.0F)), 0xFF0369A1));
       return chips;
@@ -1835,7 +2050,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                }
 
                ((TextView)this.findViewById(id.tvStrategySummary)).setText(muat);
-               ((TextView)this.findViewById(id.tvStrategyStops)).setText(this.tripLines(first, 4));
+               this.bindStrategyItemBadges(first);
+               this.bindStrategyStops(first, 4);
                card.setVisibility(this.strategyHidden ? 8 : 0);
                this.applyStrategyCollapsed();
                if (this.strategyHidden) {
@@ -1846,6 +2062,102 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             }
          }
       }
+   }
+
+   /**
+    * Total produk yang DIMUAT untuk satu rit, digabung per kapsul (label slug) — order "ambil galon
+    * saja" (KEMBALI) tak ikut: tak ada barang yang dibawa berangkat untuk mereka.
+    */
+   private LinkedHashMap<String, int[]> tripLoadItems(DeliveryPlanner.Trip trip) {
+      LinkedHashMap<String, int[]> total = new LinkedHashMap<>();
+      for (Transaction s : trip.stops) {
+         if (DeliveryPlanner.isPickupOnly(s)) continue;
+         for (Map.Entry<String, int[]> e : this.mergedChipItems(s.getItems()).entrySet()) {
+            int[] v = total.get(e.getKey());
+            if (v == null) total.put(e.getKey(), new int[]{e.getValue()[0], e.getValue()[1]});
+            else v[0] += e.getValue()[0];
+         }
+      }
+      return total;
+   }
+
+   /** Baris badge rincian item rit berikutnya di kartu Strategi Pengiriman ("MIN ×10  BIO ×2"). */
+   private void bindStrategyItemBadges(DeliveryPlanner.Trip trip) {
+      View scroll = this.findViewById(id.strategyItemBadgesScroll);
+      LinearLayout row = (LinearLayout) this.findViewById(id.strategyItemBadges);
+      if (scroll == null || row == null) return;
+      LinkedHashMap<String, int[]> items = this.tripLoadItems(trip);
+      row.removeAllViews();
+      for (Map.Entry<String, int[]> e : items.entrySet()) {
+         row.addView(this.makeDetailBadge(e.getKey() + " ×" + e.getValue()[0], e.getValue()[1]));
+      }
+      scroll.setVisibility(items.isEmpty() ? View.GONE : View.VISIBLE);
+   }
+
+   /**
+    * Pemberhentian rit di kartu Strategi: "1. ⚡ Nama" + badge produk per pelanggan (slug, kapsul
+    * yang sama dengan kartu antrean) menggantikan teks "· 1 gal". Order tanpa rincian item jatuh ke
+    * badge "N gal"; order ambil-saja ke badge "↩ ambil N gal". Sisanya diringkas "+N lagi…".
+    */
+   private void bindStrategyStops(DeliveryPlanner.Trip trip, int max) {
+      LinearLayout list = (LinearLayout) this.findViewById(id.strategyStopsList);
+      TextView more = (TextView) this.findViewById(id.tvStrategyStops);
+      if (list == null) {
+         if (more != null) more.setText(this.tripLines(trip, max));
+         return;
+      }
+      list.removeAllViews();
+      int textColor = ContextCompat.getColor(this, R.color.text_primary);
+      int n = 0;
+      for (Transaction s : trip.stops) {
+         if (max > 0 && n >= max) break;
+         LinearLayout row = new LinearLayout(this);
+         row.setOrientation(LinearLayout.HORIZONTAL);
+         row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+         row.setPadding(0, this.dp(2f), 0, this.dp(2f));
+
+         TextView name = new TextView(this);
+         name.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+         name.setText((n + 1) + ". " + (DeliveryPlanner.isPriority(s) ? "⚡ " : "") + safe(s.getCustomerName())
+               + (DeliveryPlanner.hasGeo(s) ? "" : " 📍❌"));
+         name.setTextColor(textColor);
+         name.setTextSize(13f);
+         name.setMaxLines(1);
+         name.setEllipsize(TruncateAt.END);
+         row.addView(name);
+
+         LinearLayout badges = new LinearLayout(this);
+         badges.setOrientation(LinearLayout.HORIZONTAL);
+         if (DeliveryPlanner.isPickupOnly(s)) {
+            badges.addView(this.makeDetailBadge("↩ ambil " + s.getJumlahGalon() + " gal", 0xFF64748B));
+         } else {
+            LinkedHashMap<String, int[]> items = this.mergedChipItems(s.getItems());
+            if (items.isEmpty()) {
+               badges.addView(this.makeDetailBadge(s.getJumlahGalon() + " gal", 0xFF64748B));
+            }
+            for (Map.Entry<String, int[]> e : items.entrySet()) {
+               badges.addView(this.makeDetailBadge(e.getKey() + " ×" + e.getValue()[0], e.getValue()[1]));
+            }
+         }
+         row.addView(badges);
+         list.addView(row);
+         n++;
+      }
+      if (more != null) {
+         int rest = trip.stops.size() - n;
+         more.setText(rest > 0 ? "+" + rest + " pemberhentian lagi…" : "");
+         more.setVisibility(rest > 0 ? View.VISIBLE : View.GONE);
+      }
+   }
+
+   /** Teks "Muat: MIN ×10 · BIO ×2" untuk daftar seluruh rit. */
+   private String tripLoadText(DeliveryPlanner.Trip trip) {
+      StringBuilder sb = new StringBuilder();
+      for (Map.Entry<String, int[]> e : this.tripLoadItems(trip).entrySet()) {
+         if (sb.length() > 0) sb.append(" · ");
+         sb.append(e.getKey()).append(" ×").append(e.getValue()[0]);
+      }
+      return sb.toString();
    }
 
    private String tripLines(DeliveryPlanner.Trip t, int max) {
@@ -1879,7 +2191,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                sb.append("\n\n↩ Balik ke cabang, muat galon lagi…\n\n");
             }
 
-            sb.append("▶ RIT ").append(t.n).append(" — ").append(t.galon).append(" galon").append(maxLoad > 0 ? " / " + maxLoad : "").append(t.overflow ? "  ⚠️ melebihi muatan" : "").append('\n').append(this.tripLines(t, 0));
+            String load = this.tripLoadText(t);
+            sb.append("▶ RIT ").append(t.n).append(" — ").append(t.galon).append(" galon").append(maxLoad > 0 ? " / " + maxLoad : "").append(t.overflow ? "  ⚠️ melebihi muatan" : "").append('\n');
+            if (!load.isEmpty()) sb.append("📦 Muat: ").append(load).append('\n');
+            sb.append(this.tripLines(t, 0));
          }
 
          (new AlertDialog.Builder(this)).setTitle("Strategi Pengiriman (" + this.strategyTrips.size() + " rit)").setMessage(sb.toString()).setPositiveButton("Tutup", (DialogInterface.OnClickListener)null).show();
@@ -2062,19 +2377,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          int shown = 0;
          int hidden = 0;
 
-         for(TransactionItem it : items) {
-            if (it != null && it.jumlah > 0) {
-               if (shown >= 4) {
-                  ++hidden;
-               } else {
-                  TextView chip = this.chipAt(box, shown);
-                  int bg = this.chipColor(it);
-                  chip.setText(this.chipLabel(it) + " ×" + it.jumlah);
-                  chip.setTextColor(chipTextColor(bg));
-                  ((GradientDrawable)chip.getBackground()).setColor(bg);
-                  chip.setVisibility(0);
-                  ++shown;
-               }
+         for (Map.Entry<String, int[]> e : this.mergedChipItems(items).entrySet()) {
+            if (shown >= 4) {
+               ++hidden;
+            } else {
+               TextView chip = this.chipAt(box, shown);
+               int bg = e.getValue()[1];
+               chip.setText(e.getKey() + " ×" + e.getValue()[0]);
+               chip.setTextColor(chipTextColor(bg));
+               ((GradientDrawable)chip.getBackground()).setColor(bg);
+               chip.setVisibility(0);
+               ++shown;
             }
          }
 
@@ -2524,6 +2837,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       this.updateGuidedProductBadges(stops);
       Transaction run = stops.isEmpty() ? null : (Transaction)stops.get(0);
+      // Selama rit berjalan layar TIDAK boleh mati/terkunci sendiri — kurir melirik HP di motor
+      // (pemberhentian berikutnya, badge muatan) tanpa sempat membuka kunci. Flag jendela, bukan
+      // wake lock: otomatis lepas begitu layar ini tak di depan, dan dilepas lagi saat rit selesai.
+      if (run != null) {
+         this.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+      } else {
+         this.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+      }
       View cardStrategy = this.findViewById(id.cardStrategy);
       if (cardStrategy != null && run != null) {
          cardStrategy.setVisibility(8);
@@ -4478,6 +4799,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private void openWhatsApp(String phone, String msg) {
+      openWhatsApp(this, phone, msg);
+   }
+
+   /** Buka chat WA (WhatsApp → WA Business → apa pun yang menangani wa.me). Dipakai juga oleh
+    *  kartu antrean perangkat lain (tab Perangkat Lain & OtherDeviceQueueActivity). */
+   static void openWhatsApp(android.content.Context ctx, String phone, String msg) {
+      if (phone == null || phone.replaceAll("[^0-9]", "").isEmpty()) {
+         Toast.makeText(ctx, "Pelanggan ini tidak punya nomor WA.", Toast.LENGTH_SHORT).show();
+         return;
+      }
       String normalized = phone.replaceAll("[^0-9]", "");
       if (normalized.startsWith("0")) {
          normalized = "62" + normalized.substring(1);
@@ -4486,22 +4817,22 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
 
       try {
-         Intent i = new Intent("android.intent.action.VIEW", Uri.parse("https://wa.me/" + normalized + "?text=" + Uri.encode(msg)));
+         Intent i = new Intent("android.intent.action.VIEW", Uri.parse("https://wa.me/" + normalized + "?text=" + Uri.encode(msg == null ? "" : msg)));
 
          try {
-            this.getPackageManager().getPackageInfo("com.whatsapp", 0);
+            ctx.getPackageManager().getPackageInfo("com.whatsapp", 0);
             i.setPackage("com.whatsapp");
          } catch (Exception var8) {
             try {
-               this.getPackageManager().getPackageInfo("com.whatsapp.w4b", 0);
+               ctx.getPackageManager().getPackageInfo("com.whatsapp.w4b", 0);
                i.setPackage("com.whatsapp.w4b");
             } catch (Exception var7) {
             }
          }
 
-         this.startActivity(i);
+         ctx.startActivity(i);
       } catch (Exception var9) {
-         Toast.makeText(this, "Tidak dapat membuka WhatsApp", 0).show();
+         Toast.makeText(ctx, "Tidak dapat membuka WhatsApp", 0).show();
       }
 
    }
@@ -5773,13 +6104,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     */
    private List<Chip> buildQueueDetailChips(Transaction t) {
       List<Chip> chips = new ArrayList<>();
-      List<TransactionItem> items = t.getItems();
-      if (items != null) {
-         for (TransactionItem it : items) {
-            if (it != null && it.jumlah > 0) {
-               chips.add(new Chip(this.chipLabel(it) + " ×" + it.jumlah, this.chipColor(it)));
-            }
-         }
+      for (Map.Entry<String, int[]> e : this.mergedChipItems(t.getItems()).entrySet()) {
+         chips.add(new Chip(e.getKey() + " ×" + e.getValue()[0], e.getValue()[1]));
       }
       int kembali = this.dao.getReturnedGalonForSale(t.getCustomerId(), t.getTanggal());
       chips.add(new Chip("↩ " + kembali + " gln", 0xFF64748B));
@@ -5863,13 +6189,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       row.setOrientation(LinearLayout.HORIZONTAL);
       row.setPadding(0, this.dp(4f), 0, 0);
       boolean any = false;
-      List<TransactionItem> items = stop.getItems();
-      if (items != null) {
-         for (TransactionItem it : items) {
-            if (it == null || it.jumlah <= 0) continue;
-            row.addView(this.makeDetailBadge(this.chipLabel(it) + " ×" + it.jumlah, this.chipColor(it)));
-            any = true;
-         }
+      for (Map.Entry<String, int[]> e : this.mergedChipItems(stop.getItems()).entrySet()) {
+         row.addView(this.makeDetailBadge(e.getKey() + " ×" + e.getValue()[0], e.getValue()[1]));
+         any = true;
       }
       if (!any) {
          TextView tvName = new TextView(this);
@@ -7072,6 +7394,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
          h.btnMore.setOnClickListener((v) -> DeliveryQueueActivity.this.showOtherDeviceMoreMenu(v, q));
          h.btnTakeOver.setOnClickListener((v) -> DeliveryQueueActivity.this.showOtherDeviceOrderDetail(q));
+         if (h.btnWaChat != null) {
+            String waPhone = q.optString("phone", "");
+            boolean hasPhone = !waPhone.isEmpty() && !"null".equals(waPhone);
+            h.btnWaChat.setVisibility(hasPhone ? View.VISIBLE : View.GONE);
+            h.btnWaChat.setOnClickListener((v) -> DeliveryQueueActivity.openWhatsApp(v.getContext(), waPhone, ""));
+         }
 
          // Mode pilih-banyak: tekan-tahan untuk masuk, lalu ketuk untuk menandai. Tombol per-kartu
          // disembunyikan selama memilih supaya tak ada dua cara bertindak pada kartu yang sama.
@@ -7140,6 +7468,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          LinearLayout productChips;
          MaterialButton btnMore;
          MaterialButton btnTakeOver;
+         MaterialButton btnWaChat;
 
          VH(View v) {
             super(v);
@@ -7153,6 +7482,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.productChips = (LinearLayout)v.findViewById(id.productChips);
             this.btnMore = (MaterialButton)v.findViewById(id.btnMore);
             this.btnTakeOver = (MaterialButton)v.findViewById(id.btnTakeOver);
+            this.btnWaChat = (MaterialButton)v.findViewById(id.btnWaChat);
          }
       }
    }
