@@ -186,6 +186,16 @@ public class SyncApi {
     }
 
     /**
+     * "Refresh RIT": server menyusun ulang SELURUH antrean perangkat ini jadi urutan antar terpendek
+     * (jarak tempuh OSRM, bukan garis lurus) mulai dari {@code {lat,lng}} posisi HP sekarang, lalu
+     * menulisnya sebagai delivery_seq — urutan baru tiba lewat pull berikutnya. Body lat/lng boleh
+     * kosong (server memakai ping GPS terakhir / cabang). Balas {@code {ok,message,km,trips,…}}.
+     */
+    public JSONObject optimizeRoute(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/optimize", body, cfg.getToken());
+    }
+
+    /**
      * Paket PANTUN follow-up (sebagian korpus, bukan 10.000) untuk dipakai LURING oleh HP.
      * {@code have} = cap versi yang sedang dipegang perangkat; bila sama, server menjawab
      * {@code {"version":…,"unchanged":true}} TANPA isi sehingga pemeriksaan rutin nyaris gratis.

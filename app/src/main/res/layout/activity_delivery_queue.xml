@@ -178,6 +178,28 @@
                             android:textSize="15sp"
                             android:textStyle="bold" />
 
+                        <!-- 🔄 Refresh RIT: susun ulang seluruh antrean jadi rute terpendek (jarak
+                             tempuh) dari posisi HP sekarang — dihitung server (OSRM). -->
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnRefreshRit"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="40dp"
+                            android:layout_height="40dp"
+                            android:layout_marginStart="8dp"
+                            android:contentDescription="Refresh RIT — rute terpendek"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:insetLeft="0dp"
+                            android:insetRight="0dp"
+                            android:minWidth="0dp"
+                            android:minHeight="0dp"
+                            android:padding="0dp"
+                            app:cornerRadius="10dp"
+                            app:icon="@android:drawable/ic_popup_sync"
+                            app:iconGravity="textStart"
+                            app:iconPadding="0dp"
+                            app:iconSize="20dp" />
+
                         <!-- ▶ Jalankan RIT 1 sekaligus (seluruh pemberhentiannya) — tanpa harus
                              memilih order satu per satu di daftar. Anak yang clickable di dalam
                              strategyHeader: kliknya TIDAK ikut melipat kartu. -->
@@ -223,6 +245,31 @@
                             android:layout_marginTop="2dp"
                             android:textColor="@color/text_secondary"
                             android:textSize="13sp" />
+
+                        <!-- Rincian produk yang harus DIMUAT untuk rit ini (digabung per produk,
+                             mis. "MIN ×10  BIO ×2") — kapsul sama dengan kartu antrean. -->
+                        <HorizontalScrollView
+                            android:id="@+id/strategyItemBadgesScroll"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:scrollbars="none"
+                            android:visibility="gone">
+
+                            <LinearLayout
+                                android:id="@+id/strategyItemBadges"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal" />
+                        </HorizontalScrollView>
+
+                        <!-- Baris pemberhentian rit: "1. ⚡ Nama" + badge produk (slug) per pelanggan. -->
+                        <LinearLayout
+                            android:id="@+id/strategyStopsList"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:orientation="vertical" />
 
                         <TextView
                             android:id="@+id/tvStrategyStops"

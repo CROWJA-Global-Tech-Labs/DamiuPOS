@@ -539,6 +539,9 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
 
             h.btnNavigasi.setOnClickListener(v -> navigateTo(q));
             h.btnAmbilAlih.setOnClickListener(v -> confirmTakeOver(q));
+            boolean hasPhone = !phone.isEmpty() && !phone.equals("null");
+            h.btnWaChat.setVisibility(hasPhone ? View.VISIBLE : View.GONE);
+            h.btnWaChat.setOnClickListener(v -> DeliveryQueueActivity.openWhatsApp(v.getContext(), phone, ""));
         }
 
         @Override
@@ -546,10 +549,11 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
 
         class VH extends RecyclerView.ViewHolder {
             TextView tvCustomer, tvPhone, tvOrder, tvItems, tvAddress, tvPriority, tvOpenDispatch, tvQueued, tvDistance, tvOrderNote;
-            MaterialButton btnNavigasi, btnAmbilAlih;
+            MaterialButton btnNavigasi, btnAmbilAlih, btnWaChat;
 
             VH(View v) {
                 super(v);
+                btnWaChat = v.findViewById(R.id.btnWaChat);
                 tvOrderNote = v.findViewById(R.id.tvOrderNote);
                 tvCustomer = v.findViewById(R.id.tvCustomer);
                 tvPhone = v.findViewById(R.id.tvPhone);

@@ -148,6 +148,22 @@
                 app:icon="@android:drawable/ic_menu_directions"
                 app:iconGravity="textStart" />
 
+            <!-- 💬 Chat WA pelanggan (disembunyikan bila tanpa nomor). -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnWaChat"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="56dp"
+                android:layout_height="wrap_content"
+                android:insetLeft="0dp"
+                android:insetRight="0dp"
+                android:minWidth="0dp"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
+                android:text="💬"
+                android:textSize="18sp"
+                android:contentDescription="Chat WA"
+                android:visibility="gone" />
+
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnAmbilAlih"
                 android:layout_width="0dp"

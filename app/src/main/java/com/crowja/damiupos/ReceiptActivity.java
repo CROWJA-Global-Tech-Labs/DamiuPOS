@@ -973,6 +973,17 @@ public class ReceiptActivity extends AppCompatActivity {
      * App\Support\StrukWa::customerNote di web; ubah keduanya bersamaan.
      */
     static String customerNote(String catatan) {
+        String s = customerNoteKeepLines(catatan);
+        s = s.replaceAll("\\s+", " ");
+        // Sisa pemisah menggantung setelah penanda dibuang ("· catatan" / "- catatan").
+        s = s.replaceAll("^[\\s·\\-–—,;:]+", "")
+             .replaceAll("[\\s·\\-–—,;:]+$", "");
+        return s.trim();
+    }
+
+    /** Penyaringan SAMA dengan {@link #customerNote} tapi baris baru DIPERTAHANKAN — untuk popup
+     *  catatan per poin di kartu antrean (kartunya sendiri tetap satu paragraf). */
+    static String customerNoteKeepLines(String catatan) {
         if (catatan == null) return "";
         String s = catatan;
         // Transaksi yang dibuat di WEB menyimpan JEJAK AUDIT komposit di kolom ini (nomor HP
@@ -986,11 +997,7 @@ public class ReceiptActivity extends AppCompatActivity {
         }
         s = s.replaceAll(
                 "(?i)\\[(SALDO KOMISI|REFUND|GANTI RUGI|PENCAIRAN KOMISI|JUAL BOTOL KOSONG|PROMOSI|TARIK GALON PROMOSI|ORDER ONLINE|BAYAR HUTANG|CASH BON|BAYAR SEBAGIAN)[^\\]]*\\]", " ");
-        s = s.replaceAll("\\s+", " ");
-        // Sisa pemisah menggantung setelah penanda dibuang ("· catatan" / "- catatan").
-        s = s.replaceAll("^[\\s·\\-–—,;:]+", "")
-             .replaceAll("[\\s·\\-–—,;:]+$", "");
-        return s.trim();
+        return s;
     }
 
     private static String initials(String name) {

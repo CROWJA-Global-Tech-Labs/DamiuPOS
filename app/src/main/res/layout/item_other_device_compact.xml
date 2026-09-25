@@ -234,6 +234,23 @@
             <!-- ⋮ Lainnya (Preview Peta + Foto, lihat showOtherDeviceMoreMenu) — menggantikan tombol
                  ikon peta terpisah, supaya baris aksi hanya menyisakan 📥 Ambil Alih yang selalu
                  langsung terlihat (cermin pola "Menu ⋮" di kartu Antrian Saya penuh). -->
+            <!-- 💬 Chat WA pelanggan langsung dari kartu (disembunyikan bila tanpa nomor). -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnWaChat"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:layout_marginStart="4dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:padding="0dp"
+                android:text="💬"
+                android:textSize="20sp"
+                android:contentDescription="Chat WA"
+                android:visibility="gone" />
+
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnMore"
                 style="@style/Widget.MaterialComponents.Button.TextButton"
