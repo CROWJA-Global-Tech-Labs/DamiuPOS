@@ -1054,6 +1054,24 @@ public class SyncEngine {
     }
 
     /** Append a row to entities[name], creating the array on first use. */
+    /** Heartbeat "ada staf login di HP ini?" di tiap pull (~60 dtk). Server memakainya supaya antrean
+     *  perangkat yang staf-nya login tapi belum clock-in tak dipindah otomatis (AutoDispatch
+     *  sweepUnmanned). Mode satu-pengguna (tanpa login) = selalu ada operator. */
+    private void putOperator(JSONObject body) {
+        try {
+            if (!settingsDao.isMultiUserEnabled()) {
+                body.put("operator_present", true);
+                return;
+            }
+            boolean present = settingsDao.getCurrentUserId() > 0;
+            body.put("operator_present", present);
+            if (present) {
+                String staff = LocationReporter.currentStaffUuid(appCtx);
+                if (staff != null && !staff.isEmpty()) body.put("operator_staff_uuid", staff);
+            }
+        } catch (Exception ignored) {}
+    }
+
     private static void appendTo(JSONObject entities, String name, JSONObject row) throws Exception {
         JSONArray arr = entities.optJSONArray(name);
         if (arr == null) { arr = new JSONArray(); entities.put(name, arr); }
@@ -1204,6 +1222,7 @@ public class SyncEngine {
             JSONObject body = new JSONObject();
             body.put("entities", names);
             body.put("cursors", cursors);
+            putOperator(body);
 
             JSONObject resp = api.pull(body);
             JSONObject entities = resp.optJSONObject("entities");
