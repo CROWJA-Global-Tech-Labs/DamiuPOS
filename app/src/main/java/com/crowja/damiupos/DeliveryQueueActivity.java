@@ -1365,6 +1365,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             .setPositiveButton("Tutup", (DialogInterface.OnClickListener) null)
             .setNeutralButton("Salin", (d, w) -> {
                android.content.ClipboardManager cm = (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+   /** " · 🧾 KODE-DDMMYY-N" untuk baris meta kartu antrean — ID transaksi yang sama dengan di
+    *  struk pelanggan & dashboard. Kosong bila order tak punya nomor (bukan JUAL / baris lama). */
+   static String receiptSuffix(String receiptNo) {
+      if (receiptNo == null) return "";
+      String r = receiptNo.trim();
+      return r.isEmpty() || "null".equals(r) ? "" : " · 🧾 " + r;
+   }
+
                if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("Catatan", text));
                Toast.makeText(ctx, "Catatan disalin", Toast.LENGTH_SHORT).show();
             }).show();
@@ -3409,8 +3417,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             + (t.isCustomerDataIncomplete() ? "❗ " : "") + safe(t.getCustomerName());
       long elapsedMs = elapsedMillis(t.getDeliveryQueuedAt());
       double distKm = distOrInf(t, this.myLat, this.myLng);
-      String meta = t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga());
+      String meta = t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + receiptSuffix(t.getReceiptNo());
       Customer c = t.getCustomerId() > 0 ? this.customerDao.getById(t.getCustomerId()) : null;
+      meta.append(receiptSuffix(o.optString("receipt_no", "")));
       String adminArea = c != null ? c.getAdminArea() : "";
       return new OtherQueueRow(null, t, badgeName, t.getCatatan(), meta, t.getOngkir() > 0.0,
             adminArea.isEmpty() ? "" : "📍 " + adminArea, null, elapsedMs, distKm, isPickupOnly(t));
@@ -5174,7 +5183,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       card.addView(tvName);
 
       TextView tvMeta = new TextView(this);
-      tvMeta.setText(t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()));
+      tvMeta.setText(t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + receiptSuffix(t.getReceiptNo()));
       tvMeta.setTextSize(13f);
       tvMeta.setTextColor(-10395295);
       card.addView(tvMeta);
@@ -7548,6 +7557,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
          List<Transaction> filtered = new ArrayList<>();
          for (Transaction t : base) {
+         meta.append(DeliveryQueueActivity.receiptSuffix(this.str(q, "receipt_no")));
             String name = safe(t.getCustomerName()).toLowerCase(Locale.US);
             String phone = t.getCustomerPhone() != null ? t.getCustomerPhone().toLowerCase(Locale.US) : "";
             if (name.contains(q) || phone.contains(q)) filtered.add(t);
@@ -7800,6 +7810,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.tvAdminArea = (TextView)v.findViewById(id.tvAdminArea);
             this.tvOrderNote = (TextView)v.findViewById(id.tvOrderNote);
             this.tvElapsed = (TextView)v.findViewById(id.tvElapsed);
+            meta.append(DeliveryQueueActivity.receiptSuffix(t.getReceiptNo()));
             this.btnMore = (MaterialButton)v.findViewById(id.btnMore);
             this.btnTakeOver = (MaterialButton)v.findViewById(id.btnTakeOver);
             this.productChips = (LinearLayout)v.findViewById(id.productChips);
@@ -8031,3 +8042,4 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
    }
 }
+         meta.append(DeliveryQueueActivity.receiptSuffix(t.getReceiptNo()));
