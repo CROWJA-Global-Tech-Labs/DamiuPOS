@@ -475,7 +475,8 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
             int galon = q.optInt("galon", 0);
             double total = q.optDouble("total", 0);
             h.tvOrder.setText(galon + " galon · Rp "
-                    + String.format(Locale.US, "%,.0f", total).replace(',', '.'));
+                    + String.format(Locale.US, "%,.0f", total).replace(',', '.')
+                    + DeliveryQueueActivity.receiptSuffix(q.optString("receipt_no", "")));
 
             String items = q.optString("items", "");
             if (!items.isEmpty() && !items.equals("null")) {
