@@ -63,7 +63,10 @@ public class DeliveryMapActivity extends AppCompatActivity {
     private LocationManager locationManager;
     private LocationListener locationListener;
     private boolean pageReady = false;
-    private Location pendingLocation;
+    /** Fix GPS terakhir — disuntikkan ulang setiap halaman peta selesai dimuat. */
+    private Location lastLocation;
+    /** Halaman peta sudah pernah dirender → penyegaran data berikutnya lewat JS (zoom tetap). */
+    private boolean mapRendered = false;
 
     @SuppressLint("SetJavaScriptEnabled")
     /** Pin posisi LIVE perangkat lain — dipasang di semua peta aplikasi. */
@@ -106,19 +109,17 @@ public class DeliveryMapActivity extends AppCompatActivity {
                     liveDev = new LiveDeviceOverlay(DeliveryMapActivity.this, webView);
                 }
                 liveDev.start();
-                if (pendingLocation != null) {
-                    pushLocationToMap(pendingLocation);
-                    pendingLocation = null;
-                }
+                if (lastLocation != null) pushLocationToMap(lastLocation);
             }
         });
 
         locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
-        load();
+        load(false);
     }
 
-    private void load() {
-        progress.setVisibility(View.VISIBLE);
+    /** @param silent true = segarkan data di peta yang sudah tampil (tanpa reload halaman / reset zoom). */
+    private void load(boolean silent) {
+        if (!silent) progress.setVisibility(View.VISIBLE);
         new Thread(() -> {
             JSONObject r = null;
             String err = null;
@@ -133,13 +134,23 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 if (isFinishing() || isDestroyed()) return;
                 progress.setVisibility(View.GONE);
                 if (fr == null) {
+                    if (silent) return;
                     Toast.makeText(this, ferr, Toast.LENGTH_LONG).show();
                     tvEmpty.setVisibility(View.VISIBLE);
                     return;
                 }
-                render(fr);
+                if (silent && mapRendered && pageReady) refresh(fr);
+                else render(fr);
             });
         }).start();
+    }
+
+    /** Ganti pin antrian di peta yang sedang tampil — posisi & zoom peta tidak disentuh. */
+    private void refresh(JSONObject data) {
+        JSONArray queue = data.optJSONArray("queue");
+        if (queue == null) queue = new JSONArray();
+        setTitle("Peta Antrian Delivery (" + queue.length() + ")");
+        evalJs("refreshData(" + queue + ");");
     }
 
     private void render(JSONObject data) {
@@ -153,6 +164,9 @@ public class DeliveryMapActivity extends AppCompatActivity {
         tvEmpty.setVisibility(View.GONE);
         getSupportActionBar();
         setTitle("Peta Antrian Delivery (" + queue.length() + ")");
+        // Halaman baru → fungsi JS belum ada sampai onPageFinished; fix GPS ditahan di lastLocation.
+        pageReady = false;
+        mapRendered = true;
         webView.loadDataWithBaseURL("https://unpkg.com", buildMapHtml(data), "text/html", "UTF-8", null);
         ensureLocationPermissionThenTrack();
     }
@@ -197,10 +211,39 @@ public class DeliveryMapActivity extends AppCompatActivity {
             if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
                 locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2000L, 3f, locationListener);
             }
-            Location last = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
-            if (last == null) last = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
-            if (last != null) pushLocationToMap(last);
+            pushLastKnown();
         } catch (Exception ignored) {}
+    }
+
+    /** Fix terakhir yang diketahui OS (GPS → jaringan → pasif) — supaya pin langsung muncul tanpa
+     *  menunggu fix baru, yang bisa lama di dalam ruangan / HP diam (minDistance 3 m). */
+    @SuppressLint("MissingPermission")
+    private void pushLastKnown() {
+        if (locationManager == null) return;
+        Location best = null;
+        for (String p : new String[]{LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER,
+                LocationManager.PASSIVE_PROVIDER}) {
+            try {
+                Location l = locationManager.getLastKnownLocation(p);
+                if (l != null && (best == null || l.getTime() > best.getTime())) best = l;
+            } catch (Exception ignored) {}
+        }
+        if (best != null && (lastLocation == null || best.getTime() > lastLocation.getTime())) {
+            pushLocationToMap(best);
+        } else if (lastLocation != null) {
+            pushLocationToMap(lastLocation);
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // onPause menghentikan GPS — tanpa ini pin Posisi Saya membeku (atau tak pernah muncul)
+        // setelah kembali dari dialog izin / app lain.
+        if (mapRendered && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED) {
+            startLocationUpdates();
+        }
     }
 
     private void stopLocationUpdates() {
@@ -225,8 +268,10 @@ public class DeliveryMapActivity extends AppCompatActivity {
 
     private void pushLocationToMap(Location loc) {
         if (loc == null || webView == null) return;
-        if (!pageReady) { pendingLocation = loc; return; }
-        evalJs("updateMe(" + loc.getLatitude() + "," + loc.getLongitude() + ");");
+        lastLocation = loc;
+        if (!pageReady) return;   // disuntikkan onPageFinished
+        float acc = loc.hasAccuracy() ? loc.getAccuracy() : 0f;
+        evalJs("if(window.updateMe)updateMe(" + loc.getLatitude() + "," + loc.getLongitude() + "," + acc + ",false);");
     }
 
     private void evalJs(String js) {
@@ -244,6 +289,21 @@ public class DeliveryMapActivity extends AppCompatActivity {
         public void claim(String trxUuid, String expectedDeviceUuid, String custName,
                            String items, double total) {
             runOnUiThread(() -> confirmClaim(trxUuid, expectedDeviceUuid, custName, items, total));
+        }
+
+        /** Tombol 📍: minta ulang fix (GPS bisa sudah dihentikan onPause) + suntik fix terakhir. */
+        @JavascriptInterface
+        public void locateMe() {
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (ContextCompat.checkSelfPermission(DeliveryMapActivity.this,
+                        Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                    startLocationUpdates();
+                    pushLastKnown();
+                } else {
+                    ensureLocationPermissionThenTrack();
+                }
+            });
         }
     }
 
@@ -289,6 +349,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
                           String trxUuid, String expectedDeviceUuid) {
         new Thread(() -> {
             String okMsg = null, errMsg = null;
+            boolean stale = false;
             try {
                 JSONObject body = new JSONObject();
                 body.put("transaction_uuid", trxUuid);
@@ -298,18 +359,26 @@ public class DeliveryMapActivity extends AppCompatActivity {
             } catch (SyncApi.SyncException se) {
                 try { errMsg = new JSONObject(se.body).optString("message", null); } catch (Exception ignored) {}
                 if (errMsg == null) errMsg = "Gagal mengambil alih (kode " + se.code + ").";
+                stale = se.code == 409;
             } catch (Exception e) {
                 errMsg = "Gagal mengambil alih — periksa koneksi internet.";
             }
             final String fOk = okMsg, fErr = errMsg;
+            final boolean fStale = stale;
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
                 if (fOk != null) {
                     Toast.makeText(this, fOk, Toast.LENGTH_LONG).show();
                     dialog.dismiss();
                     com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
-                    load();
+                    // Tandai pin langsung, lalu segarkan data TANPA memuat ulang halaman — zoom &
+                    // posisi peta kurir tetap di tempat ia sedang bekerja.
+                    evalJs("if(window.markClaimed)markClaimed(" + JSONObject.quote(trxUuid) + ");");
+                    load(true);
                 } else {
+                    // Pemilik order sudah berubah → segarkan data diam-diam supaya ketukan
+                    // berikutnya memakai pemilik terbaru (bukan 409 berulang).
+                    if (fStale) load(true);
                     Toast.makeText(this, fErr, Toast.LENGTH_LONG).show();
                     pos.setEnabled(true);
                     pos.setText("Ambil Alih");
@@ -426,6 +495,14 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  @keyframes pinglow{0%,100%{filter:drop-shadow(0 0 1px rgba(99,102,241,.9));}50%{filter:drop-shadow(0 0 7px rgba(99,102,241,.95));}}\n" +
                 "  .odbadge{position:absolute;top:-3px;right:-3px;width:15px;height:15px;border-radius:8px;background:#6366F1;color:#fff;font-size:9px;line-height:15px;text-align:center;box-shadow:0 0 0 2px #fff;}\n" +
                 "  .pmeta.opendispatch{color:#4338CA;font-weight:bold;margin-top:6px;}\n" +
+                "  .mepin{position:relative;width:36px;height:46px;}\n" +
+                "  .mepin svg{position:absolute;top:0;left:0;}\n" +
+                "  .mepin .memoto{position:absolute;top:8px;left:9px;width:18px;height:18px;}\n" +
+                "  .mepin .melbl{position:absolute;top:-16px;left:50%;transform:translateX(-50%);background:#1565C0;color:#fff;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:8px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.35);}\n" +
+                "  .mepin .mepulse{position:absolute;left:10px;top:38px;width:16px;height:16px;margin:-8px 0 0 0;border-radius:8px;background:rgba(21,101,192,.45);animation:mepulse 1.6s ease-out infinite;}\n" +
+                "  @keyframes mepulse{0%{transform:scale(.4);opacity:1;}100%{transform:scale(2.2);opacity:0;}}\n" +
+                "  .mepin.stale{opacity:.6;}\n" +
+                "  .mepin.stale .mepulse{display:none;}\n" +
                 "  .devpin{position:relative;width:22px;height:22px;border-radius:11px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-size:12px;}\n" +
                 "  #btnme{position:fixed;right:14px;bottom:22px;width:48px;height:48px;border-radius:24px;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;font-size:24px;z-index:1000;cursor:pointer;}\n" +
                 // LEGENDA diperbesar: sasaran sentuh sebelumnya ~20px (font 12px, padding 3px) —
@@ -469,6 +546,12 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c];});}\n" +
                 "var markers=[];\n" +
                 "var openDispatchPts=[];\n" +
+                // Dideklarasikan DI SINI, sebelum applyFilter() pertama: dulu `var odLines=[]` ada di
+                // bawah, sehingga redrawOpenDispatchLines() melempar TypeError saat halaman dimuat dan
+                // seluruh sisa skrip (updateMe/goMe — pin & tombol Posisi Saya) tak pernah terdefinisi.
+                "var odLines=[];\n" +
+                "function buildMarkers(){\n" +
+                "markers=[]; openDispatchPts=[];\n" +
                 "pts.forEach(function(p){\n" +
                 "  var m=L.marker([p.lat,p.lng],{icon:pinIcon(p.color,p.icon,p.mine,p.open_dispatch)});\n" +
                 "  m._p=p;\n" +
@@ -493,17 +576,35 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  markers.push(m);\n" +
                 "  if(p.open_dispatch){ openDispatchPts.push(p); }\n" +
                 "});\n" +
+                "}\n" +
+                "buildMarkers();\n" +
                 "function visible(p){ return !hiddenDevices[p.device_uuid||'__none__']; }\n" +
-                "function applyFilter(){\n" +
+                // fit=false → hanya ganti pin, tampilan peta (zoom/posisi) dibiarkan apa adanya.
+                "function applyFilter(fit){\n" +
                 "  cluster.clearLayers();\n" +
                 "  var b=[];\n" +
                 "  markers.forEach(function(m){ if(visible(m._p)){cluster.addLayer(m); b.push([m._p.lat,m._p.lng]);} });\n" +
-                "  if(b.length>1){map.fitBounds(b,{padding:[40,40],maxZoom:16});}\n" +
-                "  else if(b.length===1){map.setView(b[0],16);}\n" +
+                "  if(fit!==false){\n" +
+                "    if(b.length>1){map.fitBounds(b,{padding:[40,40],maxZoom:16});}\n" +
+                "    else if(b.length===1){map.setView(b[0],16);}\n" +
+                "  }\n" +
                 "  redrawOpenDispatchLines();\n" +
                 "}\n" +
+                // Penyegaran data dari HP (setelah Ambil Alih / klaim basi) — TANPA fitBounds.
+                "function refreshData(list){ map.closePopup(); pts=list||[]; buildMarkers(); applyFilter(false); }\n" +
+                // Umpan balik instan setelah klaim sukses, sebelum data segar tiba.
+                "function markClaimed(uuid){\n" +
+                "  var mine=null; for(var k=0;k<legend.length;k++){ if(legend[k].uuid===myUuid){ mine=legend[k]; break; } }\n" +
+                "  pts.forEach(function(p){ if(p.uuid!==uuid) return;\n" +
+                "    p.mine=true; p.open_dispatch=false; p.device_uuid=myUuid; p.routed_uuid=myUuid;\n" +
+                "    if(mine){ p.color=mine.color; p.icon=mine.icon; p.device_name=mine.name; } });\n" +
+                "  refreshData(pts);\n" +
+                "}\n" +
+                // Penjaga basi server membandingkan RUTE MENTAH (routed_uuid), bukan pemilik efektif
+                // (device_uuid = rute ?: asal). Server lama tak mengirim routed_uuid → fallback.
                 "function claimById(uuid){for(var i=0;i<pts.length;i++){if(pts[i].uuid===uuid){\n" +
-                "  if(window.Android&&Android.claim){Android.claim(uuid, pts[i].device_uuid||'', pts[i].name,\n" +
+                "  var exp=(pts[i].routed_uuid!==undefined)?pts[i].routed_uuid:pts[i].device_uuid;\n" +
+                "  if(window.Android&&Android.claim){Android.claim(uuid, exp||'', pts[i].name,\n" +
                 "    pts[i].items||'', +(pts[i].total||0));}\n" +
                 "  return;}}}\n" +
                 // LACAK perangkat dari legenda. Prioritas posisi: (1) posisi LIVE terkini dari
@@ -561,7 +662,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "    el.appendChild(c);\n" +
                 "  });\n" +
                 "}\n" +
-                "renderLegend();applyFilter();\n" +
+                "renderLegend();applyFilter(true);\n" +
                 // Posisi live datang belakangan (LiveDeviceOverlay menyegarkan tiap 25 detik) —
                 // gambar ulang legenda supaya penanda "belum ada posisi" ikut mutakhir.
                 "window.__onLiveDev=function(){ try{ renderLegend(); }catch(e){} };\n" +
@@ -577,15 +678,19 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 // menggambarnya untuk SEMUA peta aplikasi, dengan ikon KENDARAAN berbeda tiap
                 // perangkat dan penyegaran berkala. Digambar di sini juga cuma menumpuk dua marker
                 // di titik yang sama.
-                // ---- posisi live perangkat INI (rider) — sepeda motor biru di dalam lingkaran putih ----
-                "var RIDER='<svg width=\"44\" height=\"44\" viewBox=\"0 0 48 48\" xmlns=\"http://www.w3.org/2000/svg\">'+\n" +
-                "  '<circle cx=\"24\" cy=\"24\" r=\"22\" fill=\"#ffffff\" fill-opacity=\"0.92\" stroke=\"#1565C0\" stroke-width=\"2\"/>'+\n" +
-                "  '</svg>'+'<div style=\"position:absolute;top:12px;left:12px;\">'+motoSvg(24,'#1565C0')+'</div>';\n" +
-                "var meIcon=L.divIcon({className:'',html:'<div style=\"position:relative;width:44px;height:44px;\">'+RIDER+'</div>',iconSize:[44,44],iconAnchor:[22,22]});\n" +
-                "var meMarker=null;\n" +
+                // ---- posisi perangkat INI — PIN biru "Saya" (ujung pin = titik GPS) + titik berdenyut
+                // + lingkaran akurasi. stale=true = posisi terakhir dari server (belum ada fix live).
+                "function meIcon(stale){\n" +
+                "  var svg='<svg width=\"36\" height=\"46\" viewBox=\"0 0 30 38\" xmlns=\"http://www.w3.org/2000/svg\">'+\n" +
+                "    '<path d=\"M15 0C6.7 0 0 6.7 0 15c0 10 15 23 15 23s15-13 15-23C30 6.7 23.3 0 15 0z\" fill=\"#1565C0\" stroke=\"#fff\" stroke-width=\"1.5\"/>'+\n" +
+                "    '<circle cx=\"15\" cy=\"14\" r=\"10\" fill=\"#fff\"/></svg>';\n" +
+                "  return L.divIcon({className:'',html:'<div class=\"mepin'+(stale?' stale':'')+'\"><div class=\"mepulse\"></div>'+svg+\n" +
+                "    '<div class=\"memoto\">'+motoSvg(18,'#1565C0')+'</div><div class=\"melbl\">SAYA</div></div>',\n" +
+                "    iconSize:[36,46],iconAnchor:[18,46],popupAnchor:[0,-42]});\n" +
+                "}\n" +
+                "var meMarker=null, meAcc=null, meStale=true;\n" +
                 // Garis putus-putus dari posisi staf ke SETIAP "Pesanan Terbuka" yang belum diklaim —
                 // ditarik ulang tiap posisi GPS diperbarui supaya tetap menempel ke posisi terkini.
-                "var odLines=[];\n" +
                 "function redrawOpenDispatchLines(){\n" +
                 "  odLines.forEach(function(l){ map.removeLayer(l); });\n" +
                 "  odLines=[];\n" +
@@ -598,20 +703,36 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "    odLines.push(line);\n" +
                 "  });\n" +
                 "}\n" +
-                "function updateMe(lat,lng){\n" +
-                "  if(!meMarker){meMarker=L.marker([lat,lng],{icon:meIcon,zIndexOffset:1000,interactive:false}).addTo(map);}\n" +
-                "  else{meMarker.setLatLng([lat,lng]);}\n" +
+                "function updateMe(lat,lng,acc,stale){\n" +
+                "  lat=+lat; lng=+lng; if(!lat&&!lng) return;\n" +
+                // Fix live tak boleh ditimpa posisi server yang lebih lama.
+                "  if(stale&&meMarker&&!meStale) return;\n" +
+                "  if(!meMarker){\n" +
+                "    meMarker=L.marker([lat,lng],{icon:meIcon(stale),zIndexOffset:2000}).addTo(map);\n" +
+                "  } else {\n" +
+                "    meMarker.setLatLng([lat,lng]);\n" +
+                "    if(meStale!==!!stale) meMarker.setIcon(meIcon(stale));\n" +
+                "  }\n" +
+                "  meStale=!!stale;\n" +
+                "  meMarker.bindPopup(stale ? '<b>Posisi Saya</b><div class=\"pmeta\">Posisi terakhir yang tersimpan — menunggu GPS…</div>'\n" +
+                "    : '<b>Posisi Saya</b><div class=\"pmeta\">GPS'+(acc>0?' ±'+Math.round(acc)+' m':'')+'</div>');\n" +
+                "  if(acc>0&&acc<1000&&!stale){\n" +
+                "    if(!meAcc){ meAcc=L.circle([lat,lng],{radius:acc,color:'#1565C0',weight:1,opacity:.5,fillColor:'#1565C0',fillOpacity:.1,interactive:false}).addTo(map); }\n" +
+                "    else { meAcc.setLatLng([lat,lng]); meAcc.setRadius(acc); }\n" +
+                "  }\n" +
                 "  redrawOpenDispatchLines();\n" +
                 "}\n" +
-                // Belum ada fix GPS live di HP ini (baru buka peta, sinyal lemah, dll) → pakai
-                // posisi terakhir perangkat ini yang sudah tersimpan di server, sama seperti
-                // yang dipakai untuk melacak perangkat lain lewat legenda.
+                // Tombol 📍: pusatkan ke pin (zoom TIDAK diperkecil) + minta HP menyegarkan GPS.
+                // Belum ada fix sama sekali → posisi terakhir perangkat ini di server.
                 "function goMe(){\n" +
-                "  if(meMarker){ map.setView(meMarker.getLatLng(),16); return; }\n" +
+                "  if(window.Android&&Android.locateMe){ try{ Android.locateMe(); }catch(e){} }\n" +
+                "  if(meMarker){ map.setView(meMarker.getLatLng(),Math.max(map.getZoom(),16)); meMarker.openPopup(); return; }\n" +
                 "  var ll=myUuid?deviceLatLng(myUuid):null;\n" +
-                "  if(ll){ map.setView(ll,16); }\n" +
-                "  else { toast('Posisi GPS belum didapat, tunggu sebentar lalu coba lagi.'); }\n" +
+                "  if(ll){ updateMe(ll[0],ll[1],0,true); map.setView(ll,Math.max(map.getZoom(),16)); }\n" +
+                "  else { toast('Posisi GPS belum didapat — pastikan GPS/Lokasi HP aktif, lalu coba lagi.'); }\n" +
                 "}\n" +
+                // Pin langsung tampil saat peta dibuka walau GPS belum dapat fix.
+                "(function(){ var ll=myUuid?deviceLatLng(myUuid):null; if(ll) updateMe(ll[0],ll[1],0,true); })();\n" +
                 "</script></body></html>";
     }
 }
