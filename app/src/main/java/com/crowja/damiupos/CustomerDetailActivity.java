@@ -76,6 +76,9 @@ public class CustomerDetailActivity extends AppCompatActivity {
     private boolean mapLoaded;
     private MaterialCardView cardDeliveryMetric;
     private TextView tvDeliveryAvg, tvDeliveryCount;
+    private MaterialCardView cardLastOrder, cardPricelist;
+    /** Penanda permintaan order-insights terbaru — balasan lama (pelanggan/loadData sebelumnya) dibuang. */
+    private int lastOrderRequest;
     /** ⏱ Waktu Pengiriman: bahan analisis kecepatan antar, bukan urusan sehari-hari kurir/staf —
      *  hanya role yang benar-benar memakainya untuk keputusan (admin/marketing/spv) yang melihatnya. */
     private boolean canSeeDeliveryMetric;
@@ -131,6 +134,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
         cardDeliveryMetric = findViewById(R.id.cardDeliveryMetric);
         tvDeliveryAvg = findViewById(R.id.tvDeliveryAvg);
         tvDeliveryCount = findViewById(R.id.tvDeliveryCount);
+        cardLastOrder = findViewById(R.id.cardLastOrder);
+        cardPricelist = findViewById(R.id.cardPricelist);
 
         User u = new UserDao(dbHelper).getById(settingsDao.getCurrentUserId());
         canSeeDeliveryMetric = u != null && (u.isAdmin() || u.isMarketing() || u.isSpv());
@@ -763,6 +768,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
         List<Transaction> transactions = transactionDao.getByCustomerId(customerId);
         adapter.setData(transactions);
         renderDeliveryMetric(transactions);
+        renderPricelist(customer);
+        renderLastOrder(transactions);
 
         int otherDevices = mergedTrx - transactions.size();
         if (otherDevices > 0 && !transactions.isEmpty()) {
@@ -783,6 +790,286 @@ public class CustomerDetailActivity extends AppCompatActivity {
             tvEmptyHistory.setVisibility(View.GONE);
             rvTransactions.setVisibility(View.VISIBLE);
         }
+    }
+
+    // ------------------------------------------------------------------ Daftar Harga pelanggan
+
+    /**
+     * Harga yang berlaku untuk pelanggan ini per produk — rumus SAMA dengan Transaksi Baru
+     * ({@code TransactionActivity#applyResellerPricing}): harga khusus pelanggan (product_prices)
+     * bila ada, selain itu harga jual produk; lalu + komisi bila reseller afiliasinya (dirinya sendiri
+     * bila ia reseller, else reseller tertaut) memakai "Tambahkan Komisi ke Harga".
+     */
+    private void renderPricelist(Customer c) {
+        android.widget.LinearLayout rows = findViewById(R.id.pricelistRows);
+        TextView note = findViewById(R.id.tvPricelistNote);
+        if (cardPricelist == null || rows == null) return;
+        List<com.crowja.damiupos.model.Product> products = new com.crowja.damiupos.db.ProductDao(dbHelper).getAll();
+        if (products.isEmpty()) {
+            cardPricelist.setVisibility(View.GONE);
+            return;
+        }
+
+        Customer reseller = null;
+        Customer self = customerDao.getById(customerId);
+        if (self != null && self.isReseller()) {
+            reseller = self;
+        } else if (c.getLinkedResellerUuid() != null && !c.getLinkedResellerUuid().isEmpty()) {
+            long rid = customerDao.getIdBySyncUuid(c.getLinkedResellerUuid());
+            Customer r = rid > 0 ? customerDao.getById(rid) : null;
+            if (r != null && r.isReseller()) reseller = r;
+        }
+        boolean addKomisi = reseller != null && reseller.isKomisiAddToPrice();
+        java.util.Map<Long, Double> rates = addKomisi
+                ? new com.crowja.damiupos.db.ResellerRateDao(dbHelper).getRates(reseller.getId())
+                : new java.util.HashMap<>();
+        double globalRate = settingsDao.getResellerKomisi();
+
+        rows.removeAllViews();
+        boolean anySpecial = false;
+        int primary = androidx.core.content.ContextCompat.getColor(this, R.color.text_primary);
+        int secondary = androidx.core.content.ContextCompat.getColor(this, R.color.text_secondary);
+        for (com.crowja.damiupos.model.Product p : products) {
+            Double override = c.getPriceFor(p.getUuid());
+            double price = override != null ? override : p.getHargaJual();
+            if (addKomisi) {
+                Double r = rates.get(p.getId());
+                price += r != null ? r : globalRate;
+            }
+            boolean special = override != null && Math.abs(override - p.getHargaJual()) > 0.5;
+            anySpecial |= special;
+
+            android.widget.LinearLayout row = new android.widget.LinearLayout(this);
+            row.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+            row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            row.setPadding(0, dp(5), 0, dp(5));
+            row.addView(badge(productLabel(p), productColor(p)));
+
+            TextView name = new TextView(this);
+            android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(0, -2, 1f);
+            lp.setMarginStart(dp(8));
+            name.setLayoutParams(lp);
+            name.setText(p.getName());
+            name.setTextSize(13f);
+            name.setTextColor(primary);
+            name.setMaxLines(1);
+            name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            row.addView(name);
+
+            if (special) {
+                TextView std = new TextView(this);
+                std.setText(rupiah(p.getHargaJual()));
+                std.setTextSize(11f);
+                std.setTextColor(secondary);
+                std.setPaintFlags(std.getPaintFlags() | android.graphics.Paint.STRIKE_THRU_TEXT_FLAG);
+                std.setPadding(0, 0, dp(6), 0);
+                row.addView(std);
+            }
+            TextView tvPrice = new TextView(this);
+            tvPrice.setText((special ? "⭐ " : "") + rupiah(price));
+            tvPrice.setTextSize(14f);
+            tvPrice.setTypeface(tvPrice.getTypeface(), android.graphics.Typeface.BOLD);
+            tvPrice.setTextColor(primary);
+            row.addView(tvPrice);
+            rows.addView(row);
+        }
+
+        StringBuilder sb = new StringBuilder();
+        if (anySpecial) sb.append("⭐ = harga khusus pelanggan ini (harga standar dicoret).");
+        if (addKomisi) {
+            if (sb.length() > 0) sb.append('\n');
+            sb.append("Termasuk komisi reseller ").append(reseller.getName()).append(" (Tambahkan Komisi ke Harga).");
+        }
+        if (note != null) {
+            note.setText(sb.toString());
+            note.setVisibility(sb.length() > 0 ? View.VISIBLE : View.GONE);
+        }
+        cardPricelist.setVisibility(View.VISIBLE);
+    }
+
+    // ------------------------------------------------------------------ Transaksi Terakhir
+
+    /**
+     * Satu baris transaksi JUAL terakhir. Langsung dari transaksi LOKAL (jalan offline), lalu diganti
+     * versi server (order-insights → last_order) yang LINTAS PERANGKAT — transaksi HP terisolasi
+     * per-perangkat, jadi pelanggan yang biasa dilayani HP lain tak punya baris lokal di sini. Baris
+     * lokal yang lebih baru (belum tersinkron) tetap menang. Tertunda dilewati: tanggalnya sudah
+     * digeser ke jadwal lanjut (masa depan) — aturan yang sama dengan server.
+     */
+    private void renderLastOrder(List<Transaction> local) {
+        if (cardLastOrder == null) return;
+        Transaction lt = null;
+        for (Transaction t : local) {
+            if (Transaction.TYPE_JUAL.equals(t.getType()) && !"TERTUNDA".equals(t.getDeliveryStatus())) {
+                lt = t;
+                break;
+            }
+        }
+        if (lt != null) {
+            bindLastOrder(lt.getTanggal(), lt.getReceiptNo(), lt.getDeliveryStatus(), lt.getPaymentMethodLabel(),
+                    lt.getTotalHarga(), localBadges(lt), "perangkat ini", lt.getDeliveryDestName());
+        } else {
+            cardLastOrder.setVisibility(View.GONE);
+        }
+
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+        if (!cfg.isEnrolled()) return;
+        final String uuid = customerDao.getSyncUuidById(customerId);
+        if (uuid == null || uuid.isEmpty()) return;
+        final int req = ++lastOrderRequest;
+        final long localMs = lt != null ? com.crowja.damiupos.util.Ts.millis(lt.getTanggal()) : Long.MIN_VALUE;
+        new Thread(() -> {
+            org.json.JSONObject lo;
+            try {
+                org.json.JSONObject res = new com.crowja.damiupos.sync.SyncApi(cfg).orderInsights(uuid);
+                lo = res.optJSONObject("last_order");
+            } catch (Exception e) {
+                return;   // offline → baris lokal tetap tampil
+            }
+            final org.json.JSONObject flo = lo;
+            runOnUiThread(() -> {
+                if (req != lastOrderRequest || isFinishing() || isDestroyed() || flo == null) return;
+                long srvMs = com.crowja.damiupos.util.Ts.millis(flo.optString("tanggal", ""));
+                if (localMs != Long.MIN_VALUE && localMs != Long.MAX_VALUE && srvMs != Long.MAX_VALUE
+                        && localMs > srvMs) {
+                    return;   // transaksi lokal lebih baru (belum sampai server)
+                }
+                java.util.List<Object[]> badges = new java.util.ArrayList<>();
+                org.json.JSONArray items = flo.optJSONArray("items");
+                if (items != null) {
+                    for (int i = 0; i < items.length(); i++) {
+                        org.json.JSONObject it = items.optJSONObject(i);
+                        if (it == null) continue;
+                        String slug = it.optString("slug", "");
+                        int bg = com.crowja.damiupos.adapter.TransactionAdapter.paletteColor(slug);
+                        String col = it.optString("color", "");
+                        if (!col.isEmpty() && !"null".equals(col)) {
+                            try { bg = android.graphics.Color.parseColor(col.trim()); } catch (IllegalArgumentException ignored) {}
+                        }
+                        badges.add(new Object[]{slug + " ×" + it.optString("qty", "0"), bg});
+                    }
+                }
+                String staff = str(flo, "staff");
+                String device = str(flo, "device");
+                String who = staff.isEmpty() ? device : (device.isEmpty() ? staff : staff + " (" + device + ")");
+                bindLastOrder(str(flo, "tanggal"), str(flo, "receipt_no"), str(flo, "delivery_status"),
+                        payLabel(str(flo, "payment_method")), flo.optDouble("total", 0), badges, who, str(flo, "dest"));
+            });
+        }).start();
+    }
+
+    private void bindLastOrder(String tanggal, String receiptNo, String status, String pay, double total,
+                               java.util.List<Object[]> badges, String who, String dest) {
+        TextView head = findViewById(R.id.tvLastOrderHead);
+        TextView meta = findViewById(R.id.tvLastOrderMeta);
+        android.widget.LinearLayout row = findViewById(R.id.lastOrderBadges);
+        long ms = com.crowja.damiupos.util.Ts.millis(tanggal);
+        String when = ms == Long.MAX_VALUE ? (tanggal == null ? "-" : tanggal)
+                : new java.text.SimpleDateFormat("EEE, d MMM yyyy HH:mm", new java.util.Locale("id", "ID"))
+                        .format(new java.util.Date(ms));
+        head.setText(when + (receiptNo != null && !receiptNo.isEmpty() && !"null".equals(receiptNo) ? "  ·  🧾 " + receiptNo : ""));
+
+        row.removeAllViews();
+        for (Object[] b : badges) row.addView(badge((String) b[0], (Integer) b[1]));
+        ((View) row.getParent()).setVisibility(badges.isEmpty() ? View.GONE : View.VISIBLE);
+
+        StringBuilder sb = new StringBuilder(rupiah(total));
+        if (pay != null && !pay.isEmpty()) sb.append(" · ").append(pay);
+        sb.append(" · ").append(statusLabel(status));
+        if (who != null && !who.isEmpty()) sb.append("\nOleh ").append(who);
+        if (dest != null && !dest.isEmpty() && !"null".equals(dest)) sb.append(" · ke ").append(dest);
+        meta.setText(sb.toString());
+        cardLastOrder.setVisibility(View.VISIBLE);
+    }
+
+    private java.util.List<Object[]> localBadges(Transaction t) {
+        java.util.Map<String, com.crowja.damiupos.model.Product> byName = new java.util.HashMap<>();
+        for (com.crowja.damiupos.model.Product p : new com.crowja.damiupos.db.ProductDao(dbHelper).getAll()) {
+            if (p.getName() != null) byName.put(p.getName().trim().toLowerCase(java.util.Locale.ROOT), p);
+        }
+        // Digabung per label — baris berbayar + gratis (promo) produk yang sama = satu badge.
+        java.util.LinkedHashMap<String, int[]> merged = new java.util.LinkedHashMap<>();
+        if (t.getItems() != null) {
+            for (com.crowja.damiupos.model.TransactionItem it : t.getItems()) {
+                if (it == null || it.jumlah <= 0) continue;
+                com.crowja.damiupos.model.Product p = it.productName == null ? null
+                        : byName.get(it.productName.trim().toLowerCase(java.util.Locale.ROOT));
+                String label = p != null ? productLabel(p) : shortName(it.productName);
+                int bg = p != null ? productColor(p)
+                        : com.crowja.damiupos.adapter.TransactionAdapter.paletteColor(it.productName);
+                int[] v = merged.get(label);
+                if (v == null) merged.put(label, new int[]{it.jumlah, bg});
+                else v[0] += it.jumlah;
+            }
+        }
+        java.util.List<Object[]> out = new java.util.ArrayList<>();
+        for (java.util.Map.Entry<String, int[]> e : merged.entrySet()) {
+            out.add(new Object[]{e.getKey() + " ×" + e.getValue()[0], e.getValue()[1]});
+        }
+        if (out.isEmpty() && t.getJumlahGalon() > 0) out.add(new Object[]{t.getJumlahGalon() + " gal", 0xFF64748B});
+        return out;
+    }
+
+    private static String statusLabel(String s) {
+        if ("PENDING".equals(s)) return "🚚 Dalam antrean";
+        if ("TERTUNDA".equals(s)) return "⏸ Ditunda";
+        return "✅ Selesai";
+    }
+
+    private static String payLabel(String m) {
+        if (m == null) return "";
+        switch (m) {
+            case "TUNAI": return "Tunai";
+            case "QRIS": return "QRIS";
+            case "TRANSFER": return "Transfer";
+            case "HUTANG": return "Hutang";
+            default: return "";
+        }
+    }
+
+    private static String str(org.json.JSONObject o, String k) {
+        String v = o.optString(k, "");
+        return "null".equals(v) ? "" : v.trim();
+    }
+
+    private static String shortName(String n) {
+        String nm = n == null ? "" : n.trim();
+        if (nm.isEmpty()) return "Galon";
+        return nm.length() <= 10 ? nm : nm.substring(0, 10).trim() + "…";
+    }
+
+    private static String productLabel(com.crowja.damiupos.model.Product p) {
+        String slug = p.getSlug();
+        return slug != null && !slug.trim().isEmpty() ? slug.trim() : shortName(p.getName());
+    }
+
+    private static int productColor(com.crowja.damiupos.model.Product p) {
+        String c = p.getColor();
+        if (c != null && !c.trim().isEmpty()) {
+            try { return android.graphics.Color.parseColor(c.trim()); } catch (IllegalArgumentException ignored) {}
+        }
+        return com.crowja.damiupos.adapter.TransactionAdapter.paletteColor(p.getName());
+    }
+
+    /** Kapsul produk — cermin kapsul kartu Antrian Delivery (latar warna produk, teks kontras). */
+    private TextView badge(String label, int bg) {
+        TextView chip = new TextView(this);
+        android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(-2, -2);
+        lp.setMarginEnd(dp(6));
+        chip.setLayoutParams(lp);
+        chip.setTextSize(11f);
+        chip.setTypeface(chip.getTypeface(), android.graphics.Typeface.BOLD);
+        chip.setPadding(dp(8), dp(3), dp(8), dp(3));
+        chip.setMaxLines(1);
+        android.graphics.drawable.GradientDrawable d = new android.graphics.drawable.GradientDrawable();
+        d.setCornerRadius(dp(10));
+        d.setColor(bg);
+        chip.setBackground(d);
+        chip.setText(label);
+        double lum = (0.299 * android.graphics.Color.red(bg) + 0.587 * android.graphics.Color.green(bg)
+                + 0.114 * android.graphics.Color.blue(bg)) / 255.0;
+        chip.setTextColor(lum > 0.65 ? 0xFF1F2937 : 0xFFFFFFFF);
+        return chip;
     }
 
     /** Foto rumah: file lokal kalau ada; kalau tidak (baris hasil sync dari perangkat lain) unduh
