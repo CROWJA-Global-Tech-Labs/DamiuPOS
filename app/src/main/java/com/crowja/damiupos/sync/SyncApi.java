@@ -249,6 +249,27 @@ public class SyncApi {
      * akan pernah punya baris lokal di sini. Balas {@code {"last_jual_items":[...],
      * "delivery_counts":{"Nama Lokasi":N,...}}}. Branch-scoped by the token.
      */
+    /**
+     * Nomor terdaftar di WhatsApp? Server bertanya ke FREZ WA Bridge. Balas {@code {on_whatsapp:
+     * true|false|null}} — null = tak bisa dipastikan (Bridge mati/belum diatur), BUKAN "aman".
+     */
+    public JSONObject checkWhatsApp(String phone) throws Exception {
+        okhttp3.HttpUrl built = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/customers-check-whatsapp")
+                .newBuilder().addQueryParameter("phone", phone != null ? phone : "").build();
+        return get(built.toString(), cfg.getToken());
+    }
+
+    /** true/false = jawaban pasti Bridge; null = tak konklusif (offline, Bridge mati, galat). */
+    public static Boolean bridgeOnWhatsApp(SyncSettings cfg, String phone) {
+        try {
+            if (cfg == null || !cfg.isEnrolled()) return null;
+            JSONObject r = new SyncApi(cfg).checkWhatsApp(phone);
+            return (r.has("on_whatsapp") && !r.isNull("on_whatsapp")) ? r.optBoolean("on_whatsapp") : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     public JSONObject orderInsights(String customerUuid) throws Exception {
         return get(cfg.getBaseUrl() + "/api/customers/" + customerUuid + "/order-insights", cfg.getToken());
     }
