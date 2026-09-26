@@ -95,6 +95,9 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
     private long savedObstacleId = -1;
     private String savedPhotoPath = "";
     private String savedReason = "";
+    /** Hasil kirim lewat WA Bridge ({@link #notifyViaBridge}) — ikut dicatat di laporan kendala. */
+    private int bridgeSent = 0;
+    private int bridgeTarget = 0;
     private boolean notifyRunning = false;
     /** Sudah menekan "Buka WhatsApp" untuk pelanggan ini, menunggu staf kembali. */
     private boolean awaitingWaReturn = false;
@@ -330,26 +333,92 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
         SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
         // Server SENDIRI (ObstacleWa + FREZ WA Bridge) bisa auto-kirim laporan ini — TERMASUK yang
         // berfoto — begitu tersinkron (lihat KEY_SERVER_AUTO_OBSTACLE_WA). Itu prioritas: kalau
-        // aktif & bridge terhubung, HP tak boleh ikut kirim (dobel ke pelanggan). Auto-kirim lokal
-        // HP (varian TANPA foto — verifikasi gateway tak berlaku di layar pratinjau media) cuma
-        // FALLBACK saat server OFF atau bridge putus; dialog manual jadi fallback terakhir.
+        // aktif & bridge terhubung, HP tak boleh ikut kirim (dobel ke pelanggan). Selain itu HP
+        // mengirim SENDIRI lewat WA Bridge dulu ({@link #notifyViaBridge}, akun dipilih server sesuai
+        // prioritas); yang gagal baru jatuh ke jalur HP lama — auto-kirim lokal (varian TANPA foto —
+        // verifikasi gateway tak berlaku di layar pratinjau media), lalu dialog manual.
         boolean serverAuto = autoSettings.isServerAutoObstacleWa();
         boolean localAutoEligible = autoSettings.isAutoSendDeliveryIssueWa() && savedPhotoPath.isEmpty();
-        if (!serverAuto && !localAutoEligible) {
+        if (!serverAuto) {
+            notifyViaBridge(targets, failed -> notifyViaPhone(failed, localAutoEligible));
+            return;
+        }
+        checkWaBridge(bridgeOk -> {
+            if (bridgeOk) {
+                Toast.makeText(this, "Laporan tersimpan. Pelanggan akan diberitahu otomatis oleh sistem.",
+                        Toast.LENGTH_LONG).show();
+                finish();
+            } else {
+                notifyViaBridge(targets, failed -> notifyViaPhone(failed, localAutoEligible));
+            }
+        });
+    }
+
+    /**
+     * Kirim WA kendala ke semua {@code targets} lewat WA Bridge server (foto kendala ikut sebagai
+     * lampiran bila ada) — akun pengirim dipilih server sesuai prioritas. {@code onDone} menerima
+     * pelanggan yang GAGAL (di UI thread) untuk diteruskan ke jalur HP lama.
+     */
+    private void notifyViaBridge(List<Customer> targets,
+                                 java.util.function.Consumer<List<Customer>> onDone) {
+        bridgeTarget = targets.size();
+        bridgeSent = 0;
+        String text = obstacleText();
+        AlertDialog progress = new AlertDialog.Builder(this)
+                .setTitle("Beritahu Konsumen")
+                .setMessage("Mengirim WA lewat Bridge…")
+                .setCancelable(false)
+                .show();
+        new Thread(() -> {
+            List<Customer> failed = new ArrayList<>();
+            int sent = 0;
+            for (int i = 0; i < targets.size(); i++) {
+                Customer c = targets.get(i);
+                int n = i + 1;
+                runOnUiThread(() -> progress.setMessage("Mengirim WA lewat Bridge… (" + n + "/" + targets.size() + ")"));
+                com.crowja.damiupos.wa.WaBridgeSend.Result r = com.crowja.damiupos.wa.WaBridgeSend.sendBlocking(this,
+                        com.crowja.damiupos.wa.WaBridgeSend.Msg.to(c.getPhone(), text)
+                                .type("obstacle").proactive().customerId(c.getId())
+                                .media(savedPhotoPath.isEmpty() ? null : savedPhotoPath,
+                                        "image/jpeg", "kendala-pengiriman.jpg"));
+                if (r.ok) sent++;
+                else failed.add(c);
+            }
+            int finalSent = sent;
+            runOnUiThread(() -> {
+                try { progress.dismiss(); } catch (Exception ignored) {}
+                if (isFinishing() || isDestroyed()) return;
+                bridgeSent = finalSent;
+                if (!failed.isEmpty()) {
+                    Toast.makeText(this, "WA Bridge: " + finalSent + " terkirim, "
+                            + failed.size() + " perlu dikirim dari HP ini.", Toast.LENGTH_LONG).show();
+                }
+                onDone.accept(failed);
+            });
+        }).start();
+    }
+
+    /** Jalur HP lama untuk pelanggan yang gagal lewat Bridge: auto-kirim lokal bila aktif, lalu manual. */
+    private void notifyViaPhone(List<Customer> targets, boolean localAutoEligible) {
+        if (targets.isEmpty()) {
+            notifyQueue = targets;
+            notifySent = 0;
+            finishNotify();
+            return;
+        }
+        if (!localAutoEligible) {
             showNotifyDialog(targets);
             return;
         }
         checkWaBridge(bridgeOk -> {
-            if (serverAuto && bridgeOk) {
-                Toast.makeText(this, "Laporan tersimpan. Pelanggan akan diberitahu otomatis oleh sistem.",
-                        Toast.LENGTH_LONG).show();
-                finish();
-            } else if (localAutoEligible && bridgeOk) {
-                autoNotifyAll(targets);
-            } else {
-                showNotifyDialog(targets);
-            }
+            if (bridgeOk) autoNotifyAll(targets);
+            else showNotifyDialog(targets);
         });
+    }
+
+    private String obstacleText() {
+        return "Mohon maaf, pengiriman pesanan Anda hari ini terkendala.\n\n"
+                + savedReason + "\n\nKami segera menindaklanjuti. Terima kasih atas pengertiannya 🙏";
     }
 
     /** Tanya status FREZ WA Bridge server (background) — callback selalu di UI thread. */
@@ -393,6 +462,13 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
                     stepNotify();
                 })
                 .setNegativeButton("Nanti Saja", (d, w) -> {
+                    if (bridgeSent > 0) {
+                        // Sebagian sudah terkirim lewat Bridge — tetap catat ke laporan.
+                        notifyQueue = targets;
+                        notifySent = 0;
+                        finishNotify();
+                        return;
+                    }
                     Toast.makeText(this, "Laporan tersimpan. Pelanggan belum diberitahu.",
                             Toast.LENGTH_LONG).show();
                     finish();
@@ -407,8 +483,7 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
      * manual lama ({@link #stepNotify()}) supaya tak ada yang benar-benar tak diberitahu.
      */
     private void autoNotifyAll(List<Customer> targets) {
-        String text = "Mohon maaf, pengiriman pesanan Anda hari ini terkendala.\n\n"
-                + savedReason + "\n\nKami segera menindaklanjuti. Terima kasih atas pengertiannya 🙏";
+        String text = obstacleText();
         new Thread(() -> {
             int sent = 0;
             List<Customer> failed = new ArrayList<>();
@@ -504,18 +579,27 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
             try {
                 JSONObject results = new JSONObject();
                 results.put("opened", notifySent);
-                results.put("target", notifyQueue.size());
-                dao.markNotified(savedObstacleId, notifySent, results.toString());
+                results.put("bridge_sent", bridgeSent);
+                results.put("target", bridgeTarget > 0 ? bridgeTarget : notifyQueue.size());
+                dao.markNotified(savedObstacleId, notifySent + bridgeSent, results.toString());
                 com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
             } catch (Exception ignored) {}
         }
         // Kata-katanya sengaja "dibuka", BUKAN "terkirim": aplikasi tak pernah tahu apakah staf
         // benar-benar menekan Kirim di WhatsApp, dan melaporkan sukses yang tak teramati adalah
         // kebohongan yang akan dipercaya owner saat pelanggan komplain tak dapat kabar.
+        StringBuilder summary = new StringBuilder();
+        if (bridgeSent > 0) {
+            summary.append(bridgeSent).append(" dari ").append(bridgeTarget)
+                    .append(" pelanggan sudah dikirimi WA lewat Bridge.\n");
+        }
+        if (!notifyQueue.isEmpty()) {
+            summary.append(notifySent).append(" dari ").append(notifyQueue.size())
+                    .append(" chat pelanggan sudah dibuka").append(bridgeSent > 0 ? " manual" : "").append(".\n");
+        }
         new AlertDialog.Builder(this)
                 .setTitle("Selesai")
-                .setMessage(notifySent + " dari " + notifyQueue.size()
-                        + " chat pelanggan sudah dibuka.\n\nLaporan kendala tersimpan & terkirim ke dashboard.")
+                .setMessage(summary + "\nLaporan kendala tersimpan & terkirim ke dashboard.")
                 .setPositiveButton("Tutup", (d, w) -> finish())
                 .setCancelable(false)
                 .show();
@@ -537,8 +621,7 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
      * tombolnya tampak mati. Chooser sistem hanya dipakai kalau WhatsApp benar-benar tak ada.
      */
     private boolean sendToWhatsApp(Customer c) {
-        String text = "Mohon maaf, pengiriman pesanan Anda hari ini terkendala.\n\n"
-                + savedReason + "\n\nKami segera menindaklanjuti. Terima kasih atas pengertiannya 🙏";
+        String text = obstacleText();
         String jid = waJid(c.getPhone());
 
         File photo = savedPhotoPath.isEmpty() ? null : new File(savedPhotoPath);

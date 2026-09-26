@@ -221,15 +221,25 @@ public class IntroWaActivity extends AppCompatActivity {
                                     + "Kirim ulang?")
                             .setNegativeButton("Batal", (d, w) -> reload())
                             .setPositiveButton("Kirim Ulang", (d, w) -> {
-                                openWa(r.phone, text, link);
+                                sendIntro(r, text, link);
                                 reload();
                             })
                             .show();
                     return;
                 }
-                openWa(r.phone, text, link);
+                sendIntro(r, text, link);
             });
         }).start();
+    }
+
+    /** Kirim WA Perkenalan lewat WA Bridge server dulu (akun dipilih server sesuai prioritas);
+     *  Bridge gagal → buka WhatsApp di HP ini seperti dulu ({@link #openWa}). */
+    private void sendIntro(CustomerDao.IntroPendingRow r, String text, String link) {
+        com.crowja.damiupos.wa.WaBridgeSend.sendOrFallback(this,
+                com.crowja.damiupos.wa.WaBridgeSend.Msg.to(r.phone, text)
+                        .type("intro").proactive().customerUuid(r.uuid),
+                this::reload,
+                () -> openWa(r.phone, text, link));
     }
 
     /** "2026-08-30T14:05:00+07:00" → "30 Agt 2026, 14:05"; kembalikan apa adanya bila tak terbaca. */

@@ -3689,7 +3689,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (link != null) {
          String phone = t.getCustomerPhone();
          if (phone != null && !phone.trim().isEmpty()) {
-            this.openWhatsApp(phone, this.composeTrackMessage(t, link));
+            // WA Bridge server dulu (akun dipilih server sesuai prioritas); gagal → buka wa.me.
+            String msg = this.composeTrackMessage(t, link);
+            com.crowja.damiupos.wa.WaBridgeSend.sendOrFallback(this,
+                  com.crowja.damiupos.wa.WaBridgeSend.Msg.to(phone, msg).type("diantar")
+                        .customerId(t.getCustomerId()).transactionId(t.getId()),
+                  null,
+                  () -> this.openWhatsApp(phone, msg));
          } else {
             Toast.makeText(this, "Pelanggan belum memiliki nomor WhatsApp", 0).show();
          }
@@ -3918,6 +3924,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       String msg = "Assalamualaikum, Pelanggan Yth.\n\nMohon maaf, pesanan air minum Anda "
             + "sedikit tertunda dari perkiraan. Kami akan segera mengantarnya. Terima kasih atas kesabarannya 🙏";
 
+      // WA Bridge server DULU (akun dipilih server sesuai prioritas; jenis "apology" = WA
+      // permintaan maaf order terlambat); gagal → jalur HP lama di bawah.
+      com.crowja.damiupos.wa.WaBridgeSend.sendOrFallback(this,
+            com.crowja.damiupos.wa.WaBridgeSend.Msg.to(phone, msg).type("apology").proactive()
+                  .customerId(t.getCustomerId()).transactionId(t.getId()),
+            null,
+            () -> this.sendLateNoticeViaPhone(phone, msg));
+   }
+
+   /** Jalur HP lama "TUNDA & BERITAHU PELANGGAN" — dipakai saat kirim lewat WA Bridge gagal. */
+   private void sendLateNoticeViaPhone(String phone, String msg) {
       // Dashboard bisa meminta auto-kirim langsung (tanpa membuka intent WhatsApp ke staf lebih
       // dulu). Gagal/tak terkonfirmasi → jatuh ke intent manual lama seperti sebelum flag ini ada.
       SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
@@ -4778,9 +4795,20 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             // terlewat. Pengirimannya sendiri tetap ditekan kurir di dalam WhatsApp: klik-otomatis
             // pada layar pratinjau media tidak bisa diverifikasi tujuannya ({@see WaShare}), jadi
             // memaksakannya berisiko mengirim foto ke chat orang lain.
-            Toast.makeText(this, "Membuka WhatsApp — kirim konfirmasi + foto ke pelanggan.", 1).show();
-            WaShare.sendPhotoWithCaption(this, safe(t.getCustomerName()), phone, proofPath,
-                  this.composeUnpaidNotice(t));
+            // WA Bridge server DULU: foto bukti + konfirmasi terkirim langsung dari akun yang
+            // dipilih server sesuai prioritas — kurir tak perlu membuka WhatsApp sama sekali.
+            // Gagal → jalur lama (WhatsApp HP dengan foto + caption terisi).
+            String notice = this.composeUnpaidNotice(t);
+            String custName = safe(t.getCustomerName());
+            com.crowja.damiupos.wa.WaBridgeSend.sendOrFallback(this,
+                  com.crowja.damiupos.wa.WaBridgeSend.Msg.to(phone, notice).type("struk")
+                        .customerId(t.getCustomerId()).transactionId(t.getId())
+                        .media(proofPath, "image/jpeg", "bukti-antar.jpg"),
+                  null,
+                  () -> {
+                     Toast.makeText(this, "Membuka WhatsApp — kirim konfirmasi + foto ke pelanggan.", 1).show();
+                     WaShare.sendPhotoWithCaption(this, custName, phone, proofPath, notice);
+                  });
          } else {
             Toast.makeText(this, "Pelanggan belum punya nomor WA — konfirmasi pengiriman tak bisa dikirim.", 1).show();
          }
@@ -5421,12 +5449,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    /**
     * Tindak lanjut WA setelah tunda berhasil. Server mencoba mengirim lewat FREZ WA Bridge dan
     * melaporkan hasilnya ({@code wa.status}). Bila pelanggan TIDAK sampai diberi tahu (Bridge menolak,
-    * belum tersambung, jeda antar-pesan, atau auto-kirim nonaktif) → HP mengirim sendiri: WhatsApp
+    * belum tersambung, jeda antar-pesan, atau auto-kirim nonaktif) → HP mencoba sekali lagi lewat
+    * WA Bridge ({@link com.crowja.damiupos.wa.WaBridgeSend}, urutan prioritas akun umum), dan baru
+    * bila itu pun gagal HP mengirim sendiri: WhatsApp
     * dibuka langsung ke chat pelanggan dengan teks yang SAMA (+ foto bila ada). Pola sama dengan WA
     * Cash Bon — pengiriman foto tetap ditekan kurir (klik-otomatis di pratinjau media tak aman).
     * {@code wa == null} = server lama, tak ada tindak lanjut (perilaku sebelumnya).
     */
-   private void afterPostponeWa(String custName, JSONObject wa, String photoPath) {
+   private void afterPostponeWa(String custName, String trxUuid, JSONObject wa, String photoPath) {
       if (wa == null) return;
       String status = wa.optString("status", "");
       if ("sent".equals(status) || "queued".equals(status)) {
@@ -5440,8 +5470,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             : ("deferred".equals(status) ? "Bridge WA sedang jeda antar pesan"
             : ("disabled".equals(status) ? "Kirim otomatis WA jadwal ulang nonaktif"
             : "Bridge WA belum tersambung"));
-      Toast.makeText(this, why + " — kirim pemberitahuan dari WhatsApp HP ini.", 1).show();
-      WaShare.sendPhotoWithCaption(this, custName, phone, photoPath, text);
+      // Coba lagi lewat WA Bridge dengan urutan prioritas akun umum (2 arah → akun perangkat →
+      // akun pengirim cabang → cadangan) sebelum jatuh ke WhatsApp HP ini.
+      com.crowja.damiupos.wa.WaBridgeSend.sendOrFallback(this,
+            com.crowja.damiupos.wa.WaBridgeSend.Msg.to(phone, text).type("reschedule").proactive()
+                  .transactionUuid(trxUuid).media(photoPath, "image/jpeg", "jadwal-ulang.jpg"),
+            null,
+            () -> {
+               Toast.makeText(this, why + " — kirim pemberitahuan dari WhatsApp HP ini.", 1).show();
+               WaShare.sendPhotoWithCaption(this, custName, phone, photoPath, text);
+            });
    }
 
    private void showPostponeSchedulePicker(Transaction t) {
@@ -5564,7 +5602,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                      Toast.makeText(this, okMsgF, 1).show();
                      dialog.dismiss();
                      SyncScheduler.syncNow(this.getApplicationContext());
-                     this.afterPostponeWa(safe(t.getCustomerName()), waF, photoPath);
+                     this.afterPostponeWa(safe(t.getCustomerName()), trxUuid, waF, photoPath);
                      this.loadData();
                   } else {
                      Toast.makeText(this, errMsgF, 1).show();
@@ -5710,7 +5748,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                      Toast.makeText(this, okMsgF, 1).show();
                      dialog.dismiss();
                      SyncScheduler.syncNow(this.getApplicationContext());
-                     this.afterPostponeWa(safe(strJson(q, "name")), waF, photoPath);
+                     this.afterPostponeWa(safe(strJson(q, "name")), trxUuid, waF, photoPath);
                      this.loadOtherDevices();
                   } else {
                      Toast.makeText(this, errMsgF, 1).show();

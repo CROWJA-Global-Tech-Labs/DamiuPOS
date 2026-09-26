@@ -322,7 +322,17 @@ public class OrderInboxActivity extends AppCompatActivity {
         o.setSenderPhone(phone);
     }
 
+    /** Balas lewat WA Bridge server dulu (akun dipilih server sesuai prioritas — akun yang sudah
+     *  2 arah dengan pengirim ini diutamakan); Bridge gagal → buka chat WhatsApp di HP seperti dulu. */
     private void launchWaChat(OrderInbox o, String normalizedPhone, String template) {
+        com.crowja.damiupos.wa.WaBridgeSend.sendOrFallback(this,
+                com.crowja.damiupos.wa.WaBridgeSend.Msg.to(normalizedPhone, template)
+                        .customerId(o.getCustomerId()),
+                () -> markReplied(o),
+                () -> launchWaChatManual(o, normalizedPhone, template));
+    }
+
+    private void launchWaChatManual(OrderInbox o, String normalizedPhone, String template) {
         String url = "https://wa.me/" + normalizedPhone
                 + "?text=" + Uri.encode(template);
         Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));

@@ -232,7 +232,12 @@ public class PromoCustomersActivity extends AppCompatActivity {
             String link = res.isNull("link") ? null : res.optString("link", null);
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
-                openWa(r.phone, text, link);
+                // WA Bridge server dulu (akun dipilih server sesuai prioritas); gagal → WhatsApp HP.
+                com.crowja.damiupos.wa.WaBridgeSend.sendOrFallback(this,
+                        com.crowja.damiupos.wa.WaBridgeSend.Msg.to(r.phone, text)
+                                .type("intro").proactive().customerUuid(r.uuid),
+                        this::reloadCohort,
+                        () -> openWa(r.phone, text, link));
                 reloadCohort();
             });
         }).start();

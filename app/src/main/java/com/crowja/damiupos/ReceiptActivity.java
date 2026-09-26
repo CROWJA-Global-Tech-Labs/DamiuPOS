@@ -254,8 +254,11 @@ public class ReceiptActivity extends AppCompatActivity {
         // Selain itu: langsung ke Beranda ("Selesai").
         findViewById(R.id.btnDone).setOnClickListener(v -> {
             if (deferCustomerSend) {
-                if (manualSendOnDone[0]) sendStrukWithTracking();
-                finish();
+                // Kirim lewat WA Bridge dulu → layar ditutup SESUDAH hasilnya diketahui (sukses, atau
+                // jalur manual WhatsApp sudah diluncurkan) — menutup lebih awal membuat fallback
+                // manual tak punya layar untuk meluncurkan WhatsApp.
+                if (manualSendOnDone[0]) sendStrukWithTracking(this::finish);
+                else finish();
             } else {
                 goMain();
             }
@@ -1477,11 +1480,27 @@ public class ReceiptActivity extends AppCompatActivity {
         // chat WhatsApp pelanggan itu (lewat extra "jid") → TIDAK perlu memilih kontak; struk masuk
         // ke kotak kirim chat-nya, staf tinggal menekan "Kirim". (WhatsApp tidak mengizinkan menekan
         // "Kirim" otomatis lewat intent demi anti-spam, jadi satu ketukan tetap dilakukan staf.)
-        final Uri uri = prepareReceiptImageUri();
+        final File imageFile = prepareReceiptImageFile();
+        final Uri uri = imageFile != null ? receiptFileUri(imageFile) : null;
         if (uri == null) {
             Toast.makeText(this, "Gambar struk belum siap", Toast.LENGTH_SHORT).show();
             return;
         }
+        // WA Bridge server DULU (gambar struk + caption singkat, akun dipilih server sesuai
+        // prioritas); gagal → share gambar ke WhatsApp HP seperti dulu.
+        String phone = getIntent().getStringExtra(EXTRA_CUSTOMER_PHONE);
+        String receiptNo = getIntent().getStringExtra(EXTRA_RECEIPT_NO);
+        String imgCaption = "Struk pembelian Anda"
+                + (receiptNo != null && !receiptNo.isEmpty() ? " (" + receiptNo + ")" : "")
+                + ". Terima kasih 🙏";
+        com.crowja.damiupos.wa.WaBridgeSend.sendOrFallback(this,
+                strukMsg(phone, imgCaption).media(imageFile.getAbsolutePath(), "image/png", "struk.png"),
+                null,
+                () -> shareReceiptImageViaPhone(uri));
+    }
+
+    /** Jalur HP lama tab "Gambar": share PNG struk langsung ke chat WhatsApp pelanggan (jid). */
+    private void shareReceiptImageViaPhone(Uri uri) {
         Intent send = new Intent(Intent.ACTION_SEND);
         send.setType("image/png");
         send.putExtra(Intent.EXTRA_STREAM, uri);
@@ -1555,6 +1574,13 @@ public class ReceiptActivity extends AppCompatActivity {
     }
 
     private Uri prepareReceiptImageUri() {
+        File file = prepareReceiptImageFile();
+        return file != null ? receiptFileUri(file) : null;
+    }
+
+    /** Gambar struk (PNG) di penyimpanan app — dipakai share intent (lewat FileProvider) maupun
+     *  kirim lewat WA Bridge (dibaca langsung). Null + toast bila gagal disimpan. */
+    private File prepareReceiptImageFile() {
         try {
             Bitmap bitmap = captureView(receiptCard);
             File file = new File(getExternalFilesDir("receipts"),
@@ -1563,10 +1589,20 @@ public class ReceiptActivity extends AppCompatActivity {
             FileOutputStream fos = new FileOutputStream(file);
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
             fos.close();
-            return FileProvider.getUriForFile(this,
-                    getApplicationContext().getPackageName() + ".fileprovider", file);
+            return file;
         } catch (IOException e) {
             Toast.makeText(this, "Gagal menyimpan struk: " + e.getMessage(),
+                    Toast.LENGTH_LONG).show();
+            return null;
+        }
+    }
+
+    private Uri receiptFileUri(File file) {
+        try {
+            return FileProvider.getUriForFile(this,
+                    getApplicationContext().getPackageName() + ".fileprovider", file);
+        } catch (Exception e) {
+            Toast.makeText(this, "Gagal menyiapkan struk: " + e.getMessage(),
                     Toast.LENGTH_LONG).show();
             return null;
         }
@@ -2113,16 +2149,50 @@ public class ReceiptActivity extends AppCompatActivity {
      * Fallback: chooser sistem. Dipanggil dari tombol akhir struk penjualan.
      */
     private void sendStrukWithTracking() {
+        sendStrukWithTracking(null);
+    }
+
+    /**
+     * @param after dijalankan sesudah pengiriman selesai diputuskan (terkirim via Bridge, atau jalur
+     *              HP sudah dijalankan) — dipakai tombol akhir untuk menutup layar. Boleh null.
+     */
+    private void sendStrukWithTracking(@androidx.annotation.Nullable Runnable after) {
         // Tunggu keputusan kampanye dari server bila fetch-nya masih jalan — pesan yang TERKIRIM ke
         // pelanggan tak boleh memakai cermin lokal hanya karena staf menekan Kirim beberapa ratus
         // milidetik lebih cepat. Tidak memblokir: aksinya diantrekan lalu dijalankan ulang.
         if (!serverCampaignsSettled) {
-            withServerCampaigns(this::sendStrukWithTracking);
+            withServerCampaigns(() -> sendStrukWithTracking(after));
             return;
         }
         String caption = composeTrackingCaption(getIntent().getStringExtra(EXTRA_CUSTOMER_NAME));
         String phone = getIntent().getStringExtra(EXTRA_CUSTOMER_PHONE);
 
+        // WA Bridge server DULU — akun pengirim dipilih server sesuai prioritas (2 arah → akun
+        // perangkat → akun pengirim cabang → cadangan). Bridge gagal/tak terjangkau → jalur HP lama
+        // (gateway Aksesibilitas bila aktif, lalu intent manual) tetap jalan sebagai jatuhan.
+        com.crowja.damiupos.wa.WaBridgeSend.sendOrFallback(this, strukMsg(phone, caption),
+                after,
+                () -> {
+                    sendStrukWithTrackingViaPhone(caption, phone);
+                    if (after != null) after.run();
+                });
+    }
+
+    /** Pesan struk untuk {@link com.crowja.damiupos.wa.WaBridgeSend} — bawa pelanggan & transaksi
+     *  supaya server bisa memilih akun yang sudah 2 arah / akun perangkat yang ditugaskan. */
+    private com.crowja.damiupos.wa.WaBridgeSend.Msg strukMsg(String phone, String text) {
+        com.crowja.damiupos.wa.WaBridgeSend.Msg m = com.crowja.damiupos.wa.WaBridgeSend.Msg.to(phone, text)
+                .type("struk")
+                .customerId(getIntent().getLongExtra(EXTRA_CUSTOMER_ID, -1))
+                .transactionUuid(getIntent().getStringExtra(EXTRA_GIFT_TRX_UUID));
+        long trxId = getIntent().getLongExtra(EXTRA_GIFT_TRX_ID, -1);
+        if (trxId <= 0) trxId = loadedTransactionId;
+        return m.transactionId(trxId);
+    }
+
+    /** Jalur HP lama (sebelum WA Bridge): gateway Aksesibilitas bila diaktifkan dashboard, lalu
+     *  intent WhatsApp manual — dipakai sebagai jatuhan saat kirim lewat Bridge gagal. */
+    private void sendStrukWithTrackingViaPhone(String caption, String phone) {
         // Dashboard bisa mematikan pratinjau teks & meminta gateway auto-kirim langsung — tapi
         // cuma kalau bridge WA server benar-benar terhubung (lihat checkWaBridge). Kalau bridge
         // putus, atau gateway gagal/tak tersedia, alur intent manual di bawah tetap jalan sebagai
