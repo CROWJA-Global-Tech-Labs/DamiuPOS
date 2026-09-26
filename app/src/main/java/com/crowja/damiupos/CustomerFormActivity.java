@@ -13,7 +13,6 @@ import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
-import android.provider.MediaStore;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.TextView;
@@ -25,7 +24,6 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import androidx.core.content.FileProvider;
 import androidx.exifinterface.media.ExifInterface;
 
 import com.crowja.damiupos.db.CustomerDao;
@@ -40,7 +38,6 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.Locale;
-import com.crowja.damiupos.util.CameraIntents;
 
 public class CustomerFormActivity extends AppCompatActivity {
 
@@ -585,8 +582,6 @@ public class CustomerFormActivity extends AppCompatActivity {
     }
 
     private void takeLocationPhoto(LocationRow row) {
-        Intent takePictureIntent = CameraIntents.preferBackCamera(new Intent(MediaStore.ACTION_IMAGE_CAPTURE));
-        if (takePictureIntent.resolveActivity(getPackageManager()) == null) return;
         File photoFile;
         try {
             photoFile = createLocationImageFile();
@@ -594,11 +589,9 @@ public class CustomerFormActivity extends AppCompatActivity {
             Toast.makeText(this, "Gagal membuat file foto", Toast.LENGTH_SHORT).show();
             return;
         }
-        Uri photoURI = FileProvider.getUriForFile(this,
-                getApplicationContext().getPackageName() + ".fileprovider", photoFile);
-        takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoURI);
+        // Kamera dalam-aplikasi: pasti kamera belakang + zoom terkecil (wide bila HP punya).
         pendingPhotoRow = row;
-        startActivityForResult(takePictureIntent, REQUEST_CAMERA_LOCATION);
+        startActivityForResult(WideCaptureActivity.intent(this, photoFile), REQUEST_CAMERA_LOCATION);
     }
 
     private File createLocationImageFile() throws IOException {
@@ -779,23 +772,12 @@ public class CustomerFormActivity extends AppCompatActivity {
             return;
         }
 
-        Intent takePictureIntent = CameraIntents.preferBackCamera(new Intent(MediaStore.ACTION_IMAGE_CAPTURE));
-        if (takePictureIntent.resolveActivity(getPackageManager()) != null) {
-            File photoFile = null;
-            try {
-                photoFile = createImageFile();
-            } catch (IOException e) {
-                Toast.makeText(this, "Gagal membuat file foto", Toast.LENGTH_SHORT).show();
-                return;
-            }
-
-            if (photoFile != null) {
-                Uri photoURI = FileProvider.getUriForFile(this,
-                        getApplicationContext().getPackageName() + ".fileprovider",
-                        photoFile);
-                takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoURI);
-                startActivityForResult(takePictureIntent, REQUEST_CAMERA);
-            }
+        File photoFile;
+        try {
+            photoFile = createImageFile();
+        } catch (IOException e) {
+            Toast.makeText(this, "Gagal membuat file foto", Toast.LENGTH_SHORT).show();
+            return;
         }
     }
 
@@ -850,6 +832,9 @@ public class CustomerFormActivity extends AppCompatActivity {
                 Toast.makeText(this, "Gagal menyimpan foto", Toast.LENGTH_SHORT).show();
             }
         } else if (requestCode == REQUEST_PICK_MAP && resultCode == RESULT_OK && data != null) {
+        // Kamera dalam-aplikasi: pasti kamera belakang + zoom terkecil (wide bila HP punya) —
+        // kamera sistem lewat intent tak bisa dipaksa lensa/zoom-nya.
+        startActivityForResult(WideCaptureActivity.intent(this, photoFile), REQUEST_CAMERA);
             // Arahkan hasil picker ke BARIS yang meluncurkannya (multi-lokasi).
             if (pendingMapRow != null && locationRows.contains(pendingMapRow)) {
                 pendingMapRow.lat = data.getDoubleExtra(MapPickerActivity.EXTRA_LATITUDE, 0);
