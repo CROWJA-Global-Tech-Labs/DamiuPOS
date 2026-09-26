@@ -126,14 +126,21 @@ public final class DeliveryEditDialog {
         btnAddProduct.setOnClickListener(v -> showAddProductPicker(act, dbh, rowsContainer, rows));
 
         final TextView ongkirLabel = new TextView(act);
-        ongkirLabel.setText("Ongkir:");
+        // Ongkir PER GALON: angka yang diisi = TARIF per galon (dikali jumlah galon baru di server);
+        // kosong = tarif lama tetap, total ongkir ikut jumlah galon hasil edit.
+        final boolean perGalon = isPerGalon(t);
+        java.text.NumberFormat nfo = java.text.NumberFormat.getInstance(new java.util.Locale("id", "ID"));
+        ongkirLabel.setText(perGalon
+                ? "Ongkir per galon (sekarang Rp " + nfo.format(Math.round(t.getOngkir())) + "/galon):"
+                : "Ongkir total" + (t.getOngkir() > 0 ? " (sekarang Rp " + nfo.format(Math.round(t.getOngkir())) + ")" : "") + ":");
         ongkirLabel.setTextSize(13f);
         ongkirLabel.setPadding(0, dp(act, 14), 0, 0);
         root.addView(ongkirLabel);
 
         final EditText ongkir = new EditText(act);
         ongkir.setInputType(InputType.TYPE_CLASS_NUMBER);
-        ongkir.setHint("Kosongkan jika ongkir tidak berubah");
+        ongkir.setHint(perGalon ? "Kosongkan = tarif tetap, dikali jumlah galon baru"
+                : "Kosongkan jika ongkir tidak berubah");
         root.addView(ongkir);
 
         final TextView kembaliLabel = new TextView(act);
@@ -214,7 +221,7 @@ public final class DeliveryEditDialog {
                 // Tinjau hasil AKHIR pesanan → tampilkan dulu untuk dikonfirmasi SEBELUM benar-benar
                 // mengirim (edit langsung tak bisa "dibatalkan" setelah tersimpan di server, jadi
                 // staf harus melihat rinciannya lebih dulu).
-                String summary = buildFinalReviewSummary(liveRows, fOngkirVal, fKb, n);
+                String summary = buildFinalReviewSummary(t, liveRows, fOngkirVal, fKb, n);
                 new AlertDialog.Builder(act)
                         .setTitle("Tinjau Pesanan")
                         .setMessage(summary)
@@ -237,7 +244,12 @@ public final class DeliveryEditDialog {
      * Tinjauan pesanan HASIL AKHIR (bukan daftar perubahan) untuk popup konfirmasi sebelum kirim:
      * tiap baris item + subtotalnya, ongkir, total, galon kembali aktual, alasan (bila diisi).
      */
-    private static String buildFinalReviewSummary(List<EditRow> liveRows, Double ongkirVal,
+    /** Order ini memakai ongkir PER GALON (kolom ongkir = tarif per galon)? */
+    static boolean isPerGalon(Transaction t) {
+        return "per_galon".equals(t.getOngkirType()) && t.getOngkir() > 0;
+    }
+
+    private static String buildFinalReviewSummary(Transaction t, List<EditRow> liveRows, Double ongkirVal,
                                                     int kb, String reason) {
         java.text.NumberFormat nf = java.text.NumberFormat.getInstance(new java.util.Locale("id", "ID"));
         StringBuilder sb = new StringBuilder();
@@ -254,16 +266,24 @@ public final class DeliveryEditDialog {
                     .append(" = Rp ").append(nf.format(Math.round(subtotal))).append('\n');
         }
 
-        sb.append("\nOngkir: ").append(ongkirVal != null
-                ? "Rp " + nf.format(Math.round(ongkirVal)) : "tidak diubah");
-
-        sb.append("\nTotal: Rp ").append(nf.format(Math.round(totalItems)));
-        if (ongkirVal != null) {
-            sb.append(" + Rp ").append(nf.format(Math.round(ongkirVal)))
-                    .append(" = Rp ").append(nf.format(Math.round(totalItems + ongkirVal)));
+        // Ongkir DIHITUNG ULANG seperti server: per galon = tarif × jumlah galon baru (tarif lama bila
+        // kolom dikosongkan); borongan = angka yang diisi, atau nilai lama.
+        double galonNew = 0;
+        for (EditRow r : liveRows) galonNew += parseNonNegOr(r.etQty.getText().toString(), 0);
+        double ongkirTotal;
+        if (isPerGalon(t)) {
+            double rate = ongkirVal != null ? ongkirVal : t.getOngkir();
+            ongkirTotal = rate * galonNew;
+            sb.append("\nOngkir: Rp ").append(nf.format(Math.round(rate))).append(" × ").append(fmtQty(galonNew))
+                    .append(" galon = Rp ").append(nf.format(Math.round(ongkirTotal)));
         } else {
-            sb.append(" (+ ongkir, belum termasuk — tak diubah)");
+            ongkirTotal = ongkirVal != null ? ongkirVal : t.getOngkir();
+            sb.append("\nOngkir: Rp ").append(nf.format(Math.round(ongkirTotal)))
+                    .append(ongkirVal != null ? "" : " (tetap)");
         }
+        sb.append("\nTotal: Rp ").append(nf.format(Math.round(totalItems)))
+                .append(" + Rp ").append(nf.format(Math.round(ongkirTotal)))
+                .append(" = Rp ").append(nf.format(Math.round(totalItems + ongkirTotal)));
 
         sb.append("\n\nGalon Kembali Aktual: ").append(kb);
         if (!reason.isEmpty()) {
@@ -396,7 +416,8 @@ public final class DeliveryEditDialog {
                         arr.put(o);
                     }
                     body.put("items", arr);
-                    if (ongkir != null) body.put("ongkir", ongkir);
+                    // Per galon: angka yang diisi = TARIF → "ongkir_rate" (jenis tetap per_galon di server).
+                    if (ongkir != null) body.put(isPerGalon(t) ? "ongkir_rate" : "ongkir", ongkir);
                     body.put("jual_return_qty", kembali);
                     if (!reason.isEmpty()) body.put("reason", reason);
                     if (uname != null && !uname.isEmpty()) body.put("requester_name", uname);
