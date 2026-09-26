@@ -518,10 +518,19 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 // digabung jadi satu ketukan, mustahil melacak tanpa ikut menyembunyikan.
                 "  .leye{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:15px;background:#f1f5f9;font-size:14px;flex:0 0 auto;}\n" +
                 "  .lchip.off .leye{background:#e2e8f0;}\n" +
+                // Badge slug produk (popup pin) + baris filter centang produk di bawah peta.
+                "  .pbadges{margin-top:4px;}\n" +
+                "  .pb{display:inline-block;font-size:11px;font-weight:bold;padding:2px 8px;border-radius:10px;margin:2px 4px 0 0;}\n" +
+                "  #pfilter{position:fixed;left:8px;right:72px;bottom:24px;z-index:1000;overflow-x:auto;white-space:nowrap;display:none;}\n" +
+                "  .pchip{display:inline-flex;align-items:center;gap:6px;background:#fff;border-radius:18px;padding:8px 12px;margin:3px;box-shadow:0 2px 6px rgba(0,0,0,.3);font-size:13px;font-weight:700;cursor:pointer;border:2px solid transparent;color:#1f2937;}\n" +
+                "  .pchip.on{border-color:#1565C0;background:#E3F2FD;}\n" +
+                "  .pbox{width:15px;height:15px;border-radius:4px;border:2px solid #64748b;display:inline-flex;align-items:center;justify-content:center;font-size:11px;line-height:1;color:#fff;}\n" +
+                "  .pchip.on .pbox{background:#1565C0;border-color:#1565C0;}\n" +
                 MapTiles.BRIGHT_TILE_CSS + "\n" +
                 "</style>\n</head><body>\n" +
                 "<div id='map'></div>\n" +
                 "<div id='legend'></div>\n" +
+                "<div id='pfilter'></div>\n" +
                 "<div id='btnme' onclick='goMe()' title='Posisi Saya'>&#128205;</div>\n" +
                 "<script>\n" +
                 "var pts = " + queue + ";\n" +
@@ -557,7 +566,10 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  m._p=p;\n" +
                 "  var rp = 'Rp '+Math.round(p.total||0).toLocaleString('id-ID');\n" +
                 "  var meta = escHtml(p.device_name)+' • '+(+p.galon)+' galon • '+rp;\n" +
-                "  var itemsHtml = p.items ? '<div class=\"pmeta\">'+escHtml(p.items)+'</div>' : '';\n" +
+                // Rincian produk sebagai badge slug (item_slugs dari server, sudah digabung per slug);
+                // server lama tanpa item_slugs → teks items seperti dulu.
+                "  var itemsHtml = (p.item_slugs&&p.item_slugs.length) ? slugBadgesHtml(p.item_slugs)\n" +
+                "    : (p.items ? '<div class=\"pmeta\">'+escHtml(p.items)+'</div>' : '');\n" +
                 "  var mineBadge = p.mine ? '<span class=\"badge\">Milik Saya</span>' : '';\n" +
                 // "Pesanan Terbuka" (lelang) belum diklaim — catatan indigo di popup, cermin badge
                 // "🎲 PESANAN TERBUKA" di kartu Antrian Delivery.
@@ -578,7 +590,33 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "});\n" +
                 "}\n" +
                 "buildMarkers();\n" +
-                "function visible(p){ return !hiddenDevices[p.device_uuid||'__none__']; }\n" +
+                "function visible(p){ return !hiddenDevices[p.device_uuid||'__none__'] && productOk(p); }\n" +
+                // FILTER PRODUK: centang = tampilkan HANYA order yang memuat salah satu produk tercentang
+                // (OR). Tak ada yang dicentang = semua. Digabung dengan mata perangkat di legenda.
+                "var productOn={};\n" +
+                "function anyProductOn(){ for(var k in productOn){ if(productOn[k]) return true; } return false; }\n" +
+                "function productOk(p){ if(!anyProductOn()) return true; var a=p.item_slugs||[];\n" +
+                "  for(var i=0;i<a.length;i++){ if(productOn[a[i].slug]) return true; } return false; }\n" +
+                "function textOn(bg){ var m=/^#?([0-9a-f]{6})$/i.exec(bg||''); if(!m) return '#fff';\n" +
+                "  var n=parseInt(m[1],16), l=(0.299*((n>>16)&255)+0.587*((n>>8)&255)+0.114*(n&255))/255; return l>0.65?'#1f2937':'#fff'; }\n" +
+                "function slugBadgesHtml(a){ var h='<div class=\"pbadges\">';\n" +
+                "  a.forEach(function(x){ var bg=x.color||'#64748b';\n" +
+                "    h+='<span class=\"pb\" style=\"background:'+escHtml(bg)+';color:'+textOn(bg)+'\">'+escHtml(x.slug)+' ×'+escHtml(x.qty)+'</span>'; });\n" +
+                "  return h+'</div>'; }\n" +
+                "function renderProductFilter(){\n" +
+                "  var el=document.getElementById('pfilter'); var cnt={}, col={}, order=[];\n" +
+                "  pts.forEach(function(p){ (p.item_slugs||[]).forEach(function(x){\n" +
+                "    if(!(x.slug in cnt)){ cnt[x.slug]=0; col[x.slug]=x.color||'#64748b'; order.push(x.slug); } cnt[x.slug]++; }); });\n" +
+                "  for(var k in productOn){ if(!(k in cnt)) delete productOn[k]; }\n" +
+                "  el.innerHTML=''; el.style.display=order.length>1||anyProductOn()?'block':'none';\n" +
+                "  order.forEach(function(sl){\n" +
+                "    var c=document.createElement('div'); c.className='pchip'+(productOn[sl]?' on':'');\n" +
+                "    c.innerHTML='<span class=\"pbox\">'+(productOn[sl]?'✓':'')+'</span>'\n" +
+                "      +'<span class=\"pb\" style=\"margin:0;background:'+escHtml(col[sl])+';color:'+textOn(col[sl])+'\">'+escHtml(sl)+'</span>'\n" +
+                "      +'<span>('+cnt[sl]+')</span>';\n" +
+                "    c.onclick=function(){ productOn[sl]=!productOn[sl]; renderProductFilter(); applyFilter(true); };\n" +
+                "    el.appendChild(c); });\n" +
+                "}\n" +
                 // fit=false → hanya ganti pin, tampilan peta (zoom/posisi) dibiarkan apa adanya.
                 "function applyFilter(fit){\n" +
                 "  cluster.clearLayers();\n" +
@@ -591,7 +629,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  redrawOpenDispatchLines();\n" +
                 "}\n" +
                 // Penyegaran data dari HP (setelah Ambil Alih / klaim basi) — TANPA fitBounds.
-                "function refreshData(list){ map.closePopup(); pts=list||[]; buildMarkers(); applyFilter(false); }\n" +
+                "function refreshData(list){ map.closePopup(); pts=list||[]; buildMarkers(); renderProductFilter(); applyFilter(false); }\n" +
                 // Umpan balik instan setelah klaim sukses, sebelum data segar tiba.
                 "function markClaimed(uuid){\n" +
                 "  var mine=null; for(var k=0;k<legend.length;k++){ if(legend[k].uuid===myUuid){ mine=legend[k]; break; } }\n" +
@@ -662,7 +700,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "    el.appendChild(c);\n" +
                 "  });\n" +
                 "}\n" +
-                "renderLegend();applyFilter(true);\n" +
+                "renderLegend();renderProductFilter();applyFilter(true);\n" +
                 // Posisi live datang belakangan (LiveDeviceOverlay menyegarkan tiap 25 detik) —
                 // gambar ulang legenda supaya penanda "belum ada posisi" ikut mutakhir.
                 "window.__onLiveDev=function(){ try{ renderLegend(); }catch(e){} };\n" +
