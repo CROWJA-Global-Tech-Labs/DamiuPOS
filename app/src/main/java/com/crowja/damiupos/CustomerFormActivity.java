@@ -779,6 +779,9 @@ public class CustomerFormActivity extends AppCompatActivity {
             Toast.makeText(this, "Gagal membuat file foto", Toast.LENGTH_SHORT).show();
             return;
         }
+        // Kamera dalam-aplikasi: pasti kamera belakang + zoom terkecil (wide bila HP punya) —
+        // kamera sistem lewat intent tak bisa dipaksa lensa/zoom-nya.
+        startActivityForResult(WideCaptureActivity.intent(this, photoFile), REQUEST_CAMERA);
     }
 
     private File createImageFile() throws IOException {
@@ -832,9 +835,6 @@ public class CustomerFormActivity extends AppCompatActivity {
                 Toast.makeText(this, "Gagal menyimpan foto", Toast.LENGTH_SHORT).show();
             }
         } else if (requestCode == REQUEST_PICK_MAP && resultCode == RESULT_OK && data != null) {
-        // Kamera dalam-aplikasi: pasti kamera belakang + zoom terkecil (wide bila HP punya) —
-        // kamera sistem lewat intent tak bisa dipaksa lensa/zoom-nya.
-        startActivityForResult(WideCaptureActivity.intent(this, photoFile), REQUEST_CAMERA);
             // Arahkan hasil picker ke BARIS yang meluncurkannya (multi-lokasi).
             if (pendingMapRow != null && locationRows.contains(pendingMapRow)) {
                 pendingMapRow.lat = data.getDoubleExtra(MapPickerActivity.EXTRA_LATITUDE, 0);
