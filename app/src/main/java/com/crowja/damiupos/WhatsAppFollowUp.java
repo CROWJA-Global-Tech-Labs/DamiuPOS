@@ -68,6 +68,17 @@ public final class WhatsAppFollowUp {
      */
     public static void open(Context ctx, Customer c, SettingsDao settingsDao,
                             CustomerDao customerDao, boolean markFollowedUp, boolean withPantun) {
+        open(ctx, c, settingsDao, customerDao, markFollowedUp, withPantun, null);
+    }
+
+    /**
+     * @param afterBridgeSent dijalankan (UI thread) sesudah pesan TERKIRIM lewat WA Bridge — layar
+     *        tak pernah meninggalkan aplikasi di jalur itu, jadi daftar yang biasanya di-refresh di
+     *        onResume (saat kembali dari WhatsApp) perlu di-refresh sendiri. Boleh null.
+     */
+    public static void open(Context ctx, Customer c, SettingsDao settingsDao,
+                            CustomerDao customerDao, boolean markFollowedUp, boolean withPantun,
+                            Runnable afterBridgeSent) {
         String phone = c != null ? c.getPhone() : null;
         if (phone == null || phone.isEmpty()) {
             Toast.makeText(ctx, "Pelanggan belum memiliki nomor WhatsApp",
@@ -134,6 +145,24 @@ public final class WhatsAppFollowUp {
             msg = msg + "\n\nYA, saya pesan. Klik link berikut: " + quickOrderLink;
         }
 
+        // Kirim lewat WA Bridge server dulu (akun dipilih server sesuai prioritas: 2 arah → akun
+        // perangkat → akun pengirim cabang → cadangan); Bridge gagal → buka chat wa.me seperti dulu.
+        final String finalMsg = msg;
+        final String finalNormalized = normalized;
+        com.crowja.damiupos.wa.WaBridgeSend.sendOrFallback(ctx,
+                com.crowja.damiupos.wa.WaBridgeSend.Msg.to(phone, finalMsg)
+                        .type("followup").proactive().customerId(c.getId()),
+                () -> {
+                    // Catat: pelanggan ini di-follow-up hari ini (untuk laporan harian).
+                    if (markFollowedUp) customerDao.markFollowedUp(c.getId());
+                    if (afterBridgeSent != null) afterBridgeSent.run();
+                },
+                () -> openManual(ctx, c, customerDao, markFollowedUp, finalNormalized, finalMsg));
+    }
+
+    /** Jalur manual lama: buka chat wa.me dengan pesan terisi (staf menekan Kirim sendiri). */
+    private static void openManual(Context ctx, Customer c, CustomerDao customerDao,
+                                   boolean markFollowedUp, String normalized, String msg) {
         try {
             Intent i = new Intent(Intent.ACTION_VIEW,
                     Uri.parse("https://wa.me/" + normalized + "?text=" + Uri.encode(msg)));

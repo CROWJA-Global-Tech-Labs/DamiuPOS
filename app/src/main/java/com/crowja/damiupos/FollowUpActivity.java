@@ -581,6 +581,6 @@ public class FollowUpActivity extends AppCompatActivity {
                     "Pantun belum siap (paket belum tersinkron / Nama Merek belum diatur) — dikirim tanpa pantun.",
                     Toast.LENGTH_LONG).show();
         }
-        WhatsAppFollowUp.open(this, c, settingsDao, customerDao);
+        WhatsAppFollowUp.open(this, c, settingsDao, customerDao, true, true, this::loadData);
     }
 }

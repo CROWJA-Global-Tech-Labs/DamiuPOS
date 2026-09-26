@@ -491,6 +491,18 @@ public class SyncApi {
         return get(cfg.getBaseUrl() + "/api/wa-bridge/status", cfg.getToken());
     }
 
+    /**
+     * Kirim WA ke pelanggan lewat FREZ WA Bridge server — akun pengirim dipilih SERVER dengan urutan
+     * prioritas yang sama dengan auto-send (2 arah → akun perangkat → akun pengirim cabang → cadangan
+     * {@code fallback_priority}). Body: {@code {to, text, type?, kind?, customer_uuid?,
+     * transaction_uuid?, idempotency_key?, media_base64?, mimetype?, file_name?}}. Balas
+     * {@code {"ok":true,"account":"RAFI",...}}; gagal → 422 {@code {"ok":false,"error":{code,message}}}
+     * (dilempar sebagai {@link SyncException}). Dipakai {@link com.crowja.damiupos.wa.WaBridgeSend}.
+     */
+    public JSONObject waBridgeSend(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/wa-bridge/send", body, cfg.getToken());
+    }
+
     private JSONObject get(String url, String token) throws Exception {
         Request.Builder b = new Request.Builder()
                 .url(url)

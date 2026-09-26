@@ -275,16 +275,24 @@ public final class OnlineTasks {
                 LocationService.reconfigure(ctx);
                 break;
             case "wa_send": {
-                // Gateway WhatsApp (Opsi A): buka chat wa.me nomor tujuan dengan pesan terisi lalu
-                // tekan "Kirim" otomatis via Aksesibilitas. WhatsApp dibawa ke foreground sesaat.
+                // Kirim lewat WA Bridge server DULU (akun dipilih server sesuai prioritas); Bridge
+                // gagal → Gateway WhatsApp (Opsi A): buka chat wa.me nomor tujuan dengan pesan
+                // terisi lalu tekan "Kirim" otomatis via Aksesibilitas (WhatsApp dibawa ke
+                // foreground sesaat), atau notifikasi sekali-ketuk bila itu pun tak bisa.
                 String phone = payload != null ? payload.optString("phone", "") : "";
                 String text = payload != null ? payload.optString("text", "") : "";
                 // Pesan basi jangan dikirim: HP mati/offline seharian lalu menyala malam hari tak
                 // boleh tiba-tiba mengirim "galon sudah kami antar ya" dari pagi tadi.
                 long age = ageMs(createdAt, serverTime);
-                String status = age > WA_SEND_TTL_MS
-                        ? "expired_ttl"
-                        : com.crowja.damiupos.wa.WaGateway.send(ctx, phone, text);
+                String status;
+                if (age > WA_SEND_TTL_MS) {
+                    status = "expired_ttl";
+                } else if (com.crowja.damiupos.wa.WaBridgeSend.sendBlocking(ctx,
+                        com.crowja.damiupos.wa.WaBridgeSend.Msg.to(phone, text)).ok) {
+                    status = com.crowja.damiupos.wa.WaGateway.SENT;
+                } else {
+                    status = com.crowja.damiupos.wa.WaGateway.send(ctx, phone, text);
+                }
                 ackCommand(api, id, status);
                 break;
             }

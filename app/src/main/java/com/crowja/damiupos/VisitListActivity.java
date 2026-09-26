@@ -345,7 +345,7 @@ public class VisitListActivity extends AppCompatActivity {
         try {
             // Stempel follow-up hanya untuk salinan MILIK perangkat ini — syncUpdate pada salinan
             // perangkat lain men-dirty barisnya dan push LWW bisa menimpa edit pemiliknya.
-            WhatsAppFollowUp.open(this, c, settingsDao, customerDao, c.isMine());
+            WhatsAppFollowUp.open(this, c, settingsDao, customerDao, c.isMine(), true, this::reload);
         } finally {
             c.setCreatedAt(prevCreatedAt);   // pulihkan tanggal daftar (dipakai baris "terdaftar …")
         }
