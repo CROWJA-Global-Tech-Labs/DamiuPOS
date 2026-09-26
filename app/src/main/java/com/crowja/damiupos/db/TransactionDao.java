@@ -113,6 +113,7 @@ public class TransactionDao {
                 values.put(DatabaseHelper.COL_DELIVERY_STATUS, Transaction.DELIVERY_PENDING);
             }
             values.put(DatabaseHelper.COL_DELIVERY_QUEUED_AT, DatabaseHelper.nowIso());
+            values.put(DatabaseHelper.COL_ORDERED_AT, DatabaseHelper.nowIso());
             // Token link lacak publik (32 hex) → {base}/track/{token}, dikirim ke
             // pelanggan agar bisa memantau progres + lokasi kurir saat diantar.
             values.put(DatabaseHelper.COL_DELIVERY_TOKEN,
@@ -488,6 +489,7 @@ public class TransactionDao {
                 t.setDeliveryStatus(getStr(c, DatabaseHelper.COL_DELIVERY_STATUS));
                 t.setDeliveryQueuedAt(getStr(c, DatabaseHelper.COL_DELIVERY_QUEUED_AT));
                 t.setDeliveryTertundaAt(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_AT));
+                t.setOrderedAt(getStr(c, DatabaseHelper.COL_ORDERED_AT));
                 t.setDeliveryTertundaResumeAt(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT));
                 t.setDeliveryToken(getStr(c, DatabaseHelper.COL_DELIVERY_TOKEN));
                 t.setDeliveryDestName(getStr(c, DatabaseHelper.COL_DELIVERY_DEST_NAME));
@@ -619,6 +621,7 @@ public class TransactionDao {
                 t.setDeliveryStatus(getStr(c, DatabaseHelper.COL_DELIVERY_STATUS));
                 t.setDeliveryQueuedAt(getStr(c, DatabaseHelper.COL_DELIVERY_QUEUED_AT));
                 t.setDeliveryTertundaAt(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_AT));
+                t.setOrderedAt(getStr(c, DatabaseHelper.COL_ORDERED_AT));
                 t.setDeliveryTertundaResumeAt(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT));
                 // "Pesanan Terbuka" MASIH terbuka = kolom terisi DAN belum diklaim (delivery_device_uuid
                 // masih kosong) — kolom mentahnya sendiri PERMANEN (server tak pernah meng-null-kannya

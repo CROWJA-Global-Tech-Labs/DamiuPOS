@@ -85,6 +85,7 @@ public class Transaction {
     private String deliveryStatus;
     private String deliveryQueuedAt;
     private String deliveryTertundaAt;      // saat order ditandai TERTUNDA
+    private String orderedAt;               // saat order ASLINYA dibuat (tak bergeser saat ditunda)
     private String deliveryTertundaResumeAt; // jadwal lanjut otomatis (Pesanan Tertunda)
     /** "Pesanan Terbuka" (lelang): non-null = order TANPA perangkat tujuan spesifik, staf perangkat
      *  mana pun boleh mengklaimnya. Server-authoritative (pull-only) & PERMANEN — tak pernah
@@ -265,6 +266,9 @@ public class Transaction {
 
     public String getDeliveryQueuedAt() { return deliveryQueuedAt; }
     public void setDeliveryQueuedAt(String v) { this.deliveryQueuedAt = v; }
+
+    public String getOrderedAt() { return orderedAt; }
+    public void setOrderedAt(String v) { this.orderedAt = v; }
 
     public String getDeliveryTertundaAt() { return deliveryTertundaAt; }
     public void setDeliveryTertundaAt(String v) { this.deliveryTertundaAt = v; }

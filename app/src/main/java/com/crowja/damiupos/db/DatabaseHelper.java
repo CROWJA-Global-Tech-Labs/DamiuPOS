@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 97;
+    private static final int DATABASE_VERSION = 98;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -284,6 +284,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     /** Alasan menjadwalkan ulang (opsional) — dipilih dari quick-action (Pesanan overload/Cuaca
      *  buruk/Kecelakaan) atau ditulis bebas, HP maupun web. Cermin delivery_priority_reason. */
     public static final String COL_DELIVERY_TERTUNDA_REASON = "delivery_tertunda_reason";
+    /** Waktu pesanan ASLINYA dibuat (waktu lokal). Diisi saat insert di HP, lalu ditimpa nilai
+     *  server (pull-only: created_at server) — BEDA dari tanggal, yang ikut bergeser saat ditunda. */
+    public static final String COL_ORDERED_AT = "ordered_at";
     /** "Pesanan Terbuka" (open-dispatch): order delivery TANPA perangkat tujuan spesifik — staf
      *  perangkat mana pun boleh mengklaimnya. Non-null = sedang/pernah terbuka; PERMANEN (tak pernah
      *  di-null-kan lagi setelah diklaim) supaya setiap perangkat yang sempat menariknya tetap
@@ -616,6 +619,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_DELIVERY_TERTUNDA_AT + " TEXT, " +
                     COL_DELIVERY_TERTUNDA_RESUME_AT + " TEXT, " +
                     COL_DELIVERY_TERTUNDA_REASON + " TEXT, " +
+                    COL_ORDERED_AT + " TEXT, " +
                     COL_DELIVERY_DONE_AT + " TEXT, " +
                     COL_DELIVERY_STARTED_AT + " TEXT, " +
                     COL_DELIVERY_STARTED_CLEARED_AT + " TEXT, " +
@@ -1716,6 +1720,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         if (oldVersion < 97) {
             // Alasan Jadwalkan Ulang (popup + quick-action Pesanan overload/Cuaca buruk/Kecelakaan).
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_TERTUNDA_REASON + " TEXT");
+        }
+        if (oldVersion < 98) {
+            // "🕐 Dipesan …" di kartu antrean: waktu pesanan asli (lihat COL_ORDERED_AT). Baris lama
+            // terisi saat pull berikutnya membawanya; sampai itu kartu memakai tanggal.
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_ORDERED_AT + " TEXT");
         }
     }
 

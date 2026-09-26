@@ -1564,6 +1564,37 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    /** " · 🧾 KODE-DDMMYY-N" untuk baris meta kartu antrean — ID transaksi yang sama dengan di
     *  struk pelanggan & dashboard. Kosong bila order tak punya nomor (bukan JUAL / baris lama). */
+   /**
+    * " · 🕐 Sen 20/09 08:15" — kapan pesanan ini ASLINYA dibuat (ordered_at: nilai server
+    * created_at, atau waktu insert lokal sebelum tersinkron). Sengaja BUKAN tanggal, yang ikut
+    * digeser ke jadwal lanjut saat pesanan ditunda. Cermin "🕐 Dipesan …" di kartu antrean web.
+    */
+   static String orderedSuffix(Transaction t) {
+      String v = t.getOrderedAt();
+      if ((v == null || v.isEmpty()) && !Transaction.DELIVERY_TERTUNDA.equals(t.getDeliveryStatus())) {
+         v = t.getTanggal();   // baris lama belum membawa ordered_at; tanggal belum pernah digeser
+      }
+      return orderedSuffix(v);
+   }
+
+   /** Versi mentah: menerima waktu lokal "yyyy-MM-dd HH:mm:ss…" ATAU ISO UTC "…T…Z" (JSON server). */
+   static String orderedSuffix(String orderedAt) {
+      if (orderedAt == null || orderedAt.length() < 19 || "null".equals(orderedAt)) return "";
+      try {
+         Date d;
+         if (orderedAt.charAt(10) == 'T') {
+            SimpleDateFormat iso = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US);
+            if (orderedAt.endsWith("Z")) iso.setTimeZone(TimeZone.getTimeZone("UTC"));
+            d = iso.parse(orderedAt.substring(0, 19));
+         } else {
+            d = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).parse(orderedAt.substring(0, 19));
+         }
+         return d == null ? "" : " · 🕐 " + new SimpleDateFormat("EEE dd/MM HH:mm", new Locale("id", "ID")).format(d);
+      } catch (Exception e) {
+         return "";
+      }
+   }
+
    static String receiptSuffix(String receiptNo) {
       if (receiptNo == null) return "";
       String r = receiptNo.trim();
@@ -3682,6 +3713,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (!deviceLabel.isEmpty()) meta.append("📱 ").append(deviceLabel);
       meta.append(meta.length() > 0 ? " · " : "").append(o.optInt("galon", 0)).append(" galon");
       meta.append(receiptSuffix(o.optString("receipt_no", "")));
+      meta.append(orderedSuffix(o.optString("ordered_at", "")));
       double ongkir = o.optDouble("ongkir", 0.0);
       String adminArea = o.optString("dest_name", "").isEmpty() || "null".equals(o.optString("dest_name", ""))
             ? (c != null ? c.getAdminArea() : "")
@@ -3696,7 +3728,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             + (t.isCustomerDataIncomplete() ? "❗ " : "") + safe(t.getCustomerName());
       long elapsedMs = elapsedMillis(t.getDeliveryQueuedAt());
       double distKm = distOrInf(t, this.myLat, this.myLng);
-      String meta = t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + receiptSuffix(t.getReceiptNo());
+      String meta = t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + receiptSuffix(t.getReceiptNo()) + orderedSuffix(t);
       Customer c = t.getCustomerId() > 0 ? this.customerDao.getById(t.getCustomerId()) : null;
       String adminArea = areaLabel(c, t);
       return new OtherQueueRow(null, t, badgeName, t.getCatatan(), meta, t.getOngkir() > 0.0,
@@ -5550,7 +5582,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       card.addView(tvName);
 
       TextView tvMeta = new TextView(this);
-      tvMeta.setText(t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + receiptSuffix(t.getReceiptNo()));
+      tvMeta.setText(t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + receiptSuffix(t.getReceiptNo()) + orderedSuffix(t));
       tvMeta.setTextSize(13f);
       tvMeta.setTextColor(-10395295);
       card.addView(tvMeta);
@@ -8196,6 +8228,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             h.jarakLabel = jarak;
             meta.append(t.getJumlahGalon()).append(" galon").append(t.wasManuallyEdited() ? " ✏️" : "").append(" · Rp ").append(DeliveryQueueActivity.formatRupiah(t.getTotalHarga()));
             meta.append(DeliveryQueueActivity.receiptSuffix(t.getReceiptNo()));
+            meta.append(DeliveryQueueActivity.orderedSuffix(t));
             h.tvMeta.setText(meta.toString());
             DeliveryQueueActivity.this.bindProductChips(h.productChips, t);
             h.tvOngkir.setVisibility(t.getOngkir() > (double)0.0F ? 0 : 8);
@@ -8455,6 +8488,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          String jarak = DeliveryQueueActivity.this.myLat == (double)0.0F && DeliveryQueueActivity.this.myLng == (double)0.0F ? null : DeliveryQueueActivity.formatJarak(DeliveryQueueActivity.distOrInf(t, DeliveryQueueActivity.this.myLat, DeliveryQueueActivity.this.myLng));
          meta.append(meta.length() > 0 ? " · " : "").append(t.getJumlahGalon()).append(" galon");
          meta.append(DeliveryQueueActivity.receiptSuffix(t.getReceiptNo()));
+         meta.append(DeliveryQueueActivity.orderedSuffix(t));
          h.tvMeta.setText(meta.toString());
          h.tvOngkir.setVisibility(t.getOngkir() > (double)0.0F ? 0 : 8);
          DeliveryQueueActivity.bindPickupOnlyBadge(h.tvPickupOnly, DeliveryQueueActivity.isPickupOnly(t));
