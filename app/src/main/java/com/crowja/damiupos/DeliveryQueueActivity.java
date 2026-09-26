@@ -132,7 +132,11 @@ import org.json.JSONObject;
 import com.crowja.damiupos.util.CameraIntents;
 
 public class DeliveryQueueActivity extends AppCompatActivity {
+   /** _id lokal order yang dibuka begitu antrean tampil — dikirim DeepLinkActivity untuk link
+    *  pesanan damiupos://pesanan?trx=<uuid> (grup eskalasi). Berlaku untuk order berjalan & tertunda. */
+   public static final String EXTRA_FOCUS_TRX_ID = "focus_trx_id";
    private static final SimpleDateFormat SDF_PARSE;
+   private long pendingFocusTrxId = -1L;
    private TransactionDao dao;
    private CustomerDao customerDao;
    private ProductDao productDao;
@@ -335,6 +339,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    protected void onCreate(Bundle savedInstanceState) {
       super.onCreate(savedInstanceState);
       this.setContentView(layout.activity_delivery_queue);
+      // Hanya pada peluncuran pertama: rotasi/rekreasi tak boleh membuka ulang popup pesanan.
+      if (savedInstanceState == null && this.getIntent() != null) {
+         this.pendingFocusTrxId = this.getIntent().getLongExtra(EXTRA_FOCUS_TRX_ID, -1L);
+      }
       if (savedInstanceState != null) {
          this.pendingProofTrxId = savedInstanceState.getLong("proof_trx_id", -1L);
          this.pendingProofRevoke = savedInstanceState.getBoolean("proof_revoke", false);
@@ -1251,6 +1259,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       lateMs = (long)lateCfg.getDeliveryMaxAgeMinutes() * 60000L;
       this.revokeLateCredit = lateCfg.isRevokeCreditLateEnabled();
       this.loadData();
+      this.openPendingFocus();
       this.loadOtherDevices();
       this.tick.postDelayed(this.ticker, 1000L);
       this.tick.postDelayed(this.strategyResortTicker, 60000L);
@@ -4940,6 +4949,52 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          intent.putExtra("output", photoURI);
          this.startActivityForResult(intent, 7402);
       }
+   }
+
+   protected void onNewIntent(Intent intent) {
+      super.onNewIntent(intent);
+      this.setIntent(intent);
+      long id = intent != null ? intent.getLongExtra(EXTRA_FOCUS_TRX_ID, -1L) : -1L;
+      if (id > 0L) {
+         this.pendingFocusTrxId = id;   // dibuka di onResume berikutnya, setelah loadData
+      }
+   }
+
+   /**
+    * Buka order dari deep link pesanan: dicari di Antrean Saya, Pesanan Terbuka, lalu Antrean
+    * Tertunda — lalu tampilkan popup detailnya (showOrderDetail, sama dgn klik kartu). Order yang
+    * tak ada di antrean mana pun (sudah selesai/dibatalkan, atau milik perangkat lain yang belum
+    * tertarik ke HP ini) cukup diberi tahu lewat Toast.
+    */
+   private void openPendingFocus() {
+      long id = this.pendingFocusTrxId;
+      if (id <= 0L) return;
+      this.pendingFocusTrxId = -1L;
+
+      Transaction t = this.findQueueTrx(id);
+      if (t == null && this.openDispatchAdapter != null) {
+         t = findById(this.openDispatchAdapter.rawData, id);
+      }
+      if (t == null) {
+         t = findById(this.dao.getTertundaQueue(), id);
+      }
+
+      if (t != null) {
+         this.scrollToOrder(t);
+         this.showOrderDetail(t);
+      } else {
+         Toast.makeText(this, "Pesanan ini tidak ada di antrean perangkat ini — mungkin sudah selesai, "
+               + "dibatalkan, atau dipegang perangkat lain.", Toast.LENGTH_LONG).show();
+      }
+   }
+
+   private static Transaction findById(List<Transaction> list, long id) {
+      if (list != null) {
+         for (Transaction t : list) {
+            if (t.getId() == id) return t;
+         }
+      }
+      return null;
    }
 
    private Transaction findQueueTrx(long trxId) {

@@ -215,6 +215,16 @@ public class TransactionDao {
         return tanggal.substring(8, 10) + tanggal.substring(5, 7) + tanggal.substring(2, 4);
     }
 
+    /** _id lokal untuk sebuah sync_uuid transaksi (deep link pesanan); -1 bila belum tersinkron. */
+    public long getIdBySyncUuid(String uuid) {
+        if (uuid == null || uuid.isEmpty()) return -1;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        try (Cursor c = db.query(DatabaseHelper.TABLE_TRANSACTIONS, new String[]{DatabaseHelper.COL_ID},
+                DatabaseHelper.COL_SYNC_UUID + "=?", new String[]{uuid}, null, null, null)) {
+            return c.moveToFirst() ? c.getLong(0) : -1;
+        }
+    }
+
     /** sync_uuid transaksi (untuk menautkan struk ke gift yang di-klaim); null bila tak ada. */
     public String getSyncUuidById(long id) {
         if (id <= 0) return null;
