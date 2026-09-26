@@ -722,6 +722,59 @@ public class CustomerFormActivity extends AppCompatActivity {
         return out;
     }
 
+    /** Kumpulan nomor yang SUDAH lolos/dikonfirmasi cek WhatsApp pra-simpan (kunci = gabungan nomor). */
+    private String waPrecheckedKey;
+
+    /**
+     * Cek nomor BARU ke WhatsApp lewat FREZ WA Bridge sebelum menyimpan. Mengembalikan true bila cek
+     * sedang berjalan (save() akan dipanggil ulang sesudahnya). Nomor TIDAK terdaftar → dialog
+     * "Perbaiki / Tetap Simpan"; tetap disimpan = pelanggan ditandai bermasalah oleh cek latar
+     * belakang, sama seperti web. Bridge tak bisa menjawab (offline, belum diatur) → tak menghalangi.
+     */
+    private boolean maybeWaPrecheck(java.util.List<String> allPhones) {
+        java.util.List<String> targets = editId == -1 ? allPhones
+                : newPhonesSince(customerDao.getById(editId), allPhones);
+        if (targets == null || targets.isEmpty()) return false;
+        String key = android.text.TextUtils.join(",", targets);
+        if (key.equals(waPrecheckedKey)) return false;
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                new com.crowja.damiupos.db.SettingsDao(com.crowja.damiupos.db.DatabaseHelper.getInstance(this)));
+        if (!cfg.isEnrolled()) return false;
+
+        final android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
+        wait.setMessage("Mengecek nomor di WhatsApp…");
+        wait.setCancelable(false);
+        wait.show();
+        final java.util.List<String> list = new java.util.ArrayList<>(targets);
+        new Thread(() -> {
+            java.util.List<String> bad = new java.util.ArrayList<>();
+            for (String p : list) {
+                if (Boolean.FALSE.equals(com.crowja.damiupos.sync.SyncApi.bridgeOnWhatsApp(cfg, p))) bad.add(p);
+            }
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                try { wait.dismiss(); } catch (Exception ignored) {}
+                waPrecheckedKey = key;
+                if (bad.isEmpty()) {
+                    save();
+                    return;
+                }
+                new AlertDialog.Builder(this)
+                        .setTitle("Nomor tidak terdaftar di WhatsApp")
+                        .setMessage("Nomor berikut TIDAK terdaftar di WhatsApp:\n\n• "
+                                + android.text.TextUtils.join("\n• ", bad)
+                                + "\n\nPeriksa lagi nomornya. Bila tetap disimpan, pelanggan ditandai bermasalah (nomor).")
+                        .setPositiveButton("Perbaiki Nomor", (d, w) -> {
+                            waPrecheckedKey = null;
+                            etTelepon.requestFocus();
+                        })
+                        .setNegativeButton("Tetap Simpan", (d, w) -> save())
+                        .show();
+            });
+        }).start();
+        return true;
+    }
+
     /** Jalankan cek WhatsApp untuk nomor-nomor ini (no-op bila kosong). Tak pernah memblokir simpan
      *  — lihat {@link com.crowja.damiupos.wa.WaNumberCheck}. */
     private void scheduleWaCheck(long customerId, java.util.List<String> phones) {
@@ -1427,6 +1480,9 @@ public class CustomerFormActivity extends AppCompatActivity {
         // bentrok, satu nomor akan me-resolve ke DUA pelanggan → ambiguitas identitas yang dicegah
         // fitur ini). "0812…" ≡ "+62 812…" ≡ "62812…" dianggap sama.
         java.util.List<String> allPhones = collectPhones(telepon);
+        // Validasi nomor WhatsApp lewat FREZ WA Bridge SEBELUM menyimpan — save() dipanggil ulang
+        // setelah cek selesai (atau langsung lanjut bila Bridge tak bisa menjawab / offline).
+        if (maybeWaPrecheck(allPhones)) return;
         if (editId == -1 && !allPhones.isEmpty()) {
             // 1) Duplikat AKTIF di database lokal (pelanggan branch-wide, semua salinan perangkat).
             for (String p : allPhones) {

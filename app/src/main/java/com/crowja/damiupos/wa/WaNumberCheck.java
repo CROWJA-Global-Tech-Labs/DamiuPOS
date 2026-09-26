@@ -55,6 +55,15 @@ public final class WaNumberCheck {
             List<String> dead = new ArrayList<>();
             for (String phone : targets) {
                 if (phone == null || phone.trim().isEmpty()) continue;
+                // FREZ WA Bridge dulu (server, satu permintaan, tanpa membuka WhatsApp di HP). Hanya
+                // bila Bridge tak bisa menjawab (offline/mati) HP mengecek sendiri lewat WhatsApp-nya.
+                Boolean viaBridge = com.crowja.damiupos.sync.SyncApi.bridgeOnWhatsApp(
+                        new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(
+                                com.crowja.damiupos.db.DatabaseHelper.getInstance(ctx))), phone);
+                if (viaBridge != null) {
+                    if (!viaBridge) dead.add(phone);
+                    continue;
+                }
                 String verdict;
                 try {
                     verdict = WaGateway.check(ctx, phone);
