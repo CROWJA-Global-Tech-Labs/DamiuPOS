@@ -4,8 +4,8 @@ import android.content.Intent;
 
 /**
  * Preferensi kamera untuk layar yang memakai KAMERA SISTEM ({@code MediaStore.ACTION_IMAGE_CAPTURE})
- * — foto rumah/lokasi pelanggan, nota pengeluaran, stok galon, kendala pengiriman, dan bukti selesai
- * pengiriman. Semuanya memotret OBJEK DI DEPAN petugas, jadi harus memakai kamera BELAKANG dengan
+ * — nota pengeluaran, stok galon, kendala pengiriman, dan bukti selesai pengiriman. (Foto rumah/lokasi
+ * pelanggan sudah pindah ke kamera dalam-aplikasi {@code WideCaptureActivity}.) Semuanya memotret OBJEK DI DEPAN petugas, jadi harus memakai kamera BELAKANG dengan
  * bidang selebar mungkin.
  *
  * <p><b>Batas yang jujur harus diketahui:</b> intent {@code ACTION_IMAGE_CAPTURE} menyerahkan kendali

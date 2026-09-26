@@ -144,6 +144,10 @@
         <activity
             android:name=".PhotoCoordinateActivity"
             android:screenOrientation="portrait" />
+        <!-- Kamera dalam-aplikasi foto tempat pelanggan: kamera belakang + zoom terkecil (wide). -->
+        <activity
+            android:name=".WideCaptureActivity"
+            android:screenOrientation="portrait" />
         <!-- Provisioning QR scan, locked to portrait. -->
         <activity
             android:name=".PortraitCaptureActivity"
