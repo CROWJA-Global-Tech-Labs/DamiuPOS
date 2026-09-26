@@ -42,7 +42,7 @@
                 android:textStyle="bold"
                 android:textSize="14sp" />
 
-            <!-- Badge produk gabungan SELURUH rit berjalan — hanya kurir terpandu (updateGuidedProductBadges). -->
+            <!-- Badge produk gabungan + TOTAL SELURUH rit berjalan (terpandu & daftar biasa) — updateGuidedProductBadges. -->
             <HorizontalScrollView
                 android:id="@+id/guidedProductBadgesScroll"
                 android:layout_width="match_parent"
@@ -57,6 +57,24 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal" />
             </HorizontalScrollView>
+
+            <!-- 🔄 Susun ulang pemberhentian rit BERJALAN jadi rute terpendek (jarak tempuh) dari posisi
+                 HP sekarang — hanya tampil saat ada rit berjalan (applyRunModeChrome). -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnRunReroute"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:minHeight="0dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:text="🔄 Urutkan Rute Terpendek"
+                android:textAllCaps="false"
+                android:textColor="@color/white"
+                android:textSize="12sp"
+                android:visibility="gone"
+                app:strokeColor="@color/white" />
 
             <TextView
                 android:id="@+id/tvSummaryCaption"
@@ -730,6 +748,18 @@
             android:textColor="@color/text_primary"
             android:textStyle="bold"
             android:textSize="14sp" />
+
+        <!-- Aksi massal order terpilih: Lepas (jadi Pesanan Terbuka) / Alihkan ke perangkat lain. -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSelAksi"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:enabled="false"
+            android:text="Aksi ⋮"
+            android:textAllCaps="false"
+            android:textSize="13sp" />
 
         <!-- ▶ Jalankan SEKALIGUS semua order terpilih sebagai SATU RIT: kurir memuat semuanya lalu
              mengantar satu per satu (tiap kartu punya ✓ Selesai sendiri) tanpa kembali ke daftar. -->
