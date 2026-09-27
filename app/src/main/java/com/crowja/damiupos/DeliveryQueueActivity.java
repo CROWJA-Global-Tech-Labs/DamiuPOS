@@ -133,7 +133,9 @@ import com.crowja.damiupos.util.CameraIntents;
 
 public class DeliveryQueueActivity extends AppCompatActivity {
    /** _id lokal order yang dibuka begitu antrean tampil — dikirim DeepLinkActivity untuk link
-    *  pesanan damiupos://pesanan?trx=<uuid> (grup eskalasi). Berlaku untuk order berjalan & tertunda. */
+    *  pesanan damiupos://pesanan?trx=<uuid> (grup eskalasi) maupun link lacak publik
+    *  https://order.airfrez.com/tracking/{token} (dipakai ulang staff dari komplain/chat WA).
+    *  Berlaku untuk order berjalan & tertunda. */
    public static final String EXTRA_FOCUS_TRX_ID = "focus_trx_id";
    private static final SimpleDateFormat SDF_PARSE;
    private long pendingFocusTrxId = -1L;
