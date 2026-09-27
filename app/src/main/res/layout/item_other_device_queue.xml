@@ -159,8 +159,10 @@
                 android:minWidth="0dp"
                 android:paddingStart="0dp"
                 android:paddingEnd="0dp"
-                android:text="💬"
-                android:textSize="18sp"
+                app:icon="@drawable/ic_whatsapp"
+                app:iconGravity="textStart"
+                app:iconPadding="0dp"
+                app:iconSize="22dp"
                 android:contentDescription="Chat WA"
                 android:visibility="gone" />
 
