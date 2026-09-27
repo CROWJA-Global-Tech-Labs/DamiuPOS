@@ -535,41 +535,57 @@ public class SyncApi {
         @Nullable public final String errorMessage;
         /** Server minta kunci idempoten BARU untuk kirim ulang (pengiriman lama sudah final gagal). */
         public final boolean newKeyRequired;
+        /** Header Retry-After (ms) pada 429; 0 bila tak ada. */
+        public final long retryAfterMs;
 
         private OrderChatResult(int status, @Nullable JSONObject body, @Nullable String errorCode,
-                                @Nullable String errorMessage, boolean newKeyRequired) {
+                                @Nullable String errorMessage, boolean newKeyRequired, long retryAfterMs) {
             this.status = status;
             this.body = body;
             this.errorCode = errorCode;
             this.errorMessage = errorMessage;
             this.newKeyRequired = newKeyRequired;
+            this.retryAfterMs = retryAfterMs;
         }
 
-        public boolean isOk() { return status >= 200 && status < 300 && body != null; }
+        /** 2xx DAN body JSON {@code ok:true} — body kosong / tanpa {@code ok} (mis. halaman proxy)
+         *  BUKAN sukses: kirim yang dijawab begitu diulang dengan kunci SAMA, tak dianggap terkirim. */
+        public boolean isOk() {
+            return status >= 200 && status < 300 && body != null && body.optBoolean("ok", false);
+        }
 
         /** Tak ada respons sama sekali (jaringan/timeout) — aman diulang dengan kunci yang SAMA. */
         public boolean isNoResponse() { return status == 0; }
 
         static OrderChatResult noResponse(String message) {
-            return new OrderChatResult(0, null, "unreachable", message, false);
+            return new OrderChatResult(0, null, "unreachable", message, false, 0L);
         }
 
         static OrderChatResult of(int status, @Nullable JSONObject body) {
+            return of(status, body, 0L);
+        }
+
+        static OrderChatResult of(int status, @Nullable JSONObject body, long retryAfterMs) {
             if (status >= 200 && status < 300) {
-                if (body == null) return new OrderChatResult(status, null, "bad_response", "Balasan server tidak terbaca.", false);
-                return new OrderChatResult(status, body, null, null, false);
+                if (body == null) return new OrderChatResult(status, null, "bad_response", "Balasan server tidak terbaca.", false, 0L);
+                if (!body.optBoolean("ok", false)) {
+                    return new OrderChatResult(status, body, "bad_response", "Balasan server tidak lengkap.", false, 0L);
+                }
+                return new OrderChatResult(status, body, null, null, false, 0L);
             }
             JSONObject err = body != null ? body.optJSONObject("error") : null;
             String code = err != null ? err.optString("code", "") : "";
-            if (code.isEmpty()) code = status == 429 ? "rate_limited" : "http_" + status;
+            if (code.isEmpty()) code = status == 429 ? "rate_limited" : status == 401 ? "unauthenticated" : "http_" + status;
             String msg = err != null ? err.optString("message", "") : "";
             if (msg.isEmpty() && body != null) msg = body.optString("message", "");
+            // 401 = token perangkat dicabut ("Unauthenticated." bawaan Laravel berbahasa Inggris).
+            if (status == 401) msg = "Perangkat tidak lagi terotorisasi — hubungkan ulang di Pengaturan.";
             if (msg.isEmpty()) msg = status == 429
                     ? "Terlalu sering. Coba lagi sebentar."
                     : "Server menjawab HTTP " + status + ".";
             boolean newKey = (body != null && body.optBoolean("new_key_required", false))
                     || (err != null && err.optBoolean("new_key_required", false));
-            return new OrderChatResult(status, body, code, msg, newKey);
+            return new OrderChatResult(status, body, code, msg, newKey, retryAfterMs);
         }
     }
 
@@ -639,7 +655,16 @@ public class SyncApi {
             } catch (Exception ignored) {
                 // bukan JSON (mis. halaman galat proxy/CDN) — status HTTP tetap dilaporkan
             }
-            return OrderChatResult.of(r.code(), json);
+            long retryAfterMs = 0L;
+            String ra = r.header("Retry-After");
+            if (ra != null) {
+                try {
+                    retryAfterMs = Math.max(0L, Long.parseLong(ra.trim())) * 1000L;
+                } catch (NumberFormatException ignored) {
+                    // bentuk tanggal HTTP — abaikan, pemanggil memakai jeda bawaan
+                }
+            }
+            return OrderChatResult.of(r.code(), json, retryAfterMs);
         } catch (java.io.IOException e) {
             return OrderChatResult.noResponse("Server tidak terjangkau.");
         }

@@ -23,6 +23,22 @@
             android:textStyle="bold"
             android:visibility="gone" />
 
+        <TextView
+            android:id="@+id/tvQuote"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="4dp"
+            android:background="@drawable/bg_chat_quote"
+            android:maxLines="3"
+            android:ellipsize="end"
+            android:paddingStart="10dp"
+            android:paddingTop="4dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="4dp"
+            android:textColor="@color/grey_dark"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
         <ImageView
             android:id="@+id/imgMedia"
             android:layout_width="200dp"

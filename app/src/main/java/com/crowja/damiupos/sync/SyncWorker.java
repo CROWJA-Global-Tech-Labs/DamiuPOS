@@ -17,6 +17,8 @@ public class SyncWorker extends Worker {
     @Override
     public Result doWork() {
         Context ctx = getApplicationContext();
+        // Pangkas lampiran & salinan media pelanggan "💬 Chat Pesanan" yang sudah tua (best-effort).
+        OrderChatOutbox.pruneFiles(ctx);
         SyncEngine engine = new SyncEngine(ctx);
         if (!engine.settings().isEnabled() || !engine.settings().isEnrolled()) {
             return Result.success(); // sync off / not enrolled — nothing to do

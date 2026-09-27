@@ -1801,6 +1801,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       String jarakSuffix = Double.isNaN(this.otherLat) || Double.isNaN(this.otherLng) || lat == (double)0.0F && lng == (double)0.0F ? "" : " (" + formatJarak(haversineKmOtherDevices(this.otherLat, this.otherLng, lat, lng)) + ")";
       menu.getMenu().add(0, 1, 0, "\ud83d\udd0d Preview" + jarakSuffix);
       menu.getMenu().add(0, 2, 1, "\ud83d\udd52 Jadwalkan Ulang");
+      if (q.optBoolean("chat_session", false)) {
+         menu.getMenu().add(0, 3, 2, "\ud83d\udcac Chat Pesanan");
+      }
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
             case 1:
@@ -1808,6 +1811,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                return true;
             case 2:
                this.showPostponeSchedulePickerOther(q);
+               return true;
+            case 3:
+               this.openOrderChatUuid(q.optString("uuid", ""), q.optString("name", ""));
                return true;
             default:
                return false;
@@ -3001,6 +3007,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       menu.getMenu().add(0, 1, 0, "\u2190 Kembali");
       menu.getMenu().add(0, 2, 1, jarakLabel != null ? "\ud83d\udd0d " + jarakLabel + " \u00b7 Preview" : "\ud83d\udd0d Preview");
       menu.getMenu().add(0, 3, 2, "\ud83d\udcac Chat WA");
+      if (t.hasChatSession()) {
+         menu.getMenu().add(0, 4, 3, "\ud83d\udcac Chat Pesanan");
+      }
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
             case 1:
@@ -3011,6 +3020,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                return true;
             case 3:
                this.sendTrackLink(t);
+               return true;
+            case 4:
+               this.openOrderChat(t);
                return true;
             default:
                return false;
@@ -3026,6 +3038,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (WaShare.hasUsablePhone(t.getCustomerPhone())) {
          menu.getMenu().add(0, 3, 2, "\ud83d\udcac Chat WA Konsumen");
       }
+      if (t.hasChatSession()) {
+         menu.getMenu().add(0, 4, 3, "\ud83d\udcac Chat Pesanan");
+      }
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
             case 1:
@@ -3036,6 +3051,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                return true;
             case 3:
                openWhatsApp(this, t.getCustomerPhone(), "");
+               return true;
+            case 4:
+               this.openOrderChat(t);
                return true;
             default:
                return false;
@@ -5815,6 +5833,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.addGridAction(actionsGrid, btnAlihkan);
       }
 
+      if (t.hasChatSession()) {
+         Button btnChatPesanan = new Button(this);
+         btnChatPesanan.setText("💬 Chat Pesanan");
+         btnChatPesanan.setAllCaps(false);
+         btnChatPesanan.setOnClickListener((v) -> {
+            dialog.dismiss();
+            this.openOrderChat(t);
+         });
+         this.addGridAction(actionsGrid, btnChatPesanan);
+      }
+
       if (t.isComplained()) {
          Button btnChatKomplain = new Button(this);
          btnChatKomplain.setText("Lihat Chat Komplain");
@@ -5843,6 +5872,29 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       Intent i = new Intent(this, ChatLogActivity.class);
       i.putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid);
       i.putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, safe(t.getCustomerName()));
+      this.startActivity(i);
+   }
+
+   /** "💬 Chat Pesanan" — chat WA order agen AI (+ balas lewat Bridge) untuk order ini. */
+   private void openOrderChat(Transaction t) {
+      String uuid = this.dao.getSyncUuidById(t.getId());
+      if (uuid == null || uuid.isEmpty()) {
+         Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
+         return;
+      }
+      this.openOrderChatUuid(uuid, safe(t.getCustomerName()));
+   }
+
+   /** Sama dengan openOrderChat, untuk kartu perangkat lain (hanya punya uuid dari JSON server). */
+   private void openOrderChatUuid(String uuid, String customerName) {
+      if (uuid == null || uuid.isEmpty()) {
+         Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
+         return;
+      }
+      Intent i = new Intent(this, ChatLogActivity.class);
+      i.putExtra(ChatLogActivity.EXTRA_MODE, ChatLogActivity.MODE_ORDER);
+      i.putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid);
+      i.putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, customerName);
       this.startActivity(i);
    }
 
@@ -8878,10 +8930,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          h.btnMore.setOnClickListener((v) -> {
             PopupMenu menu = new PopupMenu(DeliveryQueueActivity.this, v);
             menu.getMenu().add(0, 1, 0, "\ud83d\udd0d Preview" + jarakSuffix);
+            if (t.hasChatSession()) {
+               menu.getMenu().add(0, 2, 1, "\ud83d\udcac Chat Pesanan");
+            }
             menu.setOnMenuItemClickListener((item) -> {
                switch (item.getItemId()) {
                   case 1:
                      DeliveryQueueActivity.this.showQueuePreview(t);
+                     return true;
+                  case 2:
+                     DeliveryQueueActivity.this.openOrderChat(t);
                      return true;
                   default:
                      return false;

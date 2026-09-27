@@ -20,8 +20,8 @@ android {
         // di API 26+.
         minSdk 26
         targetSdk 34
-        versionCode 118
-        versionName "1.4.99"
+        versionCode 119
+        versionName "1.4.100"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         // AdMob Application ID (test ID — ganti saat rilis)
@@ -144,6 +144,10 @@ dependencies {
 
     // Fused location (Phase 5): battery-efficient GPS for live staff tracking.
     implementation 'com.google.android.gms:play-services-location:21.3.0'
+
+    // JVM unit tests (src/test) — pure logic only: order-chat send policy, chat list merge,
+    // sync cursor arithmetic. Run: ./gradlew :app:testDebugUnitTest
+    testImplementation 'junit:junit:4.13.2'
 
     // Instrumented (on-device) tests — used to verify the sync client end-to-end.
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'

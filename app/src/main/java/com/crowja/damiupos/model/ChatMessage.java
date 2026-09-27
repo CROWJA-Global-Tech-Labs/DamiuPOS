@@ -53,6 +53,27 @@ public class ChatMessage {
     public String localImagePath;
     /** Local only: the media URL answered 404 (bridge evicted it) -- show "tidak tersedia lagi". */
     public boolean localMediaGone;
+    /** Local only: the image failed to load for another reason (403/429/5xx/timeout) -- show
+     *  "Gagal memuat lampiran — ketuk untuk coba lagi". */
+    public boolean localMediaFailed;
+    /** Local only: automatic reloads already spent on this URL (429 gets exactly one). */
+    public int localMediaAutoRetries;
+
+    /** Cache of {@code Ts.millis(waTimestamp)}: every poll re-sorts the whole list, and parsing each
+     *  row's timestamp with SimpleDateFormat every time is slow on old phones. */
+    private String sortTsSrc;
+    private long sortTsMillis;
+    private boolean sortTsParsed;
+
+    /** Epoch millis of {@link #waTimestamp} (Long.MAX_VALUE when missing), parsed once per value. */
+    public long sortMillis() {
+        if (!sortTsParsed || !java.util.Objects.equals(sortTsSrc, waTimestamp)) {
+            sortTsMillis = com.crowja.damiupos.util.Ts.millis(waTimestamp);
+            sortTsSrc = waTimestamp;
+            sortTsParsed = true;
+        }
+        return sortTsMillis;
+    }
 
     public boolean isOutbound() {
         return "out".equals(direction);

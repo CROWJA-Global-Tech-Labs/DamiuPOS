@@ -265,6 +265,7 @@ public class TransactionListActivity extends AppCompatActivity {
         java.util.List<String> opts = new java.util.ArrayList<>();
         opts.add("Ubah Pelanggan");
         if (Transaction.TYPE_JUAL.equals(trx.getType())) opts.add("Alokasi Galon");
+        if (trx.hasChatSession()) opts.add("💬 Chat Pesanan");
         if (trx.isComplained()) opts.add("😠 Lihat Chat Komplain");
         opts.add("Hapus Transaksi");
         final String[] options = opts.toArray(new String[0]);
@@ -274,6 +275,7 @@ public class TransactionListActivity extends AppCompatActivity {
                     String sel = options[which];
                     if ("Ubah Pelanggan".equals(sel)) showChangeCustomer(trx);
                     else if ("Alokasi Galon".equals(sel)) AllocationDialog.show(this, trx, "trx");
+                    else if ("💬 Chat Pesanan".equals(sel)) openOrderChat(trx);
                     else if ("😠 Lihat Chat Komplain".equals(sel)) openChatLog(trx);
                     else confirmDelete(trx);
                 })
@@ -289,6 +291,20 @@ public class TransactionListActivity extends AppCompatActivity {
             return;
         }
         Intent i = new Intent(this, ChatLogActivity.class);
+        i.putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid);
+        i.putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, trx.getCustomerName());
+        startActivity(i);
+    }
+
+    /** Buka "💬 Chat Pesanan" (chat WA order agen AI + balas lewat Bridge) untuk transaksi ini. */
+    private void openOrderChat(Transaction trx) {
+        String uuid = transactionDao.getSyncUuidById(trx.getId());
+        if (uuid == null || uuid.isEmpty()) {
+            Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent i = new Intent(this, ChatLogActivity.class);
+        i.putExtra(ChatLogActivity.EXTRA_MODE, ChatLogActivity.MODE_ORDER);
         i.putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid);
         i.putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, trx.getCustomerName());
         startActivity(i);

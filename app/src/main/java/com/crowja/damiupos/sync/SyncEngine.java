@@ -1214,22 +1214,8 @@ public class SyncEngine {
         // Mundurkan kursor transaksi 72 jam SEKALI (aritmetika jam-dinding murni, tanpa konversi tz),
         // ditulis dalam bentuk lama tanpa "|uuid" (tie-safe). Kosong/gagal parse → biarkan saja.
         if (cfg.needsTrxLookbackRepull()) {
-            String cur = cfg.getCursor("transactions");
-            if (cur != null && !cur.isEmpty()) {
-                try {
-                    String ts = cur.split("\\|", 2)[0];
-                    java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US);
-                    f.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
-                    f.setLenient(false);
-                    java.util.Date d = f.parse(ts.substring(0, 19));
-                    if (d != null) {
-                        String back = f.format(new java.util.Date(d.getTime() - 72L * 3600_000L));
-                        cfg.setCursor("transactions", back + ".000000");
-                    }
-                } catch (Exception ignored) {
-                    // parse gagal → kursor dibiarkan apa adanya
-                }
-            }
+            String back = SyncSettings.trxLookbackCursor(cfg.getCursor("transactions"));
+            if (back != null) cfg.setCursor("transactions", back);   // null = kosong / gagal parse → biarkan
             cfg.markTrxLookbackRepulled();
         }
 

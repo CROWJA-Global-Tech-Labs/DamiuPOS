@@ -164,11 +164,51 @@ public final class BitmapUtils {
      * mis. struk pengeluaran/pelanggan dari device lain. Panggil OFF main thread. Null bila gagal.
      */
     public static java.io.File downloadToCache(Context ctx, String url, String name) {
+        return downloadToCache(ctx, url, name, null, null);
+    }
+
+    /** Subfolder cache media chat WA (log komplain + "💬 Chat Pesanan") — dipangkas per umur
+     *  (lihat OrderChatOutbox.pruneFiles) karena isinya foto pelanggan. */
+    public static final String CHAT_MEDIA_DIR = "chat_media";
+
+    /** Folder cache unduhan remote ({@code cacheDir/remote_img[/subdir]}); tidak dibuat di sini. */
+    public static java.io.File remoteCacheDir(Context ctx, String subdir) {
+        java.io.File dir = new java.io.File(ctx.getCacheDir(), "remote_img");
+        return subdir != null && !subdir.isEmpty() ? new java.io.File(dir, subdir) : dir;
+    }
+
+    /** Hapus berkas di {@code dir} yang lebih tua dari {@code maxAgeMs}. Best-effort, OFF main thread. */
+    public static void pruneDir(java.io.File dir, long maxAgeMs) {
+        try {
+            java.io.File[] files = dir != null ? dir.listFiles() : null;
+            if (files == null) return;
+            long cutoff = System.currentTimeMillis() - maxAgeMs;
+            for (java.io.File f : files) {
+                //noinspection ResultOfMethodCallIgnored
+                if (f.isFile() && f.lastModified() < cutoff) f.delete();
+            }
+        } catch (Throwable ignored) {
+            // best-effort
+        }
+    }
+
+    /** URL untuk log TANPA query: URL media chat bertanda tangan (signature + expires) memberi akses
+     *  tanpa login ke foto pelanggan selama berjam-jam — tak boleh bocor ke logcat/bug report. */
+    private static String logUrl(String url) {
+        if (url == null) return "";
+        int q = url.indexOf('?');
+        return q >= 0 ? url.substring(0, q) + "?…" : url;
+    }
+
+    /** Sama dengan {@link #downloadToCache(Context, String, String)}, disimpan di
+     *  {@code remote_img/<subdir>} (null = remote_img); {@code httpCodeOut[0]} diisi status HTTP
+     *  respons (0 = tak ada respons / dari cache) — mis. 403 = URL bertanda tangan kedaluwarsa. */
+    public static java.io.File downloadToCache(Context ctx, String url, String name, String subdir, int[] httpCodeOut) {
         if (ctx == null || url == null || url.isEmpty() || name == null) return null;
         java.net.HttpURLConnection conn = null;
         java.io.File tmp = null;
         try {
-            java.io.File dir = new java.io.File(ctx.getCacheDir(), "remote_img");
+            java.io.File dir = remoteCacheDir(ctx, subdir);
             if (!dir.exists() && !dir.mkdirs()) return null;
             java.io.File out = new java.io.File(dir, name);
             if (out.exists() && out.length() > 0) return out;   // cached
@@ -183,8 +223,9 @@ public final class BitmapUtils {
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android) DAMIUPOS");
             conn.setRequestProperty("Accept", "image/*,*/*");
             int code = conn.getResponseCode();
+            if (httpCodeOut != null && httpCodeOut.length > 0) httpCodeOut[0] = code;
             if (code / 100 != 2) {
-                android.util.Log.w("DAMIU", "downloadToCache HTTP " + code + " " + url);
+                android.util.Log.w("DAMIU", "downloadToCache HTTP " + code + " " + logUrl(url));
                 return null;
             }
             long expected = conn.getContentLengthLong();   // -1 bila server tak kirim Content-Length
@@ -198,14 +239,15 @@ public final class BitmapUtils {
             // TOLAK unduhan terpotong (jaringan HP putus di tengah) — kalau tidak, file rusak ter-cache
             // permanen: decode gagal → avatar kosong SELAMANYA (cache-hit mencegah unduh ulang).
             if (written == 0 || (expected >= 0 && written != expected)) {
-                android.util.Log.w("DAMIU", "downloadToCache truncated " + written + "/" + expected + " " + url);
+                android.util.Log.w("DAMIU", "downloadToCache truncated " + written + "/" + expected + " " + logUrl(url));
                 tmp.delete();
                 return null;
             }
             if (!tmp.renameTo(out)) { tmp.delete(); return null; }
             return out;
         } catch (Throwable t) {
-            android.util.Log.w("DAMIU", "downloadToCache error " + url + " : " + t, t);
+            // Hanya nama kelas galat: pesan exception HttpURLConnection bisa memuat URL lengkap.
+            android.util.Log.w("DAMIU", "downloadToCache error " + logUrl(url) + " : " + t.getClass().getSimpleName());
             if (tmp != null) tmp.delete();
             return null;
         } finally {
@@ -224,15 +266,58 @@ public final class BitmapUtils {
      * di-scroll, jadi tak butuh library pemuat gambar baru.
      */
     public static void loadIntoView(android.widget.ImageView view, String url, String cacheKey) {
+        loadIntoView(view, url, cacheKey, null, null);
+    }
+
+    /** Sama dengan {@link #loadIntoView(android.widget.ImageView, String, String)}, di-cache di
+     *  {@code remote_img/<cacheSubdir>}. Bila gambar gagal tampil, {@code onError} dipanggil di UI
+     *  thread (hanya bila view masih menampilkan URL ini) dengan status HTTP-nya, atau 0 bila tak ada
+     *  respons (timeout/IO) / berkasnya tak bisa di-decode — ChatLogActivity memuat ulang URL media
+     *  bertanda tangan yang kedaluwarsa (403), adapter menandai lampiran lenyap (404) atau
+     *  menawarkan "ketuk untuk coba lagi" (selebihnya). */
+    public static void loadIntoView(android.widget.ImageView view, String url, String cacheKey,
+                                    String cacheSubdir, java.util.function.IntConsumer onError) {
         if (view == null || url == null || url.isEmpty()) return;
         view.setTag(url);
         view.setImageBitmap(null);
         final Context ctx = view.getContext().getApplicationContext();
         new Thread(() -> {
-            java.io.File f = downloadToCache(ctx, url, cacheKey + ".img");
+            int[] code = new int[1];
+            java.io.File f = downloadToCache(ctx, url, cacheKey + ".img", cacheSubdir, code);
             final Bitmap bmp = f != null ? decodeSampled(f.getAbsolutePath(), 400, 400) : null;
+            //noinspection ResultOfMethodCallIgnored
+            if (f != null && bmp == null) f.delete();   // berkas rusak: jangan jadi cache-hit selamanya
             view.post(() -> {
-                if (url.equals(view.getTag()) && bmp != null) view.setImageBitmap(bmp);
+                if (!url.equals(view.getTag())) return;
+                if (bmp != null) {
+                    view.setImageBitmap(bmp);
+                } else if (onError != null) {
+                    onError.accept(code[0] / 100 == 2 ? 0 : code[0]);
+                }
+            });
+        }).start();
+    }
+
+    /** Thumbnail berkas LOKAL ke {@code view} tanpa decode di UI thread: cache-hit langsung dipasang,
+     *  selain itu di-decode di background (view ditandai path-nya, dicek lagi sebelum dipasang —
+     *  view RecyclerView bisa sudah didaur ulang untuk baris lain). */
+    public static void loadLocalIntoView(android.widget.ImageView view, String path, int reqW, int reqH) {
+        if (view == null) return;
+        view.setTag(path);
+        if (path == null || path.isEmpty()) {
+            view.setImageBitmap(null);
+            return;
+        }
+        Bitmap cached = THUMB_CACHE.get(path + '#' + reqW + 'x' + reqH);
+        if (cached != null && !cached.isRecycled()) {
+            view.setImageBitmap(cached);
+            return;
+        }
+        view.setImageBitmap(null);
+        new Thread(() -> {
+            final Bitmap bmp = cachedThumb(path, reqW, reqH);
+            view.post(() -> {
+                if (path.equals(view.getTag())) view.setImageBitmap(bmp);
             });
         }).start();
     }

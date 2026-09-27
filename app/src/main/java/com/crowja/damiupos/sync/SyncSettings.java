@@ -328,6 +328,24 @@ public class SyncSettings {
     public boolean needsTrxLookbackRepull() { return ! "1".equals(settings.get(K_REPULL_TRX_LOOKBACK, "0")); }
     public void markTrxLookbackRepulled()   { settings.set(K_REPULL_TRX_LOOKBACK, "1"); }
 
+    /** Kursor "transactions" mundur 72 jam (aritmetika jam-dinding murni: diurai & diformat dalam
+     *  UTC, tanpa konversi zona), dalam bentuk lama tanpa "|uuid" (tie-safe). Null bila kursor kosong
+     *  atau tak bisa diurai → biarkan kursor apa adanya. Murni — diuji di JVM (src/test). */
+    public static String trxLookbackCursor(String cursor) {
+        if (cursor == null || cursor.isEmpty()) return null;
+        try {
+            String ts = cursor.split("\\|", 2)[0];
+            java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US);
+            f.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+            f.setLenient(false);
+            java.util.Date d = f.parse(ts.substring(0, 19));
+            if (d == null) return null;
+            return f.format(new java.util.Date(d.getTime() - 72L * 3600_000L)) + ".000000";
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     /** Rising-edge flag: sudah pernah memperingatkan admin soal jenis galon ganda
      *  (Kasus B upgrade). Diset saat duplikat terdeteksi, di-reset saat sudah bersih,
      *  supaya notifikasi tidak spam tiap sinkron. */
