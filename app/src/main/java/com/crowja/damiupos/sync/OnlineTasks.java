@@ -27,6 +27,10 @@ public final class OnlineTasks {
     /** Perintah wa_send lebih tua dari ini dibuang (HP mati seharian → jangan kirim pesan basi). */
     private static final long WA_SEND_TTL_MS = 15 * 60 * 1000L;
 
+    /** Notifikasi balasan pelanggan (order_chat_reply) lebih tua dari ini dibuang — sama dengan
+     *  masa berlaku perintahnya di server (30 menit). */
+    private static final long ORDER_CHAT_REPLY_TTL_MS = 30 * 60 * 1000L;
+
     /** Maksimal pesan WA yang dikirim dalam satu tick (sisanya menyusul ~60 dtk kemudian). */
     private static final int MAX_WA_SEND_PER_TICK = 2;
 
@@ -305,6 +309,25 @@ public final class OnlineTasks {
                 String status = age > WA_SEND_TTL_MS
                         ? "expired_ttl"
                         : com.crowja.damiupos.wa.WaGateway.check(ctx, phone);
+                ackCommand(api, id, status);
+                break;
+            }
+            case "order_chat_reply": {
+                // Pelanggan membalas di "💬 Chat Pesanan" order yang dipegang perangkat ini →
+                // notifikasi (ketuk = buka chat-nya), atau langsung poll bila chat itu sedang terbuka.
+                long age = ageMs(createdAt, serverTime);
+                String status;
+                if (age > ORDER_CHAT_REPLY_TTL_MS) {
+                    status = "expired_ttl";
+                } else {
+                    try {
+                        status = OrderChatNotifier.onCustomerReply(ctx, payload);
+                    } catch (Throwable t) {
+                        // Tetap di-ack: kursor sudah melewati perintah ini, jadi tanpa status ia
+                        // tampil 'tertunda' selamanya di dashboard.
+                        status = OrderChatNotifier.ACK_ERROR;
+                    }
+                }
                 ackCommand(api, id, status);
                 break;
             }

@@ -1,10 +1,12 @@
 package com.crowja.damiupos;
 
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -15,6 +17,8 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.MainThread;
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
@@ -26,6 +30,7 @@ import com.crowja.damiupos.adapter.ChatMessageAdapter;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.model.ChatMessage;
+import com.crowja.damiupos.sync.OrderChatNotifier;
 import com.crowja.damiupos.sync.OrderChatOutbox;
 import com.crowja.damiupos.sync.SyncApi;
 import com.crowja.damiupos.sync.SyncSettings;
@@ -35,11 +40,17 @@ import com.crowja.damiupos.util.Ts;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.lang.ref.WeakReference;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Viewer chat WhatsApp untuk SATU order, dua mode ({@link #EXTRA_MODE}):
@@ -53,7 +64,11 @@ import java.util.Locale;
  *       client_key sendiri (kunci idempoten server) dan dijalankan {@link OrderChatOutbox} (tingkat
  *       proses: tetap berjalan setelah Back / putar layar, gelembungnya muncul lagi saat chat dibuka
  *       ulang) — 202/timeout diulang dengan kunci SAMA, gagal final atau "status tak diketahui"
- *       dikirim ulang dengan kunci BARU (aturannya: {@link com.crowja.damiupos.sync.OrderChatSendPolicy}).</li>
+ *       dikirim ulang dengan kunci BARU (aturannya: {@link com.crowja.damiupos.sync.OrderChatSendPolicy}).
+ *       Balasan pelanggan memunculkan notifikasi "Chat Pesanan" ({@link OrderChatNotifier}) yang membuka
+ *       layar ini; saat chat-nya sudah tampil, notifikasi diganti poll seketika ({@link #pollIfShowing}).
+ *       Pesan masuk baru dianggap dilihat hanya bila dasar daftar tampil di layar — balasan yang belum
+ *       terlihat saat layar ditutup / poll gagal tetap dinotifikasi.</li>
  * </ul>
  *
  * <p>Activity klasik biasa (bukan Fragment/Navigation Component/Compose) -- app ini tak punya
@@ -76,6 +91,8 @@ public class ChatLogActivity extends AppCompatActivity {
     private static final String STATE_ATTACH_PATH = "order_chat_attach_path";
     private static final long MEDIA_RELOAD_MIN_GAP_MS = 60000L;
     private static final int REQ_PICK_IMAGE = 7301;
+    /** Selang onNewIntent → onResume "transit" (lihat {@link #handOffAt}). */
+    private static final long HANDOFF_WINDOW_MS = 3000L;
     private static final int MENU_AGENT = 1;
     private static final int MENU_RELOAD = 2;
 
@@ -94,6 +111,8 @@ public class ChatLogActivity extends AppCompatActivity {
     private final Runnable pollRunnable = this::pollNow;
     private boolean resumed;
     private boolean pollInFlight;
+    /** Balasan pelanggan tiba saat poll sedang berjalan → poll lagi begitu yang ini selesai. */
+    private boolean pollAgainAsap;
     private boolean pollStopped;
     /** Naik tiap kali muat-ulang penuh diminta — respons poll lama (gen beda) dibuang. */
     private int pollGen;
@@ -119,6 +138,25 @@ public class ChatLogActivity extends AppCompatActivity {
      *  gagal tak boleh membuka dua dialog — masing-masing akan mengirim dengan client_key sendiri
      *  dan pelanggan menerima pesan dobel. */
     private boolean confirmShowing;
+    /** Baris poll yang belum TERLIHAT: dimuat selagi daftar digulir ke atas (barisnya di bawah layar)
+     *  atau selagi layar tak tampil. Baru dilaporkan ke {@link OrderChatNotifier#markSeen} saat dasar
+     *  daftar tampil ({@link #markSeenIfVisible}) — sebelum itu balasannya tetap boleh dinotifikasi. */
+    private final List<ChatMessage> unseenRows = new ArrayList<>();
+    /** wa_timestamp pesan masuk terbaru yang sudah dimuat layar ini (petunjuk "pesan baru"). */
+    private long newestLoadedInbound;
+    /** Pemilih gambar (startActivityForResult) sedang terbuka di atas layar ini — lihat takeOverOlderScreen. */
+    private boolean pickerOpen;
+    /** uptimeMillis saat onNewIntent membuka chat order LAIN di atas layar ini (0 = tidak). onResume
+     *  sesudahnya hanya transit (Android selalu me-resume setelah onNewIntent): layar ini tak benar-benar
+     *  tampil, jadi notifikasinya tak boleh dihapus dan chat-nya tak boleh dianggap dilihat. */
+    private long handOffAt;
+
+    /** Layar Chat Pesanan yang sedang tampil (antara onResume–onPause); hanya disentuh di main thread. */
+    @Nullable
+    private static WeakReference<ChatLogActivity> sResumed;
+    /** Layar Chat Pesanan yang hidup per transaksi (onCreate–onDestroy); hanya disentuh di main thread.
+     *  Lihat {@link #takeOverOlderScreen}. */
+    private static final Map<String, WeakReference<ChatLogActivity>> sLive = new HashMap<>();
 
     private TextView tvLiveBanner;
     private TextView tvAgentBanner;
@@ -133,14 +171,18 @@ public class ChatLogActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        orderMode = MODE_ORDER.equals(getIntent().getStringExtra(EXTRA_MODE));
+        if (orderMode && loginRequired(this)) {
+            exitToLogin();
+            return;
+        }
         setContentView(R.layout.activity_chat_log);
 
         toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
         toolbar.setNavigationOnClickListener(v -> {
-            if (!confirmExitIfUnsent()) finish();
+            if (!confirmExitIfUnsent()) leave();
         });
-        orderMode = MODE_ORDER.equals(getIntent().getStringExtra(EXTRA_MODE));
         String customerName = getIntent().getStringExtra(EXTRA_CUSTOMER_NAME);
         customerNameExtra = customerName;
         if (orderMode) {
@@ -178,7 +220,50 @@ public class ChatLogActivity extends AppCompatActivity {
     @Override
     public void onBackPressed() {
         if (confirmExitIfUnsent()) return;
+        if (isTaskRoot()) startActivity(new Intent(this, MainActivity.class));   // lihat leave()
         super.onBackPressed();
+    }
+
+    /** Tutup layar. Dibuka dari notifikasi "Chat Pesanan" saat app tak berjalan → layar ini akar task
+     *  barunya: kembali ke beranda (MainActivity, dengan gerbang wizard/login-nya), bukan keluar app. */
+    private void leave() {
+        if (isTaskRoot()) startActivity(new Intent(this, MainActivity.class));
+        finish();
+    }
+
+    /**
+     * Gerbang multi-user, cermin MainActivity / TransactionActivity: Chat Pesanan mengirim WA ke
+     * pelanggan atas nama staf yang login, jadi tanpa staf login (logout / clock-out / istirahat /
+     * "Pulangkan") layar ini tak boleh dipakai. Notifikasi "Chat Pesanan" membuka layar ini langsung,
+     * tanpa lewat MainActivity — gerbangnya harus di sini.
+     */
+    public static boolean loginRequired(Context ctx) {
+        SettingsDao s = new SettingsDao(DatabaseHelper.getInstance(ctx));
+        return s.isMultiUserEnabled() && s.getCurrentUserId() <= 0;
+    }
+
+    private void exitToLogin() {
+        // Notifikasi "Chat Pesanan"-nya sengaja dibiarkan di baki (tanpa auto-cancel): setelah login
+        // staf mengetuknya lagi untuk membuka chat ini. Baru dihapus onResume saat chat-nya tampil.
+        startActivity(new Intent(this, LoginActivity.class));
+        finish();
+    }
+
+    /** Ketuk notifikasi "Chat Pesanan" (FLAG_ACTIVITY_SINGLE_TOP) selagi layar ini di puncak tumpukan. */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        String uuid = intent.getStringExtra(EXTRA_TRANSACTION_UUID);
+        if (orderMode && MODE_ORDER.equals(intent.getStringExtra(EXTRA_MODE))
+                && uuid != null && uuid.equals(transactionUuid)) {
+            pollSoon();   // chat yang sama: onResume menyusul (hapus notifikasi + poll)
+            return;
+        }
+        // Chat order LAIN: buka layar baru di atasnya — layar ini (draf & lampirannya) tetap di tumpukan.
+        // Bila chat itu sudah terbuka lebih bawah, layar barunya menutup yang lama (takeOverOlderScreen).
+        // onResume yang menyusul hanya transit: notifikasi chat INI tetap di baki (handOffAt).
+        handOffAt = SystemClock.uptimeMillis();
+        startActivity(new Intent(this, ChatLogActivity.class).putExtras(intent));
     }
 
     @Override
@@ -191,10 +276,48 @@ public class ChatLogActivity extends AppCompatActivity {
 
     private void restoreAttachment(@Nullable Bundle state) {
         String p = state != null ? state.getString(STATE_ATTACH_PATH) : null;
-        if (p == null || imgAttachPreview == null || !new File(p).exists()) return;
+        if (p != null) showAttachment(p);
+    }
+
+    private void showAttachment(String p) {
+        if (imgAttachPreview == null || !new File(p).exists()) return;
         attachPath = p;
         BitmapUtils.loadLocalIntoView(imgAttachPreview, p, 160, 160);
         if (attachPreview != null) attachPreview.setVisibility(View.VISIBLE);
+    }
+
+    /**
+     * Satu layar Chat Pesanan per transaksi. Ketuk notifikasi bisa membuat layar KEDUA untuk trx yang
+     * sudah terbuka lebih bawah di tumpukan (SINGLE_TOP hanya mencocokkan puncak: chat di bawah pemilih
+     * gambar, atau di bawah chat order lain). Dua layar berebut satu pendengar OrderChatOutbox per trx,
+     * jadi layar lama ditutup; draf teks & lampirannya dibawa ke layar ini, dan kiriman yang masih
+     * berjalan / gagal tetap di OrderChatOutbox (tampil lagi di sini).
+     *
+     * <p>Kecuali layar lama sedang menunggu hasil pemilih gambar: menutupnya membuang gambar yang
+     * dipilih staf (onActivityResult hanya sampai ke layar yang memulainya) dan meninggalkan pemilihnya
+     * di tumpukan. Layar ini yang mundur (false); layar lama tampil lagi setelah pemilih ditutup.</p>
+     *
+     * @return false bila layar ini harus ditutup
+     */
+    private boolean takeOverOlderScreen(String trxUuid) {
+        WeakReference<ChatLogActivity> prev = sLive.get(trxUuid);
+        ChatLogActivity old = prev != null ? prev.get() : null;
+        boolean oldAlive = old != null && old != this && !old.isFinishing() && !old.isDestroyed();
+        if (oldAlive && old.pickerOpen) return false;
+        sLive.put(trxUuid, new WeakReference<>(this));
+        if (!oldAlive) return true;
+        if (old.etMessage != null && old.etMessage.getText().length() > 0
+                && etMessage.getText().length() == 0) {
+            etMessage.setText(old.etMessage.getText());
+            etMessage.setSelection(etMessage.getText().length());
+        }
+        if (old.attachPath != null && attachPath == null) {
+            String p = old.attachPath;
+            old.attachPath = null;   // berkasnya kini milik layar ini
+            showAttachment(p);
+        }
+        old.finish();
+        return true;
     }
 
     /**
@@ -216,7 +339,7 @@ public class ChatLogActivity extends AppCompatActivity {
             showConfirm("Pesan belum terkirim",
                     unsent + " pesan gagal / belum pasti terkirim ke pelanggan." + more
                             + "\n\nTetap keluar? Pesan itu tetap tampil saat chat ini dibuka lagi.",
-                    "Keluar", this::finish, null, null);
+                    "Keluar", this::leave, null, null);
             return true;
         }
         if (inFlight > 0) {
@@ -318,6 +441,21 @@ public class ChatLogActivity extends AppCompatActivity {
         btnAttach.setOnClickListener(v -> pickImage());
         findViewById(R.id.btnAttachRemove).setOnClickListener(v -> clearAttachment(true));
         cleanupOldFiles();
+        if (!takeOverOlderScreen(trxUuid)) {
+            // finish() di onCreate: tanpa onResume, jadi notifikasinya tetap di baki sampai chat lama tampil.
+            Toast.makeText(this, "Chat pesanan ini sedang memilih gambar — pilih atau batalkan dulu.",
+                    Toast.LENGTH_LONG).show();
+            pollStopped = true;
+            finish();
+            return;
+        }
+        // Staf menggulir sampai dasar daftar → pesan yang dimuat di luar layar kini terlihat.
+        rvMessages.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
+                markSeenIfVisible();
+            }
+        });
 
         // Kiriman staf yang belum beres untuk order ini (dari layar sebelumnya / sebelum putar layar /
         // sebelum proses mati) tampil lagi sebagai gelembung optimis; statusnya terus diperbarui.
@@ -336,15 +474,81 @@ public class ChatLogActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        // Staf bisa logout / di-"Pulangkan" dari dashboard selagi chat ini terbuka di belakang.
+        if (orderMode && loginRequired(this)) {
+            exitToLogin();
+            return;
+        }
+        boolean transit = handOffAt > 0L && SystemClock.uptimeMillis() - handOffAt < HANDOFF_WINDOW_MS;
+        handOffAt = 0L;
+        // onNewIntent baru saja membuka chat order LAIN di atas layar ini: resume ini hanya transit —
+        // jangan hapus notifikasi chat ini, jangan poll, jangan jadi layar "tampil" (resumed tetap false).
+        if (transit) return;
         resumed = true;
+        if (orderMode && transactionUuid != null) {
+            sResumed = new WeakReference<>(this);
+            // Chat ini sedang dilihat → notifikasi balasannya tak diperlukan lagi.
+            OrderChatNotifier.cancel(this, transactionUuid);
+            // Layar yang tampil selalu memegang pendengar kirimnya (setListener menimpa yang lama).
+            if (outbox != null) outbox.setListener(transactionUuid, outboxListener);
+            // Pesan yang dimuat selagi layar tak tampil kini terlihat — bila dasar daftarnya di layar.
+            if (rvMessages != null) rvMessages.post(this::markSeenIfVisible);
+        }
         if (orderMode && !pollStopped) schedulePoll(0);
     }
 
     @Override
     protected void onPause() {
         resumed = false;
+        handOffAt = 0L;
+        if (sResumed != null && sResumed.get() == this) sResumed = null;
         handler.removeCallbacks(pollRunnable);
+        // Balasan yang tadi dijawab "chat terbuka" (tanpa notifikasi) tapi belum terlihat → notifikasi
+        // sekarang. Putar layar tidak: layar penggantinya langsung memuat ulang chat yang sama.
+        if (orderMode && transactionUuid != null && !isChangingConfigurations()) {
+            OrderChatNotifier.flushUndisplayed(this, transactionUuid);
+        }
         super.onPause();
+    }
+
+    /**
+     * Perintah {@code order_chat_reply} tiba (main thread; lihat OrderChatNotifier): bila layar Chat
+     * Pesanan untuk trx itu sedang tampil dan bisa memuat pesan, tarik pesan barunya SEKARANG dan jawab
+     * true — notifikasi belum dipasang. OrderChatNotifier menunggu pesannya terlihat (markSeen); bila
+     * layar ditutup / poll gagal lebih dulu, notifikasinya dipasang saat itu (flushUndisplayed).
+     */
+    @MainThread
+    public static boolean pollIfShowing(String trxUuid) {
+        ChatLogActivity a = sResumed != null ? sResumed.get() : null;
+        if (a == null || !a.resumed || !a.orderMode || a.isFinishing()
+                || trxUuid == null || !trxUuid.equals(a.transactionUuid)) {
+            return false;
+        }
+        return a.pollSoon();
+    }
+
+    /**
+     * Ada balasan pelanggan baru → poll secepatnya (tanpa menunggu jeda 6 detik).
+     *
+     * @return false bila layar ini tak bisa memuat pesan baru (riwayat dihapus / belum terhubung)
+     */
+    private boolean pollSoon() {
+        if (purged || cfg == null || composeBar == null) return false;
+        if (pollStopped) {
+            // Mis. "Chat pesanan belum tersedia" (no_session): balasan baru berarti sesinya kini ada.
+            pollStopped = false;
+            tvEmpty.setVisibility(View.GONE);
+            progressBar.setVisibility(View.VISIBLE);
+            requestFullReload();
+            refreshMenuIfChanged();
+            return true;
+        }
+        if (pollInFlight) {
+            pollAgainAsap = true;
+            return true;
+        }
+        schedulePoll(0);
+        return true;
     }
 
     @Override
@@ -352,6 +556,10 @@ public class ChatLogActivity extends AppCompatActivity {
         handler.removeCallbacksAndMessages(null);
         // Hanya pendengarnya yang dilepas — ulangan kirim tetap berjalan di OrderChatOutbox.
         if (outbox != null && transactionUuid != null) outbox.removeListener(transactionUuid, outboxListener);
+        if (transactionUuid != null) {
+            WeakReference<ChatLogActivity> live = sLive.get(transactionUuid);
+            if (live != null && (live.get() == this || live.get() == null)) sLive.remove(transactionUuid);
+        }
         super.onDestroy();
     }
 
@@ -365,6 +573,7 @@ public class ChatLogActivity extends AppCompatActivity {
     private void pollNow() {
         if (!resumed || pollStopped || pollInFlight || cfg == null) return;
         pollInFlight = true;
+        pollAgainAsap = false;
         final int gen = pollGen;
         final String c = cursor;
         final int r = windowRev;
@@ -384,6 +593,9 @@ public class ChatLogActivity extends AppCompatActivity {
             return;
         }
         if (!res.isOk()) {
+            // Balasan yang dijawab "chat terbuka" tak bisa ditampilkan sekarang (ulang 12–60 dtk lagi,
+            // atau berhenti) → notifikasinya dipasang; poll berikutnya yang menampilkannya menghapusnya.
+            OrderChatNotifier.flushUndisplayed(this, transactionUuid);
             if (res.status == 404 && "no_session".equals(res.errorCode)) {
                 stopOrderChat("Chat pesanan belum tersedia");
                 return;
@@ -416,13 +628,21 @@ public class ChatLogActivity extends AppCompatActivity {
         List<ChatMessage> msgs = ChatMessage.listFromJson(body.optJSONArray("messages"));
         absolutize(msgs);
 
-        boolean wasAtBottom = !sessionLoaded || isAtBottom();
+        boolean firstLoad = !sessionLoaded;
+        boolean wasAtBottom = firstLoad || isAtBottom();
+        long newestIn = OrderChatNotifier.newestInboundMillis(msgs);
+        boolean newInbound = newestIn > newestLoadedInbound;
+        if (newInbound) newestLoadedInbound = newestIn;
         if (body.optBoolean("reset", false)) {
             adapter.replaceAll(msgs);
+            unseenRows.clear();   // msgs memuat ulang seluruh jendela
         } else {
             adapter.merge(msgs);
         }
-        reconcileOutbox();
+        for (ChatMessage m : msgs) {
+            if ("in".equals(m.direction)) unseenRows.add(m);
+        }
+        reconcileOutbox(msgs);
         String nextCursor = optStr(body, "cursor");
         if (nextCursor != null) cursor = nextCursor;
         if (session != null) {
@@ -434,6 +654,15 @@ public class ChatLogActivity extends AppCompatActivity {
         rvMessages.setVisibility(View.VISIBLE);
         updateEmptyState();
         if (wasAtBottom) scrollToBottom();
+        // Pesan masuk dianggap dilihat hanya bila dasar daftar tampil di layar yang sedang dilihat:
+        // perintah notifikasinya (tiba belakangan lewat poller 60 dtk) lalu tak memasang notifikasi.
+        // Digulir ke atas → baris barunya di bawah layar: tunggu staf menggulir ke dasar (onScrolled);
+        // keluar sebelum itu → notifikasinya tetap dipasang.
+        if (resumed && wasAtBottom) {
+            reportSeen();
+        } else if (resumed && newInbound && !firstLoad) {
+            Toast.makeText(this, "💬 Pesan baru dari pelanggan — gulir ke bawah", Toast.LENGTH_SHORT).show();
+        }
 
         if (purged) {
             // Riwayat sudah dihapus retensi — tak ada lagi yang bisa berubah. pollStopped diset
@@ -445,7 +674,7 @@ public class ChatLogActivity extends AppCompatActivity {
             return;
         }
         refreshMenuIfChanged();
-        schedulePoll(body.optBoolean("has_more", false) ? 0 : POLL_MS);
+        schedulePoll(body.optBoolean("has_more", false) || pollAgainAsap ? 0 : POLL_MS);
     }
 
     private void applySession(JSONObject s) {
@@ -568,6 +797,22 @@ public class ChatLogActivity extends AppCompatActivity {
 
     private boolean isAtBottom() {
         return !rvMessages.canScrollVertically(1);
+    }
+
+    /** Layar tampil dan dasar daftarnya di layar → pesan masuk yang tertunda kini terlihat. */
+    private void markSeenIfVisible() {
+        if (!orderMode || !resumed || unseenRows.isEmpty() || rvMessages == null || isFinishing()
+                || !isAtBottom()) {
+            return;
+        }
+        reportSeen();
+    }
+
+    /** Laporkan {@link #unseenRows} sebagai terlihat (juga saat kosong: "poll terbaru terlihat"). */
+    private void reportSeen() {
+        List<ChatMessage> rows = new ArrayList<>(unseenRows);
+        unseenRows.clear();
+        OrderChatNotifier.markSeen(this, transactionUuid, rows);
     }
 
     private void scrollToBottom() {
@@ -722,12 +967,19 @@ public class ChatLogActivity extends AppCompatActivity {
         if (wasAtBottom) scrollToBottom();
     }
 
-    /** Baris server sebuah kiriman tiba lewat poll (tertaut client_key) → gelembung optimisnya sudah
-     *  diganti adapter; keluarkan dari antrean supaya tak diulang lagi. */
-    private void reconcileOutbox() {
-        if (outbox == null || transactionUuid == null) return;
+    /** Baris server sebuah kiriman tiba di poll INI (tertaut client_key) → gelembung optimisnya sudah
+     *  diganti adapter; keluarkan dari antrean supaya tak diulang lagi. Hanya kunci yang benar-benar
+     *  datang dari server: entri yang tak punya gelembung di layar ini (mis. dikirim dari layar lain
+     *  untuk trx yang sama) bisa masih diulang / gagal — membuangnya membatalkan ulangan diam-diam. */
+    private void reconcileOutbox(List<ChatMessage> fromServer) {
+        if (outbox == null || transactionUuid == null || fromServer.isEmpty()) return;
+        Set<String> keys = new HashSet<>();
+        for (ChatMessage m : fromServer) {
+            if (m.clientKey != null) keys.add(m.clientKey);
+        }
+        if (keys.isEmpty()) return;
         for (OrderChatOutbox.Entry e : outbox.entries(transactionUuid)) {
-            if (!adapter.hasOptimistic(e.clientKey)) outbox.discard(e.clientKey);
+            if (keys.contains(e.clientKey)) outbox.discard(e.clientKey);
         }
     }
 
@@ -773,6 +1025,7 @@ public class ChatLogActivity extends AppCompatActivity {
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         try {
             startActivityForResult(Intent.createChooser(intent, "Pilih gambar"), REQ_PICK_IMAGE);
+            pickerOpen = true;
         } catch (Exception ex) {
             Toast.makeText(this, "Tidak dapat membuka galeri", Toast.LENGTH_SHORT).show();
         }
@@ -781,6 +1034,7 @@ public class ChatLogActivity extends AppCompatActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_PICK_IMAGE) pickerOpen = false;
         if (requestCode != REQ_PICK_IMAGE || resultCode != RESULT_OK || data == null) return;
         Uri uri = data.getData();
         if (uri == null) return;
