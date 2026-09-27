@@ -200,13 +200,14 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
 
     class ViewHolder extends RecyclerView.ViewHolder {
         View cardTransaction;
-        TextView tvTypeIcon, tvType, tvCustomerName, tvProductItems, tvDate, tvDeliveryTime, tvGalonCount, tvHarga;
+        TextView tvTypeIcon, tvType, tvCustomerName, tvComplaintBadge, tvProductItems, tvDate, tvDeliveryTime, tvGalonCount, tvHarga;
 
         ViewHolder(@NonNull View itemView) {
             super(itemView);
             cardTransaction = itemView.findViewById(R.id.cardTransaction);
             tvTypeIcon = itemView.findViewById(R.id.tvTypeIcon);
             tvType = itemView.findViewById(R.id.tvType);
+            tvComplaintBadge = itemView.findViewById(R.id.tvComplaintBadge);
             tvCustomerName = itemView.findViewById(R.id.tvCustomerName);
             tvProductItems = itemView.findViewById(R.id.tvProductItems);
             tvDate = itemView.findViewById(R.id.tvDate);
@@ -259,6 +260,7 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
             } else {
                 tvCustomerName.setVisibility(View.GONE);
             }
+            tvComplaintBadge.setVisibility(trx.isComplained() ? View.VISIBLE : View.GONE);
 
             // Pakai waktu efektif (edited_at, konsisten) — selaras dengan urutan list &
             // monoton, sementara tanggal lama hasil sinkron bisa ter-skew tz.

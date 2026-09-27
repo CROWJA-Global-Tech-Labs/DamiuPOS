@@ -99,6 +99,11 @@ public class Transaction {
      *  Server-authoritative, pull-only; lepas lagi kalau ditolak (disetujui → order lenyap dari
      *  antrian sama sekali lewat tombstone). */
     private String voidRequestPendingAt;
+    /** Badge 😠 "Komplain" — non-null bila pelanggan pernah komplain soal order ini via WhatsApp
+     *  (Agen AI, Api\Agent\ComplaintController di server). Server-authoritative, pull-only -- HP
+     *  tak pernah menulisnya sendiri. Log percakapannya sendiri diambil on-demand (lihat
+     *  SyncApi.complaintLog / ChatLogActivity), bukan disinkron sebagai kolom. */
+    private String complainedAt;
     private String deliveryDoneAt;
     /** Nama kurir yang menekan "Selesai" — bisa BEDA dari pembuat order (lihat markDelivered). */
     private String completedByName;
@@ -295,6 +300,14 @@ public class Transaction {
     /** Badge 🗑️ — ada permintaan void PENDING untuk order ini (belum diputuskan). */
     public boolean hasPendingVoidRequest() {
         return voidRequestPendingAt != null && !voidRequestPendingAt.trim().isEmpty();
+    }
+
+    public String getComplainedAt() { return complainedAt; }
+    public void setComplainedAt(String v) { this.complainedAt = v; }
+
+    /** Badge 😠 — pelanggan pernah komplain soal order ini via WhatsApp. */
+    public boolean isComplained() {
+        return complainedAt != null && !complainedAt.trim().isEmpty();
     }
 
     /** Order ini dibuat pelanggan sendiri via halaman Order Online (kampanye jenis ORDER)? */

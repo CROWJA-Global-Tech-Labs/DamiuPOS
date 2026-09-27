@@ -485,6 +485,7 @@ public class TransactionDao {
                 t.setDeliveryDestLng(getDouble(c, DatabaseHelper.COL_DELIVERY_DEST_LNG));
                 t.setLastManualEditAt(getStr(c, DatabaseHelper.COL_LAST_MANUAL_EDIT_AT));
                 t.setVoidRequestPendingAt(getStr(c, DatabaseHelper.COL_VOID_REQUEST_PENDING_AT));
+                t.setComplainedAt(getStr(c, DatabaseHelper.COL_COMPLAINED_AT));
                 String itemsJson = getStr(c, DatabaseHelper.COL_ITEMS_JSON);
                 if (itemsJson != null) t.setItems(TransactionItem.listFromJson(itemsJson));
                 t.setCustomerName(getStr(c, "cust_name"));
@@ -621,6 +622,7 @@ public class TransactionDao {
                 // Badge ✏️/🗑️ "sudah pernah diubah" — server-authoritative, dibaca apa adanya.
                 t.setLastManualEditAt(getStr(c, DatabaseHelper.COL_LAST_MANUAL_EDIT_AT));
                 t.setVoidRequestPendingAt(getStr(c, DatabaseHelper.COL_VOID_REQUEST_PENDING_AT));
+                t.setComplainedAt(getStr(c, DatabaseHelper.COL_COMPLAINED_AT));
                 t.setDeliveryToken(getStr(c, DatabaseHelper.COL_DELIVERY_TOKEN));
                 // Lokasi tujuan terpilih (multi-lokasi) — SELECT t.* sudah memuatnya.
                 t.setDeliveryDestName(getStr(c, DatabaseHelper.COL_DELIVERY_DEST_NAME));

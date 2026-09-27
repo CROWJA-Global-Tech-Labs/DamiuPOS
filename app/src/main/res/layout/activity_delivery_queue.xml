@@ -60,12 +60,18 @@
 
             <!-- 🔄 Susun ulang pemberhentian rit BERJALAN jadi rute terpendek (jarak tempuh) dari posisi
                  HP sekarang — hanya tampil saat ada rit berjalan (applyRunModeChrome). -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnRunReroute"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
+                android:layout_marginEnd="6dp"
                 android:minHeight="0dp"
                 android:paddingTop="4dp"
                 android:paddingBottom="4dp"
@@ -75,6 +81,25 @@
                 android:textSize="12sp"
                 android:visibility="gone"
                 app:strokeColor="@color/white" />
+
+            <!-- ➕ Tambah order ke rit BERJALAN: dari Antrian Saya yang belum ikut rit, antrean
+                 perangkat lain, atau Pesanan Terbuka (applyRunModeChrome / showAddToRunPicker). -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnRunAdd"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:minHeight="0dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:text="➕ Tambah ke Rit"
+                android:textAllCaps="false"
+                android:textColor="@color/white"
+                android:textSize="12sp"
+                android:visibility="gone"
+                app:strokeColor="@color/white" />
+            </LinearLayout>
 
             <TextView
                 android:id="@+id/tvSummaryCaption"
@@ -338,6 +363,18 @@
                     android:maxLines="1" />
             </com.google.android.material.textfield.TextInputLayout>
 
+            <com.google.android.material.checkbox.MaterialCheckBox
+                android:id="@+id/cbKomplainMine"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_marginTop="2dp"
+                android:minWidth="0dp"
+                android:paddingStart="2dp"
+                android:paddingEnd="0dp"
+                android:text="😠 Komplain saja"
+                android:textSize="11sp" />
+
             <FrameLayout
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
@@ -520,6 +557,18 @@
                     android:inputType="text"
                     android:maxLines="1" />
             </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.checkbox.MaterialCheckBox
+                android:id="@+id/cbKomplainOpen"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_marginTop="2dp"
+                android:minWidth="0dp"
+                android:paddingStart="2dp"
+                android:paddingEnd="0dp"
+                android:text="😠 Komplain saja"
+                android:textSize="11sp" />
 
             <com.google.android.material.button.MaterialButtonToggleGroup
                 android:id="@+id/sortGroupOpen"
@@ -719,15 +768,36 @@
         android:id="@+id/barRute"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
+        android:orientation="vertical"
         android:background="@color/white"
         android:elevation="8dp"
         android:paddingStart="14dp"
         android:paddingEnd="10dp"
-        android:paddingTop="8dp"
+        android:paddingTop="6dp"
         android:paddingBottom="8dp"
         android:visibility="gone">
+
+        <!-- Rincian produk gabungan order terpilih (badge slug) — diisi updateSelectionUi. -->
+        <HorizontalScrollView
+            android:id="@+id/selBadgesScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="4dp"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/selBadges"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
 
         <!-- Pilih/batal SEMUA order di antrian sekaligus (dasar rute banyak tujuan). -->
         <CheckBox
@@ -775,5 +845,6 @@
             app:icon="@android:drawable/ic_media_play"
             app:iconGravity="textStart"
             app:iconPadding="4dp" />
+    </LinearLayout>
     </LinearLayout>
 </LinearLayout>

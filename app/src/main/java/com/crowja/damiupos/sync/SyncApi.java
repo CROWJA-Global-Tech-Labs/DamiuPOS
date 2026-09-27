@@ -507,6 +507,19 @@ public class SyncApi {
         return get(url, cfg.getToken());
     }
 
+    /**
+     * Log percakapan WhatsApp komplain untuk SATU order (badge 😠 Komplain) — diambil ON-DEMAND
+     * (bukan lewat sinkron push/pull biasa; transactions.complained_at sendiri TETAP ikut pull
+     * seperti kolom lain, lihat DatabaseHelper.COL_COMPLAINED_AT) saat pengguna membuka viewer
+     * chat dari daftar transaksi. Balas {@code {transaction_uuid, complained_at, messages:[{
+     * wa_message_id, direction, wa_account, sender_name, type, text, media_url, media_mimetype,
+     * wa_timestamp}, ...]}}, terurut wa_timestamp. Lihat ChatLogActivity untuk pemakainya.
+     */
+    public JSONObject complaintLog(String transactionUuid) throws Exception {
+        String url = cfg.getBaseUrl() + "/api/transactions/" + transactionUuid + "/complaint-log";
+        return get(url, cfg.getToken());
+    }
+
     /** Status FREZ WA Bridge server ({@code ok}+{@code configured}) — dipakai sebagai syarat auto-kirim WA. */
     public JSONObject waBridgeStatus() throws Exception {
         return get(cfg.getBaseUrl() + "/api/wa-bridge/status", cfg.getToken());

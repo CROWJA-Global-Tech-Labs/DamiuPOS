@@ -213,6 +213,30 @@ public final class BitmapUtils {
         }
     }
 
+    /**
+     * Muat gambar remote ({@code url}) ke {@code view} secara asinkron: unduh (di-cache lewat
+     * {@link #downloadToCache}, sekali per {@code cacheKey}) lalu decode-sampled, di background
+     * thread, tanpa Glide/Coil (lihat komentar kelas ini). {@code view} ditandai (setTag) dengan
+     * {@code url} SEBELUM thread dimulai dan dicek lagi sebelum setImageBitmap — RecyclerView bisa
+     * mendaur ulang view ini untuk baris LAIN sementara unduhan masih berjalan; tanpa cek ini,
+     * gambar baris lama bisa muncul di baris yang salah. Dipakai ChatMessageAdapter (media
+     * lampiran log komplain WA) -- viewer read-only frekuensi rendah, bukan feed yang sering
+     * di-scroll, jadi tak butuh library pemuat gambar baru.
+     */
+    public static void loadIntoView(android.widget.ImageView view, String url, String cacheKey) {
+        if (view == null || url == null || url.isEmpty()) return;
+        view.setTag(url);
+        view.setImageBitmap(null);
+        final Context ctx = view.getContext().getApplicationContext();
+        new Thread(() -> {
+            java.io.File f = downloadToCache(ctx, url, cacheKey + ".img");
+            final Bitmap bmp = f != null ? decodeSampled(f.getAbsolutePath(), 400, 400) : null;
+            view.post(() -> {
+                if (url.equals(view.getTag()) && bmp != null) view.setImageBitmap(bmp);
+            });
+        }).start();
+    }
+
     public static boolean copyUriToFile(Context ctx, android.net.Uri uri, java.io.File dest) {
         if (ctx == null || uri == null || dest == null) return false;
         try (java.io.InputStream in = ctx.getContentResolver().openInputStream(uri);

@@ -203,6 +203,9 @@ public class SyncEngine {
                     // Badge ✏️/🗑️ "sudah pernah diubah" di kartu antrian — server-authoritative
                     // (di-skip dari fillColumns push, lihat komentar konstantanya), pull-only.
                     DatabaseHelper.COL_LAST_MANUAL_EDIT_AT, DatabaseHelper.COL_VOID_REQUEST_PENDING_AT,
+                    // Badge 😠 "Komplain" (Agen AI WhatsApp) — server-authoritative, sama pola dengan
+                    // dua kolom di atas: di-skip dari fillColumns push, HP hanya membaca via pull.
+                    DatabaseHelper.COL_COMPLAINED_AT,
                     DatabaseHelper.COL_TANGGAL, DatabaseHelper.COL_CATATAN,
                     // BUKTI SELESAI: hanya URL yang disinkron — photo_path lokal-saja (pola persis
                     // attendance/expenses: path tak pernah meninggalkan perangkat).
