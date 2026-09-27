@@ -85,6 +85,7 @@ public class Transaction {
     private String deliveryStatus;
     private String deliveryQueuedAt;
     private String deliveryTertundaAt;      // saat order ditandai TERTUNDA
+    private String sourceWa;                // akun WA tempat agen menerima pesanan (pull-only)
     private String orderedAt;               // saat order ASLINYA dibuat (tak bergeser saat ditunda)
     private String deliveryTertundaResumeAt; // jadwal lanjut otomatis (Pesanan Tertunda)
     /** "Pesanan Terbuka" (lelang): non-null = order TANPA perangkat tujuan spesifik, staf perangkat
@@ -266,6 +267,9 @@ public class Transaction {
 
     public String getDeliveryQueuedAt() { return deliveryQueuedAt; }
     public void setDeliveryQueuedAt(String v) { this.deliveryQueuedAt = v; }
+
+    public String getSourceWa() { return sourceWa; }
+    public void setSourceWa(String v) { this.sourceWa = v; }
 
     public String getOrderedAt() { return orderedAt; }
     public void setOrderedAt(String v) { this.orderedAt = v; }

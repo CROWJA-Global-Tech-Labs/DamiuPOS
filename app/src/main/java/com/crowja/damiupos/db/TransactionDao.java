@@ -490,6 +490,7 @@ public class TransactionDao {
                 t.setDeliveryQueuedAt(getStr(c, DatabaseHelper.COL_DELIVERY_QUEUED_AT));
                 t.setDeliveryTertundaAt(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_AT));
                 t.setOrderedAt(getStr(c, DatabaseHelper.COL_ORDERED_AT));
+                t.setSourceWa(getStr(c, DatabaseHelper.COL_SOURCE_WA));
                 t.setDeliveryTertundaResumeAt(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT));
                 t.setDeliveryToken(getStr(c, DatabaseHelper.COL_DELIVERY_TOKEN));
                 t.setDeliveryDestName(getStr(c, DatabaseHelper.COL_DELIVERY_DEST_NAME));
@@ -622,6 +623,7 @@ public class TransactionDao {
                 t.setDeliveryQueuedAt(getStr(c, DatabaseHelper.COL_DELIVERY_QUEUED_AT));
                 t.setDeliveryTertundaAt(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_AT));
                 t.setOrderedAt(getStr(c, DatabaseHelper.COL_ORDERED_AT));
+                t.setSourceWa(getStr(c, DatabaseHelper.COL_SOURCE_WA));
                 t.setDeliveryTertundaResumeAt(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT));
                 // "Pesanan Terbuka" MASIH terbuka = kolom terisi DAN belum diklaim (delivery_device_uuid
                 // masih kosong) — kolom mentahnya sendiri PERMANEN (server tak pernah meng-null-kannya

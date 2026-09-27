@@ -183,6 +183,8 @@ public class SyncEngine {
                     DatabaseHelper.COL_DELIVERY_TERTUNDA_REASON,
                     // Pull-only di server (bukan kolom; push-nya diabaikan) — waktu order asli.
                     DatabaseHelper.COL_ORDERED_AT,
+                    // Pull-only: akun WA penerima pesanan agen (server skip saat push).
+                    DatabaseHelper.COL_SOURCE_WA,
                     DatabaseHelper.COL_DELIVERY_DONE_AT, DatabaseHelper.COL_DELIVERY_TOKEN,
                     // "Sedang dikerjakan" (▶ Jalankan) + stempel berhentinya — DITULIS HP, dua arah.
                     // Dua stempel karena push membuang kolom null (berhenti tak bisa dikirim NULL).

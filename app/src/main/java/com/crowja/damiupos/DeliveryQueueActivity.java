@@ -1569,6 +1569,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * created_at, atau waktu insert lokal sebelum tersinkron). Sengaja BUKAN tanggal, yang ikut
     * digeser ke jadwal lanjut saat pesanan ditunda. Cermin "🕐 Dipesan …" di kartu antrean web.
     */
+   /** " · 💬 ZAKY" — akun WA tempat agen menerima pesanan (source_wa); kosong bila bukan order agen.
+    *  Cermin "💬 Diterima via …" di kartu antrean web. */
+   static String sourceWaSuffix(String sourceWa) {
+      if (sourceWa == null) return "";
+      String v = sourceWa.trim();
+      return v.isEmpty() || "null".equals(v) ? "" : " · 💬 " + v;
+   }
+
    static String orderedSuffix(Transaction t) {
       String v = t.getOrderedAt();
       if ((v == null || v.isEmpty()) && !Transaction.DELIVERY_TERTUNDA.equals(t.getDeliveryStatus())) {
@@ -3714,6 +3722,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       meta.append(meta.length() > 0 ? " · " : "").append(o.optInt("galon", 0)).append(" galon");
       meta.append(receiptSuffix(o.optString("receipt_no", "")));
       meta.append(orderedSuffix(o.optString("ordered_at", "")));
+      meta.append(sourceWaSuffix(o.optString("source_wa", "")));
       double ongkir = o.optDouble("ongkir", 0.0);
       String adminArea = o.optString("dest_name", "").isEmpty() || "null".equals(o.optString("dest_name", ""))
             ? (c != null ? c.getAdminArea() : "")
@@ -3728,7 +3737,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             + (t.isCustomerDataIncomplete() ? "❗ " : "") + safe(t.getCustomerName());
       long elapsedMs = elapsedMillis(t.getDeliveryQueuedAt());
       double distKm = distOrInf(t, this.myLat, this.myLng);
-      String meta = t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + receiptSuffix(t.getReceiptNo()) + orderedSuffix(t);
+      String meta = t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + receiptSuffix(t.getReceiptNo()) + orderedSuffix(t) + sourceWaSuffix(t.getSourceWa());
       Customer c = t.getCustomerId() > 0 ? this.customerDao.getById(t.getCustomerId()) : null;
       String adminArea = areaLabel(c, t);
       return new OtherQueueRow(null, t, badgeName, t.getCatatan(), meta, t.getOngkir() > 0.0,
@@ -5355,6 +5364,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private void showOrderDetail(Transaction t) {
       StringBuilder sb = new StringBuilder();
+      if (t.getSourceWa() != null && !t.getSourceWa().trim().isEmpty() && !"null".equals(t.getSourceWa().trim())) {
+         sb.append("\ud83d\udcac Diterima via ").append(t.getSourceWa().trim()).append('\n');
+      }
       if (t.getCustomerPhone() != null && !t.getCustomerPhone().trim().isEmpty()) {
          sb.append("\ud83d\udcde ").append(t.getCustomerPhone().trim()).append('\n');
       }
@@ -5582,7 +5594,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       card.addView(tvName);
 
       TextView tvMeta = new TextView(this);
-      tvMeta.setText(t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + receiptSuffix(t.getReceiptNo()) + orderedSuffix(t));
+      tvMeta.setText(t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + receiptSuffix(t.getReceiptNo()) + orderedSuffix(t) + sourceWaSuffix(t.getSourceWa()));
       tvMeta.setTextSize(13f);
       tvMeta.setTextColor(-10395295);
       card.addView(tvMeta);
@@ -8228,7 +8240,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             h.jarakLabel = jarak;
             meta.append(t.getJumlahGalon()).append(" galon").append(t.wasManuallyEdited() ? " ✏️" : "").append(" · Rp ").append(DeliveryQueueActivity.formatRupiah(t.getTotalHarga()));
             meta.append(DeliveryQueueActivity.receiptSuffix(t.getReceiptNo()));
-            meta.append(DeliveryQueueActivity.orderedSuffix(t));
+            meta.append(DeliveryQueueActivity.orderedSuffix(t) + sourceWaSuffix(t.getSourceWa()));
             h.tvMeta.setText(meta.toString());
             DeliveryQueueActivity.this.bindProductChips(h.productChips, t);
             h.tvOngkir.setVisibility(t.getOngkir() > (double)0.0F ? 0 : 8);
@@ -8488,7 +8500,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          String jarak = DeliveryQueueActivity.this.myLat == (double)0.0F && DeliveryQueueActivity.this.myLng == (double)0.0F ? null : DeliveryQueueActivity.formatJarak(DeliveryQueueActivity.distOrInf(t, DeliveryQueueActivity.this.myLat, DeliveryQueueActivity.this.myLng));
          meta.append(meta.length() > 0 ? " · " : "").append(t.getJumlahGalon()).append(" galon");
          meta.append(DeliveryQueueActivity.receiptSuffix(t.getReceiptNo()));
-         meta.append(DeliveryQueueActivity.orderedSuffix(t));
+         meta.append(DeliveryQueueActivity.orderedSuffix(t) + sourceWaSuffix(t.getSourceWa()));
          h.tvMeta.setText(meta.toString());
          h.tvOngkir.setVisibility(t.getOngkir() > (double)0.0F ? 0 : 8);
          DeliveryQueueActivity.bindPickupOnlyBadge(h.tvPickupOnly, DeliveryQueueActivity.isPickupOnly(t));

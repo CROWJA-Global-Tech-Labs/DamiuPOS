@@ -287,6 +287,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     /** Waktu pesanan ASLINYA dibuat (waktu lokal). Diisi saat insert di HP, lalu ditimpa nilai
      *  server (pull-only: created_at server) — BEDA dari tanggal, yang ikut bergeser saat ditunda. */
     public static final String COL_ORDERED_AT = "ordered_at";
+    /** Akun WhatsApp tempat agen menerima pesanan ("ZAKY") — pull-only, ditulis server
+     *  (POST /api/agent/orders `wa_account`); push HP diabaikan server. */
+    public static final String COL_SOURCE_WA = "source_wa";
     /** "Pesanan Terbuka" (open-dispatch): order delivery TANPA perangkat tujuan spesifik — staf
      *  perangkat mana pun boleh mengklaimnya. Non-null = sedang/pernah terbuka; PERMANEN (tak pernah
      *  di-null-kan lagi setelah diklaim) supaya setiap perangkat yang sempat menariknya tetap
@@ -620,6 +623,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_DELIVERY_TERTUNDA_RESUME_AT + " TEXT, " +
                     COL_DELIVERY_TERTUNDA_REASON + " TEXT, " +
                     COL_ORDERED_AT + " TEXT, " +
+                    COL_SOURCE_WA + " TEXT, " +
                     COL_DELIVERY_DONE_AT + " TEXT, " +
                     COL_DELIVERY_STARTED_AT + " TEXT, " +
                     COL_DELIVERY_STARTED_CLEARED_AT + " TEXT, " +
@@ -1725,6 +1729,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             // "🕐 Dipesan …" di kartu antrean: waktu pesanan asli (lihat COL_ORDERED_AT). Baris lama
             // terisi saat pull berikutnya membawanya; sampai itu kartu memakai tanggal.
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_ORDERED_AT + " TEXT");
+            // "💬 Diterima via …": akun WA tempat agen menerima pesanan (lihat COL_SOURCE_WA).
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_SOURCE_WA + " TEXT");
         }
     }
 
