@@ -601,6 +601,40 @@ public class CustomerDao {
 
     /** Nomor kanonik untuk banding duplikat — PEKA kode negara: digit saja, lalu
      *  "08xx" ≡ "+62 8xx" ≡ "62 8xx" ≡ "8xx" semuanya → "628xx". Kosong bila tanpa digit. */
+    /**
+     * Bagian NASIONAL sebuah kata kunci bila ia nomor (≥3 digit setelah +62/62/0 dibuang), else null.
+     * Cermin App\Support\Phone::searchDigits di server: "0813-2155-9518", "+62 813 2155 9518",
+     * "81321559518" semuanya jadi "81321559518".
+     */
+    public static String phoneSearchDigits(String keyword) {
+        String d = keyword == null ? "" : keyword.replaceAll("\\D+", "");
+        if (d.startsWith("62")) {
+            d = d.substring(2);
+            if (d.startsWith("0")) d = d.substring(1);
+        } else if (d.startsWith("0")) {
+            d = d.substring(1);
+        }
+        return d.length() >= 3 ? d : null;
+    }
+
+    /** Versi in-memory (cermin Phone::matches server): nomor tersimpan format apa pun cocok dengan
+     *  kata kunci nomor ber-strip/spasi/+62. False bila kata kunci bukan nomor. */
+    public static boolean phoneMatches(String stored, String keyword) {
+        String national = phoneSearchDigits(keyword);
+        if (national == null || stored == null) return false;
+        return stored.replaceAll("\\D+", "").contains(national);
+    }
+
+    /** Kolom nomor tanpa pemisah (spasi - . ( ) +) — cermin Phone::sqlDigits server. Pemisah JSON
+     *  kolom `phones` (tanda kutip/koma) SENGAJA dibiarkan supaya dua nomor tak tersambung. */
+    static String sqlDigits(String column) {
+        String expr = column;
+        for (String ch : new String[]{" ", "-", ".", "(", ")", "+"}) {
+            expr = "REPLACE(" + expr + ", '" + ch + "', '')";
+        }
+        return expr;
+    }
+
     public static String canonicalPhone(String phone) {
         String d = phone == null ? "" : phone.replaceAll("\\D+", "");
         if (d.isEmpty()) return "";
@@ -1002,6 +1036,12 @@ public class CustomerDao {
         args.add(like);
         args.add(like);
         args.add(like);
+        args.add(like);
+        String phoneDigits = phoneSearchDigits(keyword);
+        if (phoneDigits != null) {
+            args.add("%" + phoneDigits + "%");
+            args.add("%" + phoneDigits + "%");
+        }
         String dateClause = "";
         if (createdFrom != null && createdTo != null) {
             dateClause = "AND " + CREATED_LOCAL_DATE + " >= ? AND " + CREATED_LOCAL_DATE + " <= ? ";
@@ -1016,7 +1056,9 @@ public class CustomerDao {
                 "COUNT(t._id) AS total_trx " +
                 "FROM customers c " +
                 "LEFT JOIN transactions t ON c._id = t.customer_id " +
-                "WHERE (c.name LIKE ? OR c.phone LIKE ? OR c.address LIKE ?) " +
+                "WHERE (c.name LIKE ? OR c.phone LIKE ? OR c.address LIKE ? OR c." + DatabaseHelper.COL_PHONES + " LIKE ?" +
+                (phoneDigits != null ? " OR " + sqlDigits("c." + DatabaseHelper.COL_PHONE) + " LIKE ?"
+                        + " OR " + sqlDigits("c." + DatabaseHelper.COL_PHONES) + " LIKE ?" : "") + ") " +
                 (includeHandedOver ? "" : "AND " + NOT_HANDED_OVER_HERE + " ") +
                 (todayOnly ? "AND " + REGISTERED_TODAY_LOCAL + " " : "") +
                 dateClause +
