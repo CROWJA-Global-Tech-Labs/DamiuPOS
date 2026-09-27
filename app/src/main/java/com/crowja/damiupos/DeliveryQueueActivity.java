@@ -1798,10 +1798,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private void showOtherDeviceMoreMenu(View anchor, JSONObject q) {
       PopupMenu menu = new PopupMenu(this, anchor);
-      double lat = q.optDouble("latitude", (double)0.0F);
-      double lng = q.optDouble("longitude", (double)0.0F);
-      String jarakSuffix = Double.isNaN(this.otherLat) || Double.isNaN(this.otherLng) || lat == (double)0.0F && lng == (double)0.0F ? "" : " (" + formatJarak(haversineKmOtherDevices(this.otherLat, this.otherLng, lat, lng)) + ")";
-      menu.getMenu().add(0, 1, 0, "\ud83d\udd0d Preview" + jarakSuffix);
+      menu.getMenu().add(0, 1, 0, "\ud83d\udc64 Detail Pelanggan");
       menu.getMenu().add(0, 2, 1, "\ud83d\udd52 Jadwalkan Ulang");
       if (q.optBoolean("chat_session", false)) {
          menu.getMenu().add(0, 3, 2, "\ud83d\udcac Chat Pesanan");
@@ -1809,7 +1806,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
             case 1:
-               this.showOtherDevicePreview(q);
+               this.openOtherDeviceCustomerDetail(q);
                return true;
             case 2:
                this.showPostponeSchedulePickerOther(q);
@@ -1822,6 +1819,19 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
       });
       menu.show();
+   }
+
+   /** "\ud83d\udc64 Detail Pelanggan" di menu \u22ee kartu Antrean Perangkat Lain \u2014 pelanggan tersinkron
+    *  branch-wide (lihat CustomerDao), jadi customer_uuid order itu SELALU punya salinan lokal
+    *  di perangkat ini untuk dibuka lewat CustomerDetailActivity yang sudah ada. */
+   private void openOtherDeviceCustomerDetail(JSONObject q) {
+      String custUuid = q.optString("customer_uuid", "");
+      Customer c = !custUuid.isEmpty() && !custUuid.equals("null") ? this.customerDao.getBySyncUuid(custUuid) : null;
+      if (c == null) {
+         Toast.makeText(this, "Data pelanggan tidak ditemukan di perangkat ini.", Toast.LENGTH_SHORT).show();
+         return;
+      }
+      this.startActivity((new Intent(this, CustomerDetailActivity.class)).putExtra("customer_id", c.getId()));
    }
 
    private void updateOtherEmptyState() {
