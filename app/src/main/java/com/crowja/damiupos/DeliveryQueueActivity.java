@@ -3019,7 +3019,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       menu.getMenu().add(0, 1, 0, "\u2190 Kembali");
       menu.getMenu().add(0, 2, 1, jarakLabel != null ? "\ud83d\udd0d " + jarakLabel + " \u00b7 Preview" : "\ud83d\udd0d Preview");
       menu.getMenu().add(0, 3, 2, "\ud83d\udcac Chat WA");
-      if (t.hasChatSession()) {
+      if ("JUAL".equals(t.getType())) {
          menu.getMenu().add(0, 4, 3, "\ud83d\udcac Chat Pesanan");
       }
       menu.setOnMenuItemClickListener((item) -> {
@@ -3050,7 +3050,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (WaShare.hasUsablePhone(t.getCustomerPhone())) {
          menu.getMenu().add(0, 3, 2, "\ud83d\udcac Chat WA Konsumen");
       }
-      if (t.hasChatSession()) {
+      if ("JUAL".equals(t.getType())) {
          menu.getMenu().add(0, 4, 3, "\ud83d\udcac Chat Pesanan");
       }
       menu.setOnMenuItemClickListener((item) -> {
@@ -5845,7 +5845,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.addGridAction(actionsGrid, btnAlihkan);
       }
 
-      if (t.hasChatSession()) {
+      if ("JUAL".equals(t.getType())) {
          Button btnChatPesanan = new Button(this);
          btnChatPesanan.setText("💬 Chat Pesanan");
          btnChatPesanan.setAllCaps(false);
@@ -8942,7 +8942,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          h.btnMore.setOnClickListener((v) -> {
             PopupMenu menu = new PopupMenu(DeliveryQueueActivity.this, v);
             menu.getMenu().add(0, 1, 0, "\ud83d\udd0d Preview" + jarakSuffix);
-            if (t.hasChatSession()) {
+            if ("JUAL".equals(t.getType())) {
                menu.getMenu().add(0, 2, 1, "\ud83d\udcac Chat Pesanan");
             }
             menu.setOnMenuItemClickListener((item) -> {

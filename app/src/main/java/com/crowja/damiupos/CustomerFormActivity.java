@@ -1516,10 +1516,14 @@ public class CustomerFormActivity extends AppCompatActivity {
         if (requirePhotoCoord && editId == -1 && !skipForReseller) {
             boolean hasPhoto = currentPhotoPath != null && !currentPhotoPath.isEmpty()
                     && new File(currentPhotoPath).exists();
+            // Kartu Foto Rumah disembunyikan — foto kini diambil per lokasi (Lokasi Pelanggan).
+            for (LocationRow r : locationRows) {
+                if (!r.photos.isEmpty()) { hasPhoto = true; break; }
+            }
             boolean hasCoord = primary != null;
             if (!hasPhoto || !hasCoord) {
-                String pesan = !hasPhoto && !hasCoord ? "Wajib ambil FOTO RUMAH dan KOORDINAT pelanggan baru."
-                        : (!hasPhoto ? "Wajib ambil FOTO RUMAH pelanggan baru." : "Wajib ambil KOORDINAT pelanggan baru.");
+                String pesan = !hasPhoto && !hasCoord ? "Wajib ambil FOTO LOKASI dan KOORDINAT pelanggan baru."
+                        : (!hasPhoto ? "Wajib ambil FOTO LOKASI pelanggan baru." : "Wajib ambil KOORDINAT pelanggan baru.");
                 Toast.makeText(this, pesan, Toast.LENGTH_LONG).show();
                 return;
             }

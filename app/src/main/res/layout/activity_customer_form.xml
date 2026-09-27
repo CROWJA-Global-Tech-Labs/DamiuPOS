@@ -232,10 +232,11 @@
                 android:textSize="13sp"
                 android:visibility="gone" />
 
-            <!-- Foto Rumah -->
+            <!-- Foto Rumah — disembunyikan: redundan dengan foto per lokasi di Lokasi Pelanggan. -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:visibility="gone"
                 android:layout_marginTop="12dp"
                 app:cardCornerRadius="12dp"
                 app:cardElevation="2dp">

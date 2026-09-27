@@ -265,7 +265,7 @@ public class TransactionListActivity extends AppCompatActivity {
         java.util.List<String> opts = new java.util.ArrayList<>();
         opts.add("Ubah Pelanggan");
         if (Transaction.TYPE_JUAL.equals(trx.getType())) opts.add("Alokasi Galon");
-        if (trx.hasChatSession()) opts.add("💬 Chat Pesanan");
+        if ("JUAL".equals(trx.getType())) opts.add("💬 Chat Pesanan");
         if (trx.isComplained()) opts.add("😠 Lihat Chat Komplain");
         opts.add("Hapus Transaksi");
         final String[] options = opts.toArray(new String[0]);
