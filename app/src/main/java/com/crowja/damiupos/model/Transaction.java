@@ -104,6 +104,10 @@ public class Transaction {
      *  tak pernah menulisnya sendiri. Log percakapannya sendiri diambil on-demand (lihat
      *  SyncApi.complaintLog / ChatLogActivity), bukan disinkron sebagai kolom. */
     private String complainedAt;
+    /** Tombol "💬 Chat Pesanan" — non-null bila order ini punya sesi chat WA aktif di server
+     *  (order dari FREZ AI Agent). Server-authoritative, pull-only; isi chat-nya diambil on-demand
+     *  (SyncApi.orderChat / ChatLogActivity mode order). */
+    private String chatSessionAt;
     private String deliveryDoneAt;
     /** Nama kurir yang menekan "Selesai" — bisa BEDA dari pembuat order (lihat markDelivered). */
     private String completedByName;
@@ -308,6 +312,14 @@ public class Transaction {
     /** Badge 😠 — pelanggan pernah komplain soal order ini via WhatsApp. */
     public boolean isComplained() {
         return complainedAt != null && !complainedAt.trim().isEmpty();
+    }
+
+    public String getChatSessionAt() { return chatSessionAt; }
+    public void setChatSessionAt(String v) { this.chatSessionAt = v; }
+
+    /** Tombol "💬 Chat Pesanan" — order ini punya sesi chat WA (dibuat FREZ AI Agent). */
+    public boolean hasChatSession() {
+        return chatSessionAt != null && !chatSessionAt.trim().isEmpty();
     }
 
     /** Order ini dibuat pelanggan sendiri via halaman Order Online (kampanye jenis ORDER)? */

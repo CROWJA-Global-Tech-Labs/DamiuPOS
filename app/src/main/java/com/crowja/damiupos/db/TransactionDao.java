@@ -496,6 +496,7 @@ public class TransactionDao {
                 t.setLastManualEditAt(getStr(c, DatabaseHelper.COL_LAST_MANUAL_EDIT_AT));
                 t.setVoidRequestPendingAt(getStr(c, DatabaseHelper.COL_VOID_REQUEST_PENDING_AT));
                 t.setComplainedAt(getStr(c, DatabaseHelper.COL_COMPLAINED_AT));
+                t.setChatSessionAt(getStr(c, DatabaseHelper.COL_CHAT_SESSION_AT));
                 String itemsJson = getStr(c, DatabaseHelper.COL_ITEMS_JSON);
                 if (itemsJson != null) t.setItems(TransactionItem.listFromJson(itemsJson));
                 t.setCustomerName(getStr(c, "cust_name"));
@@ -633,6 +634,7 @@ public class TransactionDao {
                 t.setLastManualEditAt(getStr(c, DatabaseHelper.COL_LAST_MANUAL_EDIT_AT));
                 t.setVoidRequestPendingAt(getStr(c, DatabaseHelper.COL_VOID_REQUEST_PENDING_AT));
                 t.setComplainedAt(getStr(c, DatabaseHelper.COL_COMPLAINED_AT));
+                t.setChatSessionAt(getStr(c, DatabaseHelper.COL_CHAT_SESSION_AT));
                 t.setDeliveryToken(getStr(c, DatabaseHelper.COL_DELIVERY_TOKEN));
                 // Lokasi tujuan terpilih (multi-lokasi) — SELECT t.* sudah memuatnya.
                 t.setDeliveryDestName(getStr(c, DatabaseHelper.COL_DELIVERY_DEST_NAME));
@@ -1718,6 +1720,12 @@ public class TransactionDao {
         if (dtokIdx >= 0) {
             t.setDeliveryToken(cursor.getString(dtokIdx));
         }
+        // Badge 😠 Komplain + tombol 💬 Chat Pesanan — sebelumnya complained_at tak pernah dipetakan
+        // di sini, jadi daftar transaksi tak pernah tahu order mana yang dikomplain.
+        int complainedIdx = cursor.getColumnIndex(DatabaseHelper.COL_COMPLAINED_AT);
+        if (complainedIdx >= 0) t.setComplainedAt(cursor.getString(complainedIdx));
+        int chatSessIdx = cursor.getColumnIndex(DatabaseHelper.COL_CHAT_SESSION_AT);
+        if (chatSessIdx >= 0) t.setChatSessionAt(cursor.getString(chatSessIdx));
         return t;
     }
 }

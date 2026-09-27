@@ -321,6 +321,13 @@ public class SyncSettings {
     public boolean needsDebtRepull() { return ! "1".equals(settings.get(K_REPULL_DEBTS, "0")); }
     public void markDebtRepulled()   { settings.set(K_REPULL_DEBTS, "1"); }
 
+    /** Sekali saja setelah DB v99 (kolom chat_session_at): APK lama membuang kunci tak dikenal itu
+     *  dari pull lalu kursor transaksinya sudah melewatinya — mundurkan kursor "transactions" 72 jam
+     *  supaya order agen AI yang baru-baru ini punya sesi chat mendapat tombol "💬 Chat Pesanan". */
+    private static final String K_REPULL_TRX_LOOKBACK = "sync_repull_trx_lookback_v99";
+    public boolean needsTrxLookbackRepull() { return ! "1".equals(settings.get(K_REPULL_TRX_LOOKBACK, "0")); }
+    public void markTrxLookbackRepulled()   { settings.set(K_REPULL_TRX_LOOKBACK, "1"); }
+
     /** Rising-edge flag: sudah pernah memperingatkan admin soal jenis galon ganda
      *  (Kasus B upgrade). Diset saat duplikat terdeteksi, di-reset saat sudah bersih,
      *  supaya notifikasi tidak spam tiap sinkron. */
