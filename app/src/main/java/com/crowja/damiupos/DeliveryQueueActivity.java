@@ -7895,7 +7895,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             } else {
                String name = this.str(o, "name").toLowerCase(Locale.US);
                String phone = this.str(o, "phone").toLowerCase(Locale.US);
-               if (name.contains(q) || phone.contains(q)) {
+               if (name.contains(q) || phone.contains(q) || CustomerDao.phoneMatches(phone, q)) {
                   this.data.add(o);
                }
             }
@@ -8146,7 +8146,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          for (Transaction t : base) {
             String name = safe(t.getCustomerName()).toLowerCase(Locale.US);
             String phone = t.getCustomerPhone() != null ? t.getCustomerPhone().toLowerCase(Locale.US) : "";
-            if (name.contains(q) || phone.contains(q)) filtered.add(t);
+            if (name.contains(q) || phone.contains(q) || CustomerDao.phoneMatches(phone, q)) filtered.add(t);
          }
          return filtered;
       }
@@ -8434,7 +8434,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             } else {
                String name = DeliveryQueueActivity.safe(t.getCustomerName()).toLowerCase(Locale.US);
                String phone = t.getCustomerPhone() != null ? t.getCustomerPhone().toLowerCase(Locale.US) : "";
-               if (name.contains(q) || phone.contains(q)) {
+               if (name.contains(q) || phone.contains(q) || CustomerDao.phoneMatches(phone, q)) {
                   this.data.add(t);
                }
             }

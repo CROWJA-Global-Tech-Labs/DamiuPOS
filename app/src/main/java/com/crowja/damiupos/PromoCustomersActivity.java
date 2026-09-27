@@ -386,7 +386,7 @@ public class PromoCustomersActivity extends AppCompatActivity {
             if (!q.isEmpty()) {
                 String name = r.name != null ? r.name.toLowerCase(Locale.ROOT) : "";
                 String phone = r.phone != null ? r.phone : "";
-                if (!name.contains(q) && !phone.contains(q)) continue;
+                if (!name.contains(q) && !phone.contains(q) && !CustomerDao.phoneMatches(phone, q)) continue;
             }
             shown.add(r);
         }
