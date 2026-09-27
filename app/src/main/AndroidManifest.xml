@@ -85,7 +85,9 @@
             </intent-filter>
         </activity>
 
-        <!-- Deep link dari halaman publik pelanggan: damiupos://transaksi?customer=<uuid> → Transaksi Baru. -->
+        <!-- Deep link dari halaman publik pelanggan: damiupos://transaksi?customer=<uuid> → Transaksi Baru.
+             Link pesanan (server /pesanan/{uuid}, dipakai di grup eskalasi): damiupos://pesanan?trx=<uuid>
+             → buka pesanan itu di Antrian Delivery. -->
         <activity
             android:name=".DeepLinkActivity"
             android:exported="true"
@@ -96,6 +98,12 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="damiupos" android:host="transaksi" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="damiupos" android:host="pesanan" />
             </intent-filter>
         </activity>
 
