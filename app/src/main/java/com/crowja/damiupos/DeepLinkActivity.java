@@ -12,6 +12,8 @@ import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.TransactionDao;
 import com.crowja.damiupos.model.Transaction;
 
+import java.util.List;
+
 /**
  * Menangani deep link aplikasi (tanpa UI — langsung route + finish):
  * <ul>
@@ -20,8 +22,12 @@ import com.crowja.damiupos.model.Transaction;
  *   <li>{@code damiupos://pesanan?trx=<uuid>} — link pesanan (server {@code /pesanan/{uuid}}, dipakai
  *       operator/agen untuk menyebut pesanan di grup eskalasi): buka pesanan itu di Antrian Delivery,
  *       berjalan maupun tertunda.</li>
+ *   <li>{@code https://order.airfrez.com/tracking/<token>} — link lacak publik yang sama yang dikirim
+ *       ke pelanggan (lihat DeliveryQueueActivity#trackLinkOrToast): saat staff menekannya balik, mis.
+ *       dari komplain/chat WA yang menempel link ini, buka pesanan terkait di Antrian Delivery sama
+ *       seperti link pesanan di atas.</li>
  * </ul>
- * UUID di link = sync_uuid server; di HP ini di-resolve ke _id lokal.
+ * UUID/token di link diresolve ke _id lokal (sync_uuid atau delivery_token).
  */
 public class DeepLinkActivity extends Activity {
 
@@ -30,8 +36,17 @@ public class DeepLinkActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         Uri data = getIntent() != null ? getIntent().getData() : null;
-        if (data != null && "pesanan".equalsIgnoreCase(data.getHost())) {
-            openOrder(data.getQueryParameter("trx"));
+        String trackingToken = trackingToken(data);
+        if (trackingToken != null) {
+            long trxId = new TransactionDao(DatabaseHelper.getInstance(this)).getIdByDeliveryToken(trackingToken);
+            openOrder(trxId);
+        } else if (data != null && "pesanan".equalsIgnoreCase(data.getHost())) {
+            long trxId = -1;
+            String uuid = data.getQueryParameter("trx");
+            if (uuid != null && !uuid.isEmpty()) {
+                trxId = new TransactionDao(DatabaseHelper.getInstance(this)).getIdBySyncUuid(uuid);
+            }
+            openOrder(trxId);
         } else {
             openNewTransaction(data != null ? data.getQueryParameter("customer") : null);
         }
@@ -59,12 +74,7 @@ public class DeepLinkActivity extends Activity {
         }
     }
 
-    private void openOrder(String uuid) {
-        long trxId = -1;
-        if (uuid != null && !uuid.isEmpty()) {
-            trxId = new TransactionDao(DatabaseHelper.getInstance(this)).getIdBySyncUuid(uuid);
-        }
-
+    private void openOrder(long trxId) {
         if (trxId > 0) {
             // Antrian Delivery dgn MainActivity sebagai induk; pesanannya dibuka di sana
             // (DeliveryQueueActivity.EXTRA_FOCUS_TRX_ID).
@@ -84,5 +94,17 @@ public class DeepLinkActivity extends Activity {
         Intent home = new Intent(this, MainActivity.class);
         home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         startActivity(home);
+    }
+
+    /** Ekstrak {@code <token>} dari path {@code /tracking/<token>}, atau null bila URI tidak
+     *  cocok bentuk itu (mis. link damiupos://transaksi atau damiupos://pesanan). */
+    private static String trackingToken(Uri data) {
+        if (data == null) return null;
+        List<String> segs = data.getPathSegments();
+        if (segs != null && segs.size() >= 2 && "tracking".equals(segs.get(0))) {
+            String token = segs.get(1);
+            return token != null && !token.isEmpty() ? token : null;
+        }
+        return null;
     }
 }

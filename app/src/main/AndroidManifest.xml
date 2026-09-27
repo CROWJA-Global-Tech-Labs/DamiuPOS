@@ -87,7 +87,12 @@
 
         <!-- Deep link dari halaman publik pelanggan: damiupos://transaksi?customer=<uuid> → Transaksi Baru.
              Link pesanan (server /pesanan/{uuid}, dipakai di grup eskalasi): damiupos://pesanan?trx=<uuid>
-             → buka pesanan itu di Antrian Delivery. -->
+             → buka pesanan itu di Antrian Delivery. Juga menangkap link lacak publik
+             https://order.airfrez.com/tracking/{token} (sama yang dikirim ke pelanggan) supaya saat
+             staff menekannya balik — mis. dari komplain/chat WA yang menempel link ini — order
+             terkait langsung terbuka di Antrian Pengiriman. android:autoVerify butuh assetlinks.json
+             ter-host di order.airfrez.com/.well-known/ (backend, di luar repo ini) supaya tautan
+             langsung buka app tanpa dialog "Buka dengan". -->
         <activity
             android:name=".DeepLinkActivity"
             android:exported="true"
@@ -104,6 +109,15 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="damiupos" android:host="pesanan" />
+            </intent-filter>
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="order.airfrez.com"
+                    android:pathPrefix="/tracking" />
             </intent-filter>
         </activity>
 

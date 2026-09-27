@@ -226,6 +226,18 @@ public class TransactionDao {
         }
     }
 
+    /** _id lokal untuk sebuah delivery_token (link lacak publik https://order.airfrez.com/tracking/
+     *  <token> yang dikirim ke pelanggan — dipakai ulang staff dari komplain/chat WA sebagai deep
+     *  link balik ke order tsb); -1 bila belum tersinkron ke perangkat ini. */
+    public long getIdByDeliveryToken(String token) {
+        if (token == null || token.isEmpty()) return -1;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        try (Cursor c = db.query(DatabaseHelper.TABLE_TRANSACTIONS, new String[]{DatabaseHelper.COL_ID},
+                DatabaseHelper.COL_DELIVERY_TOKEN + "=?", new String[]{token}, null, null, null)) {
+            return c.moveToFirst() ? c.getLong(0) : -1;
+        }
+    }
+
     /** sync_uuid transaksi (untuk menautkan struk ke gift yang di-klaim); null bila tak ada. */
     public String getSyncUuidById(long id) {
         if (id <= 0) return null;
