@@ -42,7 +42,7 @@ public class TransactionListActivity extends AppCompatActivity {
     private MaterialButton btnDateRange, btnSort;
     private MaterialButtonToggleGroup toggleTypeFilter;
     private TextInputEditText etSearch;
-    private android.widget.CheckBox cbPaySemua, cbPayTunai, cbPayQris, cbPayTransfer;
+    private android.widget.CheckBox cbPaySemua, cbPayTunai, cbPayQris, cbPayTransfer, cbKomplain;
     private boolean suppressPayEvents = false;
 
     // Filter state
@@ -81,6 +81,8 @@ public class TransactionListActivity extends AppCompatActivity {
         cbPayTunai = findViewById(R.id.cbPayTunai);
         cbPayQris = findViewById(R.id.cbPayQris);
         cbPayTransfer = findViewById(R.id.cbPayTransfer);
+        cbKomplain = findViewById(R.id.cbKomplain);
+        cbKomplain.setOnCheckedChangeListener((b, checked) -> reload());
         // "Semua" dipilih → bersihkan metode spesifik; dimatikan tanpa metode lain
         // → kembalikan ke "Semua" (filter tidak pernah kosong total).
         cbPaySemua.setOnCheckedChangeListener((b, checked) -> {
@@ -195,10 +197,13 @@ public class TransactionListActivity extends AppCompatActivity {
         for (Transaction t : all) {
             if (!"ALL".equals(typeFilter) && !typeFilter.equals(t.getType())) continue;
             if (!payFilter.isEmpty() && !payFilter.contains(t.getPaymentMethod())) continue;
+            if (cbKomplain.isChecked() && !t.isComplained()) continue;
             if (!search.isEmpty()) {
                 String name = t.getCustomerName() != null
                         ? t.getCustomerName().toLowerCase(Locale.getDefault()) : "";
-                if (!name.contains(search)) continue;
+                String receipt = t.getReceiptNo() != null
+                        ? t.getReceiptNo().toLowerCase(Locale.getDefault()) : "";
+                if (!name.contains(search) && !receipt.contains(search)) continue;
             }
             filtered.add(t);
         }
@@ -260,6 +265,7 @@ public class TransactionListActivity extends AppCompatActivity {
         java.util.List<String> opts = new java.util.ArrayList<>();
         opts.add("Ubah Pelanggan");
         if (Transaction.TYPE_JUAL.equals(trx.getType())) opts.add("Alokasi Galon");
+        if (trx.isComplained()) opts.add("😠 Lihat Chat Komplain");
         opts.add("Hapus Transaksi");
         final String[] options = opts.toArray(new String[0]);
         new AlertDialog.Builder(this)
@@ -268,10 +274,24 @@ public class TransactionListActivity extends AppCompatActivity {
                     String sel = options[which];
                     if ("Ubah Pelanggan".equals(sel)) showChangeCustomer(trx);
                     else if ("Alokasi Galon".equals(sel)) AllocationDialog.show(this, trx, "trx");
+                    else if ("😠 Lihat Chat Komplain".equals(sel)) openChatLog(trx);
                     else confirmDelete(trx);
                 })
                 .setNegativeButton("Batal", null)
                 .show();
+    }
+
+    /** Buka viewer log percakapan WA komplain (badge 😠) untuk transaksi ini. */
+    private void openChatLog(Transaction trx) {
+        String uuid = transactionDao.getSyncUuidById(trx.getId());
+        if (uuid == null || uuid.isEmpty()) {
+            Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent i = new Intent(this, ChatLogActivity.class);
+        i.putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid);
+        i.putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, trx.getCustomerName());
+        startActivity(i);
     }
 
     /** Pindahkan transaksi ke pelanggan lain — ubah "kolom nama pelanggan". Reuse dialog pemilih

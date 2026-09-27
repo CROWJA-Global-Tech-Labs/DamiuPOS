@@ -507,6 +507,144 @@ public class SyncApi {
         return get(url, cfg.getToken());
     }
 
+    /**
+     * Log percakapan WhatsApp komplain untuk SATU order (badge 😠 Komplain) — diambil ON-DEMAND
+     * (bukan lewat sinkron push/pull biasa; transactions.complained_at sendiri TETAP ikut pull
+     * seperti kolom lain, lihat DatabaseHelper.COL_COMPLAINED_AT) saat pengguna membuka viewer
+     * chat dari daftar transaksi. Balas {@code {transaction_uuid, complained_at, messages:[{
+     * wa_message_id, direction, wa_account, sender_name, type, text, media_url, media_mimetype,
+     * wa_timestamp}, ...]}}, terurut wa_timestamp. Lihat ChatLogActivity untuk pemakainya.
+     */
+    public JSONObject complaintLog(String transactionUuid) throws Exception {
+        String url = cfg.getBaseUrl() + "/api/transactions/" + transactionUuid + "/complaint-log";
+        return get(url, cfg.getToken());
+    }
+
+    /**
+     * Hasil satu panggilan "💬 Chat Pesanan" — BUKAN dilempar sebagai {@link SyncException}, karena
+     * pemanggil butuh status HTTP-nya persis (200 terkirim, 202 tertunda, 409 status tak diketahui,
+     * 422/403/429 gagal). {@code status == 0} = tak ada respons (jaringan putus / timeout klien).
+     * Galat server {@code {"ok":false,"error":{code,message},"new_key_required":true}} diurai seperti
+     * {@code WaBridgeSend.parseError}.
+     */
+    public static class OrderChatResult {
+        public final int status;
+        /** Body JSON (juga saat gagal); null bila tak ada respons / bukan JSON. */
+        @Nullable public final JSONObject body;
+        @Nullable public final String errorCode;
+        @Nullable public final String errorMessage;
+        /** Server minta kunci idempoten BARU untuk kirim ulang (pengiriman lama sudah final gagal). */
+        public final boolean newKeyRequired;
+
+        private OrderChatResult(int status, @Nullable JSONObject body, @Nullable String errorCode,
+                                @Nullable String errorMessage, boolean newKeyRequired) {
+            this.status = status;
+            this.body = body;
+            this.errorCode = errorCode;
+            this.errorMessage = errorMessage;
+            this.newKeyRequired = newKeyRequired;
+        }
+
+        public boolean isOk() { return status >= 200 && status < 300 && body != null; }
+
+        /** Tak ada respons sama sekali (jaringan/timeout) — aman diulang dengan kunci yang SAMA. */
+        public boolean isNoResponse() { return status == 0; }
+
+        static OrderChatResult noResponse(String message) {
+            return new OrderChatResult(0, null, "unreachable", message, false);
+        }
+
+        static OrderChatResult of(int status, @Nullable JSONObject body) {
+            if (status >= 200 && status < 300) {
+                if (body == null) return new OrderChatResult(status, null, "bad_response", "Balasan server tidak terbaca.", false);
+                return new OrderChatResult(status, body, null, null, false);
+            }
+            JSONObject err = body != null ? body.optJSONObject("error") : null;
+            String code = err != null ? err.optString("code", "") : "";
+            if (code.isEmpty()) code = status == 429 ? "rate_limited" : "http_" + status;
+            String msg = err != null ? err.optString("message", "") : "";
+            if (msg.isEmpty() && body != null) msg = body.optString("message", "");
+            if (msg.isEmpty()) msg = status == 429
+                    ? "Terlalu sering. Coba lagi sebentar."
+                    : "Server menjawab HTTP " + status + ".";
+            boolean newKey = (body != null && body.optBoolean("new_key_required", false))
+                    || (err != null && err.optBoolean("new_key_required", false));
+            return new OrderChatResult(status, body, code, msg, newKey);
+        }
+    }
+
+    /**
+     * "💬 Chat Pesanan" — potongan percakapan WA order agen AI (§4 spec chat-session). Tanpa
+     * {@code cursor}/{@code rev} → respons PENUH ({@code reset:true}); dengan keduanya → hanya baris
+     * yang berubah sejak {@code cursor} ({@code reset:false}). Balas {@code {ok, session:{…},
+     * messages:[…], reset, cursor, has_more, truncated}}; 404 {@code no_session} bila order ini tak
+     * punya sesi chat aktif.
+     *
+     * @param rev {@code session.window_rev} terakhir yang dipegang klien; ≤ 0 = belum tahu
+     */
+    public OrderChatResult orderChat(String trxUuid, @Nullable String cursor, int rev) {
+        okhttp3.HttpUrl base = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/transactions/"
+                + android.net.Uri.encode(trxUuid) + "/chat");
+        if (base == null) return OrderChatResult.noResponse("Alamat server tidak valid.");
+        okhttp3.HttpUrl.Builder ub = base.newBuilder();
+        if (cursor != null && !cursor.isEmpty()) ub.addQueryParameter("cursor", cursor);
+        if (rev > 0) ub.addQueryParameter("rev", String.valueOf(rev));
+        Request.Builder b = new Request.Builder()
+                .url(ub.build())
+                .header("Accept", "application/json")
+                .get();
+        return executeOrderChat(b);
+    }
+
+    /**
+     * Kirim balasan staf ke pelanggan lewat FREZ WA Bridge pada akun + chat SAMA dengan asal order.
+     * Body: {@code {text, client_key, staff_name, media_base64?, mimetype?, file_name?}}. Status:
+     * 200 terkirim ({@code message}), 202 tertunda (ulangi dengan client_key SAMA), 409
+     * {@code send_unknown}, 422/403/429 gagal ({@code new_key_required}).
+     */
+    public OrderChatResult orderChatSend(String trxUuid, JSONObject body) {
+        return postOrderChat("/api/transactions/" + android.net.Uri.encode(trxUuid) + "/chat/send", body);
+    }
+
+    /** "Ambil alih dari AI" ({@code paused=true}) / "Serahkan ke AI" ({@code false}). Balas
+     *  {@code {ok, agent_paused_until, agent_paused_by}}. */
+    public OrderChatResult orderChatAgent(String trxUuid, boolean paused) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("paused", paused);
+        } catch (Exception ignored) {
+            // JSONObject.put(String, boolean) tak pernah gagal untuk kunci non-null
+        }
+        return postOrderChat("/api/transactions/" + android.net.Uri.encode(trxUuid) + "/chat/agent", body);
+    }
+
+    private OrderChatResult postOrderChat(String path, JSONObject body) {
+        okhttp3.HttpUrl url = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + path);
+        if (url == null) return OrderChatResult.noResponse("Alamat server tidak valid.");
+        Request.Builder b = new Request.Builder()
+                .url(url)
+                .header("Accept", "application/json")
+                .post(RequestBody.create(body.toString(), JSON));
+        return executeOrderChat(b);
+    }
+
+    private OrderChatResult executeOrderChat(Request.Builder b) {
+        String token = cfg.getToken();
+        if (token != null && !token.isEmpty()) b.header("Authorization", "Bearer " + token);
+        try (Response r = client.newCall(b.build()).execute()) {
+            String s = r.body() != null ? r.body().string() : "";
+            JSONObject json = null;
+            try {
+                json = s.isEmpty() ? new JSONObject() : new JSONObject(s);
+            } catch (Exception ignored) {
+                // bukan JSON (mis. halaman galat proxy/CDN) — status HTTP tetap dilaporkan
+            }
+            return OrderChatResult.of(r.code(), json);
+        } catch (java.io.IOException e) {
+            return OrderChatResult.noResponse("Server tidak terjangkau.");
+        }
+    }
+
     /** Status FREZ WA Bridge server ({@code ok}+{@code configured}) — dipakai sebagai syarat auto-kirim WA. */
     public JSONObject waBridgeStatus() throws Exception {
         return get(cfg.getBaseUrl() + "/api/wa-bridge/status", cfg.getToken());

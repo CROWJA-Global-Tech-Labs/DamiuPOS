@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 98;
+    private static final int DATABASE_VERSION = 100;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -314,6 +314,15 @@ public class DatabaseHelper extends SQLiteOpenHelper {
      *  untuk order ini — dilepas lagi begitu ditolak (disetujui → order lenyap dari antrian lewat
      *  tombstone, jadi baris ini tak lagi relevan). Server-authoritative, sama seperti di atas. */
     public static final String COL_VOID_REQUEST_PENDING_AT = "void_request_pending_at";
+    /** Badge 😠 "Komplain" di kartu antrian: non-null bila pelanggan pernah komplain soal order ini
+     *  via WhatsApp (Api\Agent\ComplaintController di server). Server-authoritative, HP tak pernah
+     *  menulisnya sendiri -- hanya membaca via pull, sama seperti dua kolom di atas. Log
+     *  percakapannya sendiri diambil on-demand (lihat SyncApi.complaintLog), bukan disinkron. */
+    public static final String COL_COMPLAINED_AT = "complained_at";
+    /** Tombol "💬 Chat Pesanan": non-null bila order ini (dibuat FREZ AI Agent) punya sesi chat WA
+     *  AKTIF di server (transaction_chat_sessions). Server-authoritative & pull-only, sama persis
+     *  dengan {@link #COL_COMPLAINED_AT}; isi chat-nya diambil on-demand (SyncApi.orderChat). */
+    public static final String COL_CHAT_SESSION_AT = "chat_session_at";
     /** Token acak per-order untuk link lacak publik web ({base}/track/{token}).
      *  Pelanggan memantau progres + lokasi kurir langsung. Disinkron ke server. */
     public static final String COL_DELIVERY_TOKEN = "delivery_token";
@@ -645,6 +654,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_DELIVERY_OPEN_DISPATCH_AT + " TEXT, " +
                     COL_LAST_MANUAL_EDIT_AT + " TEXT, " +
                     COL_VOID_REQUEST_PENDING_AT + " TEXT, " +
+                    COL_COMPLAINED_AT + " TEXT, " +
+                    COL_CHAT_SESSION_AT + " TEXT, " +
                     // BUKTI SELESAI pengiriman: path lokal (TIDAK disinkron) + URL server (disinkron).
                     // Nama kolom WAJIB photo_path/photo_url — konvensi bersama pipeline MediaUploader.
                     COL_PHOTO_PATH + " TEXT, " +
@@ -1726,6 +1737,16 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_TERTUNDA_REASON + " TEXT");
         }
         if (oldVersion < 98) {
+            // Badge 😠 "Komplain" di kartu antrian — pull-only, server-authoritative (lihat komentar
+            // konstantanya di atas). Additif; NULL = belum pernah dikomplain.
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_COMPLAINED_AT + " TEXT");
+        }
+        if (oldVersion < 99) {
+            // Tombol "💬 Chat Pesanan" — pull-only, server-authoritative (lihat komentar konstantanya
+            // di atas). Additif; NULL = order ini tak punya sesi chat aktif.
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_CHAT_SESSION_AT + " TEXT");
+        }
+        if (oldVersion < 100) {
             // "🕐 Dipesan …" di kartu antrean: waktu pesanan asli (lihat COL_ORDERED_AT). Baris lama
             // terisi saat pull berikutnya membawanya; sampai itu kartu memakai tanggal.
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_ORDERED_AT + " TEXT");

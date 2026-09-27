@@ -188,6 +188,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private String searchOpenQuery = "";
    private TextInputEditText etSearchMine;
    private String searchMineQuery = "";
+   // Filter "pernah dikomplain" (badge 😠) -- independen per tab, cermin searchMineQuery/searchOpenQuery.
+   private boolean complaintOnlyMine = false;
+   private boolean complaintOnlyOpen = false;
    private static final int SORT_OPEN_DISTANCE = 0;
    private static final int SORT_OPEN_GALON = 1;
    private static final int SORT_OPEN_AGE = 2;
@@ -215,6 +218,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private LinearLayout guidedPanel;
    private LinearLayout guidedProductBadges;
    private View guidedProductBadgesScroll;
+   /** Badge rincian produk order TERPILIH di bar mode-pilih (di atas "N dipilih"). */
+   private LinearLayout selBadges;
+   private View selBadgesScroll;
    private WebView guidedInlineWebView;
    private LiveDeviceOverlay guidedInlineOverlay;
    private AlertDialog guidedRitOffer;
@@ -400,6 +406,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          public void afterTextChanged(Editable s) {
          }
       });
+      android.widget.CheckBox cbKomplainMine = this.findViewById(id.cbKomplainMine);
+      if (cbKomplainMine != null) {
+         cbKomplainMine.setOnCheckedChangeListener((b, checked) -> {
+            this.complaintOnlyMine = checked;
+            this.adapter.applyFilter();
+         });
+      }
       (new ItemTouchHelper(new ItemTouchHelper.SimpleCallback(0, 0) {
          public boolean isLongPressDragEnabled() {
             return DeliveryQueueActivity.this.isRunning();
@@ -431,6 +444,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       this.barRute = this.findViewById(id.barRute);
       this.tvSelCount = (TextView)this.findViewById(id.tvSelCount);
+      this.selBadgesScroll = this.findViewById(id.selBadgesScroll);
+      this.selBadges = (LinearLayout)this.findViewById(id.selBadges);
       this.btnJalankanBanyak = (MaterialButton)this.findViewById(id.btnJalankanBanyak);
       this.btnJalankanBanyak.setOnClickListener((v) -> this.runSelectedTogether());
       this.btnSelAksi = (MaterialButton)this.findViewById(id.btnSelAksi);
@@ -525,6 +540,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          public void afterTextChanged(Editable s) {
          }
       });
+      android.widget.CheckBox cbKomplainOpen = this.findViewById(id.cbKomplainOpen);
+      if (cbKomplainOpen != null) {
+         cbKomplainOpen.setOnCheckedChangeListener((b, checked) -> {
+            this.complaintOnlyOpen = checked;
+            this.openDispatchAdapter.applyFilterSort();
+         });
+      }
       MaterialButtonToggleGroup sortGroupOpen = (MaterialButtonToggleGroup)this.findViewById(id.sortGroupOpen);
       sortGroupOpen.check(this.sortOpenMode == 1 ? id.sortOpenGalon : (this.sortOpenMode == 2 ? id.sortOpenAge : id.sortOpenJarak));
       sortGroupOpen.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
@@ -1153,6 +1175,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private void updateSelectionUi() {
       int n = this.selectedIds.size();
       this.tvSelCount.setText(n + " dipilih");
+      this.fillProductBadges(this.selBadgesScroll, this.selBadges, this.selectedTrxs());
       if (this.btnSelAksi != null) {
          this.btnSelAksi.setEnabled(n > 0);
       }
@@ -2519,10 +2542,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
       }
 
+      boolean absorbed = this.absorbPendingRunAdds(list);
       List<Transaction> ordered = this.buildStrategyOrderedList(list);
       this.adapter.setData(ordered);
       this.renderStrategy(ordered);
       this.applyRunModeChrome(list);
+      if (absorbed) {
+         this.autoRerouteAfterAdd();
+      }
       this.setTabCount(0, list.size());
       if (this.selectionMode) {
          if (list.isEmpty()) {
@@ -3100,6 +3127,278 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       SyncScheduler.syncNow(this.getApplicationContext());
    }
 
+   // ============================ ➕ Tambah ke rit berjalan ============================
+
+   /**
+    * Order titipan "masukkan ke rit" (diambil alih dari perangkat lain / Pesanan Terbuka / Peta
+    * Delivery) yang barisnya SUDAH ada di Antrian Saya → ikut rit berjalan. Id lokal order hasil
+    * klaim baru ada setelah sinkron, jadi titipan disimpan per uuid dan diserap di sini tiap daftar
+    * dimuat ulang. Rit sudah selesai → titipan dibuang (tak ada rit untuk diikuti).
+    */
+   private boolean absorbPendingRunAdds(List<Transaction> list) {
+      SettingsDao sdao = new SettingsDao(DatabaseHelper.getInstance(this));
+      LinkedHashSet<String> pending = sdao.getDeliveryRunPendingUuids();
+      if (pending.isEmpty()) return false;
+      if (!this.isRunning()) {
+         sdao.removeDeliveryRunPendingUuids(pending);
+         return false;
+      }
+      List<String> done = new ArrayList<>();
+      int added = 0;
+      for (Transaction t : list) {
+         if (t == null) continue;
+         String u = this.dao.getSyncUuidById(t.getId());
+         if (u == null || !pending.contains(u)) continue;
+         if (!this.runningIds.contains(t.getId())) {
+            this.dao.startDelivery(t.getId());
+            this.runningIds.add(t.getId());
+            added++;
+         }
+         done.add(u);
+      }
+      if (done.isEmpty()) return false;
+      sdao.removeDeliveryRunPendingUuids(done);
+      if (added == 0) return false;
+      this.persistRunning();
+      SyncScheduler.syncNow(this.getApplicationContext());
+      Toast.makeText(this, added + " order masuk rit berjalan.", 0).show();
+      return true;
+   }
+
+   /** Setelah order ditambahkan ke rit berjalan: susun ulang rute rit (jalur darat) dari posisi HP. */
+   private void autoRerouteAfterAdd() {
+      View b = this.findViewById(id.btnRunReroute);
+      if (b != null && b.isEnabled() && this.runStops().size() > 1) {
+         this.refreshRunRoute(b);
+      }
+   }
+
+   /** "Nama · 2 galon · MIN×2 OXY×1" — label baris pemilih Tambah ke Rit. */
+   private String runPickLabel(Transaction t) {
+      StringBuilder sb = new StringBuilder(safe(t.getCustomerName()));
+      sb.append(" · ").append(t.getJumlahGalon()).append(" galon");
+      List<TransactionItem> items = t.getItems();
+      if (items != null) {
+         LinkedHashMap<String, Integer> q = new LinkedHashMap<>();
+         for (TransactionItem it : items) {
+            if (it != null && it.jumlah > 0) q.merge(this.chipLabel(it), it.jumlah, Integer::sum);
+         }
+         for (Map.Entry<String, Integer> e : q.entrySet()) {
+            sb.append(" · ").append(e.getKey()).append("×").append(e.getValue());
+         }
+      }
+      return sb.toString();
+   }
+
+   private String runPickLabel(JSONObject o) {
+      StringBuilder sb = new StringBuilder(o.optString("name", "Pelanggan"));
+      sb.append(" · ").append(o.optInt("galon", 0)).append(" galon");
+      for (Map.Entry<String, int[]> e : this.mergedCsvChips(o.optString("items", "")).entrySet()) {
+         String label = e.getKey();
+         int cut = label.indexOf('\u0000');
+         if (cut >= 0) label = label.substring(0, cut);
+         sb.append(" · ").append(label);
+         if (e.getValue()[0] > 0) sb.append("×").append(e.getValue()[0]);
+      }
+      String dev = o.optString("device_group_label", "");
+      if (!dev.isEmpty() && !"null".equals(dev)) sb.append("  📱 ").append(dev);
+      return sb.toString();
+   }
+
+   /**
+    * ➕ Tambah ke Rit: pilih order untuk ikut rit yang SEDANG berjalan — dari Antrian Saya yang
+    * belum ikut rit (mis. pesanan baru yang masuk selama rit), antrean perangkat lain, atau
+    * Pesanan Terbuka. Order milik sendiri langsung masuk; milik lain diambil alih dulu lewat
+    * endpoint klaim yang sama, lalu ikut rit begitu barisnya tersinkron (absorbPendingRunAdds).
+    */
+   private void showAddToRunPicker() {
+      if (!this.isRunning()) {
+         Toast.makeText(this, "Tidak ada rit yang sedang berjalan.", 0).show();
+         return;
+      }
+      int pad = this.dp(16.0F);
+      LinearLayout box = new LinearLayout(this);
+      box.setOrientation(LinearLayout.VERTICAL);
+      box.setPadding(pad, this.dp(8.0F), pad, 0);
+      android.widget.ScrollView sv = new android.widget.ScrollView(this);
+      sv.addView(box);
+
+      final LinkedHashMap<CheckBox, Transaction> mineBoxes = new LinkedHashMap<>();
+      final LinkedHashMap<CheckBox, String[]> otherBoxes = new LinkedHashMap<>();
+      final HashMap<String, Long> openLocalIds = new HashMap<>();
+      final HashSet<String> seen = new HashSet<>();
+
+      box.addView(this.pickerHeader("📋 Antrian Saya (belum ikut rit)"));
+      for (Transaction t : this.adapter.data) {
+         if (t == null || this.runningIds.contains(t.getId())) continue;
+         String u = this.dao.getSyncUuidById(t.getId());
+         if (u != null) seen.add(u);
+         CheckBox cb = new CheckBox(this);
+         cb.setText(runPickLabel(t));
+         box.addView(cb);
+         mineBoxes.put(cb, t);
+      }
+      if (mineBoxes.isEmpty()) box.addView(this.pickerNote("Semua order Antrian Saya sudah ikut rit."));
+
+      box.addView(this.pickerHeader("📱 Perangkat Lain & 🎲 Pesanan Terbuka"));
+      if (this.openDispatchAdapter != null) {
+         for (Transaction t : this.openDispatchAdapter.rawData) {
+            String u = this.dao.getSyncUuidById(t.getId());
+            if (u == null || u.isEmpty() || !seen.add(u)) continue;
+            CheckBox cb = new CheckBox(this);
+            cb.setText("🎲 " + runPickLabel(t));
+            box.addView(cb);
+            otherBoxes.put(cb, new String[]{u, ""});
+            openLocalIds.put(u, t.getId());
+         }
+      }
+      final TextView loading = this.pickerNote("Memuat antrean perangkat lain…");
+      box.addView(loading);
+
+      final AlertDialog dlg = (new AlertDialog.Builder(this))
+            .setTitle("➕ Tambah ke Rit Berjalan")
+            .setView(sv)
+            .setPositiveButton("Tambahkan", (DialogInterface.OnClickListener) null)
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null)
+            .create();
+      dlg.setOnShowListener((x) -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener((v) -> {
+         List<Transaction> mine = new ArrayList<>();
+         for (Map.Entry<CheckBox, Transaction> e : mineBoxes.entrySet()) {
+            if (e.getKey().isChecked()) mine.add(e.getValue());
+         }
+         LinkedHashMap<String, String> others = new LinkedHashMap<>();
+         for (Map.Entry<CheckBox, String[]> e : otherBoxes.entrySet()) {
+            if (e.getKey().isChecked()) others.put(e.getValue()[0], e.getValue()[1]);
+         }
+         if (mine.isEmpty() && others.isEmpty()) {
+            Toast.makeText(this, "Belum ada order yang dipilih.", 0).show();
+            return;
+         }
+         dlg.dismiss();
+         this.addToRunningRit(mine, others, openLocalIds);
+      }));
+      dlg.show();
+
+      SyncSettings cfg = this.syncCfg();
+      if (!cfg.isEnrolled()) {
+         loading.setText("Perangkat belum terhubung ke server.");
+         return;
+      }
+      (new Thread(() -> {
+         JSONArray queue = null;
+         try {
+            queue = (new SyncApi(cfg)).devicesQueueAll().optJSONArray("queue");
+         } catch (Exception ignored) {}
+         final JSONArray fq = queue;
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed() || !dlg.isShowing()) return;
+            if (fq == null) {
+               loading.setText("Gagal memuat antrean perangkat lain — periksa koneksi.");
+               return;
+            }
+            box.removeView(loading);
+            int n = 0;
+            for (int i = 0; i < fq.length(); i++) {
+               JSONObject o = fq.optJSONObject(i);
+               if (o == null) continue;
+               String u = o.optString("uuid", "");
+               // Sedang diantar kurir lain → jangan ditawarkan (dua kurir di jalan yang sama).
+               if (u.isEmpty() || o.optBoolean("in_progress", false) || !seen.add(u)) continue;
+               CheckBox cb = new CheckBox(this);
+               cb.setText(runPickLabel(o));
+               box.addView(cb);
+               otherBoxes.put(cb, new String[]{u, o.optString("routed_uuid", "")});
+               n++;
+            }
+            if (n == 0 && otherBoxes.isEmpty()) {
+               box.addView(this.pickerNote("Tidak ada order di perangkat lain / Pesanan Terbuka."));
+            }
+         });
+      })).start();
+   }
+
+   private TextView pickerHeader(String text) {
+      TextView tv = new TextView(this);
+      tv.setText(text);
+      tv.setTypeface(null, android.graphics.Typeface.BOLD);
+      tv.setTextSize(13.0F);
+      tv.setPadding(0, this.dp(10.0F), 0, this.dp(2.0F));
+      return tv;
+   }
+
+   private TextView pickerNote(String text) {
+      TextView tv = new TextView(this);
+      tv.setText(text);
+      tv.setTextSize(12.0F);
+      tv.setAlpha(0.7F);
+      tv.setPadding(0, this.dp(2.0F), 0, this.dp(4.0F));
+      return tv;
+   }
+
+   /**
+    * Masukkan order terpilih ke rit berjalan. Milik sendiri: langsung (startDelivery + runningIds).
+    * Milik lain / Pesanan Terbuka: klaim satu per satu (penjaga basi sama dengan Ambil Alih), yang
+    * berhasil dititipkan per uuid lalu diserap absorbPendingRunAdds begitu tersinkron.
+    */
+   private void addToRunningRit(List<Transaction> mine, LinkedHashMap<String, String> others,
+                                HashMap<String, Long> openLocalIds) {
+      if (!mine.isEmpty()) {
+         for (Transaction t : mine) {
+            this.dao.startDelivery(t.getId());
+            this.runningIds.add(t.getId());
+         }
+         this.persistRunning();
+         this.adapter.notifyDataSetChanged();
+         this.renderStrategy(this.adapter.data);
+         this.applyRunModeChrome(this.adapter.data);
+         SyncScheduler.syncNow(this.getApplicationContext());
+      }
+      if (others.isEmpty()) {
+         Toast.makeText(this, mine.size() + " order masuk rit berjalan.", 0).show();
+         this.autoRerouteAfterAdd();
+         return;
+      }
+      SyncSettings cfg = this.syncCfg();
+      android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
+      wait.setMessage("Mengambil alih " + others.size() + " order…");
+      wait.setCancelable(false);
+      wait.show();
+      (new Thread(() -> {
+         List<String> ok = new ArrayList<>();
+         int fail = 0;
+         for (Map.Entry<String, String> e : others.entrySet()) {
+            try {
+               JSONObject body = new JSONObject();
+               body.put("transaction_uuid", e.getKey());
+               body.put("expected_device_uuid", e.getValue() != null ? e.getValue() : "");
+               (new SyncApi(cfg)).claimDelivery(body);
+               ok.add(e.getKey());
+            } catch (Exception ex) {
+               fail++;
+            }
+         }
+         final int failF = fail;
+         this.runOnUiThread(() -> {
+            try { wait.dismiss(); } catch (Throwable ignored) {}
+            if (this.isFinishing() || this.isDestroyed()) return;
+            if (!ok.isEmpty()) {
+               (new SettingsDao(DatabaseHelper.getInstance(this))).addDeliveryRunPendingUuids(ok);
+               // Pesanan Terbuka sudah ada di HP → tandai milik sendiri sekarang supaya langsung
+               // terserap ke rit tanpa menunggu tarikan sinkron.
+               for (String u : ok) {
+                  Long localId = openLocalIds.get(u);
+                  if (localId != null) this.dao.markClaimedLocally(localId, cfg.getDeviceUuid());
+               }
+            }
+            Toast.makeText(this, (mine.size() + ok.size()) + " order ditambahkan ke rit"
+                  + (failF > 0 ? " · " + failF + " gagal diambil (mungkin sudah diambil rekan)" : "."), 1).show();
+            SyncScheduler.syncNow(this.getApplicationContext());
+            this.loadData();
+            if (ok.isEmpty() && !mine.isEmpty()) this.autoRerouteAfterAdd();
+         });
+      })).start();
+   }
+
    private List<Transaction> runStops() {
       List<Transaction> out = new ArrayList();
       if (!this.isRunning()) {
@@ -3175,6 +3474,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (btnRunReroute != null) {
          btnRunReroute.setVisibility(stops.size() > 1 ? 0 : 8);
          btnRunReroute.setOnClickListener((v) -> this.refreshRunRoute(v));
+      }
+
+      View btnRunAdd = this.findViewById(id.btnRunAdd);
+      if (btnRunAdd != null) {
+         btnRunAdd.setVisibility(run != null ? 0 : 8);
+         btnRunAdd.setOnClickListener((v) -> this.showAddToRunPicker());
       }
 
       View fabNavigasiRit = this.findViewById(id.fabNavigasiRit);
@@ -3734,7 +4039,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private OtherQueueRow rowFromTransaction(Transaction t) {
       String badgeName = (t.isOpenDispatch() ? "🎲 " : "") + (t.isCustomerPriority() ? "⭐ " : "")
-            + (t.isCustomerDataIncomplete() ? "❗ " : "") + safe(t.getCustomerName());
+            + (t.isCustomerDataIncomplete() ? "❗ " : "") + (t.isComplained() ? "😠 " : "") + safe(t.getCustomerName());
       long elapsedMs = elapsedMillis(t.getDeliveryQueuedAt());
       double distKm = distOrInf(t, this.myLat, this.myLng);
       String meta = t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + receiptSuffix(t.getReceiptNo()) + orderedSuffix(t) + sourceWaSuffix(t.getSourceWa());
@@ -5455,6 +5760,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          body.addView(tvVoided);
       }
 
+      if (t.isComplained()) {
+         TextView tvComplained = new TextView(this);
+         tvComplained.setText("KOMPLAIN: pelanggan pernah komplain soal order ini via WhatsApp -- ketuk \"Lihat Chat Komplain\" di bawah");
+         tvComplained.setTextSize(13.0F);
+         tvComplained.setTextColor(-1086464);
+         tvComplained.setPadding(0, Math.round(8.0F * this.getResources().getDisplayMetrics().density), 0, 0);
+         body.addView(tvComplained);
+      }
+
       ScrollView scroll = new ScrollView(this);
       scroll.addView(body);
       boolean voidPending = t.hasPendingVoidRequest();
@@ -5501,11 +5815,35 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.addGridAction(actionsGrid, btnAlihkan);
       }
 
+      if (t.isComplained()) {
+         Button btnChatKomplain = new Button(this);
+         btnChatKomplain.setText("Lihat Chat Komplain");
+         btnChatKomplain.setAllCaps(false);
+         btnChatKomplain.setOnClickListener((v) -> {
+            dialog.dismiss();
+            this.openChatLog(t);
+         });
+         this.addGridAction(actionsGrid, btnChatKomplain);
+      }
+
       if (actionsGrid.getChildCount() > 0) {
          body.addView(actionsGrid);
       }
 
       dialog.show();
+   }
+
+   /** Buka viewer log percakapan WA komplain (badge KOMPLAIN) untuk order ini. */
+   private void openChatLog(Transaction t) {
+      String uuid = this.dao.getSyncUuidById(t.getId());
+      if (uuid == null || uuid.isEmpty()) {
+         Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
+         return;
+      }
+      Intent i = new Intent(this, ChatLogActivity.class);
+      i.putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid);
+      i.putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, safe(t.getCustomerName()));
+      this.startActivity(i);
    }
 
    /** "⏸ Antrean Tertunda" — daftar semua order TERTUNDA (bukan cuma milik perangkat ini secara
@@ -6705,9 +7043,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     *  kurir langsung tahu apa yang dibawa & berapa yang harus terkumpul. Dipanggil dari
     *  applyRunModeChrome tiap kali daftar berjalan berubah; hilang begitu tak ada rit berjalan. */
    private void updateGuidedProductBadges(List<Transaction> stops) {
-      if (this.guidedProductBadgesScroll == null || this.guidedProductBadges == null) return;
+      this.fillProductBadges(this.guidedProductBadgesScroll, this.guidedProductBadges, stops);
+   }
+
+   /** Isi {@code row} dengan badge slug produk gabungan {@code stops} + badge TOTAL rupiah;
+    *  {@code scroll} disembunyikan bila tak ada yang ditampilkan. Dipakai header rit berjalan dan
+    *  bar mode-pilih (rincian order terpilih). */
+   private void fillProductBadges(View scroll, LinearLayout row, List<Transaction> stops) {
+      if (scroll == null || row == null) return;
       if (stops == null || stops.isEmpty()) {
-         this.guidedProductBadgesScroll.setVisibility(View.GONE);
+         scroll.setVisibility(View.GONE);
          return;
       }
       java.util.LinkedHashMap<String, Integer> qtyByLabel = new java.util.LinkedHashMap<>();
@@ -6728,17 +7073,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          if (t != null) total += t.getTotalHarga();
       }
       if (qtyByLabel.isEmpty() && total <= 0) {
-         this.guidedProductBadgesScroll.setVisibility(View.GONE);
+         scroll.setVisibility(View.GONE);
          return;
       }
-      this.guidedProductBadges.removeAllViews();
+      row.removeAllViews();
       for (Map.Entry<String, Integer> e : qtyByLabel.entrySet()) {
-         this.guidedProductBadges.addView(this.makeDetailBadge(e.getKey() + " ×" + e.getValue(),
+         row.addView(this.makeDetailBadge(e.getKey() + " ×" + e.getValue(),
                colorByLabel.getOrDefault(e.getKey(), -10193781)));
       }
       // Warna sama dengan badge TOTAL di Preview/detail order (buildQueueDetailChips).
-      this.guidedProductBadges.addView(this.makeDetailBadge("TOTAL " + this.rp(total), 0xFF0369A1));
-      this.guidedProductBadgesScroll.setVisibility(View.VISIBLE);
+      row.addView(this.makeDetailBadge("TOTAL " + this.rp(total), 0xFF0369A1));
+      scroll.setVisibility(View.VISIBLE);
    }
 
    /** Kartu "Selanjutnya" di bar aksi guided — intip order SETELAH yang sedang di-preview, supaya
@@ -8151,14 +8496,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             }
             q = DeliveryQueueActivity.this.searchMineQuery.toLowerCase(Locale.US);
          }
-         if (q.isEmpty()) {
+         boolean complaintOnly = DeliveryQueueActivity.this.complaintOnlyMine;
+         if (q.isEmpty() && !complaintOnly) {
             return base;
          }
          List<Transaction> filtered = new ArrayList<>();
          for (Transaction t : base) {
+            if (complaintOnly && !t.isComplained()) continue;
             String name = safe(t.getCustomerName()).toLowerCase(Locale.US);
             String phone = t.getCustomerPhone() != null ? t.getCustomerPhone().toLowerCase(Locale.US) : "";
-            if (name.contains(q) || phone.contains(q) || CustomerDao.phoneMatches(phone, q)) filtered.add(t);
+            if (q.isEmpty() || name.contains(q) || phone.contains(q) || CustomerDao.phoneMatches(phone, q)) filtered.add(t);
          }
          return filtered;
       }
@@ -8192,7 +8539,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          h.tvCustomer.setEllipsize(TruncateAt.END);
          boolean voidPending = t.hasPendingVoidRequest();
          DeliveryQueueActivity.bindOrderNote(h.tvOrderNote, voidPending ? null : t.getCatatan());
-         h.tvCustomer.setText(voidPending ? DeliveryQueueActivity.safe(t.getCustomerName()) : (t.isOpenDispatch() ? "\ud83c\udfb2 " : "") + (t.isSelfOrder() ? "\ud83d\udecd️ " : "") + (t.isCustomerPriority() ? "⭐ " : "") + (t.isCustomerDataIncomplete() ? "❗ " : "") + DeliveryQueueActivity.safe(t.getCustomerName()));
+         h.tvCustomer.setText(voidPending ? DeliveryQueueActivity.safe(t.getCustomerName()) : (t.isOpenDispatch() ? "\ud83c\udfb2 " : "") + (t.isSelfOrder() ? "\ud83d\udecd️ " : "") + (t.isCustomerPriority() ? "⭐ " : "") + (t.isCustomerDataIncomplete() ? "❗ " : "") + (t.isComplained() ? "\ud83d\ude20 " : "") + DeliveryQueueActivity.safe(t.getCustomerName()));
          int flags = h.tvCustomer.getPaintFlags();
          h.tvCustomer.setPaintFlags(voidPending ? flags | 16 : flags & -17);
          if (voidPending) {
@@ -8439,8 +8786,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       void applyFilterSort() {
          this.data.clear();
          String q = DeliveryQueueActivity.this.searchOpenQuery.toLowerCase(Locale.US);
+         boolean complaintOnly = DeliveryQueueActivity.this.complaintOnlyOpen;
 
          for(Transaction t : this.rawData) {
+            if (complaintOnly && !t.isComplained()) continue;
             if (q.isEmpty()) {
                this.data.add(t);
             } else {
@@ -8489,7 +8838,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       public void onBindViewHolder(@NonNull VH h, int position) {
          Transaction t = (Transaction)this.data.get(position);
          DeliveryQueueActivity.bindOrderNote(h.tvOrderNote, t.getCatatan());
-         h.tvCustomer.setText((t.isOrderPriority() ? "⚡ " : "") + (t.isCustomerPriority() ? "⭐ " : "") + (t.isCustomerDataIncomplete() ? "❗ " : "") + DeliveryQueueActivity.safe(t.getCustomerName()));
+         h.tvCustomer.setText((t.isOrderPriority() ? "⚡ " : "") + (t.isCustomerPriority() ? "⭐ " : "") + (t.isCustomerDataIncomplete() ? "❗ " : "") + (t.isComplained() ? "😠 " : "") + DeliveryQueueActivity.safe(t.getCustomerName()));
          DeliveryQueueActivity.this.bindPriorityLine(h.tvPriorityBig, t.isOrderPriority(), t.getOrderPriorityReason());
          StringBuilder meta = new StringBuilder();
          String phone = t.getCustomerPhone();

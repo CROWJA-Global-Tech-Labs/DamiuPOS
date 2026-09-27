@@ -456,6 +456,66 @@ public class SettingsDao {
         set(K_DLV_STRUK_SENT_TRX, sb.toString());
     }
 
+    private static final String K_DLV_RUN_PENDING = "dlv_run_pending_uuids";
+    /** Umur maksimum titipan "masukkan ke rit" — lewat dari ini dianggap basi & dibuang. */
+    private static final long RUN_PENDING_TTL_MS = 2L * 60 * 60 * 1000;
+
+    /**
+     * uuid order yang harus MASUK rit berjalan begitu barisnya ada di Antrian Saya — diisi saat
+     * order diambil alih dari perangkat lain / Peta Delivery (id lokalnya baru ada setelah sinkron).
+     * Disimpan "uuid@epochMs"; titipan lebih dari 2 jam dibuang.
+     */
+    public java.util.LinkedHashSet<String> getDeliveryRunPendingUuids() {
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        long now = System.currentTimeMillis();
+        for (String part : get(K_DLV_RUN_PENDING, "").split(",")) {
+            int at = part.lastIndexOf('@');
+            if (at <= 0) continue;
+            try {
+                if (now - Long.parseLong(part.substring(at + 1).trim()) <= RUN_PENDING_TTL_MS) {
+                    out.add(part.substring(0, at).trim());
+                }
+            } catch (NumberFormatException ignored) {}
+        }
+        return out;
+    }
+
+    public void addDeliveryRunPendingUuids(java.util.Collection<String> uuids) {
+        java.util.LinkedHashMap<String, String> keep = new java.util.LinkedHashMap<>();
+        for (String part : get(K_DLV_RUN_PENDING, "").split(",")) {
+            int at = part.lastIndexOf('@');
+            if (at > 0) keep.put(part.substring(0, at).trim(), part.trim());
+        }
+        long now = System.currentTimeMillis();
+        if (uuids != null) {
+            for (String u : uuids) {
+                if (u != null && !u.trim().isEmpty()) keep.put(u.trim(), u.trim() + "@" + now);
+            }
+        }
+        writeRunPending(keep);
+    }
+
+    public void removeDeliveryRunPendingUuids(java.util.Collection<String> uuids) {
+        java.util.LinkedHashMap<String, String> keep = new java.util.LinkedHashMap<>();
+        java.util.LinkedHashSet<String> alive = getDeliveryRunPendingUuids();
+        for (String part : get(K_DLV_RUN_PENDING, "").split(",")) {
+            int at = part.lastIndexOf('@');
+            if (at <= 0) continue;
+            String u = part.substring(0, at).trim();
+            if (alive.contains(u) && (uuids == null || !uuids.contains(u))) keep.put(u, part.trim());
+        }
+        writeRunPending(keep);
+    }
+
+    private void writeRunPending(java.util.Map<String, String> entries) {
+        StringBuilder sb = new StringBuilder();
+        for (String v : entries.values()) {
+            if (sb.length() > 0) sb.append(',');
+            sb.append(v);
+        }
+        set(K_DLV_RUN_PENDING, sb.toString());
+    }
+
     public void setDeliveryRunningTrxIds(java.util.Collection<Long> ids) {
         StringBuilder sb = new StringBuilder();
         if (ids != null) {

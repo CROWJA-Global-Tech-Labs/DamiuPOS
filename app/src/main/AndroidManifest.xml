@@ -117,6 +117,7 @@
         <activity android:name=".GalonStockActivity" />
         <activity android:name=".MapPickerActivity" />
         <activity android:name=".ReceiptActivity" />
+        <activity android:name=".ChatLogActivity" />
         <activity android:name=".SettingsActivity" />
         <activity android:name=".WizardActivity" />
         <activity android:name=".FollowUpActivity" />

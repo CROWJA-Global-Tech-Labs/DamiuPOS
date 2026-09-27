@@ -207,6 +207,12 @@ public class SyncEngine {
                     // Badge ✏️/🗑️ "sudah pernah diubah" di kartu antrian — server-authoritative
                     // (di-skip dari fillColumns push, lihat komentar konstantanya), pull-only.
                     DatabaseHelper.COL_LAST_MANUAL_EDIT_AT, DatabaseHelper.COL_VOID_REQUEST_PENDING_AT,
+                    // Badge 😠 "Komplain" (Agen AI WhatsApp) — server-authoritative, sama pola dengan
+                    // dua kolom di atas: di-skip dari fillColumns push, HP hanya membaca via pull.
+                    DatabaseHelper.COL_COMPLAINED_AT,
+                    // Tombol "💬 Chat Pesanan" — server-authoritative, pola sama persis dengan
+                    // complained_at: di-skip dari fillColumns push, HP hanya membaca via pull.
+                    DatabaseHelper.COL_CHAT_SESSION_AT,
                     DatabaseHelper.COL_TANGGAL, DatabaseHelper.COL_CATATAN,
                     // BUKTI SELESAI: hanya URL yang disinkron — photo_path lokal-saja (pola persis
                     // attendance/expenses: path tak pernah meninggalkan perangkat).
@@ -1203,6 +1209,28 @@ public class SyncEngine {
             fullResync.put("customer_debts", new java.util.HashSet<>());
             fullResync.put("customer_refunds", new java.util.HashSet<>());
             cfg.markDebtRepulled();
+        }
+        // DB v99 (chat_session_at): APK lama membuang kunci itu dari pull dan kursornya sudah lewat.
+        // Mundurkan kursor transaksi 72 jam SEKALI (aritmetika jam-dinding murni, tanpa konversi tz),
+        // ditulis dalam bentuk lama tanpa "|uuid" (tie-safe). Kosong/gagal parse → biarkan saja.
+        if (cfg.needsTrxLookbackRepull()) {
+            String cur = cfg.getCursor("transactions");
+            if (cur != null && !cur.isEmpty()) {
+                try {
+                    String ts = cur.split("\\|", 2)[0];
+                    java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US);
+                    f.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+                    f.setLenient(false);
+                    java.util.Date d = f.parse(ts.substring(0, 19));
+                    if (d != null) {
+                        String back = f.format(new java.util.Date(d.getTime() - 72L * 3600_000L));
+                        cfg.setCursor("transactions", back + ".000000");
+                    }
+                } catch (Exception ignored) {
+                    // parse gagal → kursor dibiarkan apa adanya
+                }
+            }
+            cfg.markTrxLookbackRepulled();
         }
 
         int applied = 0;

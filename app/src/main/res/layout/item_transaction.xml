@@ -56,6 +56,16 @@
                     android:ellipsize="end"
                     android:textColor="@color/text_secondary"
                     android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/tvComplaintBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:text="😠"
+                    android:textSize="13sp"
+                    android:visibility="gone"
+                    android:contentDescription="Pernah komplain via WhatsApp" />
             </LinearLayout>
 
             <TextView

@@ -150,7 +150,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
         JSONArray queue = data.optJSONArray("queue");
         if (queue == null) queue = new JSONArray();
         setTitle("Peta Antrian Delivery (" + queue.length() + ")");
-        evalJs("refreshData(" + queue + ");");
+        evalJs("if(window.setRun)setRun(" + runActive() + "," + runUuidsJson() + ");refreshData(" + queue + ");");
     }
 
     private void render(JSONObject data) {
@@ -288,7 +288,20 @@ public class DeliveryMapActivity extends AppCompatActivity {
         @JavascriptInterface
         public void claim(String trxUuid, String expectedDeviceUuid, String custName,
                            String items, double total) {
-            runOnUiThread(() -> confirmClaim(trxUuid, expectedDeviceUuid, custName, items, total));
+            runOnUiThread(() -> confirmClaim(trxUuid, expectedDeviceUuid, custName, items, total, false, false));
+        }
+
+        /** Pin DIJEDA: lanjutkan sekarang (+ ambil alih bila bukan milik sendiri). */
+        @JavascriptInterface
+        public void claimResume(String trxUuid, String expectedDeviceUuid, String custName,
+                                String items, double total, boolean mine) {
+            runOnUiThread(() -> confirmClaim(trxUuid, expectedDeviceUuid, custName, items, total, true, mine));
+        }
+
+        /** Pin MILIK SENDIRI saat rit berjalan: ikutkan order ini ke rit tersebut. */
+        @JavascriptInterface
+        public void addToRun(String trxUuid, String custName) {
+            runOnUiThread(() -> confirmAddToRun(trxUuid, custName));
         }
 
         /** Tombol 📍: minta ulang fix (GPS bisa sudah dihentikan onPause) + suntik fix terakhir. */
@@ -307,24 +320,100 @@ public class DeliveryMapActivity extends AppCompatActivity {
         }
     }
 
+    /** Jumlah order rit berjalan di HP ini (Antrian Delivery ▶ Jalankan). */
+    private int runningCount() {
+        return new SettingsDao(DatabaseHelper.getInstance(this)).getDeliveryRunningTrxIds().size();
+    }
+
+    private boolean runActive() {
+        return runningCount() > 0;
+    }
+
+    /** uuid order rit berjalan + titipan "masukkan ke rit" → {uuid:true} untuk popup pin. */
+    private String runUuidsJson() {
+        JSONObject o = new JSONObject();
+        SettingsDao sdao = new SettingsDao(DatabaseHelper.getInstance(this));
+        com.crowja.damiupos.db.TransactionDao tdao =
+                new com.crowja.damiupos.db.TransactionDao(DatabaseHelper.getInstance(this));
+        try {
+            for (Long id : sdao.getDeliveryRunningTrxIds()) {
+                String u = tdao.getSyncUuidById(id);
+                if (u != null && !u.isEmpty()) o.put(u, true);
+            }
+            for (String u : sdao.getDeliveryRunPendingUuids()) o.put(u, true);
+        } catch (Exception ignored) {}
+        return o.toString();
+    }
+
+    /** Centang "masukkan ke rit berjalan" (bawaan tercentang) — null bila tak ada rit berjalan. */
+    private android.widget.CheckBox runCheckBox() {
+        int n = runningCount();
+        if (n <= 0) return null;
+        android.widget.CheckBox cb = new android.widget.CheckBox(this);
+        cb.setText("➕ Masukkan ke rit yang sedang berjalan (" + n + " order)");
+        cb.setChecked(true);
+        return cb;
+    }
+
+    private View padded(View v) {
+        android.widget.FrameLayout f = new android.widget.FrameLayout(this);
+        int pad = Math.round(20 * getResources().getDisplayMetrics().density);
+        f.setPadding(pad, 0, pad, 0);
+        f.addView(v);
+        return f;
+    }
+
+    private void confirmAddToRun(String trxUuid, String custName) {
+        if (!runActive()) {
+            Toast.makeText(this, "Tidak ada rit yang sedang berjalan.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("➕ Masukkan ke Rit Berjalan?")
+                .setMessage("\"" + custName + "\" ikut diantar di rit yang sedang berjalan. Urutan "
+                        + "rute disusun ulang otomatis saat kembali ke Antrian Delivery.")
+                .setPositiveButton("Masukkan", (d, w) -> {
+                    queueForRun(trxUuid);
+                    Toast.makeText(this, "Masuk rit berjalan.", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /** Titipkan order ke rit berjalan — DeliveryQueueActivity memasukkannya begitu barisnya ada. */
+    private void queueForRun(String trxUuid) {
+        new SettingsDao(DatabaseHelper.getInstance(this))
+                .addDeliveryRunPendingUuids(java.util.Collections.singletonList(trxUuid));
+        evalJs("if(window.setRun){setRun(" + runActive() + "," + runUuidsJson() + ");refreshData(pts);}");
+    }
+
     private void confirmClaim(String trxUuid, String expectedDeviceUuid, String custName,
-                               String items, double total) {
+                               String items, double total, boolean resume, boolean mine) {
         StringBuilder msg = new StringBuilder();
-        msg.append("Order \"").append(custName).append("\" akan dipindahkan ke antrian perangkat ini.\n\n");
+        if (resume && mine) {
+            msg.append("Order \"").append(custName).append("\" sedang DIJEDA. Lanjutkan sekarang — kembali ke antrian aktif perangkat ini.\n\n");
+        } else if (resume) {
+            msg.append("Order \"").append(custName).append("\" sedang DIJEDA. Lanjutkan sekarang lalu pindahkan ke antrian perangkat ini.\n\n");
+        } else {
+            msg.append("Order \"").append(custName).append("\" akan dipindahkan ke antrian perangkat ini.\n\n");
+        }
         if (items != null && !items.isEmpty()) {
             msg.append("Penjualan: ").append(items).append('\n');
         }
         msg.append("Total: Rp ").append(formatRupiah(total)).append("\n\n");
-        msg.append("Ketuk \"Ambil Alih\" dua kali untuk memastikan.");
+        final String posLabel = resume ? (mine ? "Lanjutkan" : "Lanjutkan & Ambil") : "Ambil Alih";
+        msg.append("Ketuk \"").append(posLabel).append("\" dua kali untuk memastikan.");
 
-        final AlertDialog dialog = new AlertDialog.Builder(this)
+        final android.widget.CheckBox cbRun = runCheckBox();
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
                 .setIcon(android.R.drawable.ic_dialog_alert)
-                .setTitle("⚠️ Ambil Alih Pengiriman?")
+                .setTitle(resume ? "▶ Lanjutkan Pesanan Dijeda?" : "⚠️ Ambil Alih Pengiriman?")
                 .setCancelable(false)
                 .setMessage(msg.toString())
-                .setPositiveButton("Ambil Alih", null)
-                .setNegativeButton("Batal", null)
-                .create();
+                .setPositiveButton(posLabel, null)
+                .setNegativeButton("Batal", null);
+        if (cbRun != null) builder.setView(padded(cbRun));
+        final AlertDialog dialog = builder.create();
 
         dialog.setOnShowListener(d -> {
             final android.widget.Button pos = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
@@ -339,14 +428,16 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 dialog.setCancelable(false);
                 android.widget.Button neg = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
                 if (neg != null) neg.setEnabled(false);
-                doClaim(dialog, pos, neg, trxUuid, expectedDeviceUuid);
+                doClaim(dialog, pos, neg, trxUuid, expectedDeviceUuid, resume, posLabel,
+                        cbRun != null && cbRun.isChecked());
             });
         });
         dialog.show();
     }
 
     private void doClaim(AlertDialog dialog, android.widget.Button pos, android.widget.Button neg,
-                          String trxUuid, String expectedDeviceUuid) {
+                          String trxUuid, String expectedDeviceUuid, boolean resume, String posLabel,
+                          boolean addToRun) {
         new Thread(() -> {
             String okMsg = null, errMsg = null;
             boolean stale = false;
@@ -354,6 +445,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 JSONObject body = new JSONObject();
                 body.put("transaction_uuid", trxUuid);
                 body.put("expected_device_uuid", expectedDeviceUuid != null ? expectedDeviceUuid : "");
+                if (resume) body.put("resume", true);
                 JSONObject r = new SyncApi(cfg).claimDelivery(body);
                 okMsg = r.optString("message", "Order diambil alih ke perangkat ini.");
             } catch (SyncApi.SyncException se) {
@@ -368,8 +460,13 @@ public class DeliveryMapActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
                 if (fOk != null) {
-                    Toast.makeText(this, fOk, Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, fOk + (addToRun ? " Masuk rit berjalan." : ""), Toast.LENGTH_LONG).show();
                     dialog.dismiss();
+                    if (addToRun) {
+                        new SettingsDao(DatabaseHelper.getInstance(this))
+                                .addDeliveryRunPendingUuids(java.util.Collections.singletonList(trxUuid));
+                        evalJs("if(window.setRun)setRun(true," + runUuidsJson() + ");");
+                    }
                     com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
                     // Tandai pin langsung, lalu segarkan data TANPA memuat ulang halaman — zoom &
                     // posisi peta kurir tetap di tempat ia sedang bekerja.
@@ -381,7 +478,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
                     if (fStale) load(true);
                     Toast.makeText(this, fErr, Toast.LENGTH_LONG).show();
                     pos.setEnabled(true);
-                    pos.setText("Ambil Alih");
+                    pos.setText(posLabel);
                     if (neg != null) neg.setEnabled(true);
                     dialog.setCancelable(true);
                 }
@@ -480,6 +577,8 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  body{margin:0;padding:0;font-family:sans-serif;}\n" +
                 "  #map{width:100%;height:100vh;}\n" +
                 "  .leaflet-popup-content a.claimbtn{display:block;margin-top:8px;padding:9px 12px;background:#c62828;color:#fff !important;border-radius:6px;text-decoration:none;font-size:13px;font-weight:bold;text-align:center;}\n" +
+                "  .leaflet-popup-content a.claimbtn.resumebtn{background:#6d28d9;}\n" +
+                "  .leaflet-popup-content a.claimbtn.runbtn{background:#0369a1;}\n" +
                 "  .pname{font-size:14px;font-weight:bold;color:#222;}\n" +
                 "  .pmeta{font-size:12px;color:#666;margin-top:2px;}\n" +
                 "  .pmeta.inprogress{color:#b45309;font-weight:bold;margin-top:6px;}\n" +
@@ -537,6 +636,10 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "var positions = " + positions + ";\n" +
                 "var legend = " + legend + ";\n" +
                 "var myUuid = " + JSONObject.quote(myDeviceUuid == null ? "" : myDeviceUuid) + ";\n" +
+                // Rit berjalan di HP ini + uuid order di dalamnya (termasuk titipan) — tombol
+                // "➕ Masukkan ke Rit Berjalan" di pin milik sendiri.
+                "var runActive = " + runActive() + ", runUuids = " + runUuidsJson() + ";\n" +
+                "function setRun(a,u){ runActive=!!a; runUuids=u||{}; }\n" +
                 "var map = L.map('map',{zoomControl:true}).setView([" + centerLat + "," + centerLng + "], 13);\n" +
                 "L.tileLayer('" + MapTiles.LEAFLET_URL + "',{subdomains:'" + MapTiles.SUBDOMAINS + "',maxZoom:19,attribution:'" + MapTiles.ATTRIBUTION + "'}).addTo(map);\n" +
                 "var cluster = L.markerClusterGroup({maxClusterRadius:50,spiderfyOnMaxZoom:true});\n" +
@@ -581,9 +684,15 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 // Pesanan lelang yang masih DIJEDA ikut dipetakan (server mengirimnya) supaya tak
                 // hilang dari pandangan, tapi belum boleh diklaim sampai jadwalnya tiba — server pun
                 // menolak klaim atas order non-PENDING, jadi tombolnya sengaja tak ditampilkan.
-                "  var pausedNote = p.tertunda_until ? '<div class=\"pmeta opendispatch\">⏸ Dijeda sampai '+escHtml(p.tertunda_until)+' — belum bisa diambil</div>' : '';\n" +
+                // Order dijeda boleh DILANJUTKAN SEKARANG dari sini (server: claim + resume) — milik
+                // sendiri cukup dilanjutkan, milik lain/terbuka sekalian diambil alih.
+                "  var pausedNote = p.tertunda_until ? '<div class=\"pmeta opendispatch\">⏸ Dijeda sampai '+escHtml(p.tertunda_until)+'</div>'\n" +
+                "    +'<a class=\"claimbtn resumebtn\" href=\"#\" onclick=\"resumeById(\\''+p.uuid+'\\');return false;\">'+(p.mine?'▶ Lanjutkan Sekarang':'▶ Lanjutkan &amp; Ambil')+'</a>' : '';\n" +
                 "  var claimBtn = (p.mine || p.in_progress || p.tertunda_until) ? '' : '<a class=\"claimbtn\" href=\"#\" onclick=\"claimById(\\''+p.uuid+'\\');return false;\">📥 Ambil Alih</a>';\n" +
-                "  var html='<div class=\"pname\">'+escHtml(p.name)+mineBadge+'</div><div class=\"pmeta\">'+meta+'</div>'+itemsHtml+odNote+pausedNote+progressNote+claimBtn;\n" +
+                "  var runBtn = (!p.mine || p.tertunda_until || !runActive) ? '' : (runUuids[p.uuid]\n" +
+                "    ? '<div class=\"pmeta inprogress\">🚚 Sudah di rit berjalan</div>'\n" +
+                "    : '<a class=\"claimbtn runbtn\" href=\"#\" onclick=\"addRunById(\\''+p.uuid+'\\');return false;\">➕ Masukkan ke Rit Berjalan</a>');\n" +
+                "  var html='<div class=\"pname\">'+escHtml(p.name)+mineBadge+'</div><div class=\"pmeta\">'+meta+'</div>'+itemsHtml+odNote+pausedNote+progressNote+claimBtn+runBtn;\n" +
                 "  m.bindPopup(html);\n" +
                 "  markers.push(m);\n" +
                 "  if(p.open_dispatch){ openDispatchPts.push(p); }\n" +
@@ -634,7 +743,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "function markClaimed(uuid){\n" +
                 "  var mine=null; for(var k=0;k<legend.length;k++){ if(legend[k].uuid===myUuid){ mine=legend[k]; break; } }\n" +
                 "  pts.forEach(function(p){ if(p.uuid!==uuid) return;\n" +
-                "    p.mine=true; p.open_dispatch=false; p.device_uuid=myUuid; p.routed_uuid=myUuid;\n" +
+                "    p.mine=true; p.open_dispatch=false; p.tertunda_until=null; p.device_uuid=myUuid; p.routed_uuid=myUuid;\n" +
                 "    if(mine){ p.color=mine.color; p.icon=mine.icon; p.device_name=mine.name; } });\n" +
                 "  refreshData(pts);\n" +
                 "}\n" +
@@ -644,6 +753,14 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  var exp=(pts[i].routed_uuid!==undefined)?pts[i].routed_uuid:pts[i].device_uuid;\n" +
                 "  if(window.Android&&Android.claim){Android.claim(uuid, exp||'', pts[i].name,\n" +
                 "    pts[i].items||'', +(pts[i].total||0));}\n" +
+                "  return;}}}\n" +
+                "function resumeById(uuid){for(var i=0;i<pts.length;i++){if(pts[i].uuid===uuid){\n" +
+                "  var exp=(pts[i].routed_uuid!==undefined)?pts[i].routed_uuid:pts[i].device_uuid;\n" +
+                "  if(window.Android&&Android.claimResume){Android.claimResume(uuid, exp||'', pts[i].name,\n" +
+                "    pts[i].items||'', +(pts[i].total||0), !!pts[i].mine);}\n" +
+                "  return;}}}\n" +
+                "function addRunById(uuid){for(var i=0;i<pts.length;i++){if(pts[i].uuid===uuid){\n" +
+                "  if(window.Android&&Android.addToRun){Android.addToRun(uuid, pts[i].name);}\n" +
                 "  return;}}}\n" +
                 // LACAK perangkat dari legenda. Prioritas posisi: (1) posisi LIVE terkini dari
                 // LiveDeviceOverlay (paling benar — diperbarui tiap 25 detik), (2) posisi awal yang
