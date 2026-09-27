@@ -201,7 +201,9 @@ public class TransactionListActivity extends AppCompatActivity {
             if (!search.isEmpty()) {
                 String name = t.getCustomerName() != null
                         ? t.getCustomerName().toLowerCase(Locale.getDefault()) : "";
-                if (!name.contains(search)) continue;
+                String receipt = t.getReceiptNo() != null
+                        ? t.getReceiptNo().toLowerCase(Locale.getDefault()) : "";
+                if (!name.contains(search) && !receipt.contains(search)) continue;
             }
             filtered.add(t);
         }
