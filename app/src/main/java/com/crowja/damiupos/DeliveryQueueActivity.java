@@ -6083,6 +6083,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          actions.add((Runnable)() -> DeliveryEditDialog.show(this, t));
          labels.add("\ud83d\udcb3 Ubah Metode Pembayaran");
          actions.add((Runnable)() -> this.showEditPaymentMethod(t));
+         // Hanya tampil bila pelanggan punya >1 lokasi tersimpan — pelanggan satu-lokasi tak ada
+         // yang bisa dipilih (cermin gerbang kartu "Kirim ke" di Transaksi Baru).
+         Customer custForDest = t.getCustomerId() > 0L ? this.customerDao.getById(t.getCustomerId()) : null;
+         if (custForDest != null && custForDest.getLocations() != null && custForDest.getLocations().size() > 1) {
+            labels.add("\ud83d\udccd Ubah Lokasi Pengiriman (persetujuan)");
+            actions.add((Runnable)() -> DeliveryDestDialog.show(this, t, custForDest));
+         }
       }
 
       labels.add("\ud83d\uddd1️ Void Pesanan Ini (persetujuan)");
