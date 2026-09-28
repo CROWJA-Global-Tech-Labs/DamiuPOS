@@ -284,11 +284,24 @@ public class DeliveryMapActivity extends AppCompatActivity {
 
     // ---------------------------------------------------------------- bridge (Ambil Alih dari pin)
 
+    /** Sekali pakai: dialog klaim berikutnya dibuka dari tombol "Ambil & Masukkan ke Rit". */
+    private boolean forceRunOnClaim = false;
+
     private class MapBridge {
         @JavascriptInterface
         public void claim(String trxUuid, String expectedDeviceUuid, String custName,
                            String items, double total) {
             runOnUiThread(() -> confirmClaim(trxUuid, expectedDeviceUuid, custName, items, total, false, false));
+        }
+
+        /** Tombol "Ambil & Masukkan ke Rit" di pin: klaim lalu langsung ikut rit berjalan. */
+        @JavascriptInterface
+        public void claimToRun(String trxUuid, String expectedDeviceUuid, String custName,
+                               String items, double total) {
+            runOnUiThread(() -> {
+                forceRunOnClaim = true;
+                confirmClaim(trxUuid, expectedDeviceUuid, custName, items, total, false, false);
+            });
         }
 
         /** Pin DIJEDA: lanjutkan sekarang (+ ambil alih bila bukan milik sendiri). */
@@ -405,6 +418,8 @@ public class DeliveryMapActivity extends AppCompatActivity {
         msg.append("Ketuk \"").append(posLabel).append("\" dua kali untuk memastikan.");
 
         final android.widget.CheckBox cbRun = runCheckBox();
+        if (forceRunOnClaim && cbRun != null) cbRun.setChecked(true);
+        forceRunOnClaim = false;
         AlertDialog.Builder builder = new AlertDialog.Builder(this)
                 .setIcon(android.R.drawable.ic_dialog_alert)
                 .setTitle(resume ? "▶ Lanjutkan Pesanan Dijeda?" : "⚠️ Ambil Alih Pengiriman?")
@@ -688,7 +703,8 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 // sendiri cukup dilanjutkan, milik lain/terbuka sekalian diambil alih.
                 "  var pausedNote = p.tertunda_until ? '<div class=\"pmeta opendispatch\">⏸ Dijeda sampai '+escHtml(p.tertunda_until)+'</div>'\n" +
                 "    +'<a class=\"claimbtn resumebtn\" href=\"#\" onclick=\"resumeById(\\''+p.uuid+'\\');return false;\">'+(p.mine?'▶ Lanjutkan Sekarang':'▶ Lanjutkan &amp; Ambil')+'</a>' : '';\n" +
-                "  var claimBtn = (p.mine || p.in_progress || p.tertunda_until) ? '' : '<a class=\"claimbtn\" href=\"#\" onclick=\"claimById(\\''+p.uuid+'\\');return false;\">📥 Ambil Alih</a>';\n" +
+                "  var claimBtn = (p.mine || p.in_progress || p.tertunda_until) ? '' : '<a class=\"claimbtn\" href=\"#\" onclick=\"claimById(\\''+p.uuid+'\\');return false;\">📥 Ambil Alih</a>'\n" +
+                "    +(runActive ? '<a class=\"claimbtn runbtn\" href=\"#\" onclick=\"claimRunById(\\''+p.uuid+'\\');return false;\">🚚 Ambil &amp; Masukkan ke Rit</a>' : '');\n" +
                 "  var runBtn = (!p.mine || p.tertunda_until || !runActive) ? '' : (runUuids[p.uuid]\n" +
                 "    ? '<div class=\"pmeta inprogress\">🚚 Sudah di rit berjalan</div>'\n" +
                 "    : '<a class=\"claimbtn runbtn\" href=\"#\" onclick=\"addRunById(\\''+p.uuid+'\\');return false;\">➕ Masukkan ke Rit Berjalan</a>');\n" +
@@ -749,6 +765,11 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "}\n" +
                 // Penjaga basi server membandingkan RUTE MENTAH (routed_uuid), bukan pemilik efektif
                 // (device_uuid = rute ?: asal). Server lama tak mengirim routed_uuid → fallback.
+                "function claimRunById(uuid){for(var i=0;i<pts.length;i++){if(pts[i].uuid===uuid){\n" +
+                "  var exp=(pts[i].routed_uuid!==undefined)?pts[i].routed_uuid:pts[i].device_uuid;\n" +
+                "  if(window.Android&&Android.claimToRun){Android.claimToRun(uuid, exp||'', pts[i].name,\n" +
+                "    pts[i].items||'', +(pts[i].total||0));}\n" +
+                "  return;}}}\n" +
                 "function claimById(uuid){for(var i=0;i<pts.length;i++){if(pts[i].uuid===uuid){\n" +
                 "  var exp=(pts[i].routed_uuid!==undefined)?pts[i].routed_uuid:pts[i].device_uuid;\n" +
                 "  if(window.Android&&Android.claim){Android.claim(uuid, exp||'', pts[i].name,\n" +
