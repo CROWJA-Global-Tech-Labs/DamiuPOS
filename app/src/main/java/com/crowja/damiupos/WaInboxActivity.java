@@ -30,6 +30,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.crowja.damiupos.sync.WaInboxApi;
+import com.crowja.damiupos.sync.WaInboxCache;
 import com.crowja.damiupos.util.Ts;
 
 import org.json.JSONArray;
@@ -60,6 +61,7 @@ public class WaInboxActivity extends AppCompatActivity {
     private final Runnable poll = this::refresh;
     private boolean resumed;
     private boolean loading;
+    private boolean prefetched;
 
     private LinearLayout accountChips;
     private RecyclerView rv;
@@ -121,6 +123,20 @@ public class WaInboxActivity extends AppCompatActivity {
 
         CheckBox cb = findViewById(R.id.cbComplaintOnly);
         cb.setOnCheckedChangeListener((v, on) -> { complaintOnly = on; render(); });
+        // Buka layar → isi dulu dari cache (akun + percakapan terakhir), jaringan menyusul di onResume.
+        try {
+            String ca = WaInboxCache.get(this, WaInboxCache.accountsKey());
+            if (ca != null) {
+                JSONArray arr = new JSONArray(ca);
+                for (int i = 0; i < arr.length(); i++) accounts.add(arr.optJSONObject(i));
+                if (account == null && arr.length() > 0) account = arr.optJSONObject(0).optString("account");
+                buildChips();
+                showCachedConversations();
+                render();
+            }
+        } catch (Exception ignored) {
+            // cache rusak — abaikan, layar terisi dari jaringan
+        }
         ((EditText) findViewById(R.id.etSearch)).addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int a, int c, int d) {}
             @Override public void onTextChanged(CharSequence s, int a, int c, int d) {}
@@ -163,7 +179,15 @@ public class WaInboxActivity extends AppCompatActivity {
 
     // ------------------------------------------------------------------------------------ data
 
-    private void refresh() {
+    private void refresh() { refresh(true); }
+
+    /**
+     * @param withAccounts false = hanya percakapan akun terpilih (ganti akun / jendela waktu): daftar
+     *                     akun + badge tak perlu diambil ulang tiap kali. Hasil disimpan di
+     *                     {@link WaInboxCache}; sesudah muatan pertama, akun lain diambil diam-diam
+     *                     ({@link #prefetchOthers}) supaya berpindah akun langsung terisi.
+     */
+    private void refresh(boolean withAccounts) {
         handler.removeCallbacks(poll);
         if (loading || !resumed) return;
         loading = true;
@@ -171,27 +195,39 @@ public class WaInboxActivity extends AppCompatActivity {
         final String acc = account;
         final int d = days;
         if (convs.isEmpty()) progress.setVisibility(View.VISIBLE);
+        final android.content.Context app = getApplicationContext();
         new Thread(() -> {
-            WaInboxApi.Res ra = api.accounts();
+            WaInboxApi.Res ra = withAccounts ? api.accounts() : null;
             WaInboxApi.Res rc = null;
             String pick = acc;
-            if (ra.ok()) {
+            if (ra != null && ra.ok()) {
                 JSONArray arr = ra.body.optJSONArray("accounts");
+                if (arr != null) WaInboxCache.put(app, WaInboxCache.accountsKey(), arr.toString());
                 if (pick == null && arr != null && arr.length() > 0) pick = arr.optJSONObject(0).optString("account");
             }
-            if (pick != null) rc = api.conversations(pick, d);
+            boolean accountsOk = ra == null || ra.ok();
+            if (accountsOk && pick != null) {
+                rc = api.conversations(pick, d);
+                if (rc.ok()) {
+                    JSONArray carr = rc.body.optJSONArray("conversations");
+                    if (carr != null) WaInboxCache.put(app, WaInboxCache.convKey(pick, d), carr.toString());
+                }
+            }
             final String fpick = pick;
             final WaInboxApi.Res fc = rc;
+            final WaInboxApi.Res fa = ra;
             runOnUiThread(() -> {
                 loading = false;
                 progress.setVisibility(View.GONE);
                 if (isFinishing() || isDestroyed()) return;
-                if (!ra.ok()) {
-                    showStatus(ra.error.isEmpty() ? "Gagal memuat akun WA." : ra.error);
+                if (fa != null && !fa.ok()) {
+                    showStatus(fa.error.isEmpty() ? "Gagal memuat akun WA." : fa.error);
                 } else {
-                    accounts.clear();
-                    JSONArray arr = ra.body.optJSONArray("accounts");
-                    for (int i = 0; arr != null && i < arr.length(); i++) accounts.add(arr.optJSONObject(i));
+                    if (fa != null) {
+                        accounts.clear();
+                        JSONArray arr = fa.body.optJSONArray("accounts");
+                        for (int i = 0; arr != null && i < arr.length(); i++) accounts.add(arr.optJSONObject(i));
+                    }
                     if (account == null) account = fpick;
                     buildChips();
                     if (g == gen && fc != null) {
@@ -200,6 +236,7 @@ public class WaInboxActivity extends AppCompatActivity {
                     } else if (fpick == null) {
                         showStatus("Belum ada akun WhatsApp yang tertaut ke cabang ini.");
                     }
+                    if (fa != null && fa.ok() && !prefetched) { prefetched = true; prefetchOthers(); }
                 }
                 render();
                 if (resumed) handler.postDelayed(poll, POLL_MS);
@@ -207,12 +244,49 @@ public class WaInboxActivity extends AppCompatActivity {
         }, "wa-inbox-load").start();
     }
 
+    /** Ambil percakapan akun-akun lain (satu per satu, di latar) ke cache — ganti akun jadi instan. */
+    private void prefetchOthers() {
+        final android.content.Context app = getApplicationContext();
+        final int d = days;
+        final List<String> names = new ArrayList<>();
+        for (JSONObject a : accounts) {
+            String n = a.optString("account");
+            if (!n.equalsIgnoreCase(account)) names.add(n);
+        }
+        new Thread(() -> {
+            for (String n : names) {
+                WaInboxApi.Res r = api.conversations(n, d);
+                if (r.ok()) {
+                    JSONArray carr = r.body.optJSONArray("conversations");
+                    if (carr != null) WaInboxCache.put(app, WaInboxCache.convKey(n, d), carr.toString());
+                }
+            }
+        }, "wa-inbox-prefetch").start();
+    }
+
+    /** Isi layar dari cache (bila ada) TANPA jaringan. True bila ada yang ditampilkan. */
+    private boolean showCachedConversations() {
+        if (account == null) return false;
+        String cached = WaInboxCache.get(this, WaInboxCache.convKey(account, days));
+        if (cached == null) return false;
+        try {
+            applyConversations(new JSONArray(cached));
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private void reloadConversations() {
         gen++;
         convs.clear();
+        prefetched = false;
+        // Stale-while-revalidate: cache dulu (kalau ada), jaringan menyusul di latar.
+        boolean hadCache = showCachedConversations();
         render();
         loading = false;
-        refresh();
+        refresh(false);
+        if (!hadCache) progress.setVisibility(View.VISIBLE);
     }
 
     private void applyConversations(JSONArray arr) {
