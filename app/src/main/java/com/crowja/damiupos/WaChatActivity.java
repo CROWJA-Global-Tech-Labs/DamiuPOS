@@ -343,11 +343,11 @@ public class WaChatActivity extends AppCompatActivity {
         if (text.isEmpty()) { startRecording(); return; }
         etMessage.setText("");
         emojiPanel.setVisibility(View.GONE);
-        sendMessage(text, null, null, null, "text");
+        sendMessage(text, null, null, null, "text", false);
     }
 
     /** @param mediaFile lampiran (null = teks); {@code kind} untuk bubble sementara. */
-    private void sendMessage(String text, File mediaFile, String mime, String fileName, String kind) {
+    private void sendMessage(String text, File mediaFile, String mime, String fileName, String kind, boolean voice) {
         final Msg quoted = replyTo;
         setReply(null);
         final String key = UUID.randomUUID().toString().replace("-", "");
@@ -371,7 +371,7 @@ public class WaChatActivity extends AppCompatActivity {
             }
             WaInboxApi.Res r = (mediaFile != null && b64 == null)
                     ? null
-                    : api.send(account, jid, text, quoted != null ? quoted.id : null, key, b64, mime, fileName);
+                    : api.send(account, jid, text, quoted != null ? quoted.id : null, key, b64, mime, fileName, voice);
             runOnUiThread(() -> {
                 pending.remove(local);
                 if (r != null && r.ok()) {
@@ -467,7 +467,7 @@ public class WaChatActivity extends AppCompatActivity {
                     etMessage.setText("");
                     String kind = mime.startsWith("image/") ? "image" : mime.startsWith("video/") ? "video"
                             : mime.startsWith("audio/") ? "audio" : "document";
-                    sendMessage(caption.getText().toString().trim(), f, mime, name, kind);
+                    sendMessage(caption.getText().toString().trim(), f, mime, name, kind, false);
                 })
                 .setNegativeButton("Batal", null).show();
     }
@@ -527,7 +527,7 @@ public class WaChatActivity extends AppCompatActivity {
             Toast.makeText(this, "Rekaman terlalu singkat.", Toast.LENGTH_SHORT).show();
             return;
         }
-        sendMessage("", f, mime, f.getName(), "audio");
+        sendMessage("", f, mime, f.getName(), "audio", true);
     }
 
     private void cancelRecording() {
@@ -649,8 +649,11 @@ public class WaChatActivity extends AppCompatActivity {
                 runOnUiThread(() -> {
                     if (r.ok()) { lastSig = ""; pollNowSoon(); }
                     else {
-                        String msg = r.status == 501 ? "Bridge belum mendukung reaksi."
-                                : (r.error.isEmpty() ? "Reaksi gagal." : r.error);
+                        String msg = r.error.isEmpty() ? "Reaksi gagal." : r.error;
+                        if (r.body != null && r.body.optJSONObject("error") != null
+                                && !r.body.optJSONObject("error").optString("message", "").isEmpty()) {
+                            msg = r.body.optJSONObject("error").optString("message");
+                        }
                         Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
                     }
                 });
