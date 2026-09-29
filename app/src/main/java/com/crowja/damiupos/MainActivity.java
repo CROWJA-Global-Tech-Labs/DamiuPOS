@@ -77,6 +77,7 @@ public class MainActivity extends AppCompatActivity {
     private final Runnable salesCardsTicker = new Runnable() {
         @Override public void run() {
             refreshSalesCards();
+            refreshWaChatBadge();
             salesCardsHandler.postDelayed(this, SALES_CARDS_REFRESH_MS);
         }
     };
@@ -521,6 +522,7 @@ public class MainActivity extends AppCompatActivity {
         // Kapabilitas layar dibaca dari predikat di model User, bukan disusun ulang di sini —
         // dua sumber kebenaran untuk aturan peran yang sama pasti menyimpang cepat atau lambat.
         boolean canSeeDeliveryRecord = false;
+        boolean canUseWaChat = false;
         if (show) {
             com.crowja.damiupos.model.User cur =
                     new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid);
@@ -528,6 +530,7 @@ public class MainActivity extends AppCompatActivity {
             isViewer = cur != null && cur.isViewer();
             isMarketing = cur != null && cur.isMarketing();
             canSeeDeliveryRecord = cur != null && cur.canViewDeliveryRecord();
+            canUseWaChat = cur != null && cur.canUseWaChat();
         }
         boolean tracksAttendance = show && !isAdmin && !isViewer && !isMarketing; // hanya staf yang absen
 
@@ -571,6 +574,18 @@ public class MainActivity extends AppCompatActivity {
         if (boxDeliveryRecord != null) {
             boxDeliveryRecord.setVisibility(show && canSeeDeliveryRecord ? View.VISIBLE : View.GONE);
         }
+
+        // Chat WhatsApp: Admin/Marketing/SPV (User.canUseWaChat). Sel grid — dirapikan packQuickMenuGrid.
+        View boxWaChat = findViewById(R.id.boxWaChat);
+        View btnWaChat = findViewById(R.id.btnWaChat);
+        if (boxWaChat != null) {
+            boxWaChat.setVisibility(show && canUseWaChat ? View.VISIBLE : View.GONE);
+        }
+        if (btnWaChat != null) {
+            btnWaChat.setOnClickListener(v -> startActivity(new Intent(this, WaInboxActivity.class)));
+        }
+        waChatEnabled = show && canUseWaChat;
+        if (waChatEnabled) refreshWaChatBadge();
 
         // Input Promosi Galon: Marketing & Admin selalu; staf lain bila promo_enabled (salary_config).
         View boxPromosi = findViewById(R.id.boxPromosi);
@@ -1212,6 +1227,35 @@ public class MainActivity extends AppCompatActivity {
         } else {
             badge.setVisibility(View.GONE);
         }
+    }
+
+    private boolean waChatEnabled;
+    private boolean waChatBadgeLoading;
+
+    /** Badge total pesan WA baru (semua akun) di tombol Chat WA — di thread latar, gagal = badge tak berubah. */
+    private void refreshWaChatBadge() {
+        if (!waChatEnabled || waChatBadgeLoading) return;
+        waChatBadgeLoading = true;
+        final android.content.Context app = getApplicationContext();
+        new Thread(() -> {
+            int total = -1;
+            try {
+                com.crowja.damiupos.sync.WaInboxApi.Res r = new com.crowja.damiupos.sync.WaInboxApi(app).accounts();
+                if (r.ok()) {
+                    total = 0;
+                    org.json.JSONArray arr = r.body.optJSONArray("accounts");
+                    for (int i = 0; arr != null && i < arr.length(); i++) total += arr.optJSONObject(i).optInt("unread");
+                }
+            } catch (Exception ignored) {}
+            final int count = total;
+            runOnUiThread(() -> {
+                waChatBadgeLoading = false;
+                TextView badge = findViewById(R.id.tvWaChatBadge);
+                if (badge == null || count < 0) return;
+                badge.setVisibility(count > 0 ? View.VISIBLE : View.GONE);
+                badge.setText(count > 99 ? "99+" : String.valueOf(count));
+            });
+        }, "wa-chat-badge").start();
     }
 
     private void updateFollowUpIndicator() {

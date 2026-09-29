@@ -4,4 +4,5 @@
     <external-files-path name="exports" path="exports" />
     <external-files-path name="receipts" path="receipts" />
     <external-files-path name="updates" path="updates" />
+    <external-files-path name="wa_media" path="wa_media" />
 </paths>

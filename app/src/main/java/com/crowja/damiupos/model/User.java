@@ -106,6 +106,10 @@ public class User {
      *  paling berkepentingan melihat rekornya sendiri. Marketing/Viewer tak mengantar. */
     public boolean canViewDeliveryRecord() { return isStaf() || isSpv() || isAdmin(); }
 
+    /** Layar "Chat WhatsApp" (inbox semua akun WA cabang lewat Bridge): Admin, Marketing, SPV.
+     *  Server memeriksa aturan yang sama dari tabel staff (WaInboxController::ROLES). */
+    public boolean canUseWaChat() { return isAdmin() || isMarketing() || isSpv(); }
+
     /** @deprecated pakai {@link #canGiveFree()} — dipertahankan untuk pemanggil lama. */
     public boolean canPromote() { return canGiveFree(); }
 
