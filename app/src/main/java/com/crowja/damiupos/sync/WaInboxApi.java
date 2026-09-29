@@ -88,7 +88,8 @@ public final class WaInboxApi {
 
     /** Kirim teks dan/atau lampiran; {@code mediaBase64 == null} = teks saja. Audio/* = voice note. */
     public Res send(String account, String jid, String text, @Nullable String quotedId, String clientKey,
-                    @Nullable String mediaBase64, @Nullable String mimetype, @Nullable String fileName) {
+                    @Nullable String mediaBase64, @Nullable String mimetype, @Nullable String fileName,
+                    boolean voice) {
         JSONObject b = obj("account", account, "jid", jid, "text", text, "client_key", clientKey);
         try {
             if (quotedId != null) b.put("quoted_id", quotedId);
@@ -96,6 +97,7 @@ public final class WaInboxApi {
                 b.put("media_base64", mediaBase64);
                 b.put("mimetype", mimetype);
                 if (fileName != null) b.put("file_name", fileName);
+                if (voice) b.put("voice", true);   // audio direkam → kirim sebagai voice note
             }
         } catch (Exception ignored) {
             // put dengan kunci non-null tak pernah gagal
