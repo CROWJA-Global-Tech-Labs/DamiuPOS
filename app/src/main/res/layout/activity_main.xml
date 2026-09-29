@@ -859,6 +859,60 @@
                         android:stateListAnimator="@null" />
                 </FrameLayout>
 
+                <!-- Chat WhatsApp — inbox semua akun WA cabang via Bridge; badge = total pesan baru.
+                     Admin / Marketing / SPV (User.canUseWaChat). -->
+                <FrameLayout
+                    android:id="@+id/boxWaChat"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnWaChat"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="💬 Chat WA"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#075E54"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
+
+                    <TextView
+                        android:id="@+id/tvWaChatBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="top|end"
+                        android:layout_marginTop="2dp"
+                        android:layout_marginEnd="2dp"
+                        android:background="@drawable/bg_wa_unread"
+                        android:elevation="6dp"
+                        android:gravity="center"
+                        android:minWidth="22dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:paddingTop="1dp"
+                        android:paddingBottom="1dp"
+                        android:text="0"
+                        android:textColor="#FFFFFF"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+                </FrameLayout>
+
                 <!-- Cust. Promo (d/h "Pelanggan Promosi") — daftar + statistik konversi hasil promo
                      galon gratis. Visibilitas = Promo Galon. -->
                 <FrameLayout

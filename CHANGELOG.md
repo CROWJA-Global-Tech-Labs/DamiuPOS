@@ -6,6 +6,15 @@ Brand UI: _by FREZ Tech & Innovation Labs_. Paket/identifier tetap `com.crowja.d
 > Versi in-app dari dokumen ini tersedia di **Tentang → Changelog & Fitur**
 > (sumber: `app/src/main/res/raw/changelog.md`).
 
+## Belum dirilis — Chat WhatsApp (WA Bridge)
+
+- Tombol **💬 Chat WA** di dashboard untuk Admin, Marketing, dan SPV, dengan badge total pesan baru.
+- Inbox semua akun WA cabang: pindah akun lewat chip (badge pesan baru per akun), jendela waktu 3 hari (bawaan) / 7 / 30 / semua waktu / kustom, cari nama atau nomor.
+- Foto profil kontak diambil dari WA Bridge (daftar percakapan & header chat); tanpa foto → inisial.
+- Label **😠 Komplain** pada percakapan pelanggan yang ordernya ditandai komplain, plus filter "Komplain saja".
+- Tampilan chat ala WhatsApp: bubble, kutipan, gambar, voice note (rekam & putar), dokumen, emoji, lampiran, balas, reaksi.
+- Butuh endpoint `/api/wa-inbox/*` di DAMIUPOS-Online (lihat `docs/WA_INBOX_API.md` di repo server). Reaksi & voice note tergantung dukungan FREZ WA Bridge.
+
 ## Versi 1.2.10 — Transaksi Pending & Penyempurnaan
 
 ### Sinkronisasi Cloud diperluas
