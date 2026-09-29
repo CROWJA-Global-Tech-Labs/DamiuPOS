@@ -351,6 +351,7 @@ public class WaInboxActivity extends AppCompatActivity {
             Conv c = data.get(i);
             h.name.setText(c.title);
             h.avatar.setText(c.title.isEmpty() ? "?" : c.title.substring(0, 1).toUpperCase(Locale.ROOT));
+            com.crowja.damiupos.util.WaAvatarLoader.into(WaInboxActivity.this, account, c.jid, h.photo);
             h.time.setText(shortTime(c.lastAt));
             h.last.setText(("out".equals(c.lastDir) ? "Anda: " : "") + previewOf(c.lastType, c.last));
             h.complaint.setVisibility(c.complaint ? View.VISIBLE : View.GONE);
@@ -369,10 +370,13 @@ public class WaInboxActivity extends AppCompatActivity {
 
         final class VH extends RecyclerView.ViewHolder {
             final TextView avatar, name, time, last, complaint, unread;
+            final android.widget.ImageView photo;
 
             VH(View v) {
                 super(v);
                 avatar = v.findViewById(R.id.tvAvatar);
+                photo = v.findViewById(R.id.ivAvatar);
+                com.crowja.damiupos.util.WaAvatarLoader.makeRound(photo);
                 name = v.findViewById(R.id.tvName);
                 time = v.findViewById(R.id.tvTime);
                 last = v.findViewById(R.id.tvLast);

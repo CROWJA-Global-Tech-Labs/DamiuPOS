@@ -139,6 +139,26 @@ public final class WaInboxApi {
         }
     }
 
+    /** Unduh foto profil kontak ke {@code out}. Balas 200 = ada, 404 = tak punya foto, selain itu galat sementara. */
+    public int downloadAvatar(String account, String jid, File out) {
+        HttpUrl base = HttpUrl.parse(cfg.getBaseUrl() + "/api/wa-inbox/avatar");
+        if (base == null) return 0;
+        HttpUrl url = base.newBuilder().addQueryParameter("account", account).addQueryParameter("jid", jid).build();
+        try (Response r = Http.SHARED.newCall(auth(new Request.Builder().url(url).get()).build()).execute()) {
+            if (!r.isSuccessful() || r.body() == null) return r.code();
+            try (InputStream in = r.body().byteStream(); OutputStream os = new FileOutputStream(out)) {
+                byte[] buf = new byte[16 * 1024];
+                int n;
+                while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+            }
+            return 200;
+        } catch (Exception e) {
+            //noinspection ResultOfMethodCallIgnored
+            out.delete();
+            return 0;
+        }
+    }
+
     // ------------------------------------------------------------------------------------------
 
     private Res get(String path, @Nullable String[] query) {

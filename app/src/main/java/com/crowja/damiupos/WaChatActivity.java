@@ -156,6 +156,16 @@ public class WaChatActivity extends AppCompatActivity {
         String phone = getIntent().getStringExtra(EXTRA_PHONE);
         tb.setSubtitle((phone != null && !phone.isEmpty() ? "+" + phone + " · " : "") + "akun " + account);
         tb.setNavigationOnClickListener(v -> finish());
+        // Foto profil kontak di header (bulat), bila Bridge punya.
+        com.crowja.damiupos.util.WaAvatarLoader.load(this, account, jid, bm -> {
+            if (bm == null || isFinishing() || isDestroyed()) return;
+            int size = Math.round(36 * getResources().getDisplayMetrics().density);
+            Bitmap sq = Bitmap.createScaledBitmap(bm, size, size, true);
+            androidx.core.graphics.drawable.RoundedBitmapDrawable rd =
+                    androidx.core.graphics.drawable.RoundedBitmapDrawableFactory.create(getResources(), sq);
+            rd.setCircular(true);
+            tb.setLogo(rd);
+        });
         findViewById(R.id.tvComplaintBanner).setVisibility(
                 getIntent().getBooleanExtra(EXTRA_COMPLAINT, false) ? View.VISIBLE : View.GONE);
 
