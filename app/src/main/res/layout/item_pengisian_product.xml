@@ -15,7 +15,7 @@
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="match_parent"
         android:orientation="horizontal">
 
         <!-- Chip warna produk (latar polos, BUKAN foto) -->
@@ -25,10 +25,14 @@
             android:layout_height="match_parent"
             android:background="#607D8B" />
 
+        <!-- Isi kartu rata tengah vertikal: tinggi kartu (minHeight) diatur kode menurut sisa layar,
+             kepadatan isi menurut FillLayoutPlan (penuh / sedang / ringkas). -->
         <LinearLayout
+            android:id="@+id/cardContent"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="match_parent"
             android:layout_weight="1"
+            android:gravity="center_vertical"
             android:orientation="vertical"
             android:padding="14dp">
 
@@ -93,9 +97,11 @@
                 android:textSize="12sp" />
 
             <LinearLayout
+                android:id="@+id/rowButtons"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
+                android:baselineAligned="false"
                 android:orientation="horizontal">
 
                 <com.google.android.material.button.MaterialButton

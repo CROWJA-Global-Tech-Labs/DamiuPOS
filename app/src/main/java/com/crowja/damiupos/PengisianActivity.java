@@ -20,6 +20,7 @@ import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
 import android.view.LayoutInflater;
+import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
@@ -38,6 +39,7 @@ import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.db.UserDao;
 import com.crowja.damiupos.model.User;
+import com.crowja.damiupos.pengisian.FillLayoutPlan;
 import com.crowja.damiupos.pengisian.FillOutbox;
 import com.crowja.damiupos.pengisian.FillOverlay;
 import com.crowja.damiupos.pengisian.FillPlan;
@@ -121,6 +123,14 @@ public class PengisianActivity extends AppCompatActivity {
     private boolean othersExpanded;
     private String lastRev = "";
 
+    /** Padding vertikal isi gulir (atas+bawah, dp) — harus sama dengan activity_pengisian.xml. */
+    private static final int SCROLL_INNER_PAD_DP = 16;
+    /** Produk yang sedang ditata (hasil render terakhir): aktif vs tanpa aktivitas. Dipakai menata ulang
+     *  kartu saat ukuran layar/hero berubah tanpa menunggu render berikutnya. */
+    private final List<FillPlan.Product> activeProducts = new ArrayList<>();
+    private final List<FillPlan.Product> otherProducts = new ArrayList<>();
+    private boolean fitScheduled;
+
     private static final String STATE_COUNT_PROMPTED = "countPrompted";
 
     /** Popup pesan admin yang sedang tampil (anti-tumpuk) + penerima broadcast pesan baru. */
@@ -198,6 +208,16 @@ public class PengisianActivity extends AppCompatActivity {
         tvEmpty = findViewById(R.id.tvEmpty);
         swipe = findViewById(R.id.swipe);
         swipe.setOnRefreshListener(() -> requestSync(true));
+
+        // Tinggi kartu produk dibagi dari SISA tinggi layar (semua produk muat tanpa menggulir di
+        // resolusi apa pun). Tata ulang hanya bila TINGGI area/hero/peringatan berubah — kalau tidak,
+        // penataan ulang kartu sendiri memicu layout -> listener -> penataan ulang (loop).
+        View.OnLayoutChangeListener heightWatcher = (v, l, t, r, b, ol, ot, orr, ob) -> {
+            if ((b - t) != (ob - ot)) scheduleFit();
+        };
+        swipe.addOnLayoutChangeListener(heightWatcher);
+        heroBox.addOnLayoutChangeListener(heightWatcher);
+        tvUnmapped.addOnLayoutChangeListener(heightWatcher);
 
         String name = settingsDao.getCurrentUserName();
         tvStaff.setText("Pengisian · " + (name != null && !name.isEmpty() ? name : me.getName()));
@@ -446,6 +466,8 @@ public class PengisianActivity extends AppCompatActivity {
         othersBox.removeAllViews();
 
         if (plan == null) {
+            activeProducts.clear();
+            otherProducts.clear();
             heroBox.setVisibility(View.GONE);
             tvUnmapped.setVisibility(View.GONE);
             tvOthersToggle.setVisibility(View.GONE);
@@ -473,24 +495,15 @@ public class PengisianActivity extends AppCompatActivity {
             tvUnmapped.setVisibility(View.GONE);
         }
 
-        // --- kartu produk: aktif di atas, sisanya dilipat di "Produk lain"
-        List<FillPlan.Product> others = new ArrayList<>();
+        // --- kartu produk: semua muat di layar bila bisa (FillLayoutPlan); bila tidak, yang tak punya
+        //     aktivitas dilipat di "Produk lain"
+        activeProducts.clear();
+        otherProducts.clear();
         for (FillPlan.Product p : plan.products) {
-            if (FillText.isActive(p)) productsBox.addView(buildCard(productsBox, p));
-            else others.add(p);
+            if (FillText.isActive(p)) activeProducts.add(p);
+            else otherProducts.add(p);
         }
-        if (others.isEmpty()) {
-            tvOthersToggle.setVisibility(View.GONE);
-            othersBox.setVisibility(View.GONE);
-        } else {
-            tvOthersToggle.setText("Produk lain (" + others.size() + ")  "
-                    + (othersExpanded ? "▲" : "▼"));
-            tvOthersToggle.setVisibility(View.VISIBLE);
-            if (othersExpanded) {
-                for (FillPlan.Product p : others) othersBox.addView(buildCard(othersBox, p));
-            }
-            othersBox.setVisibility(othersExpanded ? View.VISIBLE : View.GONE);
-        }
+        layoutProducts();
         if (plan.products.isEmpty()) showEmpty("Belum ada produk galon di cabang ini.");
 
         // --- tanda saat kebutuhan NAIK (overlay sudah memuat ketukan sendiri, jadi ketukan sendiri
@@ -505,7 +518,7 @@ public class PengisianActivity extends AppCompatActivity {
         }
     }
 
-    private View buildCard(ViewGroup parent, FillPlan.Product p) {
+    private View buildCard(ViewGroup parent, FillPlan.Product p, FillLayoutPlan.Result fit) {
         View v = LayoutInflater.from(this).inflate(R.layout.item_pengisian_product, parent, false);
         v.findViewById(R.id.vChip).setBackgroundColor(parseColor(p.color, COLOR_NEUTRAL));
         ((TextView) v.findViewById(R.id.tvName)).setText(p.name);
@@ -546,7 +559,106 @@ public class PengisianActivity extends AppCompatActivity {
         v.findViewById(R.id.btnPlus5).setOnClickListener(x -> logFill(p, 5));
         v.findViewById(R.id.btnPlus10).setOnClickListener(x -> logFill(p, 10));
         v.findViewById(R.id.btnOther).setOnClickListener(x -> showOtherQtyDialog(p));
+        applyDensity(v, p, fit);
         return v;
+    }
+
+    // ===================================================================== tata letak adaptif
+
+    private void scheduleFit() {
+        if (fitScheduled) return;
+        fitScheduled = true;
+        swipe.post(() -> {
+            fitScheduled = false;
+            if (isFinishing() || isDestroyed()) return;
+            if (!activeProducts.isEmpty() || !otherProducts.isEmpty()) layoutProducts();
+        });
+    }
+
+    /** Tinggi view termasuk margin (0 bila GONE / belum diukur). */
+    private static int blockPx(View v) {
+        if (v.getVisibility() == View.GONE) return 0;
+        int h = v.getHeight();
+        ViewGroup.LayoutParams lp = v.getLayoutParams();
+        if (lp instanceof ViewGroup.MarginLayoutParams) {
+            h += ((ViewGroup.MarginLayoutParams) lp).topMargin + ((ViewGroup.MarginLayoutParams) lp).bottomMargin;
+        }
+        return h;
+    }
+
+    /** Tata kartu produk menurut sisa tinggi layar: lihat {@link FillLayoutPlan}. */
+    private void layoutProducts() {
+        productsBox.removeAllViews();
+        othersBox.removeAllViews();
+
+        float areaDp = 0f;
+        if (swipe.getHeight() > 0) {
+            int px = swipe.getHeight() - dp(SCROLL_INNER_PAD_DP) - blockPx(heroBox) - blockPx(tvUnmapped);
+            areaDp = px / getResources().getDisplayMetrics().density;
+        }
+        FillLayoutPlan.Result fit = FillLayoutPlan.choose(areaDp, activeProducts.size(), otherProducts.size(),
+                othersExpanded, getResources().getConfiguration().fontScale);
+
+        for (FillPlan.Product p : activeProducts) productsBox.addView(buildCard(productsBox, p, fit));
+        if (fit.inlineAll) {
+            for (FillPlan.Product p : otherProducts) productsBox.addView(buildCard(productsBox, p, fit));
+            tvOthersToggle.setVisibility(View.GONE);
+            othersBox.setVisibility(View.GONE);
+        } else if (otherProducts.isEmpty()) {
+            tvOthersToggle.setVisibility(View.GONE);
+            othersBox.setVisibility(View.GONE);
+        } else {
+            tvOthersToggle.setText("Produk lain (" + otherProducts.size() + ")  "
+                    + (othersExpanded ? "\u25B2" : "\u25BC"));
+            tvOthersToggle.setVisibility(View.VISIBLE);
+            if (othersExpanded) {
+                for (FillPlan.Product p : otherProducts) othersBox.addView(buildCard(othersBox, p, fit));
+            }
+            othersBox.setVisibility(othersExpanded ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    /** Kepadatan isi kartu: penuh / sedang / ringkas + tinggi tetap dari sisa layar. */
+    private void applyDensity(View v, FillPlan.Product p, FillLayoutPlan.Result fit) {
+        final int tier = fit.tier;
+        final float[] nameSp = {19f, 17f, 16f};
+        final float[] detailSp = {13f, 12f, 12f};
+        final float[] headSp = {32f, 26f, 20f};
+        final float[] btnSp = {17f, 16f, 15f};
+        final float[] otherSp = {14f, 13f, 13f};
+        final int[] pad = {14, 10, 8};
+        final int[] btnH = {52, 44, 36};
+        final int[] headTop = {6, 4, 2};
+        final int[] btnTop = {8, 6, 4};
+
+        // Tinggi TETAP (bukan minHeight): MaterialCardView tak meneruskan tinggi-minimum ke anak
+        // match_parent, sehingga chip warna & rata-tengah isi tak ikut memanjang.
+        if (fit.cardDp > 0f) v.getLayoutParams().height = dp(Math.round(fit.cardDp));
+
+        View content = v.findViewById(R.id.cardContent);
+        content.setPadding(dp(14), dp(pad[tier]), dp(12), dp(pad[tier]));
+
+        ((TextView) v.findViewById(R.id.tvName)).setTextSize(TypedValue.COMPLEX_UNIT_SP, nameSp[tier]);
+        ((TextView) v.findViewById(R.id.tvDetail)).setTextSize(TypedValue.COMPLEX_UNIT_SP, detailSp[tier]);
+        TextView head = v.findViewById(R.id.tvHeadline);
+        head.setTextSize(TypedValue.COMPLEX_UNIT_SP, headSp[tier]);
+        ((ViewGroup.MarginLayoutParams) head.getLayoutParams()).topMargin = dp(headTop[tier]);
+        ((ViewGroup.MarginLayoutParams) v.findViewById(R.id.rowButtons).getLayoutParams()).topMargin = dp(btnTop[tier]);
+
+        // Bar kemajuan & "sudah diisi hari ini" hanya bila ada ruang (tingkat penuh); selebihnya angka
+        // besar + tombol saja yang penting dalam sekali lihat.
+        ProgressBar pb = v.findViewById(R.id.pb);
+        pb.setVisibility(tier == FillLayoutPlan.TIER_FULL && p.target > 0 ? View.VISIBLE : View.GONE);
+        TextView filled = v.findViewById(R.id.tvFilledToday);
+        boolean roomForFilled = tier == FillLayoutPlan.TIER_FULL && fit.cardDp >= 215f;
+        filled.setVisibility(roomForFilled && p.filledToday > 0 ? View.VISIBLE : View.GONE);
+
+        final int[] ids = {R.id.btnPlus1, R.id.btnPlus5, R.id.btnPlus10, R.id.btnOther};
+        for (int id : ids) {
+            TextView b = v.findViewById(id);
+            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, id == R.id.btnOther ? otherSp[tier] : btnSp[tier]);
+            b.getLayoutParams().height = dp(btnH[tier]);
+        }
     }
 
     // ===================================================================== aksi
