@@ -28,6 +28,7 @@
                 android:layout_weight="1"
                 style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
                 android:hint="Nama Lokasi"
+                app:placeholderText="mis: warung, rumah, bengkel"
                 app:boxCornerRadiusBottomEnd="8dp"
                 app:boxCornerRadiusBottomStart="8dp"
                 app:boxCornerRadiusTopEnd="8dp"
@@ -52,6 +53,15 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="16sp" />
         </LinearLayout>
+
+        <!-- Preset nama lokasi: ketuk untuk mengisi kolom nama. Chip diisi dari kode
+             (CustomerFormActivity.LOCATION_NAME_PRESETS). -->
+        <com.google.android.material.chip.ChipGroup
+            android:id="@+id/chipgLokasiPreset"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            app:chipSpacingVertical="0dp" />
 
         <TextView
             android:id="@+id/tvLokasiKoordinat"

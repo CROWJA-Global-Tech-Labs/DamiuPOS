@@ -436,9 +436,24 @@ public class CustomerFormActivity extends AppCompatActivity {
                 locationRows.get(0).cbWajib.setChecked(existing.isWajibOngkir());
             }
         }
+        // Kartu Foto Rumah disembunyikan (foto kini per lokasi), jadi foto rumah LAMA pelanggan
+        // (photo_url di server) tak terlihat di mana pun. Cermin Customer::locationsOrDefault di web:
+        // lokasi UTAMA tanpa koleksi sendiri jatuh ke foto rumah lama — tampilkan di strip-nya, dan
+        // ikut tersimpan ke koleksi lokasi saat Simpan seperti yang dilakukan web.
+        if (existing != null && !locationRows.isEmpty()) {
+            LocationRow first = locationRows.get(0);
+            String legacy = existing.getPhotoUrl() == null ? "" : existing.getPhotoUrl().trim();
+            if (first.photos.isEmpty() && legacy.regionMatches(true, 0, "http", 0, 4)) {
+                first.photos.add(legacy);
+                renderLocationPhotos(first);
+            }
+        }
     }
 
-    /** Tambahkan satu baris lokasi (null = baris kosong; baris pertama diberi nama default). */
+    /** Preset nama lokasi di bawah kolom nama (ketuk = isi kolom). */
+    private static final String[] LOCATION_NAME_PRESETS = {"Warung", "Rumah", "Toko", "Kedai Es Teh"};
+
+    /** Tambahkan satu baris lokasi (null = baris kosong, nama diisi staf lewat placeholder/preset). */
     private void addLocationRow(Customer.Location loc) {
         View v = android.view.LayoutInflater.from(this)
                 .inflate(R.layout.item_customer_location, llLokasi, false);
@@ -455,12 +470,25 @@ public class CustomerFormActivity extends AppCompatActivity {
         } else {
             // Lokasi BARU (pelanggan baru / tambah lokasi): default Wajib Ongkir = AKTIF.
             row.cbWajib.setChecked(true);
-            if (locationRows.isEmpty()) row.etName.setText(Customer.DEFAULT_LOCATION_NAME);
+            // Nama dibiarkan KOSONG (ada placeholder + preset di bawahnya) — staf memilih/mengetik
+            // sendiri; kosong saat simpan tetap jatuh ke DEFAULT_LOCATION_NAME (collectLocations).
         }
         // Id stabil selalu ada (bahkan baris baru) — foto yang diunggah SEBELUM baris pernah
         // tersimpan tetap perlu nama berkas yang tak bentrok dengan baris lain.
         if (row.id == null || row.id.trim().isEmpty()) {
             row.id = java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+        }
+        com.google.android.material.chip.ChipGroup presets = v.findViewById(R.id.chipgLokasiPreset);
+        for (String preset : LOCATION_NAME_PRESETS) {
+            com.google.android.material.chip.Chip chip = new com.google.android.material.chip.Chip(
+                    this, null, com.google.android.material.R.attr.chipStyle);
+            chip.setText(preset);
+            chip.setCheckable(false);
+            chip.setOnClickListener(x -> {
+                row.etName.setText(preset);
+                row.etName.setSelection(preset.length());
+            });
+            presets.addView(chip);
         }
         row.btnGps.setOnClickListener(x -> getLocation(row));
         row.btnPeta.setOnClickListener(x -> pickFromMap(row));
