@@ -735,35 +735,7 @@ public class MainActivity extends AppCompatActivity {
      * lalu kembali ke layar login. App jadi idle — wajib clock in lagi.
      */
     private void doIstirahat() {
-        long uid = settingsDao.getCurrentUserId();
-        if (uid <= 0) return;
-        String uname = settingsDao.getCurrentUserName();
-        new AlertDialog.Builder(this)
-                .setTitle("Istirahat?")
-                .setMessage("Aplikasi terkunci selama istirahat. Tekan \"Lanjut Kerja\" "
-                        + "untuk melanjutkan tanpa PIN, atau rekan lain bisa login.")
-                .setPositiveButton("Ya, Istirahat", (d, w) -> {
-                    long attId = new AttendanceDao(DatabaseHelper.getInstance(this))
-                            .log(uid, Attendance.EVENT_BREAK);
-                    LocationService.stampAttendanceLocation(this, attId);   // GPS istirahat untuk dashboard
-                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());   // absensi real-time
-                    // Pause pengingat jam kerja — di-rearm saat clock in lagi.
-                    WorkHoursReminder.cancel(getApplicationContext(), uid);
-                    // Istirahat: berhenti melacak LOKASI, tapi service tetap hidup
-                    // (poll-only) supaya polling background tetap aktif selama shift.
-                    LocationService.pollOnly(getApplicationContext());
-                    // Ingat siapa yang istirahat → tombol "Lanjut Kerja" 1 ketukan di layar login
-                    // (tanpa PIN/selfie). Shift tetap terbuka sampai Pulang.
-                    settingsDao.setBreakUser(uid, uname);
-                    settingsDao.clearCurrentUser();
-                    Intent i = new Intent(this, LoginActivity.class);
-                    i.putExtra(LoginActivity.EXTRA_FROM_BREAK, true);
-                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-                    startActivity(i);
-                    finish();
-                })
-                .setNegativeButton("Batal", null)
-                .show();
+        com.crowja.damiupos.util.ShiftActions.confirmBreak(this, settingsDao);
     }
 
     private static final int REQ_SELFIE_LOGOUT = 702;
@@ -1069,6 +1041,13 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        // Pulang SEDANG berjalan (kamera selfie dibuka dari onCreate lewat EXTRA_AUTO_CLOCKOUT atau
+        // dari tombol Pulang): activity ini HARUS tetap hidup untuk menerima hasil kamera. Tanpa
+        // penjagaan ini, onResume yang mengikuti onCreate langsung mengalihkan peran Pengisian ke
+        // layarnya (dan finish()) — kamera tertutup, hasil selfie dibuang, OUT tak pernah tercatat.
+        // Di jalur onCreate tak ada content view, jadi sisa onResume (refreshDashboard dst) juga
+        // tak boleh jalan.
+        if (pendingLogoutUid > 0) return;
         // Multi-user login may have just been turned on from the dashboard (synced via
         // app_settings) — enforce the login/clock-in gate now, without needing a cold restart.
         // Guard isFinishing() so we don't double-launch when onCreate already gated + finished.

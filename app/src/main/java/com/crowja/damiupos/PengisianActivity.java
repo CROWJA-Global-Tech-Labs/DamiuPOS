@@ -225,6 +225,10 @@ public class PengisianActivity extends AppCompatActivity {
         findViewById(R.id.btnCount).setOnClickListener(v -> showCountDialog());
         findViewById(R.id.btnHistory).setOnClickListener(v -> showHistoryDialog());
         findViewById(R.id.btnPulang).setOnClickListener(v -> confirmPulang());
+        // Istirahat = jalur absensi yang SAMA dengan staf lain (catatan BREAK ke server; tanpa BREAK
+        // hitungan jam kerja memotong 1 jam otomatis).
+        findViewById(R.id.btnBreak).setOnClickListener(v ->
+                com.crowja.damiupos.util.ShiftActions.confirmBreak(this, settingsDao));
         tvOthersToggle.setOnClickListener(v -> {
             othersExpanded = !othersExpanded;
             render(false);
