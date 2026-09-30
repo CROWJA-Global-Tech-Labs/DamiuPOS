@@ -6,10 +6,12 @@ import android.database.sqlite.SQLiteDatabase;
 
 import com.crowja.damiupos.model.Attendance;
 import com.crowja.damiupos.model.Transaction;
+import com.crowja.damiupos.util.ReceiptNo;
 import com.crowja.damiupos.util.Ts;
 import com.crowja.damiupos.model.TransactionItem;
 import com.crowja.damiupos.model.User;
 
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -53,18 +55,16 @@ public class TransactionDao {
         if (trx.getTanggal() != null && !trx.getTanggal().isEmpty()) {
             values.put(DatabaseHelper.COL_TANGGAL, trx.getTanggal());
         }
-        // ID transaksi unik struk (<KODE>-DDMMYY-<COUNTER>) — cermin App\Support\ReceiptNumber
-        // (web). Hanya JUAL (struk pembelian; KEMBALI tak punya). Dihitung SENDIRI di sini, offline,
-        // lewat counter LOKAL (SyncSettings.nextLocalReceiptSeq) — BUKAN dari COUNT baris lokal
-        // transactions, karena tabel itu juga memuat order asal LAIN yang dirutekan ke perangkat ini
-        // untuk pengiriman (lihat komentar K_RECEIPT_SEQ), yang akan membuat urutan meleset.
+        // ID transaksi struk (<KODE>-<DDMMYYHHMM>-<5 KARAKTER ACAK A-Z0-9>, lihat ReceiptNo). Hanya
+        // JUAL (struk pembelian; KEMBALI tak punya). Dihitung SENDIRI di sini, offline. Suffix acak,
+        // bukan counter lokal: counter dulu menghasilkan nomor kembar antar pelanggan. Bila nomor
+        // yang sama sudah ada di tabel lokal, diundi ulang (lihat uniqueReceiptNo).
         if (Transaction.TYPE_JUAL.equals(trx.getType())) {
             com.crowja.damiupos.sync.SyncSettings receiptCfg =
                     new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(dbHelper));
             String code = receiptCfg.getReceiptCode();
             if (code == null || code.isEmpty()) code = "DEV";
-            String dayKey = receiptDayKey(effectiveTanggal);
-            String receiptNo = code + "-" + dayKey + "-" + receiptCfg.nextLocalReceiptSeq(dayKey);
+            String receiptNo = uniqueReceiptNo(db, code, receiptStamp(effectiveTanggal));
             values.put(DatabaseHelper.COL_RECEIPT_NO, receiptNo);
             trx.setReceiptNo(receiptNo);
         }
@@ -209,11 +209,39 @@ public class TransactionDao {
                 DatabaseHelper.COL_CUSTOMER_ID + "=?", new String[]{String.valueOf(customerId)});
     }
 
-    /** "ddMMyy" dari stempel "yyyy-MM-dd..." (lokal maupun ISO — 10 karakter awal sama bentuknya).
-     *  Cermin Carbon::parse($t->tanggal)->format('dmy') di web ({@see App\Support\ReceiptNumber}). */
-    private static String receiptDayKey(String tanggal) {
-        if (tanggal == null || tanggal.length() < 10) return "000000";
-        return tanggal.substring(8, 10) + tanggal.substring(5, 7) + tanggal.substring(2, 4);
+    /** Undi ulang paling banyak sekian kali bila nomor struk yang terundi sudah dipakai baris lokal. */
+    private static final int RECEIPT_MAX_REROLLS = 10;
+
+    private static final SecureRandom RECEIPT_RNG = new SecureRandom();
+
+    /**
+     * {@code <KODE>-<ddMMyyHHmm>-<5 karakter acak>} yang belum dipakai baris lokal mana pun. Tabrakan
+     * hampir mustahil (36^5 ≈ 60 juta suffix per menit); bila {@link #RECEIPT_MAX_REROLLS} undian
+     * ulang pun bertabrakan, kandidat terakhir dipakai saja daripada melempar galat — server lalu
+     * menolak nomor kembar saat sinkron dan menerbitkan yang baru (ReceiptNumber::guard).
+     */
+    private static String uniqueReceiptNo(SQLiteDatabase db, String code, String stamp) {
+        String candidate = ReceiptNo.compose(code, stamp, ReceiptNo.randomSuffix(RECEIPT_RNG));
+        for (int reroll = 0; reroll < RECEIPT_MAX_REROLLS && receiptNoExists(db, candidate); reroll++) {
+            candidate = ReceiptNo.compose(code, stamp, ReceiptNo.randomSuffix(RECEIPT_RNG));
+        }
+        return candidate;
+    }
+
+    private static boolean receiptNoExists(SQLiteDatabase db, String receiptNo) {
+        try (Cursor c = db.rawQuery("SELECT 1 FROM " + DatabaseHelper.TABLE_TRANSACTIONS
+                + " WHERE " + DatabaseHelper.COL_RECEIPT_NO + "=? LIMIT 1", new String[]{receiptNo})) {
+            return c.moveToFirst();
+        }
+    }
+
+    /** "ddMMyyHHmm" dari tanggal transaksi, waktu LOKAL. Stempel ISO-UTC (berakhiran Z, baris yang ditarik
+     *  dari server) dinormalkan ke lokal dulu lewat {@link Ts#local}; tak terurai sama sekali → waktu sekarang.
+     *  Cermin Carbon::parse($t->tanggal)->format('dmyHi') di web ({@see App\Support\ReceiptNumber}). */
+    private static String receiptStamp(String tanggal) {
+        String local = Ts.local(tanggal);
+        String stamp = ReceiptNo.stamp(local.isEmpty() ? tanggal : local);
+        return stamp != null ? stamp : ReceiptNo.stamp(Ts.local(DatabaseHelper.nowIso()));
     }
 
     /** _id lokal untuk sebuah sync_uuid transaksi (deep link pesanan); -1 bila belum tersinkron. */

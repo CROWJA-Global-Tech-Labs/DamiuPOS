@@ -40,7 +40,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_PHOTO_URL = "photo_url";
     public static final String COL_PAYMENT_CONFIRMED_AT = "payment_confirmed_at";
     public static final String COL_PAYMENT_PROOF_URL = "payment_proof_url";
-    /** ID transaksi unik struk (<KODE>-DDMMYY-<COUNTER>) — cermin App\Support\ReceiptNumber. */
+    /** ID transaksi struk (<KODE>-<DDMMYYHHMM>-<5 karakter acak>) — cermin App\Support\ReceiptNumber. */
     public static final String COL_RECEIPT_NO = "receipt_no";
     public static final String COL_LATITUDE = "latitude";
     public static final String COL_LONGITUDE = "longitude";
@@ -1699,7 +1699,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_PHOTO_URL + " TEXT");
         }
         if (oldVersion < 91) {
-            // ID transaksi unik struk (<KODE>-DDMMYY-<COUNTER>) — cermin server
+            // ID transaksi struk (<KODE>-<DDMMYYHHMM>-<5 karakter acak>) — cermin server
             // 2026_08_29_180100_add_receipt_no_to_transactions. Aditif, aman perangkat live.
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_RECEIPT_NO + " TEXT");
         }

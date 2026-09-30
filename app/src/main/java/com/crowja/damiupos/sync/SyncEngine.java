@@ -217,7 +217,7 @@ public class SyncEngine {
                     // BUKTI SELESAI: hanya URL yang disinkron — photo_path lokal-saja (pola persis
                     // attendance/expenses: path tak pernah meninggalkan perangkat).
                     DatabaseHelper.COL_PHOTO_URL,
-                    // ID transaksi unik struk (<KODE>-DDMMYY-<COUNTER>) — HP menghitungnya SENDIRI
+                    // ID transaksi struk (<KODE>-<DDMMYYHHMM>-<5 karakter acak>) — HP menghitungnya SENDIRI
                     // offline (counter lokal per-perangkat, lihat TransactionDao.insert()) lalu
                     // push; server hanya mengisi bila baris ini lahir DI WEB (Transaction::booted).
                     // Dua arah agar HP juga melihat receipt_no baris yang dibuat di web/perangkat lain.
