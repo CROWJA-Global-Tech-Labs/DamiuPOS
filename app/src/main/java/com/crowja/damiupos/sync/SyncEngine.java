@@ -512,9 +512,16 @@ public class SyncEngine {
             // Karyawan di-"Pulangkan" lewat dashboard web → event OUT-nya baru saja ditarik.
             // Tutup sesi login staf tsb di HP dan kembalikan ke halaman login.
             try { enforceRemoteClockOut(); } catch (Throwable ignored) {}
-            // Kebijakan notifikasi: karyawan marketing HANYA menerima "Pesan & Pembaruan" (pesan
-            // admin), bukan notifikasi operasional/pesanan dari dashboard (follow-up, jenis ganda).
-            boolean marketing = com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(appCtx);
+            // Kebijakan notifikasi: karyawan marketing & pengisian HANYA menerima "Pesan & Pembaruan"
+            // (pesan admin), bukan notifikasi operasional/pesanan dari dashboard (follow-up, jenis
+            // ganda). Peran dibaca SEKALI lewat predikat User (receivesOperationalAlerts), bukan
+            // isMarketing() yang disalin per titik.
+            com.crowja.damiupos.model.User sessionUser = com.crowja.damiupos.db.UserDao.currentUser(appCtx);
+            boolean marketing = sessionUser != null && !sessionUser.receivesOperationalAlerts();   // "diredam"
+            // Pengisian tak punya antrean kiriman/inbox: notifikasi seputar antrean perangkat
+            // (dipindahkan / diselesaikan pihak lain / perkenalan / lengkapi data) ikut dibungkam.
+            // Marketing TIDAK dibungkam di sini — mereka memang masih menerimanya.
+            boolean pengisian = sessionUser != null && sessionUser.isPengisian();
             // Follow-up MANUAL baru dari dashboard → notifikasi + popup + suara.
             if (!marketing) {
                 for (int i = 0; i < pulledManualFollowups.size(); i++) {
@@ -532,7 +539,7 @@ public class SyncEngine {
             // yang paling sering mendaftarkan pelanggan tanpa foto/koordinat. Popup aktual (dengan
             // tombol "Lengkapi Sekarang") ditampilkan MainActivity saat foreground; notifikasi ini
             // menutup kasus app di background.
-            if (!pulledIncompleteQueueCustomers.isEmpty()) {
+            if (!pengisian && !pulledIncompleteQueueCustomers.isEmpty()) {
                 java.util.List<Long> ids = new java.util.ArrayList<>();
                 for (int i = 0; i < pulledIncompleteQueueCustomers.size(); i++) {
                     Object[] e = pulledIncompleteQueueCustomers.get(i);
@@ -549,7 +556,7 @@ public class SyncEngine {
             }
             // Order yang tadinya ada di antrian PERANGKAT INI dipindah ke perangkat lain oleh
             // web/operator lain → notifikasi ⚠ supaya kurir tak bingung kenapa ordernya menghilang.
-            for (int i = 0; i < pulledRoutedAway.size(); i++) {
+            for (int i = 0; !pengisian && i < pulledRoutedAway.size(); i++) {
                 String name = pulledRoutedAway.get(i);
                 try {
                     OnlineNotifier.postNotif(appCtx, "⚠ Order Dipindahkan",
@@ -558,7 +565,7 @@ public class SyncEngine {
             }
             // Order yang tadinya ada di antrian PERANGKAT INI diselesaikan oleh perangkat/pihak lain
             // (web dashboard atau kurir lain) → notifikasi ⚠ supaya tak diantar/diproses dobel.
-            for (int i = 0; i < pulledCompletedElsewhere.size(); i++) {
+            for (int i = 0; !pengisian && i < pulledCompletedElsewhere.size(); i++) {
                 String[] e = pulledCompletedElsewhere.get(i);
                 String name = e[0];
                 String by = e[1];
@@ -572,7 +579,7 @@ public class SyncEngine {
             // PELANGGAN PERKENALAN baru untuk PERANGKAT PETUGAS WA Perkenalan (sudah tersaring
             // wilayah di applyRows): dirangkum satu notifikasi supaya sinkron awal/borongan tak
             // membanjiri — badge di dashboard yang memuat daftar lengkapnya.
-            if (!pulledPromoIntroArrivals.isEmpty()) {
+            if (!pengisian && !pulledPromoIntroArrivals.isEmpty()) {
                 try {
                     String body = pulledPromoIntroArrivals.size() == 1
                             ? "Pelanggan baru dari promosi: \"" + pulledPromoIntroArrivals.get(0)

@@ -432,6 +432,57 @@ public class SyncApi {
         return get(cfg.getBaseUrl() + "/api/delivery/record", cfg.getToken());
     }
 
+    // ------------------------------------------------ Pengisian Day-time (/api/fill/*)
+    // Semua panggilan membawa header X-Staff-Uuid: token perangkat hanya mengenali perangkat &
+    // cabang, sedangkan server memeriksa peran orangnya (pengisian/admin) dari tabel staff.
+    // Angka rencana dirakit SERVER (App\Support\FillPlan) — HP tidak menghitung apa pun.
+
+    /**
+     * Rencana isi galon se-cabang. {@code rev} = fingerprint rencana terakhir yang sudah dipegang
+     * HP; bila tak berubah server membalas {@code {"ok":true,"unchanged":true,"rev":...}} (murah).
+     */
+    public JSONObject fillPlan(@Nullable String rev, String staffUuid) throws Exception {
+        okhttp3.HttpUrl.Builder hb = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/fill/plan").newBuilder();
+        if (rev != null && !rev.isEmpty()) hb.addQueryParameter("rev", rev);
+        return get(hb.build().toString(), cfg.getToken(), staffUuid);
+    }
+
+    /**
+     * Catat isi galon. {@code uuid} dibuat SEKALI per ketukan (server idempoten per uuid).
+     * {@code ageSeconds} = berapa detik lalu ketukan terjadi (0..21600; ketukan tertahan di kotak
+     * keluar karena offline): server mencap {@code logged_at = now() - age_seconds} dengan jam
+     * SERVER sendiri, jadi selisih jam HP tak berpengaruh. 0 = ketukan baru saja terjadi (dihilangkan).
+     */
+    public JSONObject fillLog(String staffUuid, String uuid, String productUuid, int qty,
+                              int ageSeconds) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("uuid", uuid);
+        body.put("product_uuid", productUuid);
+        body.put("qty", qty);
+        if (ageSeconds > 0) body.put("age_seconds", ageSeconds);
+        return post(cfg.getBaseUrl() + "/api/fill/log", body, cfg.getToken(), staffUuid);
+    }
+
+    /**
+     * Hitung stok rak: {@code counts} = [{product_uuid, qty}] (nilai ABSOLUT, satu baris per produk).
+     * {@code ageSeconds}: lihat {@link #fillLog} — jangkar hitung harus bercap saat rak DIHITUNG,
+     * bukan saat terkirim.
+     */
+    public JSONObject fillCount(String staffUuid, String batchUuid, org.json.JSONArray counts,
+                                int ageSeconds) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("uuid", batchUuid);
+        body.put("counts", counts);
+        if (ageSeconds > 0) body.put("age_seconds", ageSeconds);
+        return post(cfg.getBaseUrl() + "/api/fill/count", body, cfg.getToken(), staffUuid);
+    }
+
+    /** Batalkan satu catatan (uuid baris, atau batch_uuid hitung stok). Jendela batal 15 menit. */
+    public JSONObject fillVoid(String staffUuid, String targetUuid) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/fill/log/" + android.net.Uri.encode(targetUuid) + "/void",
+                new JSONObject(), cfg.getToken(), staffUuid);
+    }
+
     /** Dashboard → device commands for this device newer than {@code sinceIso}. */
     public JSONObject commands(String sinceIso) throws Exception {
         okhttp3.HttpUrl built = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/commands")
@@ -688,20 +739,32 @@ public class SyncApi {
     }
 
     private JSONObject get(String url, String token) throws Exception {
+        return get(url, token, null);
+    }
+
+    /** @param staffUuid bila terisi dikirim sebagai header {@code X-Staff-Uuid} (identitas ORANG). */
+    private JSONObject get(String url, String token, @Nullable String staffUuid) throws Exception {
         Request.Builder b = new Request.Builder()
                 .url(url)
                 .header("Accept", "application/json")
                 .get();
         if (token != null && !token.isEmpty()) b.header("Authorization", "Bearer " + token);
+        if (staffUuid != null && !staffUuid.isEmpty()) b.header("X-Staff-Uuid", staffUuid);
         return execute(b.build());
     }
 
     private JSONObject post(String url, JSONObject body, @Nullable String token) throws Exception {
+        return post(url, body, token, null);
+    }
+
+    private JSONObject post(String url, JSONObject body, @Nullable String token,
+                            @Nullable String staffUuid) throws Exception {
         Request.Builder b = new Request.Builder()
                 .url(url)
                 .header("Accept", "application/json")
                 .post(RequestBody.create(body.toString(), JSON));
         if (token != null && !token.isEmpty()) b.header("Authorization", "Bearer " + token);
+        if (staffUuid != null && !staffUuid.isEmpty()) b.header("X-Staff-Uuid", staffUuid);
         return execute(b.build());
     }
 

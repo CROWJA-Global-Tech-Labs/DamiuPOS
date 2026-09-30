@@ -1,0 +1,19 @@
+{
+    "name": "err_product_invalid_log",
+    "method": "POST",
+    "path": "/api/fill/log",
+    "request_headers": {
+        "X-Staff-Uuid": "20000000-0000-4000-8000-00000000b001"
+    },
+    "request": {
+        "uuid": "fill-ghost-0001",
+        "product_uuid": "produk-tak-dikenal",
+        "qty": 1
+    },
+    "http": 422,
+    "body": {
+        "ok": false,
+        "code": "product_invalid",
+        "message": "Produk tidak dikenal / sudah dihapus."
+    }
+}

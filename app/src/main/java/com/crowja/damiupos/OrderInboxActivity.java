@@ -107,7 +107,7 @@ public class OrderInboxActivity extends AppCompatActivity {
         // Karyawan marketing TIDAK menangani Pesanan Terjadwal → inbox dikosongkan saat mereka login
         // (pengingat tetap tersimpan/tersinkron di perangkat, hanya tidak ditampilkan). Konsisten
         // dgn banner/alarm yang sudah dilewati untuk marketing di MainActivity.refreshOrderInboxBanner.
-        boolean marketing = com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(this);
+        boolean marketing = com.crowja.damiupos.db.UserDao.isCurrentUserAlertSilenced(this);   // marketing/pengisian
         if (!marketing) {
             if (showArchive) {
                 // View arsip

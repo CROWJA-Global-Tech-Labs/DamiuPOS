@@ -1,0 +1,227 @@
+[
+    {
+        "name": "plan_idle",
+        "category": "plan",
+        "method": "GET",
+        "path": "/api/fill/plan",
+        "http": 200
+    },
+    {
+        "name": "count_ok",
+        "category": "write_ok",
+        "method": "POST",
+        "path": "/api/fill/count",
+        "http": 200
+    },
+    {
+        "name": "count_duplicate",
+        "category": "write_ok",
+        "method": "POST",
+        "path": "/api/fill/count",
+        "http": 200
+    },
+    {
+        "name": "plan_need",
+        "category": "plan",
+        "method": "GET",
+        "path": "/api/fill/plan",
+        "http": 200
+    },
+    {
+        "name": "plan_unchanged",
+        "category": "plan",
+        "method": "GET",
+        "path": "/api/fill/plan?rev=3db0c17bca97a58a0fab2dcb181fbae9",
+        "http": 200
+    },
+    {
+        "name": "log_ok",
+        "category": "write_ok",
+        "method": "POST",
+        "path": "/api/fill/log",
+        "http": 200
+    },
+    {
+        "name": "log_duplicate",
+        "category": "write_ok",
+        "method": "POST",
+        "path": "/api/fill/log",
+        "http": 200
+    },
+    {
+        "name": "log_age_seconds",
+        "category": "write_ok",
+        "method": "POST",
+        "path": "/api/fill/log",
+        "http": 200
+    },
+    {
+        "name": "plan_after_fills",
+        "category": "plan",
+        "method": "GET",
+        "path": "/api/fill/plan",
+        "http": 200
+    },
+    {
+        "name": "count_second",
+        "category": "write_ok",
+        "method": "POST",
+        "path": "/api/fill/count",
+        "http": 200
+    },
+    {
+        "name": "void_count_batch_ok",
+        "category": "write_ok",
+        "method": "POST",
+        "path": "/api/fill/log/count-midday-001/void",
+        "http": 200
+    },
+    {
+        "name": "void_ok",
+        "category": "write_ok",
+        "method": "POST",
+        "path": "/api/fill/log/fill-mineral-0002/void",
+        "http": 200
+    },
+    {
+        "name": "void_duplicate",
+        "category": "write_ok",
+        "method": "POST",
+        "path": "/api/fill/log/fill-mineral-0002/void",
+        "http": 200
+    },
+    {
+        "name": "err_not_owner",
+        "category": "error",
+        "method": "POST",
+        "path": "/api/fill/log/fill-other-00001/void",
+        "http": 403,
+        "code": "not_owner"
+    },
+    {
+        "name": "err_log_not_found",
+        "category": "error",
+        "method": "POST",
+        "path": "/api/fill/log/tidak-ada-0001/void",
+        "http": 404,
+        "code": "log_not_found"
+    },
+    {
+        "name": "err_void_window_closed",
+        "category": "error",
+        "method": "POST",
+        "path": "/api/fill/log/fill-mineral-0001/void",
+        "http": 403,
+        "code": "void_window_closed"
+    },
+    {
+        "name": "void_admin_ok",
+        "category": "write_ok",
+        "method": "POST",
+        "path": "/api/fill/log/fill-mineral-0001/void",
+        "http": 200
+    },
+    {
+        "name": "err_validation_log",
+        "category": "error",
+        "method": "POST",
+        "path": "/api/fill/log",
+        "http": 422,
+        "code": "validation"
+    },
+    {
+        "name": "err_validation_uuid",
+        "category": "error",
+        "method": "POST",
+        "path": "/api/fill/log",
+        "http": 422,
+        "code": "validation"
+    },
+    {
+        "name": "err_validation_count",
+        "category": "error",
+        "method": "POST",
+        "path": "/api/fill/count",
+        "http": 422,
+        "code": "validation"
+    },
+    {
+        "name": "err_product_invalid_log",
+        "category": "error",
+        "method": "POST",
+        "path": "/api/fill/log",
+        "http": 422,
+        "code": "product_invalid"
+    },
+    {
+        "name": "err_product_invalid_count",
+        "category": "error",
+        "method": "POST",
+        "path": "/api/fill/count",
+        "http": 422,
+        "code": "product_invalid"
+    },
+    {
+        "name": "err_staff_uuid_missing",
+        "category": "error",
+        "method": "GET",
+        "path": "/api/fill/plan",
+        "http": 422,
+        "code": "staff_uuid_missing"
+    },
+    {
+        "name": "err_staff_not_found",
+        "category": "error",
+        "method": "GET",
+        "path": "/api/fill/plan",
+        "http": 404,
+        "code": "staff_not_found"
+    },
+    {
+        "name": "err_staff_inactive",
+        "category": "error",
+        "method": "GET",
+        "path": "/api/fill/plan",
+        "http": 403,
+        "code": "staff_inactive"
+    },
+    {
+        "name": "err_forbidden_role",
+        "category": "error",
+        "method": "GET",
+        "path": "/api/fill/plan",
+        "http": 403,
+        "code": "forbidden_role"
+    },
+    {
+        "name": "err_forbidden_role_write",
+        "category": "error",
+        "method": "POST",
+        "path": "/api/fill/log",
+        "http": 403,
+        "code": "forbidden_role"
+    },
+    {
+        "name": "err_unauthenticated",
+        "category": "error",
+        "method": "GET",
+        "path": "/api/fill/plan",
+        "http": 401
+    },
+    {
+        "name": "err_rate_limited",
+        "category": "error",
+        "method": "GET",
+        "path": "/api/fill/plan",
+        "http": 429,
+        "code": "rate_limited"
+    },
+    {
+        "name": "err_rate_limited_write",
+        "category": "error",
+        "method": "POST",
+        "path": "/api/fill/log",
+        "http": 429,
+        "code": "rate_limited"
+    }
+]

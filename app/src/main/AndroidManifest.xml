@@ -25,6 +25,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Getar singkat saat kebutuhan isi galon naik di layar Pengisian (izin normal). -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Re-arm pengingat jam kerja + restart service sinkronisasi setelah reboot perangkat. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Minta pengecualian dari optimasi baterai (Doze) supaya service sinkronisasi/lokasi tidak
@@ -151,6 +153,13 @@
         <activity android:name=".SalesAchievementActivity" />
         <activity android:name=".IntroWaActivity" />
         <activity android:name=".DeliveryRecordActivity" />
+        <!-- Karyawan Pengisian (Day-time): singleTask supaya ketukan notifikasi/deep link tak menumpuk
+             salinan layar ini di atas salinan yang sudah terbuka. Dikunci potret: rotasi membuat ulang
+             activity dan menghilangkan dialog (hitung stok dengan angka yang sedang diketik). -->
+        <activity
+            android:name=".PengisianActivity"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait" />
         <activity android:name=".DeliveryHistoryActivity" />
         <activity android:name=".DeliveryMapActivity" />
         <activity android:name=".DeliveryObstacleActivity" />

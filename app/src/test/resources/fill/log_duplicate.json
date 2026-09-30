@@ -1,0 +1,123 @@
+{
+    "name": "log_duplicate",
+    "method": "POST",
+    "path": "/api/fill/log",
+    "request_headers": {
+        "X-Staff-Uuid": "20000000-0000-4000-8000-00000000b001"
+    },
+    "request": {
+        "uuid": "fill-mineral-0001",
+        "product_uuid": "10000000-0000-4000-8000-00000000a001",
+        "qty": 7
+    },
+    "http": 200,
+    "body": {
+        "ok": true,
+        "duplicate": true,
+        "log": {
+            "uuid": "fill-mineral-0001",
+            "kind": "FILL",
+            "product_uuid": "10000000-0000-4000-8000-00000000a001",
+            "qty": 7,
+            "batch_uuid": null,
+            "staff_uuid": "20000000-0000-4000-8000-00000000b001",
+            "logged_at": "2026-09-10 09:00:00"
+        },
+        "plan": {
+            "rev": "eecc9b499a45c5e2b9e56028efc18521",
+            "server_time": "2026-09-10 09:00:00",
+            "spare": 2,
+            "status": "need",
+            "needs_count": false,
+            "products": [
+                {
+                    "product_uuid": "10000000-0000-4000-8000-00000000a001",
+                    "name": "FREZMIN Air Mineral 19L",
+                    "slug": "MIN",
+                    "color": "#1565C0",
+                    "backlog": 11,
+                    "orders": 2,
+                    "spare": 2,
+                    "target": 13,
+                    "ready": 8,
+                    "to_fill": 5,
+                    "surplus": 0,
+                    "filled_today": 7,
+                    "needs_count": false,
+                    "counted_at": "2026-09-10 07:00:00"
+                },
+                {
+                    "product_uuid": "10000000-0000-4000-8000-00000000a002",
+                    "name": "FREZBIO Alkali 19L",
+                    "slug": "ALK",
+                    "color": "#2E7D32",
+                    "backlog": 3,
+                    "orders": 1,
+                    "spare": 2,
+                    "target": 5,
+                    "ready": 0,
+                    "to_fill": 5,
+                    "surplus": 0,
+                    "filled_today": 0,
+                    "needs_count": false,
+                    "counted_at": "2026-09-10 07:00:00"
+                }
+            ],
+            "totals": {
+                "backlog": 14,
+                "spare": 4,
+                "target": 18,
+                "ready": 8,
+                "to_fill": 10,
+                "filled_today": 7,
+                "orders": 4
+            },
+            "in_transit": {
+                "pcs": 2,
+                "orders": 1
+            },
+            "unmapped": {
+                "pcs": 3,
+                "orders": 1
+            },
+            "recent": [
+                {
+                    "uuid": "fill-mineral-0001",
+                    "batch_uuid": null,
+                    "kind": "FILL",
+                    "product_uuid": "10000000-0000-4000-8000-00000000a001",
+                    "product_name": "FREZMIN Air Mineral 19L",
+                    "qty": 7,
+                    "logged_at": "2026-09-10 09:00:00",
+                    "staff_uuid": "20000000-0000-4000-8000-00000000b001",
+                    "staff_name": "Pengisi Siang",
+                    "voidable": true
+                },
+                {
+                    "uuid": "99999999-0000-4000-8000-000000000003",
+                    "batch_uuid": "count-morning-01",
+                    "kind": "COUNT",
+                    "product_uuid": "10000000-0000-4000-8000-00000000a002",
+                    "product_name": "FREZBIO Alkali 19L",
+                    "qty": 0,
+                    "logged_at": "2026-09-10 07:00:00",
+                    "staff_uuid": "20000000-0000-4000-8000-00000000b001",
+                    "staff_name": "Pengisi Siang",
+                    "voidable": false
+                },
+                {
+                    "uuid": "99999999-0000-4000-8000-000000000002",
+                    "batch_uuid": "count-morning-01",
+                    "kind": "COUNT",
+                    "product_uuid": "10000000-0000-4000-8000-00000000a001",
+                    "product_name": "FREZMIN Air Mineral 19L",
+                    "qty": 4,
+                    "logged_at": "2026-09-10 07:00:00",
+                    "staff_uuid": "20000000-0000-4000-8000-00000000b001",
+                    "staff_name": "Pengisi Siang",
+                    "voidable": false
+                }
+            ]
+        }
+    }
+}

@@ -18,6 +18,45 @@ public class UserDao {
     }
 
     /**
+     * User yang SEDANG login, atau null (tidak ada login staf / user tak ditemukan / galat baca).
+     * Satu pintu untuk pemeriksaan peran sesi — jangan salin pola getCurrentUserId+getById lagi.
+     */
+    @androidx.annotation.Nullable
+    public static User currentUser(android.content.Context ctx) {
+        try {
+            DatabaseHelper db = DatabaseHelper.getInstance(ctx);
+            long uid = new SettingsDao(db).getCurrentUserId();
+            if (uid <= 0) return null;
+            return new UserDao(db).getById(uid);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** Apakah user yang SEDANG login berperan Pengisian (Day-time)? Tanpa login staf → false. */
+    public static boolean isCurrentUserPengisian(android.content.Context ctx) {
+        User u = currentUser(ctx);
+        return u != null && u.isPengisian();
+    }
+
+    /**
+     * Apakah notifikasi/alarm OPERASIONAL (pesanan, follow-up, inbox) harus DIREDAM untuk user yang
+     * sedang login? True bila {@link User#receivesOperationalAlerts()} false (Marketing, Pengisian).
+     * Tanpa login staf → false (perangkat single-user/owner menerima semuanya).
+     */
+    public static boolean isCurrentUserAlertSilenced(android.content.Context ctx) {
+        User u = currentUser(ctx);
+        return u != null && !u.receivesOperationalAlerts();
+    }
+
+    /** Sama seperti {@link #isCurrentUserAlertSilenced} tapi untuk notifikasi Chat Pesanan:
+     *  marketing TIDAK diredam di sini ({@link User#receivesOrderChatAlerts()}). */
+    public static boolean isCurrentUserOrderChatSilenced(android.content.Context ctx) {
+        User u = currentUser(ctx);
+        return u != null && !u.receivesOrderChatAlerts();
+    }
+
+    /**
      * Apakah user yang SEDANG login berperan marketing? Dipakai untuk kebijakan notifikasi:
      * karyawan marketing TIDAK menerima broadcast pesanan/operasional (order baru dari web,
      * follow-up, dll) — hanya "Pesan & Pembaruan" (pesan admin). Tanpa login staf → false.

@@ -1,0 +1,15 @@
+{
+    "name": "err_staff_inactive",
+    "method": "GET",
+    "path": "/api/fill/plan",
+    "request_headers": {
+        "X-Staff-Uuid": "20000000-0000-4000-8000-00000000b005"
+    },
+    "request": null,
+    "http": 403,
+    "body": {
+        "ok": false,
+        "code": "staff_inactive",
+        "message": "Akun staf ini nonaktif di server."
+    }
+}
