@@ -125,7 +125,7 @@ public class Transaction {
     // "Perangkat yang ditugaskan" (marketing/SPV): uuid perangkat lain yang ditugaskan menangani
     // transaksi ini. null/kosong = perangkat sendiri (tanpa penugasan). Server yang menerjemahkannya.
     private String assignedDeviceUuid;
-    /** ID transaksi unik struk (<KODE>-DDMMYY-<COUNTER>) — cermin App\Support\ReceiptNumber (web).
+    /** ID transaksi struk (<KODE>-<DDMMYYHHMM>-<5 karakter acak>) — cermin App\Support\ReceiptNumber (web).
      *  Ditetapkan SEKALI di TransactionDao.insert() untuk baris JUAL, tak pernah diubah. */
     private String receiptNo;
     private List<TransactionItem> items = new ArrayList<>();

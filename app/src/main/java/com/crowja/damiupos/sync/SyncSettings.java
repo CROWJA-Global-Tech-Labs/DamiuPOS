@@ -38,12 +38,6 @@ public class SyncSettings {
     private static final String K_DEVICE_ICON = "sync_device_icon";
     private static final String K_DEVICE_COLOR = "sync_device_color";
     private static final String K_DEVICE_VEHICLE = "sync_device_vehicle";
-    /** Counter LOKAL (bukan kolom sinkron — key ini sengaja di luar SHAREABLE_KEYS) untuk urutan
-     *  ID transaksi struk perangkat ini: "{DDMMYY}:{N}". Dipakai TransactionDao.insert() SENDIRI,
-     *  offline — TIDAK boleh dihitung dari COUNT baris lokal transactions, karena tabel itu juga
-     *  memuat baris ASAL LAIN yang di-pull (order dirutekan ke perangkat ini untuk pengiriman),
-     *  yang akan membuat urutan meleset/bertabrakan bila ikut dihitung. */
-    private static final String K_RECEIPT_SEQ = "local_receipt_seq";
     private static final String K_ENABLED     = "sync_enabled";
     private static final String K_LAST_AT     = "sync_last_at";
     private static final String K_CURSOR      = "sync_cursor_"; // + entity
@@ -206,26 +200,6 @@ public class SyncSettings {
     public void setDeviceColor(String v) { settings.set(K_DEVICE_COLOR, v != null ? v : ""); }
     public String getDeviceVehicle()       { return settings.get(K_DEVICE_VEHICLE, ""); }
     public void setDeviceVehicle(String v) { settings.set(K_DEVICE_VEHICLE, v != null ? v : ""); }
-
-    /**
-     * Nomor urut LOKAL berikutnya untuk hari {@code dayKey} (format "ddMMyy") — dipakai menyusun
-     * receipt_no ("{@code <KODE>-<dayKey>-<N>}"). Reset otomatis ke 1 begitu hari berganti (counter
-     * disimpan berpasangan dengan hari terakhirnya, bukan per-tanggal terpisah — cukup untuk
-     * transaksi yang selalu dibuat mendekati waktu sekarang).
-     */
-    public int nextLocalReceiptSeq(String dayKey) {
-        String raw = settings.get(K_RECEIPT_SEQ, "");
-        int seq = 1;
-        if (raw != null && raw.startsWith(dayKey + ":")) {
-            try {
-                seq = Integer.parseInt(raw.substring(dayKey.length() + 1)) + 1;
-            } catch (NumberFormatException ignored) {
-                seq = 1;
-            }
-        }
-        settings.set(K_RECEIPT_SEQ, dayKey + ":" + seq);
-        return seq;
-    }
 
     public boolean isEnabled()        { return "1".equals(settings.get(K_ENABLED, "0")); }
     public void setEnabled(boolean v) { settings.set(K_ENABLED, v ? "1" : "0"); }

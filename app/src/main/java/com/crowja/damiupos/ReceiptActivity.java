@@ -78,7 +78,7 @@ public class ReceiptActivity extends AppCompatActivity {
     /** sync_uuid transaksi ini — dipakai untuk menampilkan gift yang di-klaim (redeemed) oleh
      *  transaksi ini di struk (gambar + teks WA). Diisi dari Transaksi Baru & saat re-share. */
     public static final String EXTRA_GIFT_TRX_UUID = "gift_trx_uuid";
-    /** ID transaksi unik struk (<KODE>-DDMMYY-<COUNTER>) — cermin App\Support\ReceiptNumber (web). */
+    /** ID transaksi struk (<KODE>-<DDMMYYHHMM>-<5 karakter acak>) — cermin App\Support\ReceiptNumber (web). */
     public static final String EXTRA_RECEIPT_NO = "receipt_no";
     /** _id transaksi yang BARU dibuat — hanya untuk popup "pelanggan punya gift produk".
      *  Sengaja terpisah dari EXTRA_TRANSACTION_ID: extra itu memicu hidrasi ulang seluruh

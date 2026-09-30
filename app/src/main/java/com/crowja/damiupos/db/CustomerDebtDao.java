@@ -4,6 +4,8 @@ import android.content.ContentValues;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 
+import com.crowja.damiupos.util.ReceiptNo;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -313,9 +315,10 @@ public class CustomerDebtDao {
         try {
             while (c.moveToNext() && out.size() < Math.max(1, limit)) {
                 String reason = c.getString(0);
-                // Hanya reason berbentuk KODE-DDMMYY-N (receipt_no) — reason lama/manual (teks
-                // bebas) bukan rujukan struk yang bisa ditelusuri, jadi dilewati.
-                if (reason != null && reason.matches("[A-Z0-9]{1,4}-\\d{6}-\\d+") && !out.contains(reason)) {
+                // Hanya reason berbentuk receipt_no (KODE-DDMMYY-N lama atau KODE-DDMMYYHHMM-XXXXX
+                // baru) — reason lama/manual (teks bebas) bukan rujukan struk yang bisa
+                // ditelusuri, jadi dilewati.
+                if (ReceiptNo.isReceiptNo(reason) && !out.contains(reason)) {
                     out.add(reason);
                 }
             }

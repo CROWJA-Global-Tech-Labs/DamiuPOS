@@ -1587,7 +1587,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             : (c != null ? c.getAdminArea() : "");
    }
 
-   /** " · 🧾 KODE-DDMMYY-N" untuk baris meta kartu antrean — ID transaksi yang sama dengan di
+   /** " · 🧾 KODE-DDMMYYHHMM-XXXXX" untuk baris meta kartu antrean — ID transaksi yang sama dengan di
     *  struk pelanggan & dashboard. Kosong bila order tak punya nomor (bukan JUAL / baris lama). */
    /**
     * " · 🕐 Sen 20/09 08:15" — kapan pesanan ini ASLINYA dibuat (ordered_at: nilai server
