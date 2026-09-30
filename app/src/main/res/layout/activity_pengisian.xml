@@ -19,8 +19,8 @@
         android:background="#1565C0"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
-        android:paddingTop="12dp"
-        android:paddingBottom="12dp">
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp">
 
         <LinearLayout
             android:layout_width="0dp"
@@ -97,10 +97,11 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:paddingTop="10dp"
-                android:paddingBottom="16dp">
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp">
 
-                <!-- Kartu ringkasan: berwarna menurut status (perlu isi / tercukupi / tak ada pesanan) -->
+                <!-- Kartu ringkasan: berwarna menurut status (perlu isi / tercukupi / tak ada pesanan).
+                     Sengaja ringkas: sisa tinggi layar dibagi ke kartu produk (FillLayoutPlan). -->
                 <LinearLayout
                     android:id="@+id/heroBox"
                     android:layout_width="match_parent"
@@ -109,21 +110,24 @@
                     android:layout_marginEnd="10dp"
                     android:layout_marginBottom="8dp"
                     android:orientation="vertical"
-                    android:padding="18dp">
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingTop="10dp"
+                    android:paddingBottom="10dp">
 
                     <TextView
                         android:id="@+id/tvHeroTitle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:textColor="#FFFFFF"
-                        android:textSize="16sp" />
+                        android:textSize="14sp" />
 
                     <TextView
                         android:id="@+id/tvHeroValue"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:textColor="#FFFFFF"
-                        android:textSize="46sp"
+                        android:textSize="34sp"
                         android:textStyle="bold" />
 
                     <TextView
@@ -131,7 +135,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:textColor="#FFFFFF"
-                        android:textSize="13sp" />
+                        android:textSize="12sp" />
                 </LinearLayout>
 
                 <TextView
@@ -190,44 +194,78 @@
         </androidx.core.widget.NestedScrollView>
     </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
-    <!-- Footer: selalu terlihat -->
+    <!-- Footer: selalu terlihat. baselineAligned=false WAJIB: "Hitung Stok Rak" dulu membungkus jadi dua
+         baris, dan LinearLayout horizontal menyelaraskan BASELINE teks antar anak — tombol lain ikut
+         turun/naik (tak sejajar). Kini satu baris (auto-perkecil), tinggi sama, insets 0, rata tengah. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
+        android:baselineAligned="false"
+        android:gravity="center_vertical"
         android:background="#FFFFFF"
-        android:padding="8dp">
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp">
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnCount"
             android:layout_width="0dp"
-            android:layout_height="56dp"
+            android:layout_height="52dp"
             android:layout_weight="1.4"
             android:layout_marginEnd="6dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:maxLines="1"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
             android:text="Hitung Stok Rak"
             android:textColor="#FFFFFF"
             android:textSize="14sp"
+            app:autoSizeMaxTextSize="14sp"
+            app:autoSizeMinTextSize="10sp"
+            app:autoSizeStepGranularity="1sp"
+            app:autoSizeTextType="uniform"
             app:backgroundTint="#1565C0" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnHistory"
             android:layout_width="0dp"
-            android:layout_height="56dp"
+            android:layout_height="52dp"
             android:layout_weight="1"
             android:layout_marginEnd="6dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:maxLines="1"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
             android:text="Riwayat"
             android:textColor="#FFFFFF"
             android:textSize="14sp"
+            app:autoSizeMaxTextSize="14sp"
+            app:autoSizeMinTextSize="10sp"
+            app:autoSizeStepGranularity="1sp"
+            app:autoSizeTextType="uniform"
             app:backgroundTint="#37474F" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnPulang"
             android:layout_width="0dp"
-            android:layout_height="56dp"
+            android:layout_height="52dp"
             android:layout_weight="1"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:maxLines="1"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
             android:text="Pulang"
             android:textColor="#FFFFFF"
             android:textSize="14sp"
+            app:autoSizeMaxTextSize="14sp"
+            app:autoSizeMinTextSize="10sp"
+            app:autoSizeStepGranularity="1sp"
+            app:autoSizeTextType="uniform"
             app:backgroundTint="#C62828" />
     </LinearLayout>
 </LinearLayout>
