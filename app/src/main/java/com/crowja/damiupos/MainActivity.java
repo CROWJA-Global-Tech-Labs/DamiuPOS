@@ -156,6 +156,10 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
+        // Peran Pengisian (Day-time): beranda ini cuma transit, langsung ke layar panduan isi galon
+        // (PengisianActivity). Sebelum setContentView, dan diulang di onResume.
+        if (redirectPengisianHome()) return;
+
         setContentView(R.layout.activity_main);
 
         Toolbar toolbar = findViewById(R.id.toolbar);
@@ -322,26 +326,9 @@ public class MainActivity extends AppCompatActivity {
         // Admin: logout biasa (tanpa absensi/laporan).
         if (btnAdminLogout != null) btnAdminLogout.setOnClickListener(v -> doAdminLogout());
 
-        // Siapkan channel pengingat jam kerja + minta izin notifikasi (Android 13+).
-        ensureNotificationAccess();
-
-        // Online: keep periodic sync armed + check for a newer app version on launch.
-        com.crowja.damiupos.sync.SyncScheduler.schedulePeriodic(getApplicationContext());
-        com.crowja.damiupos.sync.VersionUpdater.checkAndPrompt(this);
-    }
-
-    private static final int REQ_POST_NOTIF = 9311;
-
-    /** Buat channel pengingat jam kerja + minta izin POST_NOTIFICATIONS (API 33+). */
-    private void ensureNotificationAccess() {
-        WorkHoursReminder.ensureChannel(this);
-        if (Build.VERSION.SDK_INT >= 33
-                && androidx.core.content.ContextCompat.checkSelfPermission(this,
-                        android.Manifest.permission.POST_NOTIFICATIONS)
-                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            androidx.core.app.ActivityCompat.requestPermissions(this,
-                    new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, REQ_POST_NOTIF);
-        }
+        // Channel pengingat jam kerja + izin notifikasi (Android 13+), sinkron berkala tetap
+        // terpasang, dan cek versi baru saat dibuka — satu paket dengan layar Pengisian.
+        com.crowja.damiupos.util.ForegroundDuties.onLaunch(this);
     }
 
     private static final int REQ_LOCATION = 9312;
@@ -448,6 +435,9 @@ public class MainActivity extends AppCompatActivity {
         try {
             pending = transactionDao.countDeliveryQueue();
         } catch (Exception ignored) {}
+        // Pengisian tak punya antrean kiriman: antrean di HP ini (kalau ada) bukan tanggungannya,
+        // jangan sampai memblokir Pulang.
+        if (com.crowja.damiupos.db.UserDao.isCurrentUserPengisian(this)) pending = 0;
         if (pending <= 0) {
             confirmPulang();
             return;
@@ -532,7 +522,13 @@ public class MainActivity extends AppCompatActivity {
             canSeeDeliveryRecord = cur != null && cur.canViewDeliveryRecord();
             canUseWaChat = cur != null && cur.canUseWaChat();
         }
-        boolean tracksAttendance = show && !isAdmin && !isViewer && !isMarketing; // hanya staf yang absen
+        // Hanya staf yang absen di bar ini. Marketing SENGAJA tetap di cabang "tanpa absen" (label +
+        // tombol Logout saja) — jangan diganti User.tracksAttendance(): predikat itu memasukkan
+        // marketing (selfie saat login) dan akan menyalakan Istirahat/Pulang, timer shift, pengingat
+        // jam kerja & pelacakan GPS di sini. Pengisian tak pernah sampai ke bar ini (beranda
+        // dialihkan ke PengisianActivity sebelum setContentView); bila suatu saat tampil ia jatuh ke
+        // cabang absen, yang memang benar untuk peran berabsen.
+        boolean tracksAttendance = show && !isAdmin && !isViewer && !isMarketing;
 
         // Viewer tidak boleh buat transaksi → sembunyikan aksi cepat Jual/Kembali.
         View qaJual = findViewById(R.id.btnJualGalon);
@@ -951,11 +947,12 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onPrepareOptionsMenu(Menu menu) {
-        // Ikon amplop (inbox Pesanan Terjadwal) tampil hanya untuk NON-marketing saat ada
-        // pengingat pending. Marketing tidak menangani Pesanan Terjadwal → ikon disembunyikan.
+        // Ikon amplop (inbox Pesanan Terjadwal) tampil hanya untuk peran yang menerima notifikasi
+        // operasional saat ada pengingat pending. Marketing/Pengisian tidak menangani Pesanan
+        // Terjadwal → ikon disembunyikan.
         MenuItem inbox = menu.findItem(R.id.action_inbox);
         if (inbox != null) inbox.setVisible(
-                !com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(this)
+                !com.crowja.damiupos.db.UserDao.isCurrentUserAlertSilenced(this)
                         && orderInboxDao != null && orderInboxDao.countPendingForThisDevice() > 0);
         return super.onPrepareOptionsMenu(menu);
     }
@@ -1057,6 +1054,18 @@ public class MainActivity extends AppCompatActivity {
         dialog.show();
     }
 
+    /**
+     * Pengisian (Day-time) tidak punya beranda: lempar ke {@link PengisianActivity} dan tutup
+     * activity ini. @return true bila dialihkan (pemanggil wajib langsung return).
+     */
+    private boolean redirectPengisianHome() {
+        com.crowja.damiupos.model.User cur = com.crowja.damiupos.db.UserDao.currentUser(this);
+        if (cur == null || !cur.usesPengisianHome()) return false;
+        startActivity(new Intent(this, PengisianActivity.class));
+        finish();
+        return true;
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
@@ -1076,20 +1085,17 @@ public class MainActivity extends AppCompatActivity {
             finish();
             return;
         }
+        // Peran berubah jadi Pengisian saat app terbuka (staff di-pull ~60 dtk), atau Pulang
+        // dibatalkan di layar selfie lalu kembali ke sini → tetap kunci ke layar Pengisian.
+        if (!isFinishing() && redirectPengisianHome()) return;
         refreshDashboard();
-        // Kontrol Versi: bila versi APK ini DINONAKTIFKAN dari dashboard (flag dari heartbeat
-        // /api/me), tampilkan popup minta update. Dipanggil di onResume karena HP depot bisa
-        // terbuka berhari-hari — cek murah (baca flag lokal, hormati snooze 1 jam).
-        com.crowja.damiupos.sync.VersionUpdater.maybePromptBlocked(this);
-        // Online (REST, no MQTT): kick a sync + online tick (config/version/
-        // broadcasts) so opening the app pulls fresh data and admin messages.
-        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+        // Kontrol Versi (popup bila versi APK ini DINONAKTIFKAN dari dashboard; HP depot bisa terbuka
+        // berhari-hari, cek murah), sinkron sekali (config/versi/pesan admin), dan nyalakan service
+        // polling yang berjalan terus selama app hidup, tak bergantung shift — sehingga perubahan
+        // dari dashboard (karyawan baru, dll.) sampai real-time. Dibagi dengan layar Pengisian.
+        com.crowja.damiupos.util.ForegroundDuties.onResume(this);
         // Hangatkan cache logo depot (disinkron dari web) supaya struk pertama pun sudah ada logonya.
         new Thread(() -> com.crowja.damiupos.util.DepotLogo.ensureDownloaded(getApplicationContext())).start();
-        // Sinkronisasi berkelanjutan: nyalakan service polling yang berjalan terus
-        // selama app hidup (termasuk background), tidak bergantung pada shift —
-        // sehingga perubahan dari dashboard (karyawan baru, dll.) sampai real-time.
-        LocationService.ensureOnline(getApplicationContext());
         // Minta pengecualian baterai + lokasi "sepanjang waktu" (sekali) supaya sinkronisasi &
         // lapor koordinat tetap jalan walau app tidak di foreground / setelah reboot.
         ensureBackgroundReliability();
@@ -1102,13 +1108,7 @@ public class MainActivity extends AppCompatActivity {
             registerReceiver(syncedReceiver, syncedFilter);
         }
         // Listen pesan admin baru → popup dialog saat dashboard tampil.
-        IntentFilter adminMsgFilter = new IntentFilter(
-                com.crowja.damiupos.sync.OnlineNotifier.ACTION_ADMIN_MESSAGE);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(adminMsgReceiver, adminMsgFilter, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(adminMsgReceiver, adminMsgFilter);
-        }
+        com.crowja.damiupos.util.ForegroundDuties.registerAdminMessageReceiver(this, adminMsgReceiver);
         refreshOrderInboxBanner();
         // Re-evaluasi visibilitas ikon inbox (auto-detect bisa di-toggle di Pengaturan).
         invalidateOptionsMenu();
@@ -1161,18 +1161,8 @@ public class MainActivity extends AppCompatActivity {
      * jadi tampil sekali lalu dibersihkan (tidak dobel antara broadcast & onResume).
      */
     private void showPendingAdminMessage() {
-        if (isFinishing() || settingsDao == null) return;
-        if (!settingsDao.hasPendingAdminMessage()) return;
-        String title = settingsDao.getPendingAdminMessageTitle();
-        String body = settingsDao.getPendingAdminMessageBody();
-        settingsDao.clearPendingAdminMessage();
-        if (adminMsgDialog != null && adminMsgDialog.isShowing()) adminMsgDialog.dismiss();
-        adminMsgDialog = new androidx.appcompat.app.AlertDialog.Builder(this)
-                .setIcon(android.R.drawable.ic_dialog_email)
-                .setTitle(title == null || title.isEmpty() ? "Pesan dari Admin" : title)
-                .setMessage(body)
-                .setPositiveButton("OK", null)
-                .show();
+        adminMsgDialog = com.crowja.damiupos.util.ForegroundDuties.showPendingAdminMessage(
+                this, settingsDao, adminMsgDialog);
     }
 
     /**
@@ -1660,7 +1650,7 @@ public class MainActivity extends AppCompatActivity {
         // (order baru dari WA/web). Perlakukan seperti tidak ada pesanan pending.
         // Hanya pesanan yang DITUGASKAN ke perangkat ini (penugasan pelanggan / wilayah) — HP lain
         // tak ikut berkedip & berbunyi untuk order yang bukan tanggung jawabnya.
-        int pendingCount = com.crowja.damiupos.db.UserDao.isCurrentUserMarketing(this)
+        int pendingCount = com.crowja.damiupos.db.UserDao.isCurrentUserAlertSilenced(this)
                 ? 0 : orderInboxDao.countPendingForThisDevice();
         if (pendingCount == 0) {
             // Reset ke tampilan default + matikan alert

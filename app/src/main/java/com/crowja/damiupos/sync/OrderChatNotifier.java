@@ -73,6 +73,8 @@ public final class OrderChatNotifier {
     public static final String ACK_ALREADY_SEEN = "already_seen";
     /** Multi-user aktif tapi tak ada staf yang login (logout / clock-out / istirahat / "Pulangkan"). */
     public static final String ACK_NO_USER = "no_user";
+    /** Staf yang login berperan tanpa chat pesanan (Pengisian) — notifikasi diredam. */
+    public static final String ACK_ROLE_SILENCED = "role_silenced";
     public static final String ACK_NOTIF_DISABLED = "notif_disabled";
     public static final String ACK_CHANNEL_DISABLED = "channel_disabled";
     public static final String ACK_INVALID = "invalid_payload";
@@ -163,6 +165,8 @@ public final class OrderChatNotifier {
         // Tanpa staf login, layar chatnya tertutup gerbang login dan balasan tak punya nama staf —
         // notifikasi hanya memamerkan pesan pelanggan di HP yang tak dipakai. Dashboard tetap diberi tahu.
         if (ChatLogActivity.loginRequired(app)) return ACK_NO_USER;
+        // Peran yang diredam (Pengisian) tak boleh melihat isi pesan pelanggan / terdorong membalas.
+        if (com.crowja.damiupos.db.UserDao.isCurrentUserOrderChatSilenced(app)) return ACK_ROLE_SILENCED;
         ensureChannel(app);
         final Reply r = new Reply(trx, str(p, "customer_name"), str(p, "wa_account"),
                 str(p, "text_preview"), p.optInt("count", 1), atMillis(str(p, "at")));
@@ -222,6 +226,7 @@ public final class OrderChatNotifier {
         Context app = ctx.getApplicationContext();
         try {
             if (ChatLogActivity.loginRequired(app)) return;
+            if (com.crowja.damiupos.db.UserDao.isCurrentUserOrderChatSilenced(app)) return;
             ensureChannel(app);
             post(app, r, lower);
         } catch (Throwable ignored) {

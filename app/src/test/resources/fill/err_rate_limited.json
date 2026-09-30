@@ -1,0 +1,15 @@
+{
+    "name": "err_rate_limited",
+    "method": "GET",
+    "path": "/api/fill/plan",
+    "request_headers": {
+        "X-Staff-Uuid": "20000000-0000-4000-8000-00000000b001"
+    },
+    "request": null,
+    "http": 429,
+    "body": {
+        "ok": false,
+        "code": "rate_limited",
+        "message": "Terlalu banyak permintaan. Coba lagi sebentar."
+    }
+}

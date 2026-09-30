@@ -285,6 +285,8 @@ public class TransactionActivity extends AppCompatActivity {
             if (cur != null && !cur.canCreateTransaction()) {
                 Toast.makeText(this, cur.isMarketing()
                                 ? "Akun Marketing hanya dapat melakukan Promosi"
+                                : cur.isPengisian()
+                                ? "Akun Pengisian tidak dapat membuat transaksi"
                                 : "Akun Viewer tidak dapat membuat transaksi",
                         Toast.LENGTH_LONG).show();
                 finish();

@@ -1,0 +1,15 @@
+{
+    "name": "err_log_not_found",
+    "method": "POST",
+    "path": "/api/fill/log/tidak-ada-0001/void",
+    "request_headers": {
+        "X-Staff-Uuid": "20000000-0000-4000-8000-00000000b001"
+    },
+    "request": null,
+    "http": 404,
+    "body": {
+        "ok": false,
+        "code": "log_not_found",
+        "message": "Catatan tidak ditemukan."
+    }
+}

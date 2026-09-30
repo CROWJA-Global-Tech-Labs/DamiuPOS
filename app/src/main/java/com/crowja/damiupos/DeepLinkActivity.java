@@ -35,6 +35,14 @@ public class DeepLinkActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // Pengisian (Day-time) tak menangani pesanan/transaksi: link apa pun mendarat di layar
+        // panduan isi galon, bukan Antrian Delivery / Transaksi Baru (deep link melewati MainActivity).
+        if (com.crowja.damiupos.db.UserDao.isCurrentUserPengisian(this)) {
+            startActivity(new Intent(this, PengisianActivity.class));
+            finish();
+            return;
+        }
+
         Uri data = getIntent() != null ? getIntent().getData() : null;
         String trackingToken = trackingToken(data);
         if (trackingToken != null) {

@@ -1,0 +1,15 @@
+{
+    "name": "err_not_owner",
+    "method": "POST",
+    "path": "/api/fill/log/fill-other-00001/void",
+    "request_headers": {
+        "X-Staff-Uuid": "20000000-0000-4000-8000-00000000b001"
+    },
+    "request": null,
+    "http": 403,
+    "body": {
+        "ok": false,
+        "code": "not_owner",
+        "message": "Hanya pencatatnya (atau admin) yang boleh membatalkan."
+    }
+}

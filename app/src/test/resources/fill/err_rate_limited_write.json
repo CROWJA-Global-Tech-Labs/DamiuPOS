@@ -1,0 +1,19 @@
+{
+    "name": "err_rate_limited_write",
+    "method": "POST",
+    "path": "/api/fill/log",
+    "request_headers": {
+        "X-Staff-Uuid": "20000000-0000-4000-8000-00000000b001"
+    },
+    "request": {
+        "uuid": "fill-limited-01",
+        "product_uuid": "10000000-0000-4000-8000-00000000a001",
+        "qty": 1
+    },
+    "http": 429,
+    "body": {
+        "ok": false,
+        "code": "rate_limited",
+        "message": "Terlalu banyak permintaan. Coba lagi sebentar."
+    }
+}

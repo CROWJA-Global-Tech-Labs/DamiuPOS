@@ -1,0 +1,15 @@
+{
+    "name": "err_staff_uuid_missing",
+    "method": "GET",
+    "path": "/api/fill/plan",
+    "request_headers": {
+        "X-Staff-Uuid": null
+    },
+    "request": null,
+    "http": 422,
+    "body": {
+        "ok": false,
+        "code": "staff_uuid_missing",
+        "message": "HP belum mengirim identitas staf (akun staf ini belum tersinkron). Sinkronkan data di HP, lalu coba lagi."
+    }
+}

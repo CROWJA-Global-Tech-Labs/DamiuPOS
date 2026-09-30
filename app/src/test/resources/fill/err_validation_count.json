@@ -1,0 +1,23 @@
+{
+    "name": "err_validation_count",
+    "method": "POST",
+    "path": "/api/fill/count",
+    "request_headers": {
+        "X-Staff-Uuid": "20000000-0000-4000-8000-00000000b001"
+    },
+    "request": {
+        "uuid": "count-empty-001",
+        "counts": []
+    },
+    "http": 422,
+    "body": {
+        "ok": false,
+        "code": "validation",
+        "message": "The counts field is required.",
+        "errors": {
+            "counts": [
+                "The counts field is required."
+            ]
+        }
+    }
+}

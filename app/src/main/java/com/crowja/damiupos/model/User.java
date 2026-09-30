@@ -14,6 +14,16 @@ public class User {
     /** Marketing: staf pemasaran. Membuat transaksi jual galon (opsi gratis/berbayar) &
      *  mengakuisisi pelanggan baru (poin promosi). Absensi dihitung fixed-day tanpa lembur. */
     public static final String ROLE_MARKETING = "marketing";
+    /** Pengisian (Day-time): karyawan depot yang mengisi galon dari pagi sampai sore dan dipandu
+     *  server per produk ("isi N lagi") sesuai pesanan berjalan. Diabsen &amp; digaji per jam seperti
+     *  Staf. BEDA dari flag web {@code is_pengisian} (pengisi freelance malam, tanpa absen, lewat
+     *  link publik) — itu tak pernah sampai ke HP dan tak ada hubungannya dengan peran ini.
+     *
+     *  <p>PERINGATAN urutan rilis: peran ini ikut sinkron staf ke SEMUA HP cabang. APK LAMA tak
+     *  mengenalnya ({@code tracksAttendance()} false) — pekerja itu login tanpa selfie/absen dan
+     *  melihat beranda penuh. Terbitkan APK ini + tunggu update wajib (hash) menjangkau semua HP
+     *  SEBELUM memberi seseorang peran ini di dashboard. */
+    public static final String ROLE_PENGISIAN = "pengisian";
 
     /** Nama & PIN admin default yang dibuat otomatis saat fitur multi user
      *  diaktifkan — supaya owner selalu punya akses admin. Sebaiknya diganti. */
@@ -62,10 +72,33 @@ public class User {
     public boolean isSpv() { return ROLE_SPV.equals(role); }
     public boolean isViewer() { return ROLE_VIEWER.equals(role); }
     public boolean isMarketing() { return ROLE_MARKETING.equals(role); }
+    public boolean isPengisian() { return ROLE_PENGISIAN.equals(role); }
 
-    /** Diabsen (clock in/out): Staf, SPV, Marketing. Admin & Viewer tidak.
+    /** Diabsen (clock in/out): Staf, SPV, Marketing, Pengisian. Admin & Viewer tidak.
      *  (Marketing diabsen tapi gajinya dihitung fixed-day tanpa lembur — lihat payroll.) */
-    public boolean tracksAttendance() { return isStaf() || isSpv() || isMarketing(); }
+    public boolean tracksAttendance() { return isStaf() || isSpv() || isMarketing() || isPengisian(); }
+
+    /** Menerima notifikasi/alarm OPERASIONAL (pesanan baru, follow-up, jenis galon ganda, inbox
+     *  Pesanan Terjadwal). Marketing dan Pengisian tidak menangani antrean kiriman, jadi mereka
+     *  hanya menerima "Pesan &amp; Pembaruan" dari admin. SATU-SATUNYA predikat untuk semua titik
+     *  peredaman (OrderAlertService, banner/menu inbox, SyncEngine) — dulu tiap titik mengecek
+     *  {@code isMarketing()} sendiri dan peredaman marketing bolong tiga kali. */
+    public boolean receivesOperationalAlerts() { return !isMarketing() && !isPengisian(); }
+
+    /** Menerima notifikasi "Chat Pesanan" (balasan pelanggan di WhatsApp pesanan). Marketing tetap
+     *  menerimanya (memakai chat WA); Pengisian tidak — ia tak melayani pelanggan, dan notifikasinya
+     *  membuka layar chat yang bisa dipakai membalas pelanggan atas nama staf. Diturunkan dari
+     *  {@link #receivesOperationalAlerts()} supaya peran baru yang diredam otomatis ikut diredam. */
+    public boolean receivesOrderChatAlerts() { return isMarketing() || receivesOperationalAlerts(); }
+
+    /** Beranda terkunci "Pengisian" (layar panduan isi galon): peran Pengisian selalu dialihkan ke
+     *  sana dari MainActivity. Admin boleh MEMBUKA layarnya ({@link #canOpenPengisianScreen()})
+     *  tapi tidak dikunci ke sana. */
+    public boolean usesPengisianHome() { return isPengisian(); }
+
+    /** Boleh membuka layar panduan pengisian: Pengisian &amp; Admin (server memeriksa aturan yang
+     *  sama dari tabel staff lewat header X-Staff-Uuid — FillPlanController). */
+    public boolean canOpenPengisianScreen() { return isPengisian() || isAdmin(); }
 
     /** Transaksi penjualan: Admin, Staf, SPV, Marketing. Viewer tidak. */
     public boolean canCreateTransaction() { return isAdmin() || isStaf() || isSpv() || isMarketing(); }

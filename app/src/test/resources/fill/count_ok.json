@@ -1,0 +1,140 @@
+{
+    "name": "count_ok",
+    "method": "POST",
+    "path": "/api/fill/count",
+    "request_headers": {
+        "X-Staff-Uuid": "20000000-0000-4000-8000-00000000b001"
+    },
+    "request": {
+        "uuid": "count-morning-01",
+        "counts": [
+            {
+                "product_uuid": "10000000-0000-4000-8000-00000000a001",
+                "qty": 4
+            },
+            {
+                "product_uuid": "10000000-0000-4000-8000-00000000a002",
+                "qty": 0
+            }
+        ]
+    },
+    "http": 200,
+    "body": {
+        "ok": true,
+        "duplicate": false,
+        "batch_uuid": "count-morning-01",
+        "log": {
+            "uuid": "99999999-0000-4000-8000-000000000002",
+            "kind": "COUNT",
+            "product_uuid": "10000000-0000-4000-8000-00000000a001",
+            "qty": 4,
+            "batch_uuid": "count-morning-01",
+            "staff_uuid": "20000000-0000-4000-8000-00000000b001",
+            "logged_at": "2026-09-10 07:00:00"
+        },
+        "logs": [
+            {
+                "uuid": "99999999-0000-4000-8000-000000000002",
+                "kind": "COUNT",
+                "product_uuid": "10000000-0000-4000-8000-00000000a001",
+                "qty": 4,
+                "batch_uuid": "count-morning-01",
+                "staff_uuid": "20000000-0000-4000-8000-00000000b001",
+                "logged_at": "2026-09-10 07:00:00"
+            },
+            {
+                "uuid": "99999999-0000-4000-8000-000000000003",
+                "kind": "COUNT",
+                "product_uuid": "10000000-0000-4000-8000-00000000a002",
+                "qty": 0,
+                "batch_uuid": "count-morning-01",
+                "staff_uuid": "20000000-0000-4000-8000-00000000b001",
+                "logged_at": "2026-09-10 07:00:00"
+            }
+        ],
+        "plan": {
+            "rev": "75789eb58b97ca88fc02da7b29545efa",
+            "server_time": "2026-09-10 07:00:00",
+            "spare": 2,
+            "status": "idle",
+            "needs_count": false,
+            "products": [
+                {
+                    "product_uuid": "10000000-0000-4000-8000-00000000a002",
+                    "name": "FREZBIO Alkali 19L",
+                    "slug": "ALK",
+                    "color": "#2E7D32",
+                    "backlog": 0,
+                    "orders": 0,
+                    "spare": 0,
+                    "target": 0,
+                    "ready": 0,
+                    "to_fill": 0,
+                    "surplus": 0,
+                    "filled_today": 0,
+                    "needs_count": false,
+                    "counted_at": "2026-09-10 07:00:00"
+                },
+                {
+                    "product_uuid": "10000000-0000-4000-8000-00000000a001",
+                    "name": "FREZMIN Air Mineral 19L",
+                    "slug": "MIN",
+                    "color": "#1565C0",
+                    "backlog": 0,
+                    "orders": 0,
+                    "spare": 0,
+                    "target": 0,
+                    "ready": 4,
+                    "to_fill": 0,
+                    "surplus": 4,
+                    "filled_today": 0,
+                    "needs_count": false,
+                    "counted_at": "2026-09-10 07:00:00"
+                }
+            ],
+            "totals": {
+                "backlog": 0,
+                "spare": 0,
+                "target": 0,
+                "ready": 4,
+                "to_fill": 0,
+                "filled_today": 0,
+                "orders": 0
+            },
+            "in_transit": {
+                "pcs": 0,
+                "orders": 0
+            },
+            "unmapped": {
+                "pcs": 0,
+                "orders": 0
+            },
+            "recent": [
+                {
+                    "uuid": "99999999-0000-4000-8000-000000000003",
+                    "batch_uuid": "count-morning-01",
+                    "kind": "COUNT",
+                    "product_uuid": "10000000-0000-4000-8000-00000000a002",
+                    "product_name": "FREZBIO Alkali 19L",
+                    "qty": 0,
+                    "logged_at": "2026-09-10 07:00:00",
+                    "staff_uuid": "20000000-0000-4000-8000-00000000b001",
+                    "staff_name": "Pengisi Siang",
+                    "voidable": true
+                },
+                {
+                    "uuid": "99999999-0000-4000-8000-000000000002",
+                    "batch_uuid": "count-morning-01",
+                    "kind": "COUNT",
+                    "product_uuid": "10000000-0000-4000-8000-00000000a001",
+                    "product_name": "FREZMIN Air Mineral 19L",
+                    "qty": 4,
+                    "logged_at": "2026-09-10 07:00:00",
+                    "staff_uuid": "20000000-0000-4000-8000-00000000b001",
+                    "staff_name": "Pengisi Siang",
+                    "voidable": true
+                }
+            ]
+        }
+    }
+}

@@ -1,0 +1,15 @@
+{
+    "name": "err_forbidden_role",
+    "method": "GET",
+    "path": "/api/fill/plan",
+    "request_headers": {
+        "X-Staff-Uuid": "20000000-0000-4000-8000-00000000b004"
+    },
+    "request": null,
+    "http": 403,
+    "body": {
+        "ok": false,
+        "code": "forbidden_role",
+        "message": "Layar Pengisian hanya untuk peran Pengisian (Day-time) dan Admin (peran di server: \"staf\")."
+    }
+}

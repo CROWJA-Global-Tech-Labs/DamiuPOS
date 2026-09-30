@@ -1,0 +1,13 @@
+{
+    "name": "err_unauthenticated",
+    "method": "GET",
+    "path": "/api/fill/plan",
+    "request_headers": {
+        "X-Staff-Uuid": null
+    },
+    "request": null,
+    "http": 401,
+    "body": {
+        "message": "Unauthenticated."
+    }
+}
