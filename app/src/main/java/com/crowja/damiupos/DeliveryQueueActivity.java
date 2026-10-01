@@ -3035,14 +3035,32 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       (new AlertDialog.Builder(this)).setIcon(17301543).setTitle("Ganti pengiriman?").setMessage(what + "\n\nKembali ke daftar antrean dan memilih pengiriman lain?").setPositiveButton("Ya, ganti", (d, w) -> this.stopRun()).setNegativeButton("Tidak", (DialogInterface.OnClickListener)null).show();
    }
 
+   /** Judul item menu dengan ikon WhatsApp resmi di depannya — PopupMenu bawaan tak menggambar
+    *  ikon item (setForceShowIcon baru ada di API 29), jadi ikonnya disisipkan sebagai ImageSpan. */
+   private CharSequence waMenuTitle(String label) {
+      android.graphics.drawable.Drawable icon = ContextCompat.getDrawable(this, drawable.ic_whatsapp);
+      if (icon == null) {
+         return "💬 " + label;
+      }
+      int size = this.dp(20.0F);
+      icon.setBounds(0, 0, size, size);
+      android.text.SpannableString s = new android.text.SpannableString("  " + label);
+      s.setSpan(new android.text.style.ImageSpan(icon, android.text.style.DynamicDrawableSpan.ALIGN_BOTTOM),
+            0, 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+      return s;
+   }
+
    private void showRunningMoreMenu(View anchor, Transaction t, String jarakLabel) {
       PopupMenu menu = new PopupMenu(this, anchor);
       menu.getMenu().add(0, 1, 0, "\u2190 Kembali");
       menu.getMenu().add(0, 2, 1, jarakLabel != null ? "\ud83d\udd0d " + jarakLabel + " \u00b7 Preview" : "\ud83d\udd0d Preview");
-      menu.getMenu().add(0, 3, 2, "\ud83d\udcac Chat WA");
+      if (WaShare.hasUsablePhone(t.getCustomerPhone())) {
+         menu.getMenu().add(0, 3, 2, this.waMenuTitle("Chat WA"));
+      }
       if ("JUAL".equals(t.getType())) {
          menu.getMenu().add(0, 4, 3, "\ud83d\udcac Chat Pesanan");
       }
+      menu.getMenu().add(0, 5, 4, "\ud83d\udccd Kirim Link Lacak");
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
             case 1:
@@ -3052,10 +3070,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                this.showQueuePreview(t);
                return true;
             case 3:
-               this.sendTrackLink(t);
+               openWhatsApp(this, t.getCustomerPhone(), "");
                return true;
             case 4:
                this.openOrderChat(t);
+               return true;
+            case 5:
+               this.sendTrackLink(t);
                return true;
             default:
                return false;
@@ -3069,7 +3090,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       menu.getMenu().add(0, 1, 0, t.isOrderPriority() ? "\u26a1 Sudah Prioritas \u2014 ubah alasan" : "\u26a1 Jadikan Prioritas");
       menu.getMenu().add(0, 2, 1, jarakLabel != null ? "\ud83d\udd0d " + jarakLabel + " \u00b7 Preview" : "\ud83d\udd0d Preview");
       if (WaShare.hasUsablePhone(t.getCustomerPhone())) {
-         menu.getMenu().add(0, 3, 2, "\ud83d\udcac Chat WA Konsumen");
+         menu.getMenu().add(0, 3, 2, this.waMenuTitle("Chat WA Konsumen"));
       }
       if ("JUAL".equals(t.getType())) {
          menu.getMenu().add(0, 4, 3, "\ud83d\udcac Chat Pesanan");
