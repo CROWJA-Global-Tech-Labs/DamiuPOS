@@ -748,7 +748,15 @@ public class ReceiptActivity extends AppCompatActivity {
             }
         }
 
-        cardText(R.id.rcTotalValue, "Rp " + nf.format(totalHarga));
+        // PELUNASAN HUTANG LAMA lewat transaksi ini ("Sekalian Lunasi Hutang" saat checkout) -- uang
+        // TAMBAHAN di luar tagihan penjualan, dilebur ke angka Total kartu supaya kartu struk ini
+        // (dulu hanya mencetak totalHarga mentah) tak pernah beda dari *Total* yang sudah benar di
+        // composeTextStruk() di bawah. Cermin App\Support\StrukWa::rincian di web.
+        String rcTrxUuidForDebt = in.getStringExtra(EXTRA_GIFT_TRX_UUID);
+        double rcDebtPaidNow = rcTrxUuidForDebt != null
+                ? new com.crowja.damiupos.db.CustomerDebtDao(DatabaseHelper.getInstance(this)).paidForTransaction(rcTrxUuidForDebt)
+                : 0;
+        cardText(R.id.rcTotalValue, "Rp " + nf.format(totalHarga + rcDebtPaidNow));
 
         // Metode pembayaran
         String payLabel = paymentLabel(in.getStringExtra(EXTRA_PAYMENT_METHOD), in.getBooleanExtra(EXTRA_PAYMENT_CONFIRMED, false));
@@ -1139,8 +1147,28 @@ public class ReceiptActivity extends AppCompatActivity {
 
         sb.append(line('-')).append("\n");
 
+        // PELUNASAN HUTANG LAMA lewat transaksi ini ("Sekalian Lunasi Hutang" saat checkout) -- uang
+        // TAMBAHAN di luar tagihan penjualan, dilebur ke TOTAL yang dicetak -- cermin persis
+        // composeTextStruk()/populateReceiptCard() di atas supaya ketiga permukaan struk HP tak
+        // pernah beda angka satu sama lain (App\Support\StrukWa::rincian di web).
+        String trxUuidForDebtReceipt = getIntent().getStringExtra(EXTRA_GIFT_TRX_UUID);
+        long custIdForDebtReceipt = getIntent().getLongExtra(EXTRA_CUSTOMER_ID, -1);
+        com.crowja.damiupos.db.CustomerDebtDao debtDaoReceipt =
+                new com.crowja.damiupos.db.CustomerDebtDao(DatabaseHelper.getInstance(this));
+        double debtPaidNowReceipt = trxUuidForDebtReceipt != null
+                ? debtDaoReceipt.paidForTransaction(trxUuidForDebtReceipt) : 0;
+        if (debtPaidNowReceipt > 0) {
+            List<String> debtOriginsReceipt = custIdForDebtReceipt > 0
+                    ? debtDaoReceipt.originReceiptsFor(custIdForDebtReceipt, 1) : new ArrayList<>();
+            String debtKetReceipt = !debtOriginsReceipt.isEmpty()
+                    ? "Pembelian Sebelumnya " + android.text.TextUtils.join(", ", debtOriginsReceipt)
+                    : "Hutang Sebelumnya";
+            sb.append(leftRight("Hutang (" + debtKetReceipt + ")",
+                    "Rp " + nf.format(Math.round(debtPaidNowReceipt)))).append("\n");
+        }
+
         // Total
-        sb.append(leftRight("TOTAL", "Rp " + nf.format(totalHarga))).append("\n");
+        sb.append(leftRight("TOTAL", "Rp " + nf.format(totalHarga + debtPaidNowReceipt))).append("\n");
         // Pencairan komisi: bagian order yang dibayar dari saldo komisi reseller.
         double saldoDipotong = getIntent().getDoubleExtra(EXTRA_SALDO_DIPOTONG, 0);
         if (saldoDipotong > 0) {
