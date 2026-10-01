@@ -1864,15 +1864,26 @@ public class CustomerDao {
         Customer.Location first = null;
         java.util.List<Customer.Location> list = customer.getLocations();
         if (list != null) {
+            // Nama wajib UNIK per pelanggan (cermin gerbang Customer::saving di server): nama kosong →
+            // nama default BEBAS berikutnya ("Kediaman", "Kediaman 2", …), bukan selalu "Kediaman", dan
+            // kembaran yang lolos (form sudah memblokirnya) diberi akhiran angka yang sama dengan
+            // server. Dihitung atas baris yang benar-benar ditulis.
+            java.util.List<Customer.Location> kept = new ArrayList<>();
+            java.util.List<String> keptNames = new ArrayList<>();
             for (Customer.Location l : list) {
                 if (l == null || (l.lat == 0 && l.lng == 0)) continue; // (0,0) = belum ditandai
+                kept.add(l);
+                keptNames.add(l.name);
+            }
+            java.util.List<String> names = com.crowja.damiupos.util.LocationNames.unique(keptNames);
+            for (int i = 0; i < kept.size(); i++) {
+                Customer.Location l = kept.get(i);
                 try {
                     org.json.JSONObject o = new org.json.JSONObject();
                     // Id stabil (cermin web) — dikunci ke nama berkas koleksi foto; tanpa ini,
                     // menambah/hapus baris lain akan menggeser foto yang sudah diunggah ke lokasi lain.
                     if (l.id != null && !l.id.trim().isEmpty()) o.put("id", l.id.trim());
-                    String nm = l.name == null ? "" : l.name.trim();
-                    o.put("name", nm.isEmpty() ? Customer.DEFAULT_LOCATION_NAME : nm);
+                    o.put("name", names.get(i));
                     o.put("lat", l.lat);
                     o.put("lng", l.lng);
                     o.put("wajib_ongkir", l.wajibOngkir);
@@ -1905,12 +1916,17 @@ public class CustomerDao {
 
     /** Parse JSON array multi-lokasi → List&lt;Location&gt;. Null/kosong/invalid → null.
      *  Baris (0,0) di-drop (sentinel koordinat belum di-set); wajib_ongkir toleran
-     *  boolean maupun angka 0/1 (format web). */
+     *  boolean maupun angka 0/1 (format web). Nama dijamin UNIK, cermin Customer::locationsOrDefault
+     *  di server: nama kosong → nama default BEBAS berikutnya ("Kediaman", "Kediaman 2", …) dan baris
+     *  lama yang TERLANJUR kembar (dua "Kediaman", sebelum backfill server sampai ke HP ini) langsung
+     *  terbaca "Kediaman" / "Kediaman 2" — sama persis dengan web, jadi form tak terblokir dan pemilih
+     *  lokasi tak pernah menampilkan dua nama kembar. */
     public static java.util.List<Customer.Location> parseLocations(String json) {
         if (json == null || json.trim().isEmpty()) return null;
         try {
             org.json.JSONArray arr = new org.json.JSONArray(json);
             java.util.List<Customer.Location> list = new ArrayList<>();
+            java.util.List<String> rawNames = new ArrayList<>();
             for (int i = 0; i < arr.length(); i++) {
                 org.json.JSONObject o = arr.optJSONObject(i);
                 if (o == null) continue;
@@ -1919,8 +1935,9 @@ public class CustomerDao {
                 if (Double.isNaN(lat)) lat = 0;
                 if (Double.isNaN(lng)) lng = 0;
                 if (lat == 0 && lng == 0) continue;
-                String name = o.optString("name", "").trim();
-                if (name.isEmpty()) name = Customer.DEFAULT_LOCATION_NAME;
+                // isNull() dulu — optString() mengembalikan STRING "null" untuk JSON null.
+                String name = o.isNull("name") ? "" : o.optString("name", "").trim();
+                rawNames.add(name);   // dirapikan jadi unik setelah loop (butuh semua nama)
                 boolean wajib = o.optBoolean("wajib_ongkir", false)
                         || o.optInt("wajib_ongkir", 0) != 0;
                 Customer.Location loc = new Customer.Location(name, lat, lng, wajib);
@@ -1943,6 +1960,8 @@ public class CustomerDao {
                 if (loc.photos.isEmpty() && loc.photo != null) loc.photos.add(loc.photo);
                 list.add(loc);
             }
+            java.util.List<String> names = com.crowja.damiupos.util.LocationNames.unique(rawNames);
+            for (int i = 0; i < list.size(); i++) list.get(i).name = names.get(i);
             return list.isEmpty() ? null : list;
         } catch (org.json.JSONException e) {
             return null;

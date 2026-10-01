@@ -104,6 +104,7 @@ public class CustomerFormActivity extends AppCompatActivity {
     private final class LocationRow {
         final View view;
         final TextInputEditText etName;
+        final com.google.android.material.textfield.TextInputLayout tilName;
         final TextView tvCoord;
         final com.google.android.material.button.MaterialButton btnGps, btnPeta, btnMaps, btnGmapsLink, btnHitungOngkir;
         final com.google.android.material.checkbox.MaterialCheckBox cbWajib;
@@ -119,6 +120,7 @@ public class CustomerFormActivity extends AppCompatActivity {
         LocationRow(View v) {
             view = v;
             etName = v.findViewById(R.id.etLokasiNama);
+            tilName = v.findViewById(R.id.tilLokasiNama);
             tvCoord = v.findViewById(R.id.tvLokasiKoordinat);
             btnGps = v.findViewById(R.id.btnLokasiSaatIni);
             btnPeta = v.findViewById(R.id.btnPilihPetaRow);
@@ -134,6 +136,9 @@ public class CustomerFormActivity extends AppCompatActivity {
 
     private android.widget.LinearLayout llLokasi;
     private final java.util.List<LocationRow> locationRows = new ArrayList<>();
+    /** true = error "nama lokasi sudah dipakai" sedang tampil → ketikan/hapus baris/koordinat
+     *  memvalidasi ulang langsung supaya error hilang begitu namanya dibereskan. */
+    private boolean locationNameErrorsShown;
     /** Baris yang meluncurkan picker peta — hasil onActivityResult diarahkan ke sini. */
     private LocationRow pendingMapRow;
     /** Baris yang meluncurkan pencarian GPS "Lokasi Saat Ini" (juga baris tertunda
@@ -205,7 +210,7 @@ public class CustomerFormActivity extends AppCompatActivity {
         llHargaProduk = findViewById(R.id.llHargaProduk);
         ivFotoRumah = findViewById(R.id.ivFotoRumah);
         llLokasi = findViewById(R.id.llLokasi);
-        findViewById(R.id.btnTambahLokasi).setOnClickListener(v -> addLocationRow(null));
+        findViewById(R.id.btnTambahLokasi).setOnClickListener(v -> addLocationRowWithDefaultName());
         llPhonesExtra = findViewById(R.id.llPhonesExtra);
         findViewById(R.id.btnAddPhone).setOnClickListener(v -> addPhoneRow(""));
 
@@ -456,6 +461,75 @@ public class CustomerFormActivity extends AppCompatActivity {
                 renderLocationPhotos(first);
             }
         }
+        // Data lama yang TERLANJUR kembar (dua "Kediaman", sebelum backfill server sampai ke HP ini)
+        // tak perlu ditandai di sini: CustomerDao.parseLocations sudah membacanya unik ("Kediaman" /
+        // "Kediaman 2", sama dengan web), jadi edit lain (mis. ganti nomor HP) tetap bisa disimpan.
+    }
+
+    /** "+ Tambah Lokasi": baris baru langsung berisi nama default BEBAS berikutnya ("Kediaman 2",
+     *  …) supaya lokasi tambahan tak ikut bernama "Kediaman" — nama kembar membuat lokasi itu tak
+     *  bisa dipilih lewat nama (agen WA, Kirim Ke). Teks terpilih saat fokus → ketik langsung
+     *  menggantinya; chip preset tetap menimpanya. Baris pertama/satu-satunya tetap kosong seperti
+     *  biasa (kosong saat simpan = nama default bebas, lihat collectLocations). */
+    private void addLocationRowWithDefaultName() {
+        java.util.List<String> existingNames = new ArrayList<>();
+        for (LocationRow r : locationRows) existingNames.add(locationNameOf(r));
+        addLocationRow(null);
+        if (existingNames.isEmpty()) return;
+        String def = com.crowja.damiupos.util.LocationNames.nextDefault(
+                com.crowja.damiupos.util.LocationNames.unique(existingNames));
+        LocationRow row = locationRows.get(locationRows.size() - 1);
+        row.etName.setText(def);
+        row.etName.setSelectAllOnFocus(true);
+    }
+
+    private static String locationNameOf(LocationRow r) {
+        return r.etName.getText() != null ? r.etName.getText().toString() : "";
+    }
+
+    /**
+     * Nama lokasi wajib UNIK per pelanggan — cermin aturan server (trim, spasi dirapatkan, tanpa beda
+     * huruf besar/kecil; lihat {@link com.crowja.damiupos.util.LocationNames}). Yang dinilai hanya
+     * baris yang AKAN tersimpan (punya koordinat); nama kosong tak pernah bentrok (jatuh ke
+     * "Kediaman N" bebas). Kemunculan PERTAMA sebuah nama dibiarkan; kemunculan berikutnya diberi
+     * error inline + saran nama bebas. Error hanya disentuh bila berubah (tanpa kedip per ketikan).
+     *
+     * @param focusFirst fokuskan baris bentrok pertama (dipanggil dari Simpan).
+     * @return true = semua nama unik.
+     */
+    private boolean refreshLocationNameErrors(boolean focusFirst) {
+        java.util.List<LocationRow> rows = new ArrayList<>();
+        java.util.List<String> names = new ArrayList<>();
+        for (LocationRow r : locationRows) {
+            if (r.lat == 0 && r.lng == 0) continue;   // tak tersimpan → tak dinilai
+            rows.add(r);
+            names.add(locationNameOf(r));
+        }
+        java.util.List<Integer> dups = com.crowja.damiupos.util.LocationNames.duplicateIndexes(names);
+        java.util.List<String> fixed = dups.isEmpty() ? names
+                : com.crowja.damiupos.util.LocationNames.unique(names);
+        java.util.Map<LocationRow, String> errors = new java.util.HashMap<>();
+        for (int i : dups) {
+            errors.put(rows.get(i), "Nama lokasi sudah dipakai — beri nama lain, mis. \""
+                    + fixed.get(i) + "\"");
+        }
+        for (LocationRow r : locationRows) {
+            if (r.tilName == null) continue;
+            String want = errors.get(r);
+            CharSequence have = r.tilName.getError();
+            if (want == null) {
+                if (have != null) {
+                    r.tilName.setError(null);
+                    r.tilName.setErrorEnabled(false);   // tanpa ruang kosong sisa error
+                }
+            } else if (have == null || !want.contentEquals(have)) {
+                r.tilName.setError(want);
+            }
+        }
+        locationNameErrorsShown = !dups.isEmpty();
+        if (dups.isEmpty()) return true;
+        if (focusFirst) rows.get(dups.get(0)).etName.requestFocus();
+        return false;
     }
 
     /** Preset nama lokasi di bawah kolom nama (ketuk = isi kolom). */
@@ -479,7 +553,9 @@ public class CustomerFormActivity extends AppCompatActivity {
             // Lokasi BARU (pelanggan baru / tambah lokasi): default Wajib Ongkir = AKTIF.
             row.cbWajib.setChecked(true);
             // Nama dibiarkan KOSONG (ada placeholder + preset di bawahnya) — staf memilih/mengetik
-            // sendiri; kosong saat simpan tetap jatuh ke DEFAULT_LOCATION_NAME (collectLocations).
+            // sendiri; kosong saat simpan jatuh ke nama default BEBAS berikutnya ("Kediaman",
+            // "Kediaman 2", … — collectLocations). Tombol "+ Tambah Lokasi" mengisinya di muka
+            // (addLocationRowWithDefaultName).
         }
         // Id stabil selalu ada (bahkan baris baru) — foto yang diunggah SEBELUM baris pernah
         // tersimpan tetap perlu nama berkas yang tak bentrok dengan baris lain.
@@ -504,6 +580,14 @@ public class CustomerFormActivity extends AppCompatActivity {
         row.btnGmapsLink.setOnClickListener(x -> showMapsLinkDialog(row));
         row.btnHitungOngkir.setOnClickListener(x -> hitungOngkirForRow(row));
         v.findViewById(R.id.btnHapusLokasi).setOnClickListener(x -> removeLocationRow(row));
+        // Error "nama sudah dipakai" hilang begitu namanya dibereskan (tanpa menunggu Simpan lagi).
+        row.etName.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(android.text.Editable s) {
+                if (locationNameErrorsShown) refreshLocationNameErrors(false);
+            }
+        });
         llLokasi.addView(v);
         locationRows.add(row);
         updateKoordinatDisplay(row);
@@ -692,6 +776,7 @@ public class CustomerFormActivity extends AppCompatActivity {
         if (row == pendingMapRow) pendingMapRow = null;
         llLokasi.removeView(row.view);
         locationRows.remove(row);
+        if (locationNameErrorsShown) refreshLocationNameErrors(false);   // kembarannya mungkin ikut terhapus
     }
 
     /** Satu baris "Nomor HP lain": EditText telp + tombol ✕. Nomor tambahan opsional (etTelepon =
@@ -820,14 +905,23 @@ public class CustomerFormActivity extends AppCompatActivity {
 
     /** Kumpulkan lokasi dari baris form (urutan tampilan = urutan simpan; baris pertama
      *  ber-koordinat = lokasi utama). Baris tanpa koordinat (0,0) dilewati; nama kosong
-     *  → "Kediaman". Bisa kosong = user menghapus semua lokasi. */
+     *  → nama default BEBAS berikutnya ("Kediaman", "Kediaman 2", … — dulu selalu "Kediaman",
+     *  sehingga dua baris kosong jadi dua "Kediaman" yang tak bisa dibedakan). Nama terisi yang
+     *  kembar sudah diblokir save() lewat refreshLocationNameErrors. Bisa kosong = user menghapus
+     *  semua lokasi. */
     private java.util.List<Customer.Location> collectLocations() {
-        java.util.List<Customer.Location> out = new ArrayList<>();
+        java.util.List<LocationRow> rows = new ArrayList<>();
+        java.util.List<String> names = new ArrayList<>();
         for (LocationRow r : locationRows) {
             if (r.lat == 0 && r.lng == 0) continue;
-            String name = r.etName.getText() != null ? r.etName.getText().toString().trim() : "";
-            if (name.isEmpty()) name = Customer.DEFAULT_LOCATION_NAME;
-            Customer.Location loc = new Customer.Location(name, r.lat, r.lng, r.cbWajib.isChecked());
+            rows.add(r);
+            names.add(locationNameOf(r));
+        }
+        java.util.List<String> resolved = com.crowja.damiupos.util.LocationNames.unique(names);
+        java.util.List<Customer.Location> out = new ArrayList<>();
+        for (int i = 0; i < rows.size(); i++) {
+            LocationRow r = rows.get(i);
+            Customer.Location loc = new Customer.Location(resolved.get(i), r.lat, r.lng, r.cbWajib.isChecked());
             loc.id = r.id;
             loc.photos.addAll(r.photos);
             loc.photo = r.photos.isEmpty() ? null : r.photos.get(0);
@@ -987,6 +1081,8 @@ public class CustomerFormActivity extends AppCompatActivity {
             row.tvCoord.setText("Belum ada koordinat");
             row.btnMaps.setVisibility(android.view.View.GONE);
         }
+        // Koordinat menentukan baris mana yang tersimpan (dan dinilai keunikan namanya).
+        if (locationNameErrorsShown) refreshLocationNameErrors(false);
     }
 
     private void updateTanggalButton() {
@@ -1616,6 +1712,17 @@ public class CustomerFormActivity extends AppCompatActivity {
         if (nama.isEmpty()) {
             etNama.setError("Nama wajib diisi");
             etNama.requestFocus();
+            return;
+        }
+
+        // Nama lokasi wajib UNIK per pelanggan (agen WA & pesanan memilih lokasi lewat NAMA — dua
+        // "Kediaman" membuat lokasi kedua tak bisa dipilih) — memblokir kembaran yang DIKETIK staf
+        // (data lama yang terlanjur kembar sudah terbaca unik dari DAO, jadi tak pernah terblokir di
+        // sini; cermin form web). Dicek SEBELUM cek nomor ke server supaya staf tak menunggu jaringan
+        // untuk form yang toh ditolak.
+        if (!refreshLocationNameErrors(true)) {
+            Toast.makeText(this, "Ada nama lokasi yang kembar — beri nama lain pada lokasi yang ditandai.",
+                    Toast.LENGTH_LONG).show();
             return;
         }
 
