@@ -2,6 +2,8 @@ package com.crowja.damiupos.sync;
 
 import androidx.annotation.Nullable;
 
+import com.crowja.damiupos.util.PhoneConflictPolicy;
+
 import org.json.JSONObject;
 
 import java.io.File;
@@ -99,6 +101,36 @@ public class SyncApi {
         JSONObject body = new JSONObject();
         body.put("phones", phones);
         return post(cfg.getBaseUrl() + "/api/customers/deleted-check", body, cfg.getToken());
+    }
+
+    /** Batas total satu pertanyaan phone-check (connect+tulis+baca). Pendek: ini dijalankan saat staf
+     *  menekan Simpan; lewat batas → jatuh ke cek lokal, bukan menggantung. */
+    public static final int PHONE_CHECK_TIMEOUT_SEC = 6;
+
+    /**
+     * Cek-pra-simpan "nomor ini sudah dipegang pelanggan AKTIF lain?" ({@code POST /api/customers/phone-check}).
+     * Body {@code {"phones":[…1..15],"exclude_uuid":"<uuid yang sedang diedit>"}}; balasan 200
+     * {@code {"ok":true,"conflicts":[{phone,canonical,customer:{uuid,name,phone,role}}]}} — kosong = bebas.
+     * Cabang = cabang perangkat (token). Non-2xx (422/429/401/5xx) dilempar sebagai {@link SyncException};
+     * jaringan putus / timeout dilempar sebagai IOException — pemanggil menjatuhkannya ke cek lokal.
+     * Panggil DI LUAR main thread. Tak memakai org.json (diurai Gson di {@link PhoneConflictPolicy}).
+     */
+    public PhoneConflictPolicy.ServerResult customerPhoneCheck(java.util.List<String> phones,
+                                                                @Nullable String excludeUuid) throws Exception {
+        Request req = new Request.Builder()
+                .url(cfg.getBaseUrl() + "/api/customers/phone-check")
+                .header("Accept", "application/json")
+                .header("Authorization", "Bearer " + cfg.getToken())
+                .post(RequestBody.create(PhoneConflictPolicy.buildRequestJson(phones, excludeUuid), JSON))
+                .build();
+        OkHttpClient shortClient = client.newBuilder()   // berbagi pool/dispatcher dgn Http.SHARED
+                .callTimeout(PHONE_CHECK_TIMEOUT_SEC, TimeUnit.SECONDS)
+                .build();
+        try (Response r = shortClient.newCall(req).execute()) {
+            String s = r.body() != null ? r.body().string() : "";
+            if (!r.isSuccessful()) throw new SyncException(r.code(), s);
+            return PhoneConflictPolicy.parseResponse(s, excludeUuid);
+        }
     }
 
     /**

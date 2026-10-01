@@ -360,6 +360,14 @@ public class CustomerFormActivity extends AppCompatActivity {
                     til.setError("Nomor HP tidak valid");
                     return;
                 }
+                // Normalisasi (buang pemisah/+62) SEBELUM masuk ke kolom form: kolom itu berfilter
+                // 13 karakter, jadi "0856-6666-1234" (14 karakter, 12 digit) dulu terpotong diam-diam
+                // dan guard duplikat memeriksa nomor yang salah. save() menormalisasi dengan cara sama.
+                String norm = com.crowja.damiupos.util.PhoneUtils.toLocal08(raw);
+                if (norm.length() > 13) {
+                    til.setError("Nomor HP maksimal 13 digit");
+                    return;
+                }
                 til.setError(null);
                 Customer dup = customerDao.findByPhoneCanonical(raw);
                 if (dup != null) {
@@ -367,8 +375,8 @@ public class CustomerFormActivity extends AppCompatActivity {
                     showExistingCustomerDialog(dup, raw);
                     return;
                 }
-                // Lolos — isi nomor ke form & buka form pelanggan baru.
-                etTelepon.setText(raw);
+                // Lolos — isi nomor (sudah bersih) ke form & buka form pelanggan baru.
+                etTelepon.setText(norm);
                 dialog.dismiss();
             });
         });
@@ -1314,6 +1322,10 @@ public class CustomerFormActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         stopLocationSearch();
+        // Pemeriksaan server yang masih jalan digugurkan + dialog tunggu ditutup di sini: tanpa ini
+        // putaran layar membocorkan window dan hasil jaringan yang telat menyentuh activity mati.
+        pendingServerCheck.cancel();
+        dismissServerWaitDialog();
     }
 
     @Override
@@ -1403,6 +1415,113 @@ public class CustomerFormActivity extends AppCompatActivity {
         if (!relevant) cbSkipPhotoCoordReseller.setChecked(true);   // reset default utk lain kali muncul
     }
 
+    /** Kumpulan nomor yang SUDAH lolos cek "pemegang aktif" di server (atau server tak bisa
+     *  menjawab) — supaya save() lanjutan tak bertanya ulang untuk set nomor yang sama. */
+    private String serverPhoneCheckedKey = null;
+
+    /** Kumpulan nomor yang SUDAH lolos cek pemegang aktif LOKAL — save() masuk-ulang setelah tiap
+     *  langkah async (server, terhapus, WA) tak memindai tabel pelanggan lagi untuk set yang sama.
+     *  Dikosongkan saat ada pemblokiran/pembatalan, jadi percobaan simpan berikutnya memeriksa ulang. */
+    private String localPhoneCheckedKey = null;
+
+    /** Status satu pemeriksaan server yang menggantung (dialog "Memeriksa nomor di server…"). */
+    private final com.crowja.damiupos.util.PendingServerCheck pendingServerCheck =
+            new com.crowja.damiupos.util.PendingServerCheck();
+    private androidx.appcompat.app.AlertDialog serverWaitDialog = null;
+
+    /**
+     * Tampilkan dialog tunggu server yang BISA DIBATALKAN (Back / ketuk di luar) dan matikan tombol
+     * Simpan. Batal = menggugurkan percobaan simpan ini: tombol dinyalakan lagi, hasil jaringan yang
+     * telat diabaikan, dan TIDAK PERNAH menyimpan diam-diam (staf mengetuk Simpan lagi bila mau).
+     *
+     * @return token untuk {@link #finishServerWait(int)}
+     */
+    private int beginServerWait() {
+        final int token = pendingServerCheck.begin();
+        final View btnSimpan = findViewById(R.id.btnSimpan);
+        if (btnSimpan != null) btnSimpan.setEnabled(false);
+        serverWaitDialog = new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setMessage("Memeriksa nomor di server…")
+                .setCancelable(true)
+                .setOnCancelListener(d -> {
+                    if (!pendingServerCheck.cancel()) return;
+                    serverWaitDialog = null;
+                    localPhoneCheckedKey = null;
+                    if (btnSimpan != null) btnSimpan.setEnabled(true);
+                    if (!isFinishing() && !isDestroyed()) {
+                        Toast.makeText(this, "Pemeriksaan dibatalkan — data belum disimpan.",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .create();
+        serverWaitDialog.show();
+        return token;
+    }
+
+    /**
+     * Hasil jaringan tiba di UI thread. True = proses hasilnya (token masih berlaku, belum
+     * dibatalkan, activity hidup); dialog sudah ditutup dan Simpan dinyalakan lagi. False = abaikan
+     * sama sekali (dibatalkan / activity sudah dihancurkan) tanpa menyentuh view.
+     */
+    private boolean finishServerWait(int token) {
+        if (!pendingServerCheck.complete(token)) return false;
+        dismissServerWaitDialog();
+        if (isFinishing() || isDestroyed()) return false;
+        View btnSimpan = findViewById(R.id.btnSimpan);
+        if (btnSimpan != null) btnSimpan.setEnabled(true);
+        return true;
+    }
+
+    private void dismissServerWaitDialog() {
+        androidx.appcompat.app.AlertDialog d = serverWaitDialog;
+        serverWaitDialog = null;
+        if (d != null) {
+            try { d.dismiss(); } catch (Exception ignored) {}   // dismiss() tak memicu OnCancelListener
+        }
+    }
+
+    /**
+     * Tanya server ({@code POST /api/customers/phone-check}) apakah nomor yang akan ditambah/diubah sudah
+     * dipegang pelanggan aktif lain di cabang ini, lalu lanjutkan save(). Berjalan DI LUAR main thread
+     * dengan batas {@link com.crowja.damiupos.sync.SyncApi#PHONE_CHECK_TIMEOUT_SEC} detik; tombol Simpan
+     * dimatikan selama menunggu dan dinyalakan lagi apa pun hasilnya (selesai ATAU dibatalkan staf —
+     * lihat {@link #beginServerWait}). Bentrok → dialog pemblokir dengan nama pemegang. Belum
+     * provisioning / offline / timeout / respons non-2xx → LANJUT (cek lokal sudah jalan; input lapangan
+     * tak boleh terkunci jaringan — backstop-nya bendera server saat sinkron).
+     */
+    private void runServerPhoneCheckThenSave(java.util.List<String> toCheck, String key) {
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this)));
+        if (!cfg.isEnrolled()) {
+            serverPhoneCheckedKey = key;
+            save();
+            return;
+        }
+        final int token = beginServerWait();
+        // Dibaca di main thread (DB lokal kecil) — thread jaringan tak menyentuh DAO.
+        final String excludeUuid = editId != -1 ? customerDao.getSyncUuidById(editId) : null;
+        final java.util.List<String> numbers = new java.util.ArrayList<>(toCheck);
+        new Thread(() -> {
+            com.crowja.damiupos.util.PhoneConflictPolicy.ServerResult res;
+            try {
+                res = new com.crowja.damiupos.sync.SyncApi(cfg).customerPhoneCheck(numbers, excludeUuid);
+            } catch (Exception e) {
+                res = com.crowja.damiupos.util.PhoneConflictPolicy.unavailable();   // offline/timeout/non-2xx
+            }
+            final com.crowja.damiupos.util.PhoneConflictPolicy.ServerResult fr = res;
+            runOnUiThread(() -> {
+                if (!finishServerWait(token)) return;   // dibatalkan / activity dihancurkan → abaikan
+                if (fr.verdict == com.crowja.damiupos.util.PhoneConflictPolicy.Verdict.BLOCKED) {
+                    localPhoneCheckedKey = null;
+                    showDuplicateBlockedDialog(fr.first());
+                    return;
+                }
+                serverPhoneCheckedKey = key;   // FREE atau UNAVAILABLE → lanjut alur simpan normal
+                save();
+            });
+        }).start();
+    }
+
     /** Nomor yang SUDAH lolos cek pelanggan-terhapus di server — supaya save() lanjutan
      *  (dipanggil ulang setelah cek async) tidak berputar memeriksa nomor yang sama lagi. */
     private String deletedCheckedPhone = null;
@@ -1412,6 +1531,18 @@ public class CustomerFormActivity extends AppCompatActivity {
      * pelanggan yang sudah DIHAPUS dari dashboard (tidak boleh didaftarkan ulang dari HP;
      * pulihkan lewat menu Pelanggan Terhapus di web bila memang diperlukan).
      */
+    /** Pemblokir untuk pemegang AKTIF (lokal atau server) — teks dari {@link
+     *  com.crowja.damiupos.util.PhoneConflictPolicy#blockedMessage} (beda kalimat untuk Edit vs Tambah,
+     *  dan menyebut bila bentrokan tercatat di server). */
+    private void showDuplicateBlockedDialog(com.crowja.damiupos.util.PhoneConflictPolicy.Conflict c) {
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setIcon(android.R.drawable.ic_dialog_alert)
+                .setTitle("⚠️ Pelanggan Sudah Ada")
+                .setMessage(com.crowja.damiupos.util.PhoneConflictPolicy.blockedMessage(c, editId != -1))
+                .setPositiveButton("MENGERTI", null)
+                .show();
+    }
+
     private void showDuplicateBlockedDialog(String existingName, String phone, boolean deleted) {
         String msg = deleted
                 ? "Nomor " + phone + " pernah terdaftar sebagai pelanggan yang sudah DIHAPUS " +
@@ -1448,10 +1579,7 @@ public class CustomerFormActivity extends AppCompatActivity {
             save();
             return;
         }
-        androidx.appcompat.app.AlertDialog waiting = new androidx.appcompat.app.AlertDialog.Builder(this)
-                .setMessage("Memeriksa nomor di server…")
-                .setCancelable(false)
-                .show();
+        final int token = beginServerWait();   // dialog yang sama, juga bisa dibatalkan
         new Thread(() -> {
             boolean deleted = false;
             try {
@@ -1466,8 +1594,7 @@ public class CustomerFormActivity extends AppCompatActivity {
             }
             boolean fDeleted = deleted;
             runOnUiThread(() -> {
-                try { waiting.dismiss(); } catch (Exception ignored) {}
-                if (isFinishing() || isDestroyed()) return;
+                if (!finishServerWait(token)) return;   // dibatalkan / activity dihancurkan → abaikan
                 if (fDeleted) {
                     showDuplicateBlockedDialog(null, phones.isEmpty() ? "" : phones.get(0), true);
                 } else {
@@ -1503,30 +1630,60 @@ public class CustomerFormActivity extends AppCompatActivity {
             return;
         }
 
-        // Guard anti-duplikat (hanya pelanggan BARU): dibandingkan secara KANONIK, mencakup SEMUA
-        // nomor (utama + tambahan) — nomor kedua pun tak boleh bentrok dengan pelanggan lain (kalau
-        // bentrok, satu nomor akan me-resolve ke DUA pelanggan → ambiguitas identitas yang dicegah
-        // fitur ini). "0812…" ≡ "+62 812…" ≡ "62812…" dianggap sama.
+        // Guard anti-duplikat: dibandingkan secara KANONIK, mencakup SEMUA nomor (utama + tambahan) —
+        // nomor kedua pun tak boleh bentrok dengan pelanggan lain (kalau bentrok, satu nomor akan
+        // me-resolve ke DUA pelanggan → ambiguitas identitas yang dicegah fitur ini). "0812…" ≡
+        // "+62 812…" ≡ "62812…" ≡ "0062 812…" dianggap sama.
+        // Pelanggan BARU: semua nomor. EDIT: hanya nomor yang BARU/BERUBAH vs yang tersimpan
+        // (dirinya sendiri dikecualikan) — pelanggan lama yang sudah terlanjur berbagi nomor tetap
+        // bisa disunting alamat/fotonya tanpa dipaksa membereskan nomor dulu.
         java.util.List<String> allPhones = collectPhones(telepon);
-        // Validasi nomor WhatsApp lewat FREZ WA Bridge SEBELUM menyimpan — save() dipanggil ulang
-        // setelah cek selesai (atau langsung lanjut bila Bridge tak bisa menjawab / offline).
-        if (maybeWaPrecheck(allPhones)) return;
-        if (editId == -1 && !allPhones.isEmpty()) {
+        java.util.List<String> beforePhones = null;
+        if (editId != -1) {
+            Customer stored = customerDao.getById(editId);
+            beforePhones = stored != null ? stored.getPhonesOrDefault() : null;
+        }
+        java.util.List<String> toCheck = com.crowja.damiupos.util.PhoneConflictPolicy
+                .numbersToCheck(beforePhones, allPhones, editId == -1);
+        if (!toCheck.isEmpty()) {
             // 1) Duplikat AKTIF di database lokal (pelanggan branch-wide, semua salinan perangkat).
-            for (String p : allPhones) {
-                Customer dup = customerDao.findByPhoneCanonical(p);
-                if (dup != null) {
-                    showDuplicateBlockedDialog(dup.getName(), p, false);
-                    return;
+            //    Juga menangkap pelanggan buatan HP ini yang belum sempat terkirim. SATU lintasan
+            //    tabel untuk semua nomor (findByPhonesCanonical), dan hasil "lolos"-nya diingat per
+            //    set nomor supaya save() masuk-ulang (server → terhapus → WA) tak memindai lagi.
+            //    Tetap di UI thread: sekali per percobaan simpan, hanya kolom ringan — bukan
+            //    pemindaian per nomor per putaran seperti sebelumnya.
+            String checkKey = android.text.TextUtils.join(",", toCheck);
+            if (!checkKey.equals(localPhoneCheckedKey)) {
+                java.util.Map<String, Customer> localHits = customerDao.findByPhonesCanonical(toCheck, editId);
+                for (String p : toCheck) {
+                    Customer dup = localHits.get(p);
+                    if (dup != null) {
+                        showDuplicateBlockedDialog(new com.crowja.damiupos.util.PhoneConflictPolicy.Conflict(
+                                p, "", dup.getName(), "", dup.getPhone(), "", false));
+                        return;
+                    }
                 }
+                localPhoneCheckedKey = checkKey;
             }
-            // 2) Pelanggan TERHAPUS di dashboard (tombstone) → tanya server (semua nomor), lalu lanjut.
+            // 2) Tanya SERVER sebelum menyimpan (salinan lokal bisa basi/offline; dua HP bisa
+            //    mendaftarkan nomor sama dalam jeda sinkron). Gagal/timeout → lanjut (best-effort).
+            if (!checkKey.equals(serverPhoneCheckedKey)) {
+                runServerPhoneCheckThenSave(toCheck, checkKey);
+                return;
+            }
+        }
+        if (editId == -1 && !allPhones.isEmpty()) {
+            // 3) Pelanggan TERHAPUS di dashboard (tombstone) → tanya server (semua nomor), lalu lanjut.
             String phonesKey = android.text.TextUtils.join(",", allPhones);
             if (!phonesKey.equals(deletedCheckedPhone)) {
                 runDeletedCheckThenSave(allPhones);
                 return;
             }
         }
+        // Validasi nomor WhatsApp lewat FREZ WA Bridge SEBELUM menyimpan — save() dipanggil ulang
+        // setelah cek selesai (atau langsung lanjut bila Bridge tak bisa menjawab / offline). Sengaja
+        // SETELAH cek duplikat: tak ada gunanya menanyai WhatsApp untuk nomor yang akan diblokir.
+        if (maybeWaPrecheck(allPhones)) return;
 
         // Lokasi (multi): baris tanpa koordinat dilewati; entri PERTAMA = lokasi utama.
         java.util.List<Customer.Location> locs = collectLocations();

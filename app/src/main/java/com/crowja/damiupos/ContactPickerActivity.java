@@ -181,11 +181,13 @@ public class ContactPickerActivity extends AppCompatActivity {
         return s == null ? "" : s.trim().replaceAll("\\s+", " ");
     }
 
-    /** 8 digit terakhir (toleran prefix 0812 vs +62812), atau "" kalau terlalu pendek. */
+    /** Kunci dedup antar-kontak = nomor KANONIK (toleran 0812 / +62812 / 62 0812 / 0062 812 / pemisah),
+     *  atau "" kalau terlalu pendek. Dulu 8 digit terakhir → dua nomor berbeda yang kebetulan berbuntut
+     *  sama ikut tersingkir; sekarang selaras dengan guard duplikat pelanggan. */
     private static String phoneSuffix(String phone) {
-        String n = phone.replaceAll("[^0-9]", "");
+        String n = com.crowja.damiupos.util.PhoneUtils.canonical(phone);
         if (n.length() < 4) return "";
-        return n.substring(n.length() - Math.min(n.length(), 8));
+        return n;
     }
 
     /**
@@ -251,13 +253,16 @@ public class ContactPickerActivity extends AppCompatActivity {
             if (!baseByKey.containsKey(key)) baseByKey.put(key, clean);
         }
         Map<String, Integer> nameIdx = new HashMap<>();
+        // Himpunan nomor kanonik SEMUA pelanggan lokal (utama + tambahan), dibangun SEKALI — bukan
+        // memindai tabel per kontak (ribuan kontak × ribuan pelanggan).
+        Set<String> knownPhones = customerDao.allCanonicalPhones();
         for (String[] fp : flat) {
             String clean = cleanName(fp[0]);
             String key = clean.toLowerCase(Locale.ROOT);
             String displayName = nameCount.get(key) > 1
                     ? baseByKey.get(key) + " #" + nameIdx.merge(key, 1, Integer::sum)
                     : clean;
-            boolean already = customerDao.existsByPhone(fp[1]);
+            boolean already = knownPhones.contains(com.crowja.damiupos.db.CustomerDao.canonicalPhone(fp[1]));
             list.add(new ContactPickerAdapter.ContactEntry(displayName, fp[1], already));
         }
         return list;
@@ -285,17 +290,21 @@ public class ContactPickerActivity extends AppCompatActivity {
 
             int imported = 0;
             int skipped = 0;
+            // Nomor kanonik semua pelanggan (utama + tambahan) — diperbarui tiap kontak diimpor supaya
+            // dua kontak berbeda-format-sama dalam satu batch tak jadi dua pelanggan.
+            final Set<String> knownPhones = customerDao.allCanonicalPhones();
             final List<ContactPickerAdapter.ContactEntry> deletedSkipped = new ArrayList<>();
             int total = selected.size();
             for (int i = 0; i < total; i++) {
                 ContactPickerAdapter.ContactEntry e = selected.get(i);
                 if (deletedOnServer.contains(e.phone)) {
                     deletedSkipped.add(e);   // dihapus di server → jangan di-import lagi
-                } else if (customerDao.existsByPhone(e.phone)) {
-                    skipped++;
+                } else if (knownPhones.contains(com.crowja.damiupos.db.CustomerDao.canonicalPhone(e.phone))) {
+                    skipped++;   // nomor ini sudah milik pelanggan lain (utama ATAU tambahan)
                 } else {
                     // Normalisasi nomor kontak ke format lokal 08XXXX sebelum simpan (cek dedup tetap kanonik).
                     customerDao.insert(new Customer(e.name, com.crowja.damiupos.util.PhoneUtils.toLocal08(e.phone), ""));
+                    knownPhones.add(com.crowja.damiupos.db.CustomerDao.canonicalPhone(e.phone));
                     imported++;
                 }
                 final int done = i + 1;

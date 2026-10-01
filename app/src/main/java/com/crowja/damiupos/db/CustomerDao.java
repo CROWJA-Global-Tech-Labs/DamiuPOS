@@ -635,12 +635,15 @@ public class CustomerDao {
         return expr;
     }
 
+    /**
+     * Kunci kanonik "62…" — didelegasikan ke {@link com.crowja.damiupos.util.PhoneUtils#canonical}
+     * (cermin Phone::canonical server) supaya HP & server SEPAKAT soal awalan "00", sisa "0" setelah
+     * 62 ("62 0821…"), dan pemisah. Dulu algoritma sendiri → "62 0821…" jadi "620821…" dan "0062…"
+     * jadi "62062…" sehingga lolos dari guard duplikat. Tanpa digit → "".
+     */
     public static String canonicalPhone(String phone) {
-        String d = phone == null ? "" : phone.replaceAll("\\D+", "");
-        if (d.isEmpty()) return "";
-        if (d.startsWith("0")) return "62" + d.substring(1);
-        if (d.startsWith("8")) return "62" + d;
-        return d;
+        String national = com.crowja.damiupos.util.PhoneUtils.canonical(phone);
+        return national.isEmpty() ? "" : "62" + national;
     }
 
     /**
@@ -649,36 +652,135 @@ public class CustomerDao {
      * di-handover) — dipakai guard anti-duplikat saat menambah pelanggan baru. Null bila tak ada.
      */
     public Customer findByPhoneCanonical(String phone) {
-        String canon = canonicalPhone(phone);
-        if (canon.isEmpty()) return null;
-        String tail = canon.length() > 7 ? canon.substring(canon.length() - 7) : canon;
-        SQLiteDatabase db = dbHelper.getReadableDatabase();
-        // Prefilter LIKE pada `phone` UTAMA maupun daftar `phones` (JSON) → nomor KEDUA pun ketemu,
-        // jadi order/dedup dengan nomor lain nyantol ke orang yang sama.
-        Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMERS, null,
-                DatabaseHelper.COL_PHONE + " LIKE ? OR " + DatabaseHelper.COL_PHONES + " LIKE ?",
-                new String[]{"%" + tail + "%", "%" + tail + "%"},
-                null, null, null);
-        Customer hit = null;
-        while (c.moveToNext()) {
-            Customer cand = cursorToCustomer(c);
-            if (!matchesCanonical(cand, canon)) continue;   // cocok SALAH SATU nomor pelanggan
-            // Utamakan salinan MILIK perangkat ini (transaksi lokal menempel di situ — selaras
-            // dedupeForDisplay); salinan perangkat lain hanya fallback bila tak ada yang lokal.
-            if (hit == null || (cand.isMine() && !hit.isMine())) hit = cand;
-            if (cand.isMine()) break;
-        }
-        c.close();
-        return hit;
+        return findByPhoneCanonical(phone, -1);
     }
 
-    /** True bila SALAH SATU nomor pelanggan == $canon (sudah dikanonikkan). */
+    /**
+     * Seperti {@link #findByPhoneCanonical(String)} tetapi MELEWATI pelanggan {@code excludeId}
+     * (dirinya sendiri saat mode Edit; -1 = tak ada yang dikecualikan).
+     *
+     * <p>Satu implementasi dengan varian batch {@link #findByPhonesCanonical} (daftar berisi satu nomor)
+     * supaya semantik keduanya tak bisa melenceng.
+     */
+    public Customer findByPhoneCanonical(String phone, long excludeId) {
+        if (phone == null) return null;
+        java.util.Map<String, Customer> hits = findByPhonesCanonical(java.util.Collections.singletonList(phone), excludeId);
+        return hits.get(phone);
+    }
+
+    /**
+     * Varian BATCH: cari pemegang lokal untuk SEMUA {@code phones} dalam SATU lintasan tabel
+     * pelanggan (dulu satu pemindaian penuh per nomor, diulang tiap save() masuk-ulang). Semantik per
+     * nomor sama persis dengan {@link #findByPhoneCanonical(String, long)} lama: kanonik peka
+     * +62/62/0, memeriksa {@code phone} + {@code phones}, melewati {@code excludeId}, dan
+     * mengutamakan salinan MILIK perangkat ini.
+     *
+     * <p>Prefilter dilakukan di Java atas deret DIGIT kolom {@code phone}/{@code phones} (bukan LIKE
+     * pada kolom mentah): nomor tersimpan dengan pemisah — "0821-4231-9379", "+62 821 4231 9379",
+     * "(0821) 4231 9379", hasil tarik dari server apa adanya — tadi tak pernah terambil karena 7 digit
+     * terakhir tak berurutan di kolom mentah. Hanya kolom ringan (_id, phone, phones) yang dipindai
+     * (digit tiap baris dihitung sekali untuk semua nomor); baris lengkap dimuat HANYA untuk kandidat
+     * (sekali per baris, dipakai bersama semua nomor), lalu diverifikasi {@link #matchesCanonical}.
+     *
+     * @return peta nomor-yang-diberikan (string apa adanya) → pemegang; nomor tanpa pemegang/tanpa
+     *         digit tak ada di peta. Tak pernah null.
+     */
+    public java.util.Map<String, Customer> findByPhonesCanonical(java.util.List<String> phones, long excludeId) {
+        java.util.Map<String, Customer> out = new java.util.LinkedHashMap<>();
+        if (phones == null || phones.isEmpty()) return out;
+        java.util.List<String> keys = new ArrayList<>();      // nomor yang diberikan (yang punya digit)
+        java.util.List<String> canons = new ArrayList<>();    // "62…"
+        java.util.List<String> tails = new ArrayList<>();     // kunci prefilter
+        for (String p : phones) {
+            String canon = canonicalPhone(p);
+            if (canon.isEmpty()) continue;
+            keys.add(p);
+            canons.add(canon);
+            tails.add(com.crowja.damiupos.util.PhoneUtils.matchTail(com.crowja.damiupos.util.PhoneUtils.canonical(p)));
+        }
+        if (keys.isEmpty()) return out;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        java.util.List<java.util.List<Long>> candidateIds = new ArrayList<>();   // per nomor, urut tabel
+        for (int i = 0; i < keys.size(); i++) candidateIds.add(new ArrayList<Long>());
+        Cursor scan = db.query(DatabaseHelper.TABLE_CUSTOMERS,
+                new String[]{DatabaseHelper.COL_ID, DatabaseHelper.COL_PHONE, DatabaseHelper.COL_PHONES},
+                null, null, null, null, null);
+        try {
+            while (scan.moveToNext()) {
+                long id = scan.getLong(0);
+                if (id == excludeId) continue;
+                String p = scan.isNull(1) ? null : scan.getString(1);
+                String ps = scan.isNull(2) ? null : scan.getString(2);
+                for (int idx : com.crowja.damiupos.util.PhoneUtils.prefilterHits(p, ps, tails)) {
+                    candidateIds.get(idx).add(id);
+                }
+            }
+        } finally {
+            scan.close();
+        }
+        java.util.Map<Long, Customer> loaded = new java.util.HashMap<>();   // baris kandidat dimuat sekali
+        for (int i = 0; i < keys.size(); i++) {
+            Customer hit = null;
+            for (long id : candidateIds.get(i)) {
+                Customer cand;
+                if (loaded.containsKey(id)) {
+                    cand = loaded.get(id);
+                } else {
+                    Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMERS, null,
+                            DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(id)},
+                            null, null, null);
+                    cand = c.moveToFirst() ? cursorToCustomer(c) : null;
+                    c.close();
+                    loaded.put(id, cand);
+                }
+                if (cand == null || !matchesCanonical(cand, canons.get(i))) continue;   // cocok SALAH SATU nomor pelanggan
+                // Utamakan salinan MILIK perangkat ini (transaksi lokal menempel di situ — selaras
+                // dedupeForDisplay); salinan perangkat lain hanya fallback bila tak ada yang lokal.
+                if (hit == null || (cand.isMine() && !hit.isMine())) hit = cand;
+                if (cand.isMine()) break;
+            }
+            if (hit != null) out.put(keys.get(i), hit);
+        }
+        return out;
+    }
+
+    /** True bila SALAH SATU nomor pelanggan == $canon (sudah dikanonikkan). Memeriksa daftar
+     *  {@code phones} DAN skalar {@code phone} — baris dari sinkron bisa menyisakan skalar yang tak
+     *  ada di daftar (drift), dan nomor itu tetap milik pelanggan ini. */
     public static boolean matchesCanonical(Customer c, String canon) {
         if (canon == null || canon.isEmpty()) return false;
         for (String p : c.getPhonesOrDefault()) {
             if (canonicalPhone(p).equals(canon)) return true;
         }
-        return false;
+        return c.getPhone() != null && canonicalPhone(c.getPhone()).equals(canon);
+    }
+
+    /**
+     * Himpunan kunci kanonik ("62…") SEMUA nomor (utama + tambahan) seluruh pelanggan lokal — untuk
+     * pencocokan massal (impor kontak) tanpa memindai tabel sekali per kontak.
+     */
+    public java.util.Set<String> allCanonicalPhones() {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMERS,
+                new String[]{DatabaseHelper.COL_PHONE, DatabaseHelper.COL_PHONES},
+                null, null, null, null, null);
+        while (c.moveToNext()) {
+            String p = c.isNull(0) ? null : c.getString(0);
+            if (p != null) {
+                String k = canonicalPhone(p);
+                if (!k.isEmpty()) out.add(k);
+            }
+            java.util.List<String> list = c.isNull(1) ? null : parsePhones(c.getString(1));
+            if (list != null) {
+                for (String s : list) {
+                    String k = canonicalPhone(s);
+                    if (!k.isEmpty()) out.add(k);
+                }
+            }
+        }
+        c.close();
+        return out;
     }
 
     /**
@@ -1127,23 +1229,12 @@ public class CustomerDao {
         return list;
     }
 
-    /** Check if customer with this phone number exists */
+    /** Apakah SUDAH ada pelanggan dengan nomor ini — kanonik (peka +62/62/0/00 & pemisah) dan
+     *  memeriksa nomor utama MAUPUN tambahan. Dulu: LIKE 8 digit terakhir pada skalar `phone` saja,
+     *  jadi nomor tambahan pelanggan lain terimpor lagi sebagai pelanggan baru. */
     public boolean existsByPhone(String phone) {
         if (phone == null || phone.isEmpty()) return false;
-        SQLiteDatabase db = dbHelper.getReadableDatabase();
-        // Normalize: match last 8+ digits to handle prefix variations
-        String normalized = phone.replaceAll("[^0-9]", "");
-        if (normalized.length() < 4) return false;
-        String suffix = normalized.substring(normalized.length() - Math.min(normalized.length(), 8));
-        Cursor cursor = db.rawQuery(
-                "SELECT COUNT(*) FROM customers WHERE REPLACE(REPLACE(REPLACE(phone,' ',''),'-',''),'+','') LIKE ?",
-                new String[]{"%" + suffix});
-        boolean exists = false;
-        if (cursor.moveToFirst()) {
-            exists = cursor.getInt(0) > 0;
-        }
-        cursor.close();
-        return exists;
+        return findByPhoneCanonical(phone) != null;
     }
 
     /**
