@@ -23,6 +23,17 @@ public class Transaction {
      *  jenis ORDER), bukan diinput staf — cermin App\Models\Transaction::SELF_ORDER_MARKER (web). */
     public static final String SELF_ORDER_MARKER = "[ORDER ONLINE]";
 
+    /** Penanda catatan: order dipesan RESELLER untuk pelanggannya (afiliasi) lewat link pemesanan
+     *  reseller — cermin App\Models\Transaction::RESELLER_ORDER_MARKER (web). SENGAJA beda dari
+     *  {@link #SELF_ORDER_MARKER}: penanda itu memicu dialog wajib "Kirim Struk WA" ke pelanggan,
+     *  sedangkan pesanan reseller tak mengirim apa pun ke afiliasi saat order (ringkasannya ke
+     *  reseller). Cadangan HP untuk {@link #deliveryProofRequired} — foto bukti Selesai WAJIB. */
+    public static final String RESELLER_ORDER_MARKER = "[ORDER RESELLER]";
+
+    /** Prefiks delivery_dest_name saat reseller memilih lokasinya SENDIRI sebagai tujuan antar
+     *  pesanan afiliasinya ("Reseller: Kediaman") — cermin web; pelanggannya tetap si afiliasi. */
+    public static final String RESELLER_DEST_PREFIX = "Reseller:";
+
     // Metode pembayaran (untuk transaksi JUAL).
     public static final String PAY_TUNAI = "TUNAI";
     public static final String PAY_QRIS = "QRIS";
@@ -110,6 +121,9 @@ public class Transaction {
      *  (order dari FREZ AI Agent). Server-authoritative, pull-only; isi chat-nya diambil on-demand
      *  (SyncApi.orderChat / ChatLogActivity mode order). */
     private String chatSessionAt;
+    /** Foto bukti Selesai WAJIB untuk order INI (pesanan link reseller), apa pun setelan cabang.
+     *  Server-authoritative, pull-only — lihat DatabaseHelper.COL_DELIVERY_PROOF_REQUIRED. */
+    private boolean deliveryProofRequired;
     private String deliveryDoneAt;
     /** Nama kurir yang menekan "Selesai" — bisa BEDA dari pembuat order (lihat markDelivered). */
     private String completedByName;
@@ -330,9 +344,52 @@ public class Transaction {
         return chatSessionAt != null && !chatSessionAt.trim().isEmpty();
     }
 
-    /** Order ini dibuat pelanggan sendiri via halaman Order Online (kampanye jenis ORDER)? */
+    /** Order ini dibuat pelanggan sendiri via halaman Order Online (kampanye jenis ORDER)? Pesanan
+     *  reseller TIDAK pernah dihitung di sini walau catatannya kebetulan memuat kedua penanda —
+     *  kalau iya, kurir dipaksa mengirim struk WA ke afiliasi yang tak memesan sendiri. */
     public boolean isSelfOrder() {
-        return catatan != null && catatan.contains(SELF_ORDER_MARKER);
+        return catatan != null && catatan.contains(SELF_ORDER_MARKER) && !isResellerOrder();
+    }
+
+    /** Order ini dipesan reseller untuk afiliasinya lewat link pemesanan reseller? */
+    public boolean isResellerOrder() {
+        return catatan != null && catatan.contains(RESELLER_ORDER_MARKER);
+    }
+
+    public boolean isDeliveryProofRequired() { return deliveryProofRequired; }
+    public void setDeliveryProofRequired(boolean v) { this.deliveryProofRequired = v; }
+
+    /** Foto bukti Selesai wajib KHUSUS order ini: flag server ATAU penanda catatan. Penanda ikut
+     *  dihitung karena tiba lewat catatan yang sudah tersinkron sejak lama — order reseller tetap
+     *  tergerbang di HP yang belum menarik flag-nya (mis. baris lama sebelum migrasi v101). Setelan
+     *  cabang & Cash Bon diputuskan terpisah (DeliveryProofPolicy). */
+    public boolean requiresDeliveryProof() {
+        return deliveryProofRequired || isResellerOrder();
+    }
+
+    /** Tujuan antar order ini lokasi milik RESELLER (bukan lokasi afiliasi)? */
+    public boolean isResellerDestination() {
+        return isResellerDestName(deliveryDestName);
+    }
+
+    /** "Reseller: Kediaman" (huruf besar/kecil bebas, spasi tepi diabaikan) → true. */
+    public static boolean isResellerDestName(String destName) {
+        if (destName == null) return false;
+        String s = destName.trim();
+        return s.regionMatches(true, 0, RESELLER_DEST_PREFIX, 0, RESELLER_DEST_PREFIX.length());
+    }
+
+    /** Nama lokasi reseller tanpa prefiks: "Reseller: Kediaman" → "Kediaman" ("" bila kosong). */
+    public static String resellerDestLocationName(String destName) {
+        if (!isResellerDestName(destName)) return "";
+        return destName.trim().substring(RESELLER_DEST_PREFIX.length()).trim();
+    }
+
+    /** Label tujuan untuk kurir: "Dikirim ke lokasi reseller: Kediaman" — supaya tidak mencari
+     *  rumah afiliasi (nama pelanggan di kartu) padahal galonnya diantar ke rumah reseller. */
+    public static String resellerDestLabel(String destName) {
+        String loc = resellerDestLocationName(destName);
+        return "Dikirim ke lokasi reseller" + (loc.isEmpty() ? "" : ": " + loc);
     }
 
     public String getCompletedByName() { return completedByName; }

@@ -213,6 +213,9 @@ public class SyncEngine {
                     // Tombol "💬 Chat Pesanan" — server-authoritative, pola sama persis dengan
                     // complained_at: di-skip dari fillColumns push, HP hanya membaca via pull.
                     DatabaseHelper.COL_CHAT_SESSION_AT,
+                    // "🤝 📷" Pesanan Reseller: foto bukti Selesai wajib per-order — server-authoritative,
+                    // pola sama: di-skip dari fillColumns push (HP tak bisa melepasnya), dibaca via pull.
+                    DatabaseHelper.COL_DELIVERY_PROOF_REQUIRED,
                     DatabaseHelper.COL_TANGGAL, DatabaseHelper.COL_CATATAN,
                     // BUKTI SELESAI: hanya URL yang disinkron — photo_path lokal-saja (pola persis
                     // attendance/expenses: path tak pernah meninggalkan perangkat).

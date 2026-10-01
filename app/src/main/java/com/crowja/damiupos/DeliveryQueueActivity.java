@@ -99,6 +99,7 @@ import com.crowja.damiupos.sync.SyncSettings;
 import com.crowja.damiupos.sync.VersionUpdater;
 import com.crowja.damiupos.util.BitmapUtils;
 import com.crowja.damiupos.util.CompassArrowView;
+import com.crowja.damiupos.util.DeliveryProofPolicy;
 import com.crowja.damiupos.util.Ts;
 import com.crowja.damiupos.wa.WaContactEnsure;
 import com.crowja.damiupos.wa.WaShare;
@@ -1567,8 +1568,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * geocode server); lokasi lain (Kantor, Warung, …) tak punya data wilayah. Order yang dikirim ke
     * lokasi LAIN (tujuan berjarak > 100 m dari lokasi utama) karena itu menampilkan nama lokasi
     * tujuannya, bukan wilayah lokasi utama yang keliru. Jarak di kartu sudah dihitung dari tujuan.
+    *
+    * <p>Tujuan milik RESELLER ("Reseller: Kediaman", dipilih reseller dari link pemesanannya) SELALU
+    * diberi label "Dikirim ke lokasi reseller: …" walau dekat lokasi utama afiliasi — nama di kartu
+    * tetap si afiliasi, jadi tanpa label ini kurir mengetuk pintu rumah yang salah.</p>
     */
    static String areaLabel(Customer c, double destLat, double destLng, String destName) {
+      if (Transaction.isResellerDestName(destName)) {
+         return Transaction.resellerDestLabel(destName);
+      }
       String area = c != null ? c.getAdminArea() : "";
       boolean destGeo = destLat != 0.0 || destLng != 0.0;
       boolean primaryGeo = c != null && (c.getLatitude() != 0.0 || c.getLongitude() != 0.0);
@@ -1582,7 +1590,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    static String areaLabel(Customer c, Transaction t) {
-      boolean dest = t.getDeliveryDestLat() != 0.0 || t.getDeliveryDestLng() != 0.0;
+      boolean dest = t.getDeliveryDestLat() != 0.0 || t.getDeliveryDestLng() != 0.0
+            || t.isResellerDestination();
       return dest ? areaLabel(c, t.getDeliveryDestLat(), t.getDeliveryDestLng(), t.getDeliveryDestName())
             : (c != null ? c.getAdminArea() : "");
    }
@@ -2140,12 +2149,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       String adminArea = c != null ? c.getAdminArea() : "";
       String areaSuffix = !adminArea.isEmpty() ? " (" + adminArea + ")" : "";
       String custAddress = c != null && c.getAddress() != null ? c.getAddress().trim() : "";
-      String address = !destLocName.trim().isEmpty() ? "Kirim Ke: " + destLocName.trim() + areaSuffix : (!custAddress.isEmpty() ? custAddress + areaSuffix : "");
+      // Tujuan RESELLER: label khusus & TANPA foto rumah afiliasi sebagai cadangan — cermin
+      // showQueuePreview di antrean sendiri.
+      boolean resellerDest = Transaction.isResellerDestName(destLocName);
+      String address = resellerDest ? "🤝 " + Transaction.resellerDestLabel(destLocName)
+            : !destLocName.trim().isEmpty() ? "Kirim Ke: " + destLocName.trim() + areaSuffix : (!custAddress.isEmpty() ? custAddress + areaSuffix : "");
+      Customer photoFallback = resellerDest ? null : c;
 
       // Foto lokasi: nama lokasi cocok persis (kalau ada) menang atas foto default pelanggan -
       // cermin showQueuePreview di antrean sendiri.
       String destPhotoUrl = null;
-      if (c != null && !destLocName.trim().isEmpty() && c.getLocations() != null) {
+      if (c != null && !resellerDest && !destLocName.trim().isEmpty() && c.getLocations() != null) {
          for (Customer.Location l : c.getLocations()) {
             if (destLocName.trim().equalsIgnoreCase(safe(l.name)) && l.photo != null && !l.photo.trim().isEmpty()) {
                destPhotoUrl = l.photo.trim();
@@ -2174,8 +2188,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       d.address = address;
       d.detailChips = this.buildOtherDeviceDetailChips(q);
       d.detailExtra = this.otherDevicePreviewExtra(q);
-      d.photoLocalPath = destPhotoUrl == null && c != null ? c.getPhotoPath() : null;
-      d.photoUrl = destPhotoUrl != null ? destPhotoUrl : (c != null ? c.getPhotoUrl() : null);
+      d.photoLocalPath = destPhotoUrl == null && photoFallback != null ? photoFallback.getPhotoPath() : null;
+      d.photoUrl = destPhotoUrl != null ? destPhotoUrl : (photoFallback != null ? photoFallback.getPhotoUrl() : null);
       this.showPreviewDialog(d);
    }
 
@@ -5265,14 +5279,32 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private void doComplete(Transaction t, boolean revokeCredit) {
-      SettingsDao sd = new SettingsDao(DatabaseHelper.getInstance(this));
       // CASH BON apa pun alasannya: galon diserahkan tapi uangnya TIDAK masuk. Fotonya WAJIB apa pun
       // setelan cabang — inilah SATU-SATUNYA bukti bahwa galonnya benar-benar sampai, dan tanpa itu
       // klaim "sudah diantar tapi belum dibayar" tak bisa dipertanggungjawabkan.
-      boolean required = sd.isDeliveryProofRequired() || this.isCashBon(t);
-      if (!required) {
+      // PESANAN RESELLER (flag server delivery_proof_required ATAU penanda [ORDER RESELLER]) juga
+      // WAJIB apa pun setelan cabang: reseller memantau pesanan afiliasinya dari halaman link-nya,
+      // dan foto inilah satu-satunya bukti yang ia lihat bahwa galonnya sampai.
+      DeliveryProofPolicy.Reason reason = this.proofReason(t);
+      if (!DeliveryProofPolicy.isRequired(reason)) {
          this.askOptionalProof(t, revokeCredit);
-      } else if (this.isCashBon(t)) {
+      } else if (reason == DeliveryProofPolicy.Reason.RESELLER) {
+         // Pengantar dulu, baru kamera — alasannya sama dengan Cash Bon di bawah. Tak bisa ditutup
+         // (back/ketuk luar): satu-satunya jalan keluar selain memotret adalah "Batal", yang
+         // membiarkan order tetap di antrean.
+         (new AlertDialog.Builder(this))
+               .setCancelable(false)
+               .setTitle("📷 WAJIB: Foto Bukti — Pesanan Reseller")
+               .setMessage("Order ini dipesan RESELLER untuk pelanggannya lewat link pemesanan "
+                     + "reseller, jadi fotonya WAJIB.\n\n"
+                     + "Foto galon yang sudah diserahkan (atau rumah/lokasi tujuan) sebagai bukti "
+                     + "barangnya benar-benar sampai. Reseller melihat foto ini di halaman "
+                     + "pesanannya.")
+               .setPositiveButton("AMBIL FOTO", (d, w) -> this.requestProofPhoto(t, revokeCredit))
+               .setNegativeButton("Batal", (d, w) ->
+                     Toast.makeText(this, "Order belum ditandai Selesai — foto bukti wajib untuk pesanan reseller.", 1).show())
+               .show();
+      } else if (reason == DeliveryProofPolicy.Reason.CASH_BON) {
          // CASH BON: jelaskan DULU kenapa fotonya wajib, baru buka kamera. Tanpa pengantar ini
          // kamera muncul tiba-tiba tepat setelah menekan Simpan — kurir tak tahu apa yang harus
          // difoto, lalu memotret asal atau menekan batal (yang membatalkan penyelesaian order).
@@ -5293,7 +5325,26 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    /**
-    * Order BIASA (bukan Cash Bon, cabang tak mewajibkan): TAWARKAN foto bukti, jangan memaksa.
+    * Kenapa (dan apakah) foto bukti wajib untuk order ini — {@link DeliveryProofPolicy}. Dinilai dari
+    * baris SEGAR di DB, bukan hanya objek {@code t} dalam memori: {@code t} kerap hasil loadData()
+    * yang dirender SEBELUM pull terakhir membawa flag delivery_proof_required / penanda
+    * [ORDER RESELLER] (atau sebelum applyDeliveryAdjustment menulis [CASH BON]) — jebakan yang sama
+    * dengan yang dijelaskan di {@link #finishComplete}. Keduanya digabung OR: wajib di salah satu =
+    * wajib. {@code t} sendiri tetap dipakai untuk langkah berikutnya (ia membawa delivery_queued_at
+    * untuk durasi; baris getById tidak).
+    */
+   private DeliveryProofPolicy.Reason proofReason(Transaction t) {
+      Transaction fresh = t != null ? this.dao.getById(t.getId()) : null;
+      boolean cashBon = this.isCashBon(t) || this.isCashBon(fresh);
+      boolean orderRequired = (t != null && t.requiresDeliveryProof())
+            || (fresh != null && fresh.requiresDeliveryProof());
+      SettingsDao sd = new SettingsDao(DatabaseHelper.getInstance(this));
+      return DeliveryProofPolicy.reason(sd.isDeliveryProofRequired(), cashBon, orderRequired);
+   }
+
+   /**
+    * Order BIASA (bukan Cash Bon, bukan pesanan reseller, cabang tak mewajibkan): TAWARKAN foto
+    * bukti, jangan memaksa.
     *
     * <p>Tombol default "TIDAK" berhitung mundur 10 detik lalu menekan dirinya sendiri. Alasannya
     * praktis: pertanyaannya muncul tepat di tengah alur menyelesaikan order, dan kurir yang sedang
@@ -5350,8 +5401,18 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private void launchProofCamera(long trxId, boolean revokeCredit) {
       Intent intent = CameraIntents.preferBackCamera(new Intent("android.media.action.IMAGE_CAPTURE"));
       if (intent.resolveActivity(this.getPackageManager()) == null) {
-         Toast.makeText(this, "Tidak ada aplikasi kamera — order diselesaikan tanpa foto bukti.", 1).show();
          Transaction t = this.findQueueTrx(trxId);
+         // Foto WAJIB (Cash Bon / pesanan reseller / setelan cabang) → TAK ada jalan pintas. Dulu
+         // order tetap diselesaikan tanpa foto di sini, jadi "wajib" bisa dilewati cukup dengan HP
+         // tanpa aplikasi kamera. Hanya foto opsional yang masih boleh dilewati seperti sebelumnya.
+         if (DeliveryProofPolicy.isRequired(this.proofReason(t != null ? t : this.dao.getById(trxId)))) {
+            this.pendingProofTrxId = -1L;
+            Toast.makeText(this, "Tidak ada aplikasi kamera — foto bukti WAJIB untuk order ini, jadi "
+                  + "order belum ditandai Selesai. Aktifkan aplikasi kamera lalu coba lagi.", 1).show();
+            return;
+         }
+
+         Toast.makeText(this, "Tidak ada aplikasi kamera — order diselesaikan tanpa foto bukti.", 1).show();
          if (t != null) {
             this.finishComplete(t, revokeCredit);
          }
@@ -5516,8 +5577,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     *
     * <p>Dipanggil dari {@link #finishComplete} TEPAT setelah foto bukti tersimpan, dan langsung
     * membuka WhatsApp tanpa dialog perantara — alur "foto lalu kirim" jadi satu tarikan napas.
-    * Foto yang barusan diambil ikut sebagai lampiran; bila jalur penyelesaian ini tak memotret
-    * (mis. perangkat tanpa aplikasi kamera), {@link WaShare} otomatis jatuh ke pesan teks saja.</p>
+    * Foto yang barusan diambil ikut sebagai lampiran; bila jalur penyelesaian ini tak membawa foto
+    * (proofPath null), {@link WaShare} otomatis jatuh ke pesan teks saja. Perangkat tanpa aplikasi
+    * kamera tak lagi bisa menyelesaikan Cash Bon tanpa foto (lihat {@link #launchProofCamera}).</p>
     */
    private void sendCashBonNoticeWa(Transaction t, String proofPath) {
       if (t != null) {
@@ -5759,7 +5821,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          sb.append("\ud83d\udccd ").append(t.getCustomerAddress().trim()).append('\n');
       }
 
-      if (t.getDeliveryDestName() != null && !t.getDeliveryDestName().trim().isEmpty()) {
+      if (t.isResellerDestination()) {
+         // Diantar ke rumah RESELLER, bukan afiliasi — alamat 📍 di atas milik afiliasi (pelanggan
+         // order ini), jadi tujuan sebenarnya harus terbaca jelas.
+         sb.append("🤝 ").append(Transaction.resellerDestLabel(t.getDeliveryDestName())).append('\n');
+      } else if (t.getDeliveryDestName() != null && !t.getDeliveryDestName().trim().isEmpty()) {
          sb.append("\ud83d\udccd Kirim ke: ").append(t.getDeliveryDestName().trim()).append('\n');
       }
 
@@ -7023,6 +7089,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private Customer.Location resolveOrderLocation(Transaction t) {
       String destName = t.getDeliveryDestName();
+      if (t.isResellerDestination()) {
+         return this.resolveResellerDestLocation(t);
+      }
       if (destName != null && !destName.trim().isEmpty()) {
          Customer c = t.getCustomerId() > 0L ? this.customerDao.getByIdMerged(t.getCustomerId()) : null;
          if (c != null && c.getLocations() != null) {
@@ -7039,6 +7108,25 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       } else {
          return null;
       }
+   }
+
+   /**
+    * Lokasi RESELLER yang dipilih sebagai tujuan ("Reseller: Kediaman" → lokasi "Kediaman" milik
+    * reseller order ini). null bila salinan reseller belum ada di HP ini atau namanya tak cocok —
+    * preview lalu tampil TANPA foto, bukan jatuh ke foto rumah afiliasi (itu rumah yang salah).
+    */
+   private Customer.Location resolveResellerDestLocation(Transaction t) {
+      String name = Transaction.resellerDestLocationName(t.getDeliveryDestName());
+      Customer r = t.getResellerId() > 0L ? this.customerDao.getByIdMerged(t.getResellerId()) : null;
+      if (name.isEmpty() || r == null || r.getLocations() == null) {
+         return null;
+      }
+      for (Customer.Location l : r.getLocations()) {
+         if (l.name != null && name.equalsIgnoreCase(l.name.trim())) {
+            return l;
+         }
+      }
+      return null;
    }
 
    /**
@@ -7113,7 +7201,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       d.destLat = lat;
       d.destLng = lng;
       d.destName = d.title;
-      d.address = destLoc != null ? "Kirim Ke: " + safe(destLoc.name) + areaSuffix
+      // Tujuan RESELLER ("Reseller: Kediaman"): alamat & foto rumah AFILIASI bukan tujuannya — jangan
+      // dipakai sebagai cadangan, nanti kurir mencocokkan rumah yang salah dengan pin di peta.
+      boolean resellerDest = t.isResellerDestination();
+      Customer photoFallback = resellerDest ? null : c;
+      d.address = resellerDest ? "🤝 " + Transaction.resellerDestLabel(t.getDeliveryDestName())
+            : destLoc != null ? "Kirim Ke: " + safe(destLoc.name) + areaSuffix
             : (t.getCustomerAddress() != null && !t.getCustomerAddress().trim().isEmpty()
                   ? t.getCustomerAddress().trim() + areaSuffix : "");
       d.detailChips = this.buildQueueDetailChips(t);
@@ -7121,9 +7214,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       d.detailExtra = extra.isEmpty() ? null : extra;
       d.photoLocalPath = destLoc != null && destLoc.photo != null && !destLoc.photo.trim().isEmpty()
             ? null   // foto lokasi tersimpan sbg URL server (lihat photoUrl), bukan path lokal
-            : (c != null ? c.getPhotoPath() : null);
+            : (photoFallback != null ? photoFallback.getPhotoPath() : null);
       d.photoUrl = destLoc != null && destLoc.photo != null && !destLoc.photo.trim().isEmpty()
-            ? destLoc.photo.trim() : (c != null ? c.getPhotoUrl() : null);
+            ? destLoc.photo.trim() : (photoFallback != null ? photoFallback.getPhotoUrl() : null);
       d.guided = this.guidedMode;
       d.guidedTrxId = t.getId();
       d.note = ReceiptActivity.customerNote(t.getCatatan());
@@ -8671,7 +8764,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          h.tvCustomer.setEllipsize(TruncateAt.END);
          boolean voidPending = t.hasPendingVoidRequest();
          DeliveryQueueActivity.bindOrderNote(h.tvOrderNote, voidPending ? null : t.getCatatan());
-         h.tvCustomer.setText(voidPending ? DeliveryQueueActivity.safe(t.getCustomerName()) : (t.isOpenDispatch() ? "\ud83c\udfb2 " : "") + (t.isSelfOrder() ? "\ud83d\udecd️ " : "") + (t.isCustomerPriority() ? "⭐ " : "") + (t.isCustomerDataIncomplete() ? "❗ " : "") + (t.isComplained() ? "\ud83d\ude20 " : "") + DeliveryQueueActivity.safe(t.getCustomerName()));
+         // "🤝 📷" = dipesan reseller untuk afiliasinya + foto bukti Selesai WAJIB — kurir tahu sejak
+         // di kartu bahwa order ini tak bisa diselesaikan tanpa memotret (📷 saja = flag server tanpa penanda).
+         h.tvCustomer.setText(voidPending ? DeliveryQueueActivity.safe(t.getCustomerName()) : (t.isOpenDispatch() ? "\ud83c\udfb2 " : "") + (t.isSelfOrder() ? "\ud83d\udecd️ " : "") + (t.isResellerOrder() ? "🤝 " : "") + (t.requiresDeliveryProof() ? "📷 " : "") + (t.isCustomerPriority() ? "⭐ " : "") + (t.isCustomerDataIncomplete() ? "❗ " : "") + (t.isComplained() ? "\ud83d\ude20 " : "") + DeliveryQueueActivity.safe(t.getCustomerName()));
          int flags = h.tvCustomer.getPaintFlags();
          h.tvCustomer.setPaintFlags(voidPending ? flags | 16 : flags & -17);
          if (voidPending) {

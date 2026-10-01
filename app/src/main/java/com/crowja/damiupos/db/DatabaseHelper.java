@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 100;
+    private static final int DATABASE_VERSION = 101;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -323,6 +323,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
      *  AKTIF di server (transaction_chat_sessions). Server-authoritative & pull-only, sama persis
      *  dengan {@link #COL_COMPLAINED_AT}; isi chat-nya diambil on-demand (SyncApi.orderChat). */
     public static final String COL_CHAT_SESSION_AT = "chat_session_at";
+    /** 1 = foto bukti SELESAI WAJIB untuk order INI saja (pesanan dari link pemesanan reseller),
+     *  apa pun setelan cabang {@code SettingsDao.KEY_DELIVERY_PROOF_REQUIRED}. Distempel server saat
+     *  order dibuat; server-authoritative & pull-only, sama pola dengan {@link #COL_COMPLAINED_AT}
+     *  (push HP di-skip fillColumns, jadi HP tak bisa melepasnya). */
+    public static final String COL_DELIVERY_PROOF_REQUIRED = "delivery_proof_required";
     /** Token acak per-order untuk link lacak publik web ({base}/track/{token}).
      *  Pelanggan memantau progres + lokasi kurir langsung. Disinkron ke server. */
     public static final String COL_DELIVERY_TOKEN = "delivery_token";
@@ -656,6 +661,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_VOID_REQUEST_PENDING_AT + " TEXT, " +
                     COL_COMPLAINED_AT + " TEXT, " +
                     COL_CHAT_SESSION_AT + " TEXT, " +
+                    COL_DELIVERY_PROOF_REQUIRED + " INTEGER DEFAULT 0, " +
                     // BUKTI SELESAI pengiriman: path lokal (TIDAK disinkron) + URL server (disinkron).
                     // Nama kolom WAJIB photo_path/photo_url — konvensi bersama pipeline MediaUploader.
                     COL_PHOTO_PATH + " TEXT, " +
@@ -1752,6 +1758,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_ORDERED_AT + " TEXT");
             // "💬 Diterima via …": akun WA tempat agen menerima pesanan (lihat COL_SOURCE_WA).
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_SOURCE_WA + " TEXT");
+        }
+        if (oldVersion < 101) {
+            // "🤝 📷" Pesanan Reseller — foto bukti Selesai wajib per-order (lihat
+            // COL_DELIVERY_PROOF_REQUIRED). Aditif; 0 = ikut setelan cabang seperti biasa. Order
+            // reseller yang sudah ada di HP tetap tergerbang lewat penanda [ORDER RESELLER] di catatan
+            // sampai pull berikutnya membawa flag-nya.
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_PROOF_REQUIRED + " INTEGER DEFAULT 0");
         }
     }
 

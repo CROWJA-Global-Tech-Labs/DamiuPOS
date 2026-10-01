@@ -1007,7 +1007,7 @@ public class ReceiptActivity extends AppCompatActivity {
             s = s.substring(p + "catatan:".length());
         }
         s = s.replaceAll(
-                "(?i)\\[(SALDO KOMISI|REFUND|GANTI RUGI|PENCAIRAN KOMISI|JUAL BOTOL KOSONG|PROMOSI|TARIK GALON PROMOSI|ORDER ONLINE|BAYAR HUTANG|CASH BON|BAYAR SEBAGIAN)[^\\]]*\\]", " ");
+                "(?i)\\[(SALDO KOMISI|REFUND|GANTI RUGI|PENCAIRAN KOMISI|JUAL BOTOL KOSONG|PROMOSI|TARIK GALON PROMOSI|ORDER ONLINE|ORDER RESELLER|BAYAR HUTANG|CASH BON|BAYAR SEBAGIAN)[^\\]]*\\]", " ");
         return s;
     }
 
