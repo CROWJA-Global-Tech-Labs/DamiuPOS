@@ -313,22 +313,21 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
     /**
      * Gerbang AMBIL ALIH: popup peringatan (⚠) yang tombol lanjutnya harus diketuk DUA KALI —
      * memindahkan order rekan adalah keputusan yang mengubah pembagian kerja orang lain, jadi tak
-     * boleh terjadi karena salah sentuh. Order yang sedang DIKERJAKAN rekan diberi peringatan
-     * tambahan (kurirnya mungkin sudah di jalan).
+     * boleh terjadi karena salah sentuh. Order yang sedang DIANTAR rekan tidak bisa diambil alih
+     * sama sekali (kurirnya sudah di jalan).
      */
     private void confirmTakeOver(JSONObject q) {
         final String uuid = str(q, "uuid");   // identitas sinkron transaksi (bukan id lokal server)
         final String name = safe(q.optString("name", "Pelanggan"));
-        boolean running = q.optBoolean("in_progress", false);
+        if (q.optBoolean("in_progress", false)) {
+            Toast.makeText(this, "🚚 Sedang diantar — tidak bisa diambil alih.", Toast.LENGTH_LONG).show();
+            return;
+        }
 
         StringBuilder msg = new StringBuilder();
         msg.append("Order \"").append(name).append("\" akan DIPINDAHKAN dari perangkat ")
                 .append(peekDeviceName != null && !peekDeviceName.isEmpty() ? "\"" + peekDeviceName + "\"" : "lain")
                 .append(" ke perangkat Anda.\n\n");
-        if (running) {
-            msg.append("⚠️ Order ini SEDANG DIKERJAKAN kurir tersebut — pastikan sudah ada kesepakatan "
-                    + "sebelum mengambilnya.\n\n");
-        }
         msg.append("Perangkat asal akan diberi tahu bahwa order ini dipindahkan.\n\n"
                 + "Ketuk \"Ambil Alih\" dua kali untuk memastikan.");
 
@@ -541,6 +540,10 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
             DeliveryQueueActivity.bindOrderNote(h.tvOrderNote, str(q, "note"));
 
             h.btnNavigasi.setOnClickListener(v -> navigateTo(q));
+            // Sedang diantar kurirnya → tak bisa diambil alih (server juga menolak).
+            boolean delivering = q.optBoolean("in_progress", false);
+            h.btnAmbilAlih.setEnabled(!delivering);
+            h.btnAmbilAlih.setText(delivering ? "🚚 Sedang Diantar" : "Ambil Alih");
             h.btnAmbilAlih.setOnClickListener(v -> confirmTakeOver(q));
             boolean hasPhone = !phone.isEmpty() && !phone.equals("null");
             h.btnWaChat.setVisibility(hasPhone ? View.VISIBLE : View.GONE);

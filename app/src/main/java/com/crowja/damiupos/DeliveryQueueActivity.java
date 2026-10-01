@@ -1869,17 +1869,29 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return (double)12742.0F * Math.atan2(Math.sqrt(a), Math.sqrt((double)1.0F - a));
    }
 
+   /** Order perangkat lain yang SEDANG diantar kurirnya (▶ Jalankan, kunci server {@code in_progress})
+    *  — tak boleh diambil alih. Server menolaknya juga (DeliveryClaimController), ini supaya HP tak
+    *  menawarkan tombolnya sama sekali. */
+   private static boolean isBeingDelivered(JSONObject q) {
+      return q != null && q.optBoolean("in_progress", false);
+   }
+
+   private void toastBeingDelivered(JSONObject q) {
+      String dev = q.optString("device_group_label", "");
+      String by = !dev.isEmpty() && !"null".equals(dev) ? " oleh " + dev : "";
+      Toast.makeText(this, "🚚 Sedang diantar" + by + " — tidak bisa diambil alih.", Toast.LENGTH_LONG).show();
+   }
+
    private void confirmTakeOverOtherDevices(JSONObject q) {
+      if (isBeingDelivered(q)) {
+         this.toastBeingDelivered(q);
+         return;
+      }
       String uuid = q.optString("uuid", "");
       String name = q.optString("name", "Pelanggan");
       String fromDevice = q.optString("device_group_label", "");
-      boolean running = q.optBoolean("in_progress", false);
       StringBuilder msg = new StringBuilder();
       msg.append("Order \"").append(name).append("\" akan DIPINDAHKAN dari perangkat ").append(!fromDevice.isEmpty() && !fromDevice.equals("null") ? "\"" + fromDevice + "\"" : "lain").append(" ke perangkat Anda.\n\n");
-      if (running) {
-         msg.append("⚠️ Order ini SEDANG DIKERJAKAN kurir tersebut — pastikan sudah ada kesepakatan sebelum mengambilnya.\n\n");
-      }
-
       msg.append("Perangkat asal akan diberi tahu bahwa order ini dipindahkan.\n\nKetuk \"Ambil Alih\" dua kali untuk memastikan.");
       AlertDialog dialog = (new AlertDialog.Builder(this)).setIcon(17301543).setTitle("⚠️ Ambil Alih Pengiriman?").setCancelable(false).setMessage(msg.toString()).setPositiveButton("Ambil Alih", (DialogInterface.OnClickListener)null).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).create();
       dialog.setOnShowListener((d) -> {
@@ -2020,7 +2032,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private void showOtherDeviceOrderDetail(JSONObject q) {
       String name = q.optString("name", "Pelanggan");
-      (new AlertDialog.Builder(this)).setTitle("Detail Order \u2014 " + name).setMessage(this.otherDeviceOrderDetailText(q)).setPositiveButton("\ud83d\udce5 Ambil Alih", (d, w) -> this.confirmTakeOverOtherDevices(q)).setNeutralButton("\ud83d\udd0d Preview", (d, w) -> this.showOtherDevicePreview(q)).setNegativeButton("Kembali", (DialogInterface.OnClickListener)null).show();
+      boolean delivering = isBeingDelivered(q);
+      String text = this.otherDeviceOrderDetailText(q);
+      AlertDialog.Builder b = (new AlertDialog.Builder(this)).setTitle("Detail Order \u2014 " + name)
+            .setMessage(delivering ? "\ud83d\ude9a SEDANG DIANTAR \u2014 tidak bisa diambil alih.\n\n" + text : text)
+            .setNeutralButton("\ud83d\udd0d Preview", (d, w) -> this.showOtherDevicePreview(q))
+            .setNegativeButton("Kembali", (DialogInterface.OnClickListener)null);
+      if (!delivering) {
+         b.setPositiveButton("\ud83d\udce5 Ambil Alih", (d, w) -> this.confirmTakeOverOtherDevices(q));
+      }
+      b.show();
    }
 
    private void showOtherDevicePreview(JSONObject q) {
@@ -4052,8 +4073,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       double lng = o.optDouble("longitude", 0.0);
       double distKm = (lat == 0.0 && lng == 0.0) ? Double.MAX_VALUE : this.distKmFromMe(lat, lng);
       StringBuilder meta = new StringBuilder();
+      if (isBeingDelivered(o)) meta.append("🚚 Sedang diantar");
       String deviceLabel = o.optString("device_group_label", "");
-      if (!deviceLabel.isEmpty()) meta.append("📱 ").append(deviceLabel);
+      if (!deviceLabel.isEmpty()) meta.append(meta.length() > 0 ? " · " : "").append("📱 ").append(deviceLabel);
       meta.append(meta.length() > 0 ? " · " : "").append(o.optInt("galon", 0)).append(" galon");
       meta.append(receiptSuffix(o.optString("receipt_no", "")));
       meta.append(orderedSuffix(o.optString("ordered_at", "")));
@@ -4151,8 +4173,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             h.tvAdminArea.setVisibility(View.GONE);
          }
          h.btnMore.setVisibility(View.GONE);
-         h.btnTakeOver.setText("📥");
+         boolean delivering = row.json != null && DeliveryQueueActivity.isBeingDelivered(row.json);
+         h.btnTakeOver.setText(delivering ? "🚚" : "📥");
+         h.btnTakeOver.setAlpha(delivering ? 0.5F : 1.0F);
          h.btnTakeOver.setOnClickListener((v) -> {
+            if (delivering) {
+               DeliveryQueueActivity.this.toastBeingDelivered(row.json);
+               return;
+            }
             this.hostDialog.dismiss();
             DeliveryQueueActivity.this.claimOtherQueueRow(row);
          });
@@ -8068,7 +8096,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       java.util.LinkedHashMap<String, String> picked = new java.util.LinkedHashMap<>();
       for (JSONObject o : this.otherDevicesAdapter.data) {
          String uuid = o.optString("uuid", "");
-         if (!uuid.isEmpty() && this.claimSelectedOther.contains(uuid)) {
+         // Yang keburu dijalankan kurirnya setelah dipilih (daftar disegarkan) tak ikut diklaim.
+         if (!uuid.isEmpty() && this.claimSelectedOther.contains(uuid) && !isBeingDelivered(o)) {
             picked.put(uuid, o.optString("routed_uuid", ""));
          }
       }
@@ -8378,10 +8407,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          DeliveryQueueActivity.this.bindPriorityLine(h.tvPriorityBig, orderPriority, this.str(q, "order_priority_reason"));
          long elapsedMs = DeliveryQueueActivity.elapsedMillis(q.optString("queued_at", (String)null));
          DeliveryQueueActivity.bindElapsedBadge(h.tvElapsed, elapsedMs);
+         boolean delivering = DeliveryQueueActivity.isBeingDelivered(q);
          StringBuilder meta = new StringBuilder();
+         if (delivering) {
+            meta.append("\ud83d\ude9a Sedang diantar");
+         }
          String dev = this.str(q, "device_group_label");
          if (!dev.isEmpty()) {
-            meta.append("\ud83d\udcf1 ").append(dev);
+            meta.append(meta.length() > 0 ? " \u00b7 " : "").append("\ud83d\udcf1 ").append(dev);
          }
 
          String phone = this.str(q, "phone");
@@ -8415,6 +8448,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
 
          h.btnMore.setOnClickListener((v) -> DeliveryQueueActivity.this.showOtherDeviceMoreMenu(v, q));
+         // Sedang diantar → 📥 diganti 🚚 redup; detail yang terbuka tak punya tombol Ambil Alih.
+         h.btnTakeOver.setText(delivering ? "🚚" : "📥");
+         h.btnTakeOver.setAlpha(delivering ? 0.5F : 1.0F);
          h.btnTakeOver.setOnClickListener((v) -> DeliveryQueueActivity.this.showOtherDeviceOrderDetail(q));
          if (h.btnWaChat != null) {
             String waPhone = q.optString("phone", "");
@@ -8442,6 +8478,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
          h.itemView.setOnClickListener((v) -> {
             if (DeliveryQueueActivity.this.claimSelectOther) {
+               if (delivering) {
+                  DeliveryQueueActivity.this.toastBeingDelivered(q);
+                  return;
+               }
                DeliveryQueueActivity.this.toggleClaimOther(trxUuid);
                this.notifyItemChanged(h.getBindingAdapterPosition());
             } else {
@@ -8449,7 +8489,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             }
          });
          h.itemView.setOnLongClickListener((v) -> {
-            if (DeliveryQueueActivity.this.claimSelectOther || trxUuid.isEmpty()) {
+            if (DeliveryQueueActivity.this.claimSelectOther || trxUuid.isEmpty() || delivering) {
                return false;
             }
             DeliveryQueueActivity.this.enterClaimSelect(false);
