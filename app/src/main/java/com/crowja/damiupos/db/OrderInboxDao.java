@@ -367,13 +367,11 @@ public class OrderInboxDao {
         return ids;
     }
 
-    /** Digit saja, 08xx→628xx (samakan dengan dedup nomor di server). null bila kosong. */
+    /** Kunci kanonik "62…" (samakan dengan dedup nomor di server) — satu normaliser bersama
+     *  {@link CustomerDao#canonicalPhone}. null bila tanpa digit. */
     private static String canonicalPhone(String phone) {
-        if (phone == null) return null;
-        String d = phone.replaceAll("\\D+", "");
-        if (d.isEmpty()) return null;
-        if (d.startsWith("0")) d = "62" + d.substring(1);
-        return d;
+        String k = CustomerDao.canonicalPhone(phone);
+        return k.isEmpty() ? null : k;
     }
 
     private static String joinIds(List<Long> ids) {
