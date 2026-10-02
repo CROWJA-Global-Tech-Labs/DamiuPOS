@@ -1956,10 +1956,11 @@ public class TransactionActivity extends AppCompatActivity {
      */
     private void highlightLastPurchasedItems(Customer c) {
         if (c == null || c.getId() <= 0) {
-            applyLastPurchasedNames(java.util.Collections.emptyList());
+            applyLastPurchasedNames(java.util.Collections.emptyList(), null);
             return;
         }
-        applyLastPurchasedNames(transactionDao.getLastJualProductNames(c.getId()));
+        applyLastPurchasedNames(transactionDao.getLastJualProductNames(c.getId()),
+                transactionDao.getLastJualTanggal(c.getId()));
     }
 
     /**
@@ -1969,7 +1970,24 @@ public class TransactionActivity extends AppCompatActivity {
      * (trim + case-insensitive), bukan pid: pid lokal-perangkat, dan produk bisa direname sejak
      * transaksi lama disimpan.
      */
-    private void applyLastPurchasedNames(java.util.List<String> lastNames) {
+    /** "↩ Terakhir dibeli Kam, 1 Okt · 2 hari lalu" — hari dihitung per tanggal kalender lokal. */
+    private static String lastBoughtLabel(String tanggal) {
+        long ms = com.crowja.damiupos.util.Ts.millis(tanggal);
+        if (tanggal == null || tanggal.isEmpty() || ms == Long.MAX_VALUE) return "↩ Terakhir dibeli";
+        java.util.Calendar a = java.util.Calendar.getInstance();
+        a.setTimeInMillis(ms);
+        java.util.Calendar b = java.util.Calendar.getInstance();
+        for (java.util.Calendar k : new java.util.Calendar[]{a, b}) {
+            k.set(java.util.Calendar.HOUR_OF_DAY, 0); k.set(java.util.Calendar.MINUTE, 0);
+            k.set(java.util.Calendar.SECOND, 0); k.set(java.util.Calendar.MILLISECOND, 0);
+        }
+        long days = Math.round((b.getTimeInMillis() - a.getTimeInMillis()) / 86_400_000.0);
+        String ago = days <= 0 ? "hari ini" : days + " hari lalu";
+        return "↩ Terakhir dibeli " + new java.text.SimpleDateFormat("EEE, d MMM",
+                new java.util.Locale("id", "ID")).format(new java.util.Date(ms)) + " · " + ago;
+    }
+
+    private void applyLastPurchasedNames(java.util.List<String> lastNames, String lastTanggal) {
         for (ProductEntry pe : productEntries) {
             if (pe.tvLastBought != null) {
                 pe.tvLastBought.clearAnimation();
@@ -1985,6 +2003,7 @@ public class TransactionActivity extends AppCompatActivity {
             if (pname == null || !normalized.contains(pname.trim().toLowerCase(java.util.Locale.ROOT))) continue;
             startLastBoughtBlink(pe.row);   // border kartu berkedip kuning TERUS-MENERUS
             if (pe.tvLastBought != null) {
+                pe.tvLastBought.setText(lastBoughtLabel(lastTanggal));
                 pe.tvLastBought.setVisibility(View.VISIBLE);
                 blinkViewForever(pe.tvLastBought);   // badge-nya sendiri tetap berkedip selama tampil
             }
@@ -2022,6 +2041,8 @@ public class TransactionActivity extends AppCompatActivity {
                     if (n != null && !n.isEmpty()) lastItems.add(n);
                 }
             }
+            org.json.JSONObject lo = res.optJSONObject("last_order");
+            final String lastTanggal = lo == null || lo.isNull("tanggal") ? null : lo.optString("tanggal");
             final java.util.Map<String, Integer> counts = new java.util.HashMap<>();
             org.json.JSONObject dc = res.optJSONObject("delivery_counts");
             if (dc != null) {
@@ -2065,7 +2086,7 @@ public class TransactionActivity extends AppCompatActivity {
                 // jalankan ulang dengan vonis se-cabang. Anti-spam menjaga agar tak dobel.
                 Customer again = customerDao.getById(targetCustomerId);
                 if (again != null) maybeWarnDuplicateOrderToday(again);
-                applyLastPurchasedNames(lastItems);
+                applyLastPurchasedNames(lastItems, lastTanggal);
                 selectedLocationCounts = counts;
                 updateKirimKeCard();
                 if (tvLastOrderLine != null) {
@@ -2151,6 +2172,36 @@ public class TransactionActivity extends AppCompatActivity {
 
     /** Kartu "Kirim ke" tampil HANYA saat JUAL & pelanggan punya >1 lokasi
      *  (disembunyikan di mode payout/promosi). Label = nama lokasi terpilih. */
+    /** Jarak tempuh + waktu perjalanan darat dari cabang (OSRM di server, di-cache server) per koordinat. */
+    private final java.util.Map<String, String> routeInfoByCoord = new java.util.HashMap<>();
+    private final java.util.Set<String> routeInfoPending = new java.util.HashSet<>();
+
+    private void fetchRouteInfo(String coord, double lat, double lng) {
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+        if (!cfg.isEnrolled() || !routeInfoPending.add(coord)) return;
+        new Thread(() -> {
+            String label = null;
+            try {
+                org.json.JSONObject r = new com.crowja.damiupos.sync.SyncApi(cfg).calculateOngkir(lat, lng);
+                double km = r.optDouble("km", Double.NaN);
+                if (!Double.isNaN(km)) {
+                    boolean driving = "driving".equals(r.optString("method"));
+                    label = (driving ? "🚗 " : "📏 ") + String.format(java.util.Locale.US, "%.1f", km).replace('.', ',') + " km"
+                            + (r.isNull("minutes") || !r.has("minutes") ? (driving ? "" : " (garis lurus)")
+                               : " · ±" + r.optInt("minutes") + " mnt");
+                }
+            } catch (Exception ignored) {
+            }
+            final String fl = label;
+            runOnUiThread(() -> {
+                routeInfoPending.remove(coord);
+                if (fl == null || isFinishing() || isDestroyed()) return;
+                routeInfoByCoord.put(coord, fl);
+                updateKirimKeCard();
+            });
+        }).start();
+    }
+
     private void updateKirimKeCard() {
         if (cardKirimKe == null) return;
         // Tampil untuk JUAL bila pelanggan punya >=1 lokasi berkoordinat. Single-lokasi = preview
@@ -2186,9 +2237,10 @@ public class TransactionActivity extends AppCompatActivity {
                 ? selectedLocations.get(selectedDestIndex) : null;
         if (tvKirimKeCoord != null) {
             boolean hasCoord = selectedDestLat != 0 || selectedDestLng != 0;
-            tvKirimKeCoord.setText(hasCoord
-                    ? String.format(java.util.Locale.US, "%.5f, %.5f", selectedDestLat, selectedDestLng)
-                    : "Koordinat belum diisi");
+            String coord = String.format(java.util.Locale.US, "%.5f, %.5f", selectedDestLat, selectedDestLng);
+            String route = hasCoord ? routeInfoByCoord.get(coord) : null;
+            tvKirimKeCoord.setText(hasCoord ? coord + (route != null ? '\n' + route : "") : "Koordinat belum diisi");
+            if (hasCoord && route == null) fetchRouteInfo(coord, selectedDestLat, selectedDestLng);
         }
         if (ivKirimKeThumb != null) {
             loadLocationThumb(ivKirimKeThumb, locationPhotoSource(sel, selectedDestIndex == 0), true);
