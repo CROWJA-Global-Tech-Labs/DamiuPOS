@@ -18,6 +18,11 @@ public class Customer {
         public double lat;
         public double lng;
         public boolean wajibOngkir;
+        /** Tarif ongkir lokasi (Rp/galon) milik SERVER — HP tak mengeditnya, hanya me-round-trip apa
+         *  adanya. null = tak ada di data server (kunci tidak dikirim balik, server mempertahankan
+         *  nilainya sendiri). Dulu kunci ini tak dikenal HP sama sekali, sehingga setiap edit pelanggan
+         *  di HP menghapus tarif semua lokasinya di server. */
+        public Double ongkir;
         /** Foto UTAMA lokasi (URL server, kadang path lokal) = photos.get(0). null = pakai foto rumah
          *  pelanggan untuk lokasi utama. Di-round-trip apa adanya saat push supaya foto per-lokasi
          *  web tidak terhapus. Dipertahankan sebagai cermin tunggal untuk pembaca lama. */

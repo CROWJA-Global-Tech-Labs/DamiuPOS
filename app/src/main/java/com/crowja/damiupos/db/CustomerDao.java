@@ -1887,6 +1887,9 @@ public class CustomerDao {
                     o.put("lat", l.lat);
                     o.put("lng", l.lng);
                     o.put("wajib_ongkir", l.wajibOngkir);
+                    // Round-trip tarif ongkir per lokasi milik server (HP tak mengeditnya) — tanpa ini
+                    // push edit pelanggan menghapus tarif tiap lokasinya di server.
+                    if (l.ongkir != null && !l.ongkir.isNaN()) o.put("ongkir", l.ongkir.doubleValue());
                     // Round-trip foto per-lokasi apa adanya — kalau di-drop, edit pelanggan (web ATAU
                     // HP, keduanya bisa mengubah koleksi sekarang) akan menghapus foto lokasi saat
                     // push balik.
@@ -1941,6 +1944,10 @@ public class CustomerDao {
                 boolean wajib = o.optBoolean("wajib_ongkir", false)
                         || o.optInt("wajib_ongkir", 0) != 0;
                 Customer.Location loc = new Customer.Location(name, lat, lng, wajib);
+                if (o.has("ongkir") && !o.isNull("ongkir")) {
+                    double ongkir = o.optDouble("ongkir", Double.NaN);
+                    if (!Double.isNaN(ongkir)) loc.ongkir = ongkir;
+                }
                 String id = o.isNull("id") ? "" : o.optString("id", "").trim();
                 if (!id.isEmpty() && !"null".equalsIgnoreCase(id)) loc.id = id;
                 // optString() mengembalikan STRING "null" untuk JSON null (jebakan org.json) — nilai

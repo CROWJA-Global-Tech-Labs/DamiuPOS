@@ -116,6 +116,9 @@ public class CustomerFormActivity extends AppCompatActivity {
         String id;
         /** Koleksi foto lokasi (URL server, maks 5) — bisa diedit langsung di form ini. */
         final java.util.List<String> photos = new java.util.ArrayList<>();
+        /** Tarif ongkir lokasi milik server (tak diedit di form) — dibawa apa adanya ke
+         *  Customer.Location supaya simpan form tak menghapus tarifnya di server. */
+        Double ongkir;
 
         LocationRow(View v) {
             view = v;
@@ -545,6 +548,7 @@ public class CustomerFormActivity extends AppCompatActivity {
             row.lat = loc.lat;
             row.lng = loc.lng;
             row.id = loc.id;
+            row.ongkir = loc.ongkir;
             if (loc.photos != null) row.photos.addAll(loc.photos);
             // Lokasi TERSIMPAN: hormati nilai aslinya (jangan paksa ke default — pelanggan yang
             // sengaja bebas ongkir tak boleh diam-diam berubah saat formnya dibuka/diedit).
@@ -923,6 +927,7 @@ public class CustomerFormActivity extends AppCompatActivity {
             LocationRow r = rows.get(i);
             Customer.Location loc = new Customer.Location(resolved.get(i), r.lat, r.lng, r.cbWajib.isChecked());
             loc.id = r.id;
+            loc.ongkir = r.ongkir;
             loc.photos.addAll(r.photos);
             loc.photo = r.photos.isEmpty() ? null : r.photos.get(0);
             out.add(loc);
