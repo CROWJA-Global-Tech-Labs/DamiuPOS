@@ -101,6 +101,10 @@ public class TransactionActivity extends AppCompatActivity {
     /** Status Wajib Ongkir pelanggan yang SEDANG terpilih — dipakai guard di toggle ongkir:
      *  memilih "Tanpa" (gratis ongkir) ditolak dengan popup lalu dikembalikan ke Per Galon. */
     private boolean selectedWajibOngkir = false;
+    /** Tarif ongkir (Rp/galon) lokasi tujuan TERPILIH dari data server ({@link Customer.Location#ongkir});
+     *  0 = tak ada. > 0 → default Per Galon dengan nominal = tarif ini (bukan default Pengaturan) dan
+     *  diperlakukan seperti Wajib Ongkir — cermin form Transaksi Baru web. */
+    private double selectedOngkirRate = 0;
     /** Ketidakcocokan ongkir sudah dikonfirmasi staf (2 klik) → jangan tanya lagi untuk isian ini.
      *  Direset begitu pelanggan / mode ongkir / nominalnya berubah (lihat resetOngkirAck). */
     private boolean ongkirAcknowledged = false;
@@ -389,7 +393,7 @@ public class TransactionActivity extends AppCompatActivity {
                     && !(promosiMode && isPromosiGratis())) {
                 new AlertDialog.Builder(this)
                         .setTitle("⚠️ Wajib Ongkir")
-                        .setMessage("Pelanggan ini ditandai \"Wajib Ongkir\" — ongkos kirim tidak "
+                        .setMessage("Lokasi tujuan ini wajib ongkir (punya tarif ongkir) — ongkos kirim tidak "
                                 + "boleh gratis. Pilihan dikembalikan ke Per Galon.")
                         .setPositiveButton("OK", null)
                         .setOnDismissListener(d -> toggleOngkirMode.check(R.id.btnOngkirPerGalon))
@@ -1281,7 +1285,9 @@ public class TransactionActivity extends AppCompatActivity {
             } else {
                 tilOngkir.setHint("Ongkos Kirim / Botol Galon");
                 userEditedOngkir = false;
-                double defaultOngkir = settingsDao.getDefaultOngkir();
+                // Tarif lokasi tujuan menang atas tarif default Pengaturan.
+                double defaultOngkir = selectedOngkirRate > 0
+                        ? selectedOngkirRate : settingsDao.getDefaultOngkir();
                 syncingOngkir = true;
                 etOngkir.setText(defaultOngkir > 0
                         ? String.valueOf((long) defaultOngkir) : "");
@@ -1921,7 +1927,7 @@ public class TransactionActivity extends AppCompatActivity {
         // = Per Galon (opsi "Tanpa" dijaga popup di listener toggle). Cek tombol memicu listener
         // → updateOngkirUI() yang mengisi nominal ongkir default. Hanya untuk JUAL.
         applyCustomerLocations(c);
-        if (isJualSelected() && selectedWajibOngkir) toggleOngkirMode.check(R.id.btnOngkirPerGalon);
+        if (isJualSelected() && selectedWajibOngkir) applyPerGalonDefault();
         tvSelectedCustomer.setText(c.getName());
         userEditedKembali = false;
         // Pelanggan Umum → ownership default = Botol Sendiri (konsumen memakai galon
@@ -2129,12 +2135,14 @@ public class TransactionActivity extends AppCompatActivity {
             selectedDestName = primary.name;
             selectedDestLat = primary.lat;
             selectedDestLng = primary.lng;
-            selectedWajibOngkir = primary.wajibOngkir;
+            selectedOngkirRate = rateOf(primary);
+            selectedWajibOngkir = primary.wajibOngkir || selectedOngkirRate > 0;
             ongkirAcknowledged = false;   // pelanggan/lokasi lain → status berbeda, tanya lagi
         } else {
             selectedDestName = null;
             selectedDestLat = 0;
             selectedDestLng = 0;
+            selectedOngkirRate = 0;
             selectedWajibOngkir = c != null && c.isWajibOngkir();
             ongkirAcknowledged = false;
         }
@@ -2297,12 +2305,27 @@ public class TransactionActivity extends AppCompatActivity {
         selectedDestName = l.name;
         selectedDestLat = l.lat;
         selectedDestLng = l.lng;
-        selectedWajibOngkir = l.wajibOngkir;
+        selectedOngkirRate = rateOf(l);
+        selectedWajibOngkir = l.wajibOngkir || selectedOngkirRate > 0;
         ongkirAcknowledged = false;   // ganti lokasi tujuan → status wajib ongkirnya ikut ganti
-        if (isJualSelected() && l.wajibOngkir) {
-            toggleOngkirMode.check(R.id.btnOngkirPerGalon);
+        if (isJualSelected() && selectedWajibOngkir) applyPerGalonDefault();
+        else if (isJualSelected() && toggleOngkirMode.getCheckedButtonId() == R.id.btnOngkirPerGalon) {
+            updateOngkirUI();   // lokasi tanpa tarif → nominal kembali ke default, bukan tarif lokasi sebelumnya
         }
         updateKirimKeCard();
+    }
+
+    /** Tarif ongkir lokasi (Rp/galon) dari server; 0 bila tak ada. */
+    private static double rateOf(Customer.Location l) {
+        return l != null && l.ongkir != null && !l.ongkir.isNaN() && l.ongkir > 0 ? l.ongkir : 0;
+    }
+
+    /** Lokasi tujuan wajib ongkir / bertarif → Ongkos Kirim = Per Galon dengan nominal tarif
+     *  lokasinya. Bila Per Galon SUDAH terpilih, check() tak memicu listener, jadi nominalnya
+     *  diisi ulang langsung lewat updateOngkirUI(). */
+    private void applyPerGalonDefault() {
+        if (toggleOngkirMode.getCheckedButtonId() == R.id.btnOngkirPerGalon) updateOngkirUI();
+        else toggleOngkirMode.check(R.id.btnOngkirPerGalon);
     }
 
     /** Sumber foto preview untuk sebuah lokasi: foto lokasi sendiri bila ada; untuk lokasi UTAMA
@@ -2404,7 +2427,11 @@ public class TransactionActivity extends AppCompatActivity {
             coord.setText(hasCoord
                     ? String.format(java.util.Locale.US, "%.5f, %.5f", l.lat, l.lng)
                     : "Koordinat belum diisi");
-            badge.setVisibility(l.wajibOngkir ? View.VISIBLE : View.GONE);
+            double rate = rateOf(l);
+            badge.setText(rate > 0
+                    ? "🚚 Ongkir Rp" + NumberFormat.getInstance(new Locale("id", "ID")).format((long) rate) + "/galon"
+                    : "🚚 Wajib Ongkir");
+            badge.setVisibility(l.wajibOngkir || rate > 0 ? View.VISIBLE : View.GONE);
             int cnt = deliveryCountFor(i);
             if (count != null) {
                 count.clearAnimation();
