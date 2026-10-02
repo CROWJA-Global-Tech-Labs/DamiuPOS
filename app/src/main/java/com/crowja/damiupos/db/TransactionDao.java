@@ -1395,6 +1395,17 @@ public class TransactionDao {
      * SUDAH terjadi. Dicocokkan lewat NAMA (bukan pid) oleh pemanggil — pid device-local, produk
      * bisa direname sejak transaksi lama disimpan.
      */
+    /** Tanggal pembelian JUAL terakhir (aturan sama dgn {@link #getLastJualProductNames}); null bila tak ada. */
+    public String getLastJualTanggal(long customerId) {
+        Cursor cursor = dbHelper.getReadableDatabase().rawQuery("SELECT tanggal FROM transactions " +
+                "WHERE type='JUAL' AND customer_id=? AND (delivery_status IS NULL OR delivery_status != ?) " +
+                "ORDER BY tanggal DESC, _id DESC LIMIT 1",
+                new String[]{String.valueOf(customerId), Transaction.DELIVERY_TERTUNDA});
+        String t = cursor.moveToFirst() ? cursor.getString(0) : null;
+        cursor.close();
+        return t;
+    }
+
     public List<String> getLastJualProductNames(long customerId) {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         String query = "SELECT items_json FROM transactions " +

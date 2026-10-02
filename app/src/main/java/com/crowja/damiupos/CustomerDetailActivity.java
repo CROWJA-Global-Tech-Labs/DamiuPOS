@@ -907,7 +907,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
         }
         if (lt != null) {
             bindLastOrder(lt.getTanggal(), lt.getReceiptNo(), lt.getDeliveryStatus(), lt.getPaymentMethodLabel(),
-                    lt.getTotalHarga(), localBadges(lt), "perangkat ini", lt.getDeliveryDestName());
+                    lt.getTotalHarga(), localBadges(lt), "perangkat ini", lt.getDeliveryDestName(),
+                    lt.getDeliveryDoneAt(), lt.getDeliveryQueuedAt());
         } else {
             cardLastOrder.setVisibility(View.GONE);
         }
@@ -953,13 +954,15 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 String device = str(flo, "device");
                 String who = staff.isEmpty() ? device : (device.isEmpty() ? staff : staff + " (" + device + ")");
                 bindLastOrder(str(flo, "tanggal"), str(flo, "receipt_no"), str(flo, "delivery_status"),
-                        payLabel(str(flo, "payment_method")), flo.optDouble("total", 0), badges, who, str(flo, "dest"));
+                        payLabel(str(flo, "payment_method")), flo.optDouble("total", 0), badges, who, str(flo, "dest"),
+                        str(flo, "done_at"), str(flo, "queued_at"));
             });
         }).start();
     }
 
     private void bindLastOrder(String tanggal, String receiptNo, String status, String pay, double total,
-                               java.util.List<Object[]> badges, String who, String dest) {
+                               java.util.List<Object[]> badges, String who, String dest,
+                               String doneAt, String queuedAt) {
         TextView head = findViewById(R.id.tvLastOrderHead);
         TextView meta = findViewById(R.id.tvLastOrderMeta);
         android.widget.LinearLayout row = findViewById(R.id.lastOrderBadges);
@@ -978,6 +981,17 @@ public class CustomerDetailActivity extends AppCompatActivity {
         sb.append(" · ").append(statusLabel(status));
         if (who != null && !who.isEmpty()) sb.append("\nOleh ").append(who);
         if (dest != null && !dest.isEmpty() && !"null".equals(dest)) sb.append(" · ke ").append(dest);
+        // Kapan diselesaikan + lama prosesnya (dari mulai antre, fallback tanggal transaksi).
+        long doneMs = com.crowja.damiupos.util.Ts.millis(doneAt);
+        if (doneAt != null && !doneAt.isEmpty() && doneMs != Long.MAX_VALUE) {
+            sb.append('\n').append("✅ Selesai ").append(new java.text.SimpleDateFormat("EEE, d MMM HH:mm",
+                    new java.util.Locale("id", "ID")).format(new java.util.Date(doneMs)));
+            long startMs = com.crowja.damiupos.util.Ts.millis(queuedAt);
+            if (queuedAt == null || queuedAt.isEmpty() || startMs == Long.MAX_VALUE) startMs = ms;
+            if (startMs != Long.MAX_VALUE && doneMs >= startMs) {
+                sb.append(" · ⏱ ").append(DeliveryQueueActivity.formatDuration(doneMs - startMs));
+            }
+        }
         meta.setText(sb.toString());
         cardLastOrder.setVisibility(View.VISIBLE);
     }

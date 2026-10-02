@@ -6994,7 +6994,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return System.currentTimeMillis() - t;
    }
 
-   private static String formatDuration(long ms) {
+   static String formatDuration(long ms) {
       long s = ms / 1000L;
       long h = s / 3600L;
       long m = s % 3600L / 60L;
