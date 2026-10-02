@@ -1928,6 +1928,9 @@ public class TransactionActivity extends AppCompatActivity {
         // → updateOngkirUI() yang mengisi nominal ongkir default. Hanya untuk JUAL.
         applyCustomerLocations(c);
         if (isJualSelected() && selectedWajibOngkir) applyPerGalonDefault();
+        else if (isJualSelected() && toggleOngkirMode.getCheckedButtonId() == R.id.btnOngkirPerGalon) {
+            updateOngkirUI();   // pelanggan tanpa tarif → nominal kembali ke default, bukan tarif pelanggan sebelumnya
+        }
         tvSelectedCustomer.setText(c.getName());
         userEditedKembali = false;
         // Pelanggan Umum → ownership default = Botol Sendiri (konsumen memakai galon
