@@ -48,9 +48,6 @@
                 android:layout_marginStart="8dp"
                 android:orientation="vertical">
 
-                <!-- Nama produk + badge "↩ Terakhir dibeli" BERDAMPINGAN (bukan badge di baris
-                     tersendiri di bawahnya seperti sebelumnya) — nama tetap dapat jatah lebar
-                     fleksibel (weight=1) jadi masih wrap/ellipsize wajar saat badge tampil. -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -68,24 +65,6 @@
                         android:textColor="@color/text_primary"
                         android:textSize="14sp"
                         android:textStyle="bold" />
-
-                    <!-- Muncul begitu pelanggan dipilih, untuk produk yang ada di pembelian (JUAL)
-                         TERAKHIR-nya (lihat TransactionActivity.highlightLastPurchasedItems). -->
-                    <TextView
-                        android:id="@+id/tvItemLastBought"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="6dp"
-                        android:paddingStart="6dp"
-                        android:paddingEnd="6dp"
-                        android:paddingTop="1dp"
-                        android:paddingBottom="1dp"
-                        android:background="@drawable/bg_badge_wajib"
-                        android:text="↩ Terakhir dibeli"
-                        android:textColor="#B45309"
-                        android:textSize="10sp"
-                        android:textStyle="bold"
-                        android:visibility="gone" />
                 </LinearLayout>
 
                 <LinearLayout
@@ -169,6 +148,24 @@
                 app:cornerRadius="8dp" />
         </LinearLayout>
 
+        <!-- "↩ Terakhir dibeli <tgl> · N hari lalu" — di BAWAH baris, masih di dalam kotak kuning,
+             supaya nama produk tak terpotong (TransactionActivity.applyLastPurchasedNames). -->
+        <TextView
+            android:id="@+id/tvItemLastBought"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="20dp"
+            android:layout_marginBottom="6dp"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:paddingTop="1dp"
+            android:paddingBottom="1dp"
+            android:background="@drawable/bg_badge_wajib"
+            android:text="↩ Terakhir dibeli"
+            android:textColor="#B45309"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"

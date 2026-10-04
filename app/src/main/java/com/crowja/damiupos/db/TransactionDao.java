@@ -90,7 +90,10 @@ public class TransactionDao {
         // kredit galon/komisi ke staf yang clock-in di perangkat tujuan. Activity mengirim null saat
         // "Perangkat ini" terpilih, jadi di sini non-kosong pasti berarti perangkat lain.
         String assigned = trx.getAssignedDeviceUuid();
-        boolean assignedElsewhere = Transaction.TYPE_JUAL.equals(trx.getType())
+        // KEMBALI juga boleh ditugaskan: jadi tugas "AMBIL GALON" di antrean perangkat tujuan
+        // (server: pickup_only = KEMBALI PENDING). "Perangkat ini" → KEMBALI tetap langsung selesai.
+        boolean isKembali = Transaction.TYPE_KEMBALI.equals(trx.getType());
+        boolean assignedElsewhere = (Transaction.TYPE_JUAL.equals(trx.getType()) || isKembali)
                 && assigned != null && !assigned.trim().isEmpty();
         if (assignedElsewhere) {
             values.put(DatabaseHelper.COL_ASSIGNED_DEVICE_UUID, assigned.trim());
@@ -102,7 +105,8 @@ public class TransactionDao {
         // JUAL diantrikan sebagai pengiriman bila: Pesanan Tertunda diminta, ATAU bukan akuisisi
         // marketing di lokasi (perilaku lama), ATAU ditugaskan ke perangkat lain (agar perangkat
         // tujuan melihatnya di antrean — termasuk untuk marketing yang menugaskan ke kurir).
-        if (Transaction.TYPE_JUAL.equals(trx.getType()) && (tertundaRequested || !marketing || assignedElsewhere)) {
+        if ((Transaction.TYPE_JUAL.equals(trx.getType()) && (tertundaRequested || !marketing || assignedElsewhere))
+                || (isKembali && assignedElsewhere)) {
             if (tertundaRequested) {
                 // Diparkir: keluar dari antrian aktif (web & HP memfilter 'PENDING' persis), jadwal
                 // lanjut otomatis WAJIB — cermin App\Support\TertundaSchedule::apply di web.
@@ -1440,6 +1444,22 @@ public class TransactionDao {
      * lokasi UTAMA (indeks 0), karena sebelum multi-lokasi ada, semua pengiriman memang ke sana.
      */
     public static final String UNNAMED_DEST_KEY = "";
+
+    /** Tarif ongkir Per Galon dari JUAL terakhir pelanggan ke lokasi ini (destName null = lokasi
+     *  mana pun) — fallback bila tarif lokasi tak terbawa ke HP. 0 = belum pernah berongkir. */
+    public double getLastPerGalonOngkir(long customerId, String destName) {
+        String q = "SELECT ongkir FROM transactions WHERE type='JUAL' AND customer_id=? "
+                + "AND ongkir_type=? AND ongkir>0"
+                + (destName != null ? " AND COALESCE(delivery_dest_name,'')=?" : "")
+                + " ORDER BY tanggal DESC, _id DESC LIMIT 1";
+        String[] args = destName != null
+                ? new String[]{String.valueOf(customerId), Transaction.ONGKIR_PER_GALON, destName}
+                : new String[]{String.valueOf(customerId), Transaction.ONGKIR_PER_GALON};
+        Cursor c = dbHelper.getReadableDatabase().rawQuery(q, args);
+        double v = c.moveToFirst() ? c.getDouble(0) : 0;
+        c.close();
+        return v;
+    }
 
     public java.util.Map<String, Integer> countJualByDeliveryDestName(long customerId) {
         SQLiteDatabase db = dbHelper.getReadableDatabase();

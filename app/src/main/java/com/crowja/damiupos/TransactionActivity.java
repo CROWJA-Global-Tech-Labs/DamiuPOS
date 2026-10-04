@@ -263,6 +263,8 @@ public class TransactionActivity extends AppCompatActivity {
     // ini untuk menandai delivery_status=TERTUNDA + jadwal lanjut, cermin web (App\Support\TertundaSchedule).
     private android.view.View btnTertunda;
     private boolean tertundaRequested = false;
+    // "Simpan & Selesaikan" (menu ⋮ samping Simpan): konfirmasi sama, lalu order langsung DONE.
+    private boolean completeAfterSave = false;
     private String tertundaResumeAtDb;   // format trxDbFmt — dipakai juga sbg selectedTrxDate (tanggal ikut jadwal)
 
     private final List<TransactionItem> items = new ArrayList<>();
@@ -540,7 +542,19 @@ public class TransactionActivity extends AppCompatActivity {
         // validasi (mis. "Pilih pelanggan dulu") — tombol terakhir yang ditekan yang menang.
         findViewById(R.id.btnSimpan).setOnClickListener(v -> {
             tertundaRequested = false;
+            completeAfterSave = false;
             trySave();
+        });
+        findViewById(R.id.btnSimpanMore).setOnClickListener(v -> {
+            android.widget.PopupMenu m = new android.widget.PopupMenu(this, v);
+            m.getMenu().add(0, 1, 0, "✅ Simpan & Selesaikan");
+            m.setOnMenuItemClickListener(item -> {
+                tertundaRequested = false;
+                completeAfterSave = true;
+                trySave();
+                return true;
+            });
+            m.show();
         });
         btnTertunda = findViewById(R.id.btnTertunda);
         btnTertunda.setOnClickListener(v -> showTertundaScheduleDialog());
@@ -716,6 +730,7 @@ public class TransactionActivity extends AppCompatActivity {
         if (!products.isEmpty()) etPayoutNilai.setText(String.valueOf(Math.round(products.get(0).getHargaJual())));
 
         com.google.android.material.button.MaterialButton btnSimpan = findViewById(R.id.btnSimpan);
+        findViewById(R.id.btnSimpanMore).setVisibility(View.GONE);   // payout: tak ada "Selesaikan"
         btnSimpan.setText("Cairkan");
 
         togglePayoutType.addOnButtonCheckedListener((g, checkedId, isChecked) -> {
@@ -975,7 +990,8 @@ public class TransactionActivity extends AppCompatActivity {
         refreshUseSaldoCard();   // "Gunakan Saldo Komisi" hanya untuk JUAL
         // "Perangkat yang ditugaskan" hanya untuk JUAL air & role staf/marketing/SPV (bukan pencairan komisi).
         if (cardAssignDevice != null) {
-            cardAssignDevice.setVisibility(isJual && assignDeviceEligible && !payoutMode ? View.VISIBLE : View.GONE);
+            boolean kembali = toggleType.getCheckedButtonId() == R.id.btnTypeKembali;
+            cardAssignDevice.setVisibility((isJual || kembali) && assignDeviceEligible && !payoutMode ? View.VISIBLE : View.GONE);
         }
         // Pesanan Tertunda: JUAL air saja (KEMBALI/Jual Botol tak diantrikan di HP sama sekali —
         // tak ada antrian aktif untuk "ditunda"), bukan mode payout/promosi (akuisisi di lokasi).
@@ -1013,7 +1029,8 @@ public class TransactionActivity extends AppCompatActivity {
         }
         populateAssignSpinner();
         // Visibilitas awal (updateTypeUI awal berjalan sebelum eligibility diset saat onCreate).
-        cardAssignDevice.setVisibility(isJualSelected() && !payoutMode ? View.VISIBLE : View.GONE);
+        cardAssignDevice.setVisibility((isJualSelected() || toggleType.getCheckedButtonId() == R.id.btnTypeKembali)
+                && !payoutMode ? View.VISIBLE : View.GONE);
 
         // Konfirmasi alih-penugasan (MARKETING): sentuhan menandai AKSI USER; setSelection programatik
         // (populate / roster refresh) TIDAK. Saat user memilih perangkat/staf LAIN (pos>0) → popup YA/BATAL.
@@ -2052,6 +2069,10 @@ public class TransactionActivity extends AppCompatActivity {
             }
             org.json.JSONObject lo = res.optJSONObject("last_order");
             final String lastTanggal = lo == null || lo.isNull("tanggal") ? null : lo.optString("tanggal");
+            // Ongkir Per Galon order terakhir SE-CABANG (order HP lain tak ada di DB lokal).
+            final double lastPerGalon = lo != null && "per_galon".equals(lo.optString("ongkir_type"))
+                    ? lo.optDouble("ongkir", 0) : 0;
+            final String lastDest = lo == null || lo.isNull("dest") ? "" : lo.optString("dest");
             final java.util.Map<String, Integer> counts = new java.util.HashMap<>();
             org.json.JSONObject dc = res.optJSONObject("delivery_counts");
             if (dc != null) {
@@ -2096,6 +2117,12 @@ public class TransactionActivity extends AppCompatActivity {
                 Customer again = customerDao.getById(targetCustomerId);
                 if (again != null) maybeWarnDuplicateOrderToday(again);
                 applyLastPurchasedNames(lastItems, lastTanggal);
+                String curDest = selectedDestName != null ? selectedDestName : "";
+                if (lastPerGalon > 0 && selectedOngkirRate <= 0 && lastDest.equals(curDest)) {
+                    selectedOngkirRate = lastPerGalon;
+                    selectedWajibOngkir = true;
+                    if (isJualSelected() && !(promosiMode && isPromosiGratis())) applyPerGalonDefault();
+                }
                 selectedLocationCounts = counts;
                 updateKirimKeCard();
                 if (tvLastOrderLine != null) {
@@ -2139,14 +2166,15 @@ public class TransactionActivity extends AppCompatActivity {
             selectedDestLat = primary.lat;
             selectedDestLng = primary.lng;
             selectedOngkirRate = rateOf(primary);
+            if (selectedOngkirRate <= 0 && c != null) selectedOngkirRate = transactionDao.getLastPerGalonOngkir(c.getId(), primary.name);
             selectedWajibOngkir = primary.wajibOngkir || selectedOngkirRate > 0;
             ongkirAcknowledged = false;   // pelanggan/lokasi lain → status berbeda, tanya lagi
         } else {
             selectedDestName = null;
             selectedDestLat = 0;
             selectedDestLng = 0;
-            selectedOngkirRate = 0;
-            selectedWajibOngkir = c != null && c.isWajibOngkir();
+            selectedOngkirRate = c != null ? transactionDao.getLastPerGalonOngkir(c.getId(), null) : 0;
+            selectedWajibOngkir = (c != null && c.isWajibOngkir()) || selectedOngkirRate > 0;
             ongkirAcknowledged = false;
         }
         updateKirimKeCard();
@@ -2309,6 +2337,7 @@ public class TransactionActivity extends AppCompatActivity {
         selectedDestLat = l.lat;
         selectedDestLng = l.lng;
         selectedOngkirRate = rateOf(l);
+        if (selectedOngkirRate <= 0 && selectedCustomerId > 0) selectedOngkirRate = transactionDao.getLastPerGalonOngkir(selectedCustomerId, l.name);
         selectedWajibOngkir = l.wajibOngkir || selectedOngkirRate > 0;
         ongkirAcknowledged = false;   // ganti lokasi tujuan → status wajib ongkirnya ikut ganti
         if (isJualSelected() && selectedWajibOngkir) applyPerGalonDefault();
@@ -3741,6 +3770,9 @@ public class TransactionActivity extends AppCompatActivity {
             if (assignDeviceEligible) {
                 trx.setAssignedDeviceUuid(selectedAssignUuid());
             }
+        } else if (Transaction.TYPE_KEMBALI.equals(trx.getType()) && assignDeviceEligible) {
+            // Ambil galon ditugaskan ke perangkat lain → tugas AMBIL GALON di antreannya (TransactionDao.insert).
+            trx.setAssignedDeviceUuid(selectedAssignUuid());
         }
         double hargaGR = 0;
         int rusak = 0;
@@ -3987,6 +4019,15 @@ public class TransactionActivity extends AppCompatActivity {
             new com.crowja.damiupos.db.ResellerWithdrawalDao(DatabaseHelper.getInstance(this))
                     .insert(selectedCustomerId, com.crowja.damiupos.db.ResellerWithdrawalDao.TYPE_UANG,
                             0, saldoUsed, "Bayar transaksi pakai saldo komisi", 0);
+        }
+        // "Simpan & Selesaikan": order yang baru masuk antrean langsung ditandai Selesai (jalur sama
+        // dgn Selesaikan di Antrian Delivery → completed_by, kredit galon, finalisasi gift ikut).
+        if (completeAfterSave) {
+            completeAfterSave = false;
+            Transaction saved = transactionDao.getById(newTrxId);
+            if (saved != null && Transaction.DELIVERY_PENDING.equals(saved.getDeliveryStatus())) {
+                transactionDao.markDelivered(newTrxId);
+            }
         }
         // Transaksi baru (JUAL masuk Antrian Delivery) → dorong segera ke dashboard
         // tanpa menunggu polling ~60 detik, supaya antrean delivery real-time.
