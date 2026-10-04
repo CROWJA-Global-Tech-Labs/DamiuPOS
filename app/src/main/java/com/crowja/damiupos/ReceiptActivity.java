@@ -677,8 +677,12 @@ public class ReceiptActivity extends AppCompatActivity {
                 String pname = in.getStringExtra(EXTRA_PRODUCT_NAME);
                 int jumlah = in.getIntExtra(EXTRA_JUMLAH, 0);
                 double harga = in.getDoubleExtra(EXTRA_HARGA_PER_GALON, 0);
-                addCardRow(items, pname != null && !pname.isEmpty() ? pname : "Air minum",
-                        jumlah + " × Rp " + nf.format(harga), "Rp " + nf.format(jumlah * harga), dotColor);
+                // Kunjungan tanpa barang (hanya tagih hutang/ambil galon kosong): jangan cetak baris hantu
+                // "Air minum 0 × Rp 0".
+                if (jumlah > 0) {
+                    addCardRow(items, pname != null && !pname.isEmpty() ? pname : "Air minum",
+                            jumlah + " × Rp " + nf.format(harga), "Rp " + nf.format(jumlah * harga), dotColor);
+                }
                 totalGalon = jumlah;
             }
             // Ongkir
@@ -1115,16 +1119,18 @@ public class ReceiptActivity extends AppCompatActivity {
                 totalGalon += it.jumlah;
             }
         } else {
-            // Legacy single-product fallback
-            if (productName != null && !productName.isEmpty()) {
-                sb.append(wrapText(productName)).append("\n");
-            } else {
-                sb.append("Air minum\n");
+            // Legacy single-product fallback (dilewati untuk kunjungan tanpa barang: jumlah 0)
+            if (jumlah > 0) {
+                if (productName != null && !productName.isEmpty()) {
+                    sb.append(wrapText(productName)).append("\n");
+                } else {
+                    sb.append("Air minum\n");
+                }
+                double subtotalAir = jumlah * hargaPerGalon;
+                sb.append(leftRight(
+                        "  " + jumlah + " x Rp " + nf.format(hargaPerGalon),
+                        "Rp " + nf.format(subtotalAir))).append("\n");
             }
-            double subtotalAir = jumlah * hargaPerGalon;
-            sb.append(leftRight(
-                    "  " + jumlah + " x Rp " + nf.format(hargaPerGalon),
-                    "Rp " + nf.format(subtotalAir))).append("\n");
             totalGalon = jumlah;
         }
 

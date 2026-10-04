@@ -3017,10 +3017,21 @@ public class TransactionActivity extends AppCompatActivity {
         double totalHarga = 0;
         String ongkirType = Transaction.ONGKIR_NONE;
 
+        // Kunjungan TANPA barang (mis. ambil galon kosong sambil menagih hutang lama): keranjang
+        // kosong boleh disimpan bila pelanggan masih punya hutang — uang yang diterima berasal dari
+        // pelunasan hutang itu (nominalnya WAJIB > 0, lihat askSettleDebt mode wajib). Cermin web:
+        // tombol kirim aktif bila "uang diterima" > 0, bukan hanya bila harga penjualan > 0.
+        boolean debtOnlyVisit = false;
         if (isJual) {
             if (items.isEmpty()) {
-                Toast.makeText(this, "Tambahkan minimal 1 item", Toast.LENGTH_SHORT).show();
-                return;
+                if (!promosiMode && selectedCustomerId > 0 && !isUmumCustomer()
+                        && new com.crowja.damiupos.db.CustomerDebtDao(DatabaseHelper.getInstance(this))
+                                .balanceFor(selectedCustomerId) > 0) {
+                    debtOnlyVisit = true;
+                } else {
+                    Toast.makeText(this, "Tambahkan minimal 1 item", Toast.LENGTH_SHORT).show();
+                    return;
+                }
             }
             for (TransactionItem it : items) {
                 totalJumlah += it.jumlah;
@@ -3182,6 +3193,9 @@ public class TransactionActivity extends AppCompatActivity {
                 msg.append("Beli Botol: ").append(String.valueOf(totalJumlah))
                         .append(" × Rp ").append(nf.format(hb)).append("\n");
             }
+            if (debtOnlyVisit) {
+                msg.append("Tanpa penjualan — sekalian tagih hutang lama (nominal ditanyakan berikutnya).\n");
+            }
             msg.append("\n");
             appendStyled(msg, "Total: Rp " + nf.format(totalHarga),
                     Color.parseColor("#1565C0"), true, 1.1f);
@@ -3202,6 +3216,7 @@ public class TransactionActivity extends AppCompatActivity {
         final double fOngkir = ongkir;
         final double fTotal = totalHarga;
         final boolean fIsJual = isJual;
+        final boolean fDebtOnly = debtOnlyVisit;
         final String fOngkirType = ongkirType;
         final String fOwnership = isJual
                 ? umumSafeOwnership(getSelectedOwnership()) : Transaction.OWNERSHIP_PINJAM;
@@ -3218,13 +3233,16 @@ public class TransactionActivity extends AppCompatActivity {
                     boolean gratisPromo = promosiMode && isPromosiGratis() && fTotal <= 0;
                     if (fIsJual && !gratisPromo) {
                         // JUAL: wajib pilih metode pembayaran dulu.
+                        // Kunjungan tanpa barang: "Hutang (bayar nanti)" tak ditawarkan (tak ada yang
+                        // dihutangkan) dan dialog pelunasan WAJIB diisi > 0 — tanpa uang masuk,
+                        // transaksi kosong tak boleh tersimpan.
                         showPaymentPicker(method -> {
                             pendingPayment = method;
                             // Punya hutang lama? Tawarkan sekalian menagihnya SEBELUM simpan, supaya
                             // baris pelunasannya bisa ditautkan ke transaksi ini.
                             askSettleDebt(method, () -> doSave(fIsJual, fTotalJumlah, fOngkir, fTotal,
-                                    fJumlahKembali, fOngkirType, fOwnership, fHargaBotol));
-                        });
+                                    fJumlahKembali, fOngkirType, fOwnership, fHargaBotol), fDebtOnly);
+                        }, fDebtOnly);
                     } else {
                         pendingPayment = null; // KEMBALI / promosi gratis: tidak ada pembayaran
                         doSave(fIsJual, fTotalJumlah, fOngkir, fTotal, fJumlahKembali,
@@ -3248,12 +3266,26 @@ public class TransactionActivity extends AppCompatActivity {
      * menambah hutang tidak masuk akal). Nominal tetap dipagari sisa hutang di CustomerDebtDao.
      */
     private void askSettleDebt(String method, Runnable next) {
+        askSettleDebt(method, next, false);
+    }
+
+    /**
+     * @param mandatory true untuk kunjungan TANPA barang (keranjang kosong): satu-satunya uang yang
+     *                  masuk adalah pelunasan ini, jadi nominal WAJIB > 0 dan membatalkan dialog
+     *                  membatalkan penyimpanan (bukan lanjut menyimpan transaksi kosong).
+     */
+    private void askSettleDebt(String method, Runnable next, boolean mandatory) {
         pendingDebtPay = 0;
         double sisa = (selectedCustomerId > 0 && !Transaction.PAY_HUTANG.equals(method))
                 ? new com.crowja.damiupos.db.CustomerDebtDao(DatabaseHelper.getInstance(this))
                         .balanceFor(selectedCustomerId)
                 : 0;
         if (sisa <= 0) {
+            if (mandatory) {
+                Toast.makeText(this, "Pelanggan ini tidak punya hutang lagi — tambahkan minimal 1 item",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
             next.run();
             return;
         }
@@ -3267,24 +3299,44 @@ public class TransactionActivity extends AppCompatActivity {
         box.setPadding(pad, pad / 2, pad, 0);
         box.addView(nominal);
 
-        new AlertDialog.Builder(this)
-                .setTitle("Sekalian Lunasi Hutang?")
-                .setMessage(selectedCustomerName + " masih punya hutang Rp "
-                        + java.text.NumberFormat.getNumberInstance(new java.util.Locale("in", "ID"))
-                                .format(Math.round(sisa))
-                        + ". Tagihan transaksi ini tidak berubah — nominal di bawah adalah uang tambahan.")
-                .setView(box)
-                .setNegativeButton("Nanti saja", (d, w) -> next.run())
-                .setPositiveButton("Tagih", (d, w) -> {
-                    try {
-                        pendingDebtPay = Double.parseDouble(nominal.getText().toString().trim());
-                    } catch (NumberFormatException ex) {
-                        pendingDebtPay = 0;
-                    }
-                    next.run();
-                })
-                .setOnCancelListener(d -> next.run())
-                .show();
+        String sisaTxt = java.text.NumberFormat.getNumberInstance(new java.util.Locale("in", "ID"))
+                .format(Math.round(sisa));
+        AlertDialog.Builder b = new AlertDialog.Builder(this).setView(box);
+        if (mandatory) {
+            b.setTitle("Tagih Hutang")
+                    .setMessage(selectedCustomerName + " masih punya hutang Rp " + sisaTxt
+                            + ". Transaksi ini tanpa penjualan — nominal di bawah adalah uang yang diterima.")
+                    .setNegativeButton("Batal", null)
+                    .setPositiveButton("Tagih", (d, w) -> {
+                        double v;
+                        try {
+                            v = Double.parseDouble(nominal.getText().toString().trim());
+                        } catch (NumberFormatException ex) {
+                            v = 0;
+                        }
+                        if (v <= 0) {
+                            Toast.makeText(this, "Nominal harus lebih dari 0", Toast.LENGTH_SHORT).show();
+                            return;
+                        }
+                        pendingDebtPay = v;
+                        next.run();
+                    });
+        } else {
+            b.setTitle("Sekalian Lunasi Hutang?")
+                    .setMessage(selectedCustomerName + " masih punya hutang Rp " + sisaTxt
+                            + ". Tagihan transaksi ini tidak berubah — nominal di bawah adalah uang tambahan.")
+                    .setNegativeButton("Nanti saja", (d, w) -> next.run())
+                    .setPositiveButton("Tagih", (d, w) -> {
+                        try {
+                            pendingDebtPay = Double.parseDouble(nominal.getText().toString().trim());
+                        } catch (NumberFormatException ex) {
+                            pendingDebtPay = 0;
+                        }
+                        next.run();
+                    })
+                    .setOnCancelListener(d -> next.run());
+        }
+        b.show();
     }
 
     /** Callback metode pembayaran. */
@@ -3292,9 +3344,18 @@ public class TransactionActivity extends AppCompatActivity {
 
     /** Dialog pilih metode pembayaran: Tunai / QRIS / Transfer / Hutang. */
     private void showPaymentPicker(OnPayment cb) {
-        final String[] labels = {"Tunai", "QRIS", "Transfer", "Hutang (bayar nanti)"};
-        final String[] values = {Transaction.PAY_TUNAI, Transaction.PAY_QRIS,
-                Transaction.PAY_TRANSFER, Transaction.PAY_HUTANG};
+        showPaymentPicker(cb, false);
+    }
+
+    /** @param withoutHutang true = tanpa opsi "Hutang (bayar nanti)" (kunjungan tanpa barang). */
+    private void showPaymentPicker(OnPayment cb, boolean withoutHutang) {
+        final String[] labels = withoutHutang
+                ? new String[]{"Tunai", "QRIS", "Transfer"}
+                : new String[]{"Tunai", "QRIS", "Transfer", "Hutang (bayar nanti)"};
+        final String[] values = withoutHutang
+                ? new String[]{Transaction.PAY_TUNAI, Transaction.PAY_QRIS, Transaction.PAY_TRANSFER}
+                : new String[]{Transaction.PAY_TUNAI, Transaction.PAY_QRIS,
+                        Transaction.PAY_TRANSFER, Transaction.PAY_HUTANG};
         new AlertDialog.Builder(this)
                 .setTitle("Metode Pembayaran")
                 .setItems(labels, (d, which) -> cb.onPick(values[which]))

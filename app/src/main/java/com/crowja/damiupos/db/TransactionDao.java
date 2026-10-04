@@ -166,7 +166,10 @@ public class TransactionDao {
         // Gift pelanggan: JUAL untuk pelanggan tersimpan meng-klaim SEMUA gift pending-nya —
         // redeemed_at terisi + struk ditautkan (redeemed_transaction_uuid = sync_uuid transaksi ini)
         // → di-push balik ke server & tampil di struk. Non-JUAL / walk-in (customerId≤0) = no-op.
-        if (Transaction.TYPE_JUAL.equals(trx.getType()) && trx.getCustomerId() > 0) {
+        // Kunjungan tanpa barang terjual (Rp0 & 0 galon — hanya tagih hutang lama/ambil galon kosong)
+        // bukan pembelian: gift tidak ikut terpakai (cermin TransactionController::storePending di web).
+        if (Transaction.TYPE_JUAL.equals(trx.getType()) && trx.getCustomerId() > 0
+                && (trx.getTotalHarga() > 0 || trx.getJumlahGalon() > 0)) {
             String trxUuid = null;
             try (Cursor uc = db.query(DatabaseHelper.TABLE_TRANSACTIONS,
                     new String[]{DatabaseHelper.COL_SYNC_UUID},
