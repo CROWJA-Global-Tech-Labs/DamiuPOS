@@ -149,6 +149,20 @@
         <activity android:name=".FollowUpMapActivity" />
         <activity android:name=".CustomerMapActivity" />
         <activity android:name=".DeliveryQueueActivity" />
+        <!-- 🧭 Navigasi Pengiriman: ringkasan perhentian aktif MELAYANG (Picture-in-Picture) di atas
+             Google Maps. taskAffinity sendiri → jendela melayang adalah task terpisah, jadi antrean
+             tidak ikut mengecil; singleTask → tombol Navigasi berikutnya memakai ulang jendela yang
+             sama (onNewIntent). configChanges: PiP ↔ layar penuh mengubah ukuran tanpa membuat
+             ulang activity. Tanpa izin overlay — PiP bawaan Android. -->
+        <activity
+            android:name=".NavigationPipActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
+            android:taskAffinity="com.crowja.damiupos.navpip" />
         <activity android:name=".OtherDeviceQueueActivity" />
         <activity android:name=".SalesAchievementActivity" />
         <activity android:name=".IntroWaActivity" />

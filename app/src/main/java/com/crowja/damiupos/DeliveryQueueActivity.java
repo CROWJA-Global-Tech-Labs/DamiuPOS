@@ -100,6 +100,7 @@ import com.crowja.damiupos.sync.SyncSettings;
 import com.crowja.damiupos.sync.VersionUpdater;
 import com.crowja.damiupos.util.BitmapUtils;
 import com.crowja.damiupos.util.CompassArrowView;
+import com.crowja.damiupos.util.DeliveryNavLogic;
 import com.crowja.damiupos.util.DeliveryProofPolicy;
 import com.crowja.damiupos.util.Ts;
 import com.crowja.damiupos.wa.WaContactEnsure;
@@ -4714,18 +4715,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private void openMapsNavigation(double lat, double lng) {
-      Uri nav = Uri.parse("google.navigation:q=" + lat + "," + lng);
-      Intent i = (new Intent("android.intent.action.VIEW", nav)).setPackage("com.google.android.apps.maps");
-      if (i.resolveActivity(this.getPackageManager()) == null) {
-         i = new Intent("android.intent.action.VIEW", Uri.parse("https://www.google.com/maps?q=" + lat + "," + lng));
-      }
-
-      try {
-         this.startActivity(i);
-      } catch (Exception var8) {
-         Toast.makeText(this, "Tidak ada aplikasi peta", 0).show();
-      }
-
+      NavigationPipActivity.startMaps(this, NavigationPipActivity.singleNavIntent(this, lat, lng, false));
    }
 
    private String trackLinkOrToast(Transaction t) {
@@ -5238,29 +5228,68 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * ditagihnya dan "Total harus diterima" = penjualan lokasi ini saja.</p>
     */
    private String debtSummaryText(Transaction t) {
-      if (t == null || t.getCustomerId() <= 0L) {
+      PriorDebt pd = priorDebtFor(DatabaseHelper.getInstance(this), t);
+      double prior = pd.amount;
+      if (prior <= (double)0.0F) {
          return "";
-      } else {
-         String trxUuid = (new TransactionDao(DatabaseHelper.getInstance(this))).getSyncUuidById(t.getId());
-         CustomerDebtDao debtDao = new CustomerDebtDao(DatabaseHelper.getInstance(this));
-         String co = legCheckoutUuid(t);
-         double prior = co != null
-               ? debtDao.balanceExcludingTransaction(t.getCustomerId(), trxUuid, co)
-               : debtDao.balanceExcludingTransaction(t.getCustomerId(), trxUuid);
-         if (prior <= (double)0.0F) {
-            return "";
-         }
-         // 🧺 Hutang lama ditagih di SATU pintu (DebtBalance::priorForDoor). Pintu lain: tagihannya
-         // hanya penjualan lokasi ini — kurir diberi tahu di mana hutang lamanya ditagih.
-         CheckoutStrukText.DebtDoor door = co != null ? this.dao.oldDebtDoor(t) : null;
-         if (door != null && !door.here) {
-            // Leg pintu tagih tak ada di HP ini (dirutekan ke HP lain / di-void) → kalimat bersyarat.
-            return "\n" + CheckoutStrukText.oldDebtElsewhereLine(door, this.rp(prior))
-                  + "\nTotal harus diterima: " + this.rp(t.getTotalHarga());
-         }
-         return "\nHutang sebelumnya: " + this.rp(prior)
-               + "\nTotal harus diterima: " + this.rp(t.getTotalHarga() + prior);
       }
+      // 🧺 Hutang lama ditagih di SATU pintu (DebtBalance::priorForDoor). Pintu lain: tagihannya
+      // hanya penjualan lokasi ini — kurir diberi tahu di mana hutang lamanya ditagih.
+      if (!pd.here()) {
+         // Leg pintu tagih tak ada di HP ini (dirutekan ke HP lain / di-void) → kalimat bersyarat.
+         return "\n" + CheckoutStrukText.oldDebtElsewhereLine(pd.door, this.rp(prior))
+               + "\nTotal harus diterima: " + this.rp(t.getTotalHarga());
+      }
+      return "\nHutang sebelumnya: " + this.rp(prior)
+            + "\nTotal harus diterima: " + this.rp(t.getTotalHarga() + prior);
+   }
+
+   /**
+    * Hutang LAMA pelanggan untuk pintu sebuah order + pintu tagihnya — SATU sumber untuk popup
+    * antrean ({@link #debtSummaryText}) dan jendela melayang navigasi (NavigationPipActivity), jadi
+    * keduanya tak mungkin menyebut angka berbeda.
+    */
+   static final class PriorDebt {
+      static final PriorDebt NONE = new PriorDebt(0.0, null);
+
+      /** Hutang lama (> 0), atau 0 bila tak ada. */
+      final double amount;
+      /** Pintu tagih leg checkout; null = order tunggal (selalu ditagih di sini). */
+      final CheckoutStrukText.DebtDoor door;
+
+      PriorDebt(double amount, CheckoutStrukText.DebtDoor door) {
+         this.amount = amount;
+         this.door = door;
+      }
+
+      /** Hutang lama ditagih di pintu INI. */
+      boolean here() {
+         return this.door == null || this.door.here;
+      }
+   }
+
+   /** Lihat {@link PriorDebt}. Aman dipanggil dari thread latar (hanya baca DB). */
+   static PriorDebt priorDebtFor(DatabaseHelper db, Transaction t) {
+      if (t == null || t.getCustomerId() <= 0L) return PriorDebt.NONE;
+      TransactionDao trxDao = new TransactionDao(db);
+      String trxUuid = trxDao.getSyncUuidById(t.getId());
+      CustomerDebtDao debtDao = new CustomerDebtDao(db);
+      String co = legCheckoutUuid(t);
+      double prior = co != null
+            ? debtDao.balanceExcludingTransaction(t.getCustomerId(), trxUuid, co)
+            : debtDao.balanceExcludingTransaction(t.getCustomerId(), trxUuid);
+      if (prior <= 0.0) return PriorDebt.NONE;
+      return new PriorDebt(prior, co != null ? trxDao.oldDebtDoor(t) : null);
+   }
+
+   /**
+    * Saldo refund yang memotong order ini (Σ baris 'usage' buku besar customer_refunds) — SATU
+    * sumber untuk {@link #refundSummaryText} dan jendela melayang navigasi. Aman dari thread latar.
+    */
+   static double refundUsedFor(DatabaseHelper db, Transaction t) {
+      if (t == null || t.getId() <= 0L) return 0.0;
+      String trxUuid = (new TransactionDao(db)).getSyncUuidById(t.getId());
+      return (new CustomerRefundDao(db)).usedForTransaction(trxUuid);
    }
 
    /**
@@ -5278,8 +5307,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (t == null || t.getId() <= 0L) {
          return "";
       } else {
-         String trxUuid = (new TransactionDao(DatabaseHelper.getInstance(this))).getSyncUuidById(t.getId());
-         double used = (new CustomerRefundDao(DatabaseHelper.getInstance(this))).usedForTransaction(trxUuid);
+         double used = refundUsedFor(DatabaseHelper.getInstance(this), t);
          return used <= (double)0.0F
                ? ""
                : "\nDari saldo refund: " + this.rp(used)
@@ -6166,68 +6194,64 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return effectiveLat(t) != (double)0.0F || effectiveLng(t) != (double)0.0F;
    }
 
+   /**
+    * 🧭 Navigasi rit: LANGSUNG membuka Google Maps dengan rute rit berjalan (tanpa dialog konfirmasi
+    * lagi) — titik = perhentian rit bertitik peta menurut urutan rit (rencana terkini, termasuk hasil
+    * "Urutkan Rute Terpendek"), maks 10 (batas Google Maps), tujuan = titik terakhir. DAMIU POS lalu
+    * mengecil jadi jendela melayang (NavigationPipActivity) berisi perhentian aktif. PiP tak bisa
+    * dipakai → Maps dibuka langsung seperti dulu + petunjuk sekali.
+    */
    private void navigasiRitAktif() {
       List<Transaction> stops = this.runningGeoStops();
       if (stops.isEmpty()) {
-         Toast.makeText(this, "Order yang sedang diantar belum punya titik koordinat", 1).show();
-      } else {
-         if (stops.size() > 10) {
-            stops = new ArrayList(stops.subList(0, 10));
-            Toast.makeText(this, "Dibatasi 10 tujuan (batas Google Maps)", 0).show();
-         }
-
-         List<Transaction> finalStops = stops;
-         StringBuilder sb = new StringBuilder();
-
-         for(int i = 0; i < finalStops.size(); ++i) {
-            sb.append(i + 1).append(". ").append(routeStopLabel((Transaction)finalStops.get(i))).append('\n');
-         }
-
-         (new AlertDialog.Builder(this)).setTitle("\ud83d\udccd Urutan Rit (" + finalStops.size() + " tujuan)").setMessage(sb.toString().trim()).setPositiveButton("Buka Google Maps", (d, w) -> this.openMapsRoute(finalStops)).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).show();
-      }
-   }
-
-   private static String routeStopLabel(Transaction t) {
-      String name = safe(t.getCustomerName());
-      String dest = t.getDeliveryDestName();
-      return dest != null && !dest.trim().isEmpty() ? name + " (" + dest.trim() + ")" : name;
-   }
-
-   private void openMapsRoute(List<Transaction> stops) {
-      try {
-         this.startActivity(new Intent("android.intent.action.VIEW", Uri.parse(buildMapsDirUrl(stops))));
-      } catch (Exception var3) {
-         Toast.makeText(this, "Tidak ada aplikasi peta", 0).show();
+         Toast.makeText(this, "Order yang sedang diantar belum punya titik koordinat", Toast.LENGTH_LONG).show();
          return;
       }
 
-      Toast.makeText(this, "Rute " + stops.size() + " tujuan dibuka", 0).show();
+      // SEMUA perhentian bertitik dipantau jendela melayang; Maps hanya menerima 10 pertama.
+      long[] ritIds = new long[stops.size()];
+      for (int i = 0; i < stops.size(); ++i) {
+         ritIds[i] = stops.get(i).getId();
+      }
+      List<Transaction> route = stops;
+      if (stops.size() > DeliveryNavLogic.MAX_MAPS_STOPS) {
+         route = DeliveryNavLogic.capRoute(stops);
+         Toast.makeText(this, "Dibatasi 10 tujuan (batas Google Maps)", Toast.LENGTH_SHORT).show();
+      }
+      this.openMapsRoute(route, ritIds);
+   }
+
+   private void openMapsRoute(List<Transaction> stops, long[] ritIds) {
+      String url = buildMapsDirUrl(stops);
+      if (url == null) return;
+      boolean floating = NavigationPipActivity.launchRit(this, ritIds, url);
+      if (!floating && !NavigationPipActivity.startMaps(this, NavigationPipActivity.routeIntent(this, url, false))) {
+         return;   // "Tidak ada aplikasi peta" sudah ditampilkan
+      }
+
+      Toast.makeText(this, "Rute " + stops.size() + " tujuan dibuka", Toast.LENGTH_SHORT).show();
+      if (!floating) NavigationPipActivity.showPipHintOnce(this);
       this.exitSelectionMode();
    }
 
+   /** URL rute Maps (urutan = urutan {@code stops}, maks 10) + dir_action=navigate — lihat DeliveryNavLogic. */
    private static String buildMapsDirUrl(List<Transaction> stops) {
-      Transaction dest = (Transaction)stops.get(stops.size() - 1);
-      StringBuilder url = new StringBuilder("https://www.google.com/maps/dir/?api=1&travelmode=driving");
-      url.append("&destination=").append(coord(dest));
-      if (stops.size() > 1) {
-         StringBuilder wp = new StringBuilder();
-
-         for(int i = 0; i < stops.size() - 1; ++i) {
-            if (i > 0) {
-               wp.append('|');
-            }
-
-            wp.append(coord((Transaction)stops.get(i)));
-         }
-
-         url.append("&waypoints=").append(Uri.encode(wp.toString()));
+      List<double[]> pts = new ArrayList<>(stops.size());
+      for (Transaction t : stops) {
+         pts.add(new double[]{effectiveLat(t), effectiveLng(t)});
       }
-
-      return url.toString();
+      return DeliveryNavLogic.buildDirUrl(pts, true);
    }
 
-   private static String coord(Transaction t) {
-      return effectiveLat(t) + "," + effectiveLng(t);
+   /**
+    * "🧭 Navigasi" satu order (Preview / FAB panel mode terpandu). Order antrean SENDIRI → jendela
+    * melayang berisi ringkasan order itu di atas Maps; selain itu (antrean perangkat lain, atau PiP
+    * tak bisa dipakai) → Maps langsung seperti dulu.
+    */
+   private void navigateToOrder(long trxId, double lat, double lng) {
+      if (trxId > 0L && NavigationPipActivity.launchSingle(this, trxId, lat, lng)) return;
+      this.openMapsNavigation(lat, lng);
+      if (trxId > 0L) NavigationPipActivity.showPipHintOnce(this);
    }
 
    private static double haversineKm(double lat1, double lng1, double lat2, double lng2) {
@@ -8131,7 +8155,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          fabLp.gravity = android.view.Gravity.BOTTOM | android.view.Gravity.END;
          fabLp.setMargins(0, 0, this.dp(12f), this.dp(12f));
          fabNav.setLayoutParams(fabLp);
-         fabNav.setOnClickListener((v) -> this.openMapsNavigation(d.destLat, d.destLng));
+         fabNav.setOnClickListener((v) -> this.navigateToOrder(d.guidedTrxId, d.destLat, d.destLng));
          mapBox.addView(fabNav);
       }
       if (guided && d.phone != null && !d.phone.trim().isEmpty()) {
@@ -8322,7 +8346,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       AlertDialog.Builder builder = (new AlertDialog.Builder(this)).setTitle("🔍 Preview — " + safe(d.title))
             .setView(scroll).setPositiveButton("Tutup", (DialogInterface.OnClickListener) null);
       if (d.hasDest) {
-         builder.setNeutralButton("🧭 Navigasi", (dlg, w) -> this.openMapsNavigation(d.destLat, d.destLng));
+         builder.setNeutralButton("🧭 Navigasi", (dlg, w) -> this.navigateToOrder(d.guidedTrxId, d.destLat, d.destLng));
       }
 
       AlertDialog dialog = builder.create();
