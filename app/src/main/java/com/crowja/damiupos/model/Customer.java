@@ -33,6 +33,11 @@ public class Customer {
          *  photos.get(0). */
         public java.util.List<String> photos = new java.util.ArrayList<>();
 
+        /** Harga khusus LOKASI ini per produk {product_uuid: harga} (web & HP mengedit field JSON
+         *  'prices' yang sama). Menimpa harga khusus pelanggan untuk order ke lokasi ini; produk yang
+         *  tak ada di sini ikut harga pelanggan, lalu harga standar. Kosong = ikut pelanggan. */
+        public java.util.Map<String, Double> prices = new java.util.LinkedHashMap<>();
+
         public Location() {}
 
         public Location(String name, double lat, double lng, boolean wajibOngkir) {
@@ -572,6 +577,41 @@ public class Customer {
     /** Harga khusus per produk { product_uuid: harga } (null/kosong = ikut harga produk standar). */
     public java.util.Map<String, Double> getProductPrices() { return productPrices; }
     public void setProductPrices(java.util.Map<String, Double> v) { this.productPrices = v; }
+
+    /**
+     * Harga khusus EFEKTIF untuk order ke lokasi bernama {@code locationName}: harga khusus pelanggan
+     * ditimpa harga khusus lokasi itu (cocok nama, abaikan kapital/spasi tepi). Produk yang tak ada
+     * di peta hasil = harga produk standar. null/tak dikenal = harga pelanggan saja. CERMIN PERSIS
+     * Customer::priceOverridesFor di server — web, agen & HP wajib sama.
+     */
+    public java.util.Map<String, Double> priceOverridesFor(String locationName) {
+        java.util.Map<String, Double> out = new java.util.LinkedHashMap<>();
+        putValidPrices(out, productPrices);
+        Location loc = locationNamed(locationName);
+        if (loc != null) putValidPrices(out, loc.prices);
+        return out;
+    }
+
+    /** Hanya harga numerik ≥ 0 (cermin Customer::normalizePriceMap) — nilai rusak/NaN dari JSON tak
+     *  boleh jadi harga Rp0 di Transaksi Baru; produk itu jatuh ke harga di atasnya. */
+    private static void putValidPrices(java.util.Map<String, Double> out, java.util.Map<String, Double> src) {
+        if (src == null) return;
+        for (java.util.Map.Entry<String, Double> e : src.entrySet()) {
+            Double v = e.getValue();
+            if (e.getKey() != null && !e.getKey().trim().isEmpty() && v != null && !v.isNaN() && v >= 0) {
+                out.put(e.getKey().trim(), v);
+            }
+        }
+    }
+
+    /** Lokasi bernama {@code name} (tanpa beda kapital/spasi tepi), atau null. */
+    public Location locationNamed(String name) {
+        if (name == null || name.trim().isEmpty() || locations == null) return null;
+        for (Location l : locations) {
+            if (l != null && l.name != null && l.name.trim().equalsIgnoreCase(name.trim())) return l;
+        }
+        return null;
+    }
 
     /** Harga khusus untuk satu produk (by uuid), atau null = pakai harga produk standar. */
     public Double getPriceFor(String productUuid) {

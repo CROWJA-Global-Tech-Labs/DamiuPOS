@@ -443,6 +443,92 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- 🧺 Pintu masuk "Bagi ke beberapa lokasi" — tampil di bawah kartu "Kirim ke" hanya bila
+                 pelanggan punya ≥ 2 lokasi berkoordinat & JUAL biasa (TransactionActivity.canSplit).
+                 Teks inilah target ketuknya (membuka CheckoutSplitSheet). -->
+            <TextView
+                android:id="@+id/tvSplitEntry"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/bg_pill_blue"
+                android:clickable="true"
+                android:focusable="true"
+                android:paddingStart="12dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="12dp"
+                android:paddingBottom="6dp"
+                android:text="🧺 Bagi ke beberapa lokasi ›"
+                android:textColor="@color/primary"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+            <!-- 🧺 Mode bagi lokasi AKTIF: ringkasan tiap bagian ("📍 Rumah — 1 galon · Rp 8.000").
+                 Menggantikan kartu Kirim ke, item, ongkir, galon kembali & perangkat order tunggal;
+                 ketuk baris mana pun untuk mengubah pembagian (TransactionActivity.renderCheckoutPartsCard). -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardCheckoutParts"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:visibility="gone"
+                app:cardBackgroundColor="@color/card_jual"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="12dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/tvCheckoutPartsTitle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="🧺 Dibagi ke beberapa lokasi"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvCheckoutPartsEdit"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:text="Ubah ›"
+                            android:textColor="@color/primary"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/llCheckoutParts"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:orientation="vertical" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:text="Tiap lokasi = satu pengiriman sendiri dan dibayar di pintunya sendiri (metode bayar sama)."
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
             <!-- Ringkasan order terakhir (isi + siapa yang mengantar + ke mana) — SATU baris padat,
                  dari TransactionActivity.fetchOrderInsightsAsync (server, se-cabang). -->
             <TextView

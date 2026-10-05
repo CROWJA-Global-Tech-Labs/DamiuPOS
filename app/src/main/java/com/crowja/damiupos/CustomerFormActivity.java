@@ -109,6 +109,8 @@ public class CustomerFormActivity extends AppCompatActivity {
         final com.google.android.material.button.MaterialButton btnGps, btnPeta, btnMaps, btnGmapsLink, btnHitungOngkir;
         final com.google.android.material.checkbox.MaterialCheckBox cbWajib;
         final TextView tvHitungOngkir;
+        final TextInputEditText etOngkir;
+        final com.google.android.material.button.MaterialButton btnOngkirDefault;
         final android.widget.ProgressBar pb;
         final android.widget.LinearLayout llFoto;
         double lat, lng;
@@ -116,9 +118,17 @@ public class CustomerFormActivity extends AppCompatActivity {
         String id;
         /** Koleksi foto lokasi (URL server, maks 5) — bisa diedit langsung di form ini. */
         final java.util.List<String> photos = new java.util.ArrayList<>();
-        /** Tarif ongkir lokasi milik server (tak diedit di form) — dibawa apa adanya ke
-         *  Customer.Location supaya simpan form tak menghapus tarifnya di server. */
+        /** Tarif ongkir lokasi saat form dibuka (null = belum diatur) — nilai akhirnya dibaca dari
+         *  etOngkir saat simpan (lihat {@link #rowOngkir}). */
         Double ongkir;
+        /** Seksi lipat "Harga khusus lokasi ini": header (jumlah harga diatur) + satu kolom per produk. */
+        final TextView tvHargaHeader;
+        final android.widget.LinearLayout llHarga, llHargaRows;
+        final java.util.List<LocPriceField> priceFields = new java.util.ArrayList<>();
+        /** Harga lokasi untuk produk yang TAK punya kolom di HP ini (produk belum tersinkron / tanpa
+         *  uuid lokal) — dibawa apa adanya saat simpan supaya tak terhapus diam-diam. */
+        final java.util.Map<String, Double> hiddenPrices = new java.util.LinkedHashMap<>();
+        boolean hargaExpanded;
 
         LocationRow(View v) {
             view = v;
@@ -132,8 +142,25 @@ public class CustomerFormActivity extends AppCompatActivity {
             cbWajib = v.findViewById(R.id.cbWajibOngkirRow);
             btnHitungOngkir = v.findViewById(R.id.btnHitungOngkirRow);
             tvHitungOngkir = v.findViewById(R.id.tvHitungOngkirRow);
+            etOngkir = v.findViewById(R.id.etOngkirRow);
+            btnOngkirDefault = v.findViewById(R.id.btnOngkirDefaultRow);
             pb = v.findViewById(R.id.pbLokasiAkurasiRow);
             llFoto = v.findViewById(R.id.llLokasiFoto);
+            tvHargaHeader = v.findViewById(R.id.tvLokasiHargaHeader);
+            llHarga = v.findViewById(R.id.llLokasiHarga);
+            llHargaRows = v.findViewById(R.id.llLokasiHargaRows);
+        }
+    }
+
+    /** Satu kolom harga khusus LOKASI untuk satu produk (kunci = product uuid). Kosong = tak ada
+     *  harga lokasi → ikut harga pelanggan, lalu harga standar. */
+    private static final class LocPriceField {
+        final String uuid;
+        final TextInputEditText et;
+        final TextView tvSumber;
+        final double std;   // harga standar produk — fallback terakhir untuk petunjuk kolom
+        LocPriceField(String uuid, TextInputEditText et, TextView tvSumber, double std) {
+            this.uuid = uuid; this.et = et; this.tvSumber = tvSumber; this.std = std;
         }
     }
 
@@ -552,10 +579,17 @@ public class CustomerFormActivity extends AppCompatActivity {
             if (loc.photos != null) row.photos.addAll(loc.photos);
             // Lokasi TERSIMPAN: hormati nilai aslinya (jangan paksa ke default — pelanggan yang
             // sengaja bebas ongkir tak boleh diam-diam berubah saat formnya dibuka/diedit).
-            row.cbWajib.setChecked(loc.wajibOngkir);
+            // Tarif > 0 dari web = wajib ongkir juga (web hanya punya kolom tarif, tanpa centang).
+            row.cbWajib.setChecked(loc.wajibOngkir || (loc.ongkir != null && loc.ongkir > 0));
+            if (loc.ongkir != null && !loc.ongkir.isNaN()) {
+                row.etOngkir.setText(String.valueOf(Math.round(loc.ongkir)));
+            } else if (row.cbWajib.isChecked()) {
+                row.etOngkir.setText(String.valueOf(Math.round(locationOngkirDefault())));
+            }
         } else {
             // Lokasi BARU (pelanggan baru / tambah lokasi): default Wajib Ongkir = AKTIF.
             row.cbWajib.setChecked(true);
+            row.etOngkir.setText(String.valueOf(Math.round(locationOngkirDefault())));
             // Nama dibiarkan KOSONG (ada placeholder + preset di bawahnya) — staf memilih/mengetik
             // sendiri; kosong saat simpan jatuh ke nama default BEBAS berikutnya ("Kediaman",
             // "Kediaman 2", … — collectLocations). Tombol "+ Tambah Lokasi" mengisinya di muka
@@ -583,6 +617,29 @@ public class CustomerFormActivity extends AppCompatActivity {
         row.btnMaps.setOnClickListener(x -> openInGoogleMaps(row));
         row.btnGmapsLink.setOnClickListener(x -> showMapsLinkDialog(row));
         row.btnHitungOngkir.setOnClickListener(x -> hitungOngkirForRow(row));
+        row.btnOngkirDefault.setOnClickListener(x -> {
+            row.etOngkir.setText(String.valueOf(Math.round(locationOngkirDefault())));
+            row.cbWajib.setChecked(true);
+        });
+        // Centang <-> tarif: dicentang tanpa tarif -> isi default; centang dilepas -> tarif 0 (bebas
+        // ongkir); tarif > 0 diketik -> otomatis wajib.
+        row.cbWajib.setOnCheckedChangeListener((b, checked) -> {
+            Double cur = rowOngkir(row);
+            if (checked && (cur == null || cur <= 0)) {
+                row.etOngkir.setText(String.valueOf(Math.round(locationOngkirDefault())));
+            } else if (!checked && cur != null && cur > 0) {
+                row.etOngkir.setText("0");
+            }
+        });
+        row.etOngkir.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(android.text.Editable s) {
+                Double v = rowOngkir(row);
+                if (v != null && v > 0 && !row.cbWajib.isChecked()) row.cbWajib.setChecked(true);
+            }
+        });
+        buildLocationPriceFields(row, loc);
         v.findViewById(R.id.btnHapusLokasi).setOnClickListener(x -> removeLocationRow(row));
         // Error "nama sudah dipakai" hilang begitu namanya dibereskan (tanpa menunggu Simpan lagi).
         row.etName.addTextChangedListener(new android.text.TextWatcher() {
@@ -594,8 +651,169 @@ public class CustomerFormActivity extends AppCompatActivity {
         });
         llLokasi.addView(v);
         locationRows.add(row);
+        updateLocationRowStateSaving();
         updateKoordinatDisplay(row);
         renderLocationPhotos(row);
+    }
+
+    /**
+     * Android menyimpan-memulihkan isi view per ID saat activity dibuat ulang (rotasi, ganti tema,
+     * proses mati saat staf di Maps/galeri). Tiap baris lokasi memakai ID yang SAMA (etLokasiNama,
+     * etOngkirRow, cbWajibOngkirRow, …), jadi dengan ≥2 baris isi baris TERAKHIR ditimpakan ke semua
+     * baris — nama kembar, ongkir/centang wajib tertukar diam-diam. Pemulihan hanya diizinkan saat
+     * barisnya SATU (ketikan staf tetap selamat); selebihnya baris dibangun ulang dari database di
+     * onCreate. Kolom harga per produk di dalam baris dipagari terpisah (buildLocationPriceFields).
+     */
+    private void updateLocationRowStateSaving() {
+        boolean single = locationRows.size() <= 1;
+        for (LocationRow r : locationRows) r.view.setSaveFromParentEnabled(single);
+    }
+
+    /**
+     * Seksi "Harga khusus lokasi ini" satu baris lokasi: satu kolom per produk (katalog yang sama
+     * dengan Harga Khusus pelanggan), prefill dari Location.prices — kolom kosong = tak ada harga
+     * lokasi. Harga tersimpan untuk produk yang tak punya kolom di HP ini disisihkan ke hiddenPrices
+     * (ikut tersimpan apa adanya). Seksi terlipat; header menghitung harga yang diatur.
+     */
+    private void buildLocationPriceFields(LocationRow row, Customer.Location loc) {
+        row.llHargaRows.removeAllViews();
+        row.priceFields.clear();
+        row.hiddenPrices.clear();
+        java.util.Map<String, Double> saved = loc != null && loc.prices != null
+                ? loc.prices : java.util.Collections.<String, Double>emptyMap();
+        java.util.Set<String> shown = new java.util.HashSet<>();
+        for (com.crowja.damiupos.model.Product p : formProducts()) {
+            String uuid = p.getUuid();
+            if (uuid == null || uuid.isEmpty() || !shown.add(uuid)) continue;   // butuh uuid unik sebagai kunci
+            View pv = android.view.LayoutInflater.from(this)
+                    .inflate(R.layout.item_customer_location_price, row.llHargaRows, false);
+            ((TextView) pv.findViewById(R.id.tvLokHargaNama)).setText(p.getName());
+            TextInputEditText et = pv.findViewById(R.id.etLokHarga);
+            Double v = saved.get(uuid);
+            if (v != null && !v.isNaN()) et.setText(fmtPrice(v));
+            row.priceFields.add(new LocPriceField(uuid, et, pv.findViewById(R.id.tvLokHargaSumber),
+                    p.getHargaJual()));
+            et.addTextChangedListener(new android.text.TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+                @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+                @Override public void afterTextChanged(android.text.Editable s) {
+                    updateLocationPriceHeader(row);
+                }
+            });
+            row.llHargaRows.addView(pv);
+        }
+        for (java.util.Map.Entry<String, Double> e : saved.entrySet()) {
+            if (e.getKey() != null && e.getValue() != null && !shown.contains(e.getKey())) {
+                row.hiddenPrices.put(e.getKey(), e.getValue());
+            }
+        }
+        // ID etLokHarga sama di tiap kolom produk → dengan ≥2 produk, pemulihan state Android menimpakan
+        // isi kolom TERAKHIR ke semua kolom (seksi terlipat → tak terlihat; Simpan lalu mengirim harga
+        // yang salah / "prices":{} yang menghapus). Kolom dibangun ulang dari Location.prices di onCreate.
+        if (row.priceFields.size() > 1) for (LocPriceField f : row.priceFields) f.et.setSaveEnabled(false);
+        row.tvHargaHeader.setOnClickListener(x -> {
+            row.hargaExpanded = !row.hargaExpanded;
+            row.llHarga.setVisibility(row.hargaExpanded ? View.VISIBLE : View.GONE);
+            updateLocationPriceHeader(row);
+        });
+        // Katalog produk kosong (belum tersinkron) → tak ada yang bisa diatur; seksi disembunyikan
+        // (hiddenPrices tetap terbawa saat simpan).
+        boolean any = !row.priceFields.isEmpty();
+        row.tvHargaHeader.setVisibility(any ? View.VISIBLE : View.GONE);
+        if (!any) row.llHarga.setVisibility(View.GONE);
+        refreshLocationPriceHints(row);
+        updateLocationPriceHeader(row);
+    }
+
+    /** Header seksi harga lokasi: panah lipat/buka + jumlah produk yang diberi harga lokasi. Baris
+     *  tanpa koordinat tak ikut tersimpan (collectLocations) → harganya diberi tanda peringatan. */
+    private void updateLocationPriceHeader(LocationRow row) {
+        int n = 0;
+        for (LocPriceField f : row.priceFields) if (parsePriceField(f.et) != null) n++;
+        boolean noCoord = row.lat == 0 && row.lng == 0;
+        row.tvHargaHeader.setText((row.hargaExpanded ? "▾ " : "▸ ")
+                + "Harga khusus lokasi ini (opsional)" + (n > 0 ? " · " + n + " diatur" : "")
+                + (n > 0 && noCoord ? " · ⚠ isi koordinat dulu" : ""));
+    }
+
+    /**
+     * Harga khusus lokasi hanya tersimpan bersama lokasinya, padahal baris TANPA koordinat dibuang
+     * collectLocations — harga yang sudah diketik di baris itu akan hilang diam-diam saat Simpan.
+     * Cegat di sini: buka seksinya, tandai kolom pertama yang terisi, minta staf mengisi koordinat
+     * atau mengosongkan harganya. (Centang Wajib Ongkir diselamatkan ke kolom skalar di save();
+     * harga lokasi tak punya tempat setara.)
+     *
+     * @return true = aman disimpan.
+     */
+    private boolean checkLocationPricesHaveCoordinates() {
+        for (LocationRow r : locationRows) {
+            if (r.lat != 0 || r.lng != 0) continue;
+            for (LocPriceField f : r.priceFields) {
+                if (parsePriceField(f.et) == null) continue;
+                if (!r.hargaExpanded) {
+                    r.hargaExpanded = true;
+                    r.llHarga.setVisibility(View.VISIBLE);
+                    updateLocationPriceHeader(r);
+                }
+                f.et.setError("Lokasi ini belum punya koordinat");
+                f.et.requestFocus();
+                Toast.makeText(this, "Harga khusus lokasi hanya tersimpan bila lokasinya punya koordinat — "
+                        + "isi koordinat lokasi itu dulu, atau kosongkan harganya.", Toast.LENGTH_LONG).show();
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Petunjuk tiap kolom harga lokasi = harga yang berlaku bila kolom dikosongkan (kolom Harga
+     *  Khusus pelanggan di form ini bila berisi angka, selain itu harga standar) + keterangan
+     *  sumbernya. Dipanggil ulang setiap kolom harga pelanggan berubah. Angka TANPA pemisah ribuan
+     *  ("5000", awalan "Rp " dari layout) — petunjuk "5.000" memancing staf mengetik titik, yang
+     *  dulu terbaca desimal (Rp5). */
+    private void refreshLocationPriceHints(LocationRow row) {
+        for (LocPriceField f : row.priceFields) {
+            double eff = customerLevelPrice(f.uuid, f.std);
+            f.et.setHint(fmtPrice(eff));
+            f.tvSumber.setText(Math.abs(eff - f.std) > 0.001
+                    ? "Kosong = harga pelanggan" : "Kosong = harga standar");
+        }
+    }
+
+    private void refreshAllLocationPriceHints() {
+        for (LocationRow r : locationRows) refreshLocationPriceHints(r);
+    }
+
+    /** Harga pelanggan untuk produk ini menurut kolom Harga Khusus di form (belum tersimpan pun
+     *  ikut) — kosong/tak valid = harga standar, sama seperti collectProductPrices. */
+    private double customerLevelPrice(String uuid, double std) {
+        for (PriceRow r : priceRows) {
+            if (r.uuid.equals(uuid)) {
+                Double v = parsePriceField(r.et);
+                return v != null ? v : r.def;
+            }
+        }
+        return std;
+    }
+
+    /** Angka di kolom harga (lihat {@link #parsePrice}); null = kosong / tak valid / negatif. */
+    private static Double parsePriceField(android.widget.EditText et) {
+        return parsePrice(et.getText() != null ? et.getText().toString() : "");
+    }
+
+    /** Teks harga → angka; null = kosong / tak valid / negatif. Koma desimal diterima ("1,5"), tapi
+     *  pola pemisah RIBUAN ("15.000", "1.250.000", "12,500") dibaca sebagai ribuan — harga rupiah
+     *  tak pernah ber-3 desimal, dan staf lazim mengetik harga seperti tampilan "Rp 15.000". Tanpa
+     *  ini "15.000" terbaca Rp15 dan pelanggan/lokasi diam-diam dihargai seribu kali lebih murah. */
+    private static Double parsePrice(String raw) {
+        String s = raw != null ? raw.trim() : "";
+        if (s.isEmpty()) return null;
+        s = s.matches("\\d{1,3}([.,]\\d{3})+") ? s.replaceAll("[.,]", "") : s.replace(",", ".");
+        try {
+            double v = Double.parseDouble(s);
+            return (v >= 0 && !Double.isNaN(v) && !Double.isInfinite(v)) ? v : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /** Batas koleksi foto per lokasi (cermin Customer::MAX_LOCATION_PHOTOS di web). */
@@ -780,6 +998,7 @@ public class CustomerFormActivity extends AppCompatActivity {
         if (row == pendingMapRow) pendingMapRow = null;
         llLokasi.removeView(row.view);
         locationRows.remove(row);
+        updateLocationRowStateSaving();
         if (locationNameErrorsShown) refreshLocationNameErrors(false);   // kembarannya mungkin ikut terhapus
     }
 
@@ -927,9 +1146,16 @@ public class CustomerFormActivity extends AppCompatActivity {
             LocationRow r = rows.get(i);
             Customer.Location loc = new Customer.Location(resolved.get(i), r.lat, r.lng, r.cbWajib.isChecked());
             loc.id = r.id;
-            loc.ongkir = r.ongkir;
+            loc.ongkir = rowOngkir(r);
             loc.photos.addAll(r.photos);
             loc.photo = r.photos.isEmpty() ? null : r.photos.get(0);
+            // Harga khusus lokasi: kolom berisi angka → masuk peta; kosong → tak ada (ikut harga
+            // pelanggan / standar). Harga produk tanpa kolom di HP ini dibawa apa adanya.
+            loc.prices.putAll(r.hiddenPrices);
+            for (LocPriceField f : r.priceFields) {
+                Double pv = parsePriceField(f.et);
+                if (pv != null) loc.prices.put(f.uuid, pv);
+            }
             out.add(loc);
         }
         return out;
@@ -1088,6 +1314,7 @@ public class CustomerFormActivity extends AppCompatActivity {
         }
         // Koordinat menentukan baris mana yang tersimpan (dan dinilai keunikan namanya).
         if (locationNameErrorsShown) refreshLocationNameErrors(false);
+        updateLocationPriceHeader(row);   // tanda "isi koordinat dulu" ikut muncul/hilang
     }
 
     private void updateTanggalButton() {
@@ -1253,6 +1480,9 @@ public class CustomerFormActivity extends AppCompatActivity {
                 double km = r.optDouble("km", 0);
                 double rate = r.optDouble("rate", 0);
                 boolean outOfRange = r.optBoolean("outOfRange", false);
+                final double fRate = rate;
+                // Sama seperti tombol "Hitung" web: hasilnya langsung mengisi tarif lokasi.
+                if (fRate > 0) runOnUiThread(() -> row.etOngkir.setText(String.valueOf(Math.round(fRate))));
                 result = String.format(Locale.getDefault(), "%.1f km · Rp %s%s",
                         km, formatRupiah(rate),
                         outOfRange ? " (di luar tangga jarak — konfirmasi ke tim)" : "");
@@ -1269,6 +1499,18 @@ public class CustomerFormActivity extends AppCompatActivity {
                 row.tvHitungOngkir.setText(fResult != null ? fResult : fErr);
             });
         }).start();
+    }
+
+    /** Default Ongkir per Lokasi cabang (tersinkron dari Konfigurasi web; bawaan Rp1.000). */
+    private double locationOngkirDefault() {
+        return new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this)).getLocationOngkirDefault();
+    }
+
+    /** Tarif di kolom "Ongkir/galon" baris ini; null = kosong (belum diatur). */
+    private static Double rowOngkir(LocationRow r) {
+        String s = r.etOngkir.getText() != null ? r.etOngkir.getText().toString().trim() : "";
+        if (s.isEmpty()) return null;
+        try { return Double.parseDouble(s); } catch (NumberFormatException e) { return null; }
     }
 
     private static String formatRupiah(double v) {
@@ -1730,6 +1972,8 @@ public class CustomerFormActivity extends AppCompatActivity {
                     Toast.LENGTH_LONG).show();
             return;
         }
+        // Harga khusus lokasi di baris TANPA koordinat akan terbuang diam-diam → tolak dulu.
+        if (!checkLocationPricesHaveCoordinates()) return;
 
         // Guard FORMAT nomor telp untuk pelanggan BARU: harus diawali 08, hanya angka, 9–13 digit.
         // (Kosong tetap diperbolehkan = pelanggan tanpa nomor.) Edit tak dipagari agar nomor lama
@@ -1973,8 +2217,7 @@ public class CustomerFormActivity extends AppCompatActivity {
         if (llHargaProduk == null) return;
         llHargaProduk.removeAllViews();
         priceRows.clear();
-        java.util.List<com.crowja.damiupos.model.Product> products =
-                new com.crowja.damiupos.db.ProductDao(DatabaseHelper.getInstance(this)).getAll();
+        java.util.List<com.crowja.damiupos.model.Product> products = formProducts();
         java.util.Map<String, Double> overrides = existing != null ? existing.getProductPrices() : null;
         for (com.crowja.damiupos.model.Product p : products) {
             if (p.getUuid() == null || p.getUuid().isEmpty()) continue;   // butuh uuid sebagai kunci sync
@@ -1988,24 +2231,47 @@ public class CustomerFormActivity extends AppCompatActivity {
             // harga standar TIDAK disimpan sebagai override (lihat collectProductPrices), jadi
             // pelanggan tanpa penyesuaian tetap ikut harga standar (tak "beku" saat form dibuka).
             et.setText(fmtPrice(ov != null ? ov : p.getHargaJual()));
+            // Petunjuk kolom harga per LOKASI = harga pelanggan ini → ikut berubah saat diketik.
+            et.addTextChangedListener(new android.text.TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+                @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+                @Override public void afterTextChanged(android.text.Editable s) {
+                    refreshAllLocationPriceHints();
+                }
+            });
             llHargaProduk.addView(row);
             priceRows.add(new PriceRow(p.getUuid(), et, p.getHargaJual()));
         }
+        // ID etProdukHarga sama di tiap baris → dengan ≥2 produk, pemulihan state Android (rotasi,
+        // proses mati) menimpakan isi kolom TERAKHIR ke semua kolom. Isinya dibangun ulang dari DB di
+        // onCreate, jadi cukup matikan pemulihannya (satu produk = aman, ketikan tetap selamat).
+        if (priceRows.size() > 1) for (PriceRow r : priceRows) r.et.setSaveEnabled(false);
+        refreshAllLocationPriceHints();
+    }
+
+    /** Katalog produk form (sekali baca DB) — dipakai baris Harga Khusus pelanggan & harga per lokasi. */
+    private java.util.List<com.crowja.damiupos.model.Product> productsCache;
+
+    private java.util.List<com.crowja.damiupos.model.Product> formProducts() {
+        if (productsCache == null) {
+            productsCache = new com.crowja.damiupos.db.ProductDao(DatabaseHelper.getInstance(this)).getAll();
+            if (productsCache == null) productsCache = new ArrayList<>();
+        }
+        return productsCache;
     }
 
     /** Kumpulkan harga per produk dari input → Map { uuid: harga }. Kosong → null (ikut standar). */
     private java.util.Map<String, Double> collectProductPrices() {
         java.util.Map<String, Double> map = new java.util.HashMap<>();
         for (PriceRow r : priceRows) {
-            String s = r.et.getText() != null ? r.et.getText().toString().trim() : "";
-            if (s.isEmpty()) continue;   // dikosongkan = ikut harga standar
-            try {
-                double v = Double.parseDouble(s.replace(",", "."));
-                // Hanya simpan sebagai override kalau BEDA dari harga standar. Nilai = standar
-                // (mis. field ter-prefill dan tidak diubah) dianggap "ikut standar" → tidak
-                // membekukan harga pelanggan pada nilai default saat form kebetulan dibuka+disimpan.
-                if (Math.abs(v - r.def) > 0.001) map.put(r.uuid, v);
-            } catch (NumberFormatException ignored) {}
+            // Kosong / tak valid = ikut harga standar. Pemisah ribuan ("15.000") dibaca ribuan —
+            // pengurai yang sama dengan petunjuk kolom harga lokasi (parsePrice).
+            Double v = parsePriceField(r.et);
+            if (v == null) continue;
+            // Hanya simpan sebagai override kalau BEDA dari harga standar. Nilai = standar
+            // (mis. field ter-prefill dan tidak diubah) dianggap "ikut standar" → tidak
+            // membekukan harga pelanggan pada nilai default saat form kebetulan dibuka+disimpan.
+            if (Math.abs(v - r.def) > 0.001) map.put(r.uuid, v);
         }
         return map.isEmpty() ? null : map;
     }

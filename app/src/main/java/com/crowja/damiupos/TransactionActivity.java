@@ -28,6 +28,9 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.crowja.damiupos.adapter.CustomerAdapter;
+import com.crowja.damiupos.checkout.CheckoutConstants;
+import com.crowja.damiupos.checkout.CheckoutPart;
+import com.crowja.damiupos.checkout.CheckoutSplitSheet;
 import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.ProductDao;
@@ -202,8 +205,12 @@ public class TransactionActivity extends AppCompatActivity {
     private int selectedHeld = 0;
     /** Klik Simpan saat kembali > dipinjam: perlu 2x (peringatan berkedip muncul 2x) baru lanjut. */
     private int returnOverWarnCount = 0;
-    /** Harga khusus per produk pelanggan terpilih { product_uuid: harga } (null = harga produk standar). */
+    /** Harga khusus EFEKTIF pelanggan terpilih { product_uuid: harga } untuk lokasi TUJUAN saat ini
+     *  (harga pelanggan ditimpa harga lokasi — {@link #refreshCustomerPrices}). null = harga standar. */
     private java.util.Map<String, Double> selectedCustomerPrices = null;
+    /** Baris pelanggan sumber harga khusus (product_prices + prices per lokasi) — baris yang SAMA dengan
+     *  sumber daftar lokasi "Kirim ke". null = belum ada pelanggan terpilih. */
+    private Customer selectedPriceCustomer = null;
 
     // --- Multi-lokasi pelanggan → "Kirim ke" (lokasi tujuan pengiriman) ---
     /** Daftar lokasi pelanggan terpilih (entri pertama = utama; kosong = tanpa lokasi). */
@@ -224,6 +231,23 @@ public class TransactionActivity extends AppCompatActivity {
     private android.widget.ImageView ivKirimKeThumb;
     /** Pelanggan terakhir yang sudah diberi info multi-lokasi — popup sekali per pelanggan. */
     private long lastLocInfoCustomerId = -1;
+
+    // --- 🧺 Checkout multi-lokasi ("Bagi ke beberapa lokasi") ---
+    /** Mode bagi lokasi AKTIF: satu order disimpan sebagai N leg JUAL (satu per lokasi) dalam satu
+     *  transaksi DB — lihat {@link #doSaveCheckout}. Form order tunggal (item, Kirim ke, ongkir, galon
+     *  kembali, perangkat) disembunyikan; isinya ada di {@link #checkoutParts}. */
+    private boolean multiLocMode = false;
+    /** Bagian per lokasi berkoordinat (termasuk yang 0 galon — hanya bagian bergalon yang jadi leg). */
+    private final List<CheckoutPart> checkoutParts = new ArrayList<>();
+    private View tvSplitEntry, cardCheckoutParts;
+    private LinearLayout llCheckoutParts;
+    /** STAF/MARKETING sudah menjawab YA "alihkan ke staf lain" — ditanya SEKALI per checkout. */
+    private final boolean[] splitOtherDeviceConfirmed = {false};
+    /** Akun MARKETING: mode bagi lokasi disembunyikan (v1 — penjualan marketing tak diantrikan). */
+    private boolean splitBlockedForRole = false;
+    /** Tanggal transaksi dipilih manual lewat picker — dipakai memberi tahu bila mode bagi lokasi
+     *  menaikkan tanggal mundur ke waktu sekarang (lihat CheckoutPart.baseTanggal). */
+    private boolean trxDatePickedManually = false;
 
     // --- Gunakan Saldo Komisi (muncul saat pelanggan = reseller, mode JUAL) ---
     private View cardUseSaldo, layoutSaldoPotong, layoutSaldoBreakdown;
@@ -312,6 +336,13 @@ public class TransactionActivity extends AppCompatActivity {
         transactionDao = new TransactionDao(dbHelper);
         settingsDao = new SettingsDao(dbHelper);
         resellerRateDao = new com.crowja.damiupos.db.ResellerRateDao(dbHelper);
+        // 🧺 Bagi ke beberapa lokasi: disembunyikan untuk akun MARKETING (v1) — penjualan marketing
+        // tidak diantrikan kecuali ditugaskan/tertunda (TransactionDao.insert), leg-nya bisa hilang dari antrean.
+        if (settingsDao.getCurrentUserId() > 0) {
+            com.crowja.damiupos.model.User splitUser =
+                    new com.crowja.damiupos.db.UserDao(dbHelper).getById(settingsDao.getCurrentUserId());
+            splitBlockedForRole = splitUser != null && splitUser.isMarketing();
+        }
 
         toggleType = findViewById(R.id.toggleType);
         tvSelectedCustomer = findViewById(R.id.tvSelectedCustomer);
@@ -360,6 +391,13 @@ public class TransactionActivity extends AppCompatActivity {
         tvLastOrderLine = findViewById(R.id.tvLastOrderLine);
         ivKirimKeThumb = findViewById(R.id.ivKirimKeThumb);
         cardKirimKe.setOnClickListener(v -> showKirimKePicker());
+        // 🧺 "Bagi ke beberapa lokasi": pintu masuk di bawah kartu Kirim ke + kartu ringkasan saat aktif
+        // (keduanya membuka lembar pembagian). Visibilitas: refreshSplitEntry / applySplitVisibility.
+        tvSplitEntry = findViewById(R.id.tvSplitEntry);
+        cardCheckoutParts = findViewById(R.id.cardCheckoutParts);
+        llCheckoutParts = findViewById(R.id.llCheckoutParts);
+        tvSplitEntry.setOnClickListener(v -> openSplitSheet());
+        cardCheckoutParts.setOnClickListener(v -> openSplitSheet());
 
         // Prefill ganti rugi price from settings (default 35.000)
         etHargaGantiRugi.setText(String.valueOf((long) settingsDao.getHargaBotolGalon()));
@@ -424,12 +462,14 @@ public class TransactionActivity extends AppCompatActivity {
         if (preCustomerId != -1) {
             Customer c = customerDao.getById(preCustomerId);
             if (c != null) {
+                resetSplitMode();   // 🧺 pembagian lokasi milik pelanggan lain tak pernah terbawa
                 selectedCustomerId = c.getId();
                 selectedCustomerName = c.getName();
                 selectedCustomerPhone = c.getPhone();
-                selectedCustomerPrices = c.getProductPrices();
                 // Multi-lokasi: dest default = lokasi utama; selectedWajibOngkir mengikuti
                 // flag lokasi TERPILIH (guard "Tanpa" ongkir aktif juga di jalur preset).
+                // Harga khusus efektif (pelanggan + lokasi utama) ikut dihitung di dalamnya;
+                // diterapkan ke baris produk oleh applyResellerPricing() setelah buildProductEntries.
                 applyCustomerLocations(c);
                 presetWajibOngkir = selectedWajibOngkir;
                 tvSelectedCustomer.setText(c.getName());
@@ -622,7 +662,9 @@ public class TransactionActivity extends AppCompatActivity {
         selectedCustomerId = c.getId();
         selectedCustomerName = c.getName();
         selectedCustomerPhone = c.getPhone();
-        selectedCustomerPrices = c.getProductPrices();
+        // Kartu "Kirim ke" disembunyikan di mode ini → tujuan default = lokasi UTAMA (aturan sama).
+        selectedPriceCustomer = c;
+        refreshCustomerPrices();
         tvSelectedCustomer.setText(c.getName()
                 + (c.getPhone() != null && !c.getPhone().isEmpty() ? " · " + c.getPhone() : ""));
         maybeWarnIncompleteCustomer(c);   // akuisisi baru: foto + koordinat wajib lengkap
@@ -700,7 +742,7 @@ public class TransactionActivity extends AppCompatActivity {
 
         // Sembunyikan semua kartu jual; tampilkan kartu pencairan.
         int[] hide = {R.id.cardType, R.id.rowCustomerDate, R.id.cardReseller, R.id.cardKirimKe,
-                R.id.cardAssignDevice,
+                R.id.tvSplitEntry, R.id.cardCheckoutParts, R.id.cardAssignDevice,
                 R.id.cardItems, R.id.cardJualBotol, R.id.cardOwnership, R.id.cardKembali,
                 R.id.cardDetails, R.id.cardUseSaldo, R.id.cardTotal};
         for (int id : hide) { View v = findViewById(id); if (v != null) v.setVisibility(View.GONE); }
@@ -941,6 +983,14 @@ public class TransactionActivity extends AppCompatActivity {
     private void updateTypeUI() {
         boolean isJual = isJualSelected();
         boolean isJualBotol = isJualBotolSelected();
+        // 🧺 Bagi ke beberapa lokasi hanya untuk Jual Air → pindah ke jenis lain mematikannya (form
+        // order tunggal dipulihkan oleh cabang di bawah).
+        if (multiLocMode && !isJual) {
+            multiLocMode = false;
+            checkoutParts.clear();
+            splitOtherDeviceConfirmed[0] = false;
+            Toast.makeText(this, "🧺 Pembagian lokasi dibatalkan — hanya untuk Jual Air", Toast.LENGTH_SHORT).show();
+        }
         if (isJualBotol) {
             // Mode: Jual Botol Galon Kosong saja (tanpa air)
             cardJualBotol.setVisibility(View.VISIBLE);
@@ -989,15 +1039,18 @@ public class TransactionActivity extends AppCompatActivity {
         updateKirimKeCard();     // "Kirim ke" hanya untuk JUAL & pelanggan multi-lokasi
         refreshUseSaldoCard();   // "Gunakan Saldo Komisi" hanya untuk JUAL
         // "Perangkat yang ditugaskan" hanya untuk JUAL air & role staf/marketing/SPV (bukan pencairan komisi).
+        // 🧺 Mode bagi lokasi: perangkat dipilih PER LOKASI di lembar pembagian, bukan di kartu ini.
         if (cardAssignDevice != null) {
             boolean kembali = toggleType.getCheckedButtonId() == R.id.btnTypeKembali;
-            cardAssignDevice.setVisibility((isJual || kembali) && assignDeviceEligible && !payoutMode ? View.VISIBLE : View.GONE);
+            cardAssignDevice.setVisibility((isJual || kembali) && assignDeviceEligible && !payoutMode
+                    && !multiLocMode ? View.VISIBLE : View.GONE);
         }
         // Pesanan Tertunda: JUAL air saja (KEMBALI/Jual Botol tak diantrikan di HP sama sekali —
         // tak ada antrian aktif untuk "ditunda"), bukan mode payout/promosi (akuisisi di lokasi).
         if (btnTertunda != null) {
             btnTertunda.setVisibility(isJual && !payoutMode && !promosiMode ? View.VISIBLE : View.GONE);
         }
+        applySplitVisibility();
         updateTotal();
     }
 
@@ -1180,6 +1233,13 @@ public class TransactionActivity extends AppCompatActivity {
                 cfg.setBranchCenter(bc != null ? bc.toString() : "");
                 org.json.JSONArray qz = r.optJSONArray("wilayah_zones");
                 cfg.setWilayahZones(qz != null ? qz.toString() : "");
+                // 🧺 Gerbang checkout multi-lokasi dari /me yang SAMA (aturan = OnlineTasks.refreshConfig)
+                // → layar ini memakai vonis server terbaru, tak menunggu siklus /me 15 menit.
+                boolean coOn = SyncSettings.parseCheckoutMultiEnabled(r.opt("checkout_multi_enabled"));
+                if (coOn != cfg.isCheckoutMultiEnabled()) {
+                    cfg.setCheckoutMultiEnabled(coOn);
+                    runOnUiThread(this::refreshSplitEntry);
+                }
                 if (devices != null) {
                     cfg.setDeviceRoster(devices.toString());
                     runOnUiThread(() -> { populateAssignSpinner(); selectWilayahDefaultDevice(); });
@@ -1222,7 +1282,8 @@ public class TransactionActivity extends AppCompatActivity {
         //   - BOTOL SENDIRI: pelanggan pakai botol sendiri → tidak ada yg dikembalikan
         if (isJualSelected()) {
             boolean hideKembali = !isPinjamSelected();
-            cardKembali.setVisibility(hideKembali ? View.GONE : View.VISIBLE);
+            // 🧺 Mode bagi lokasi: galon kembali diisi per lokasi di lembar pembagian.
+            cardKembali.setVisibility(hideKembali || multiLocMode ? View.GONE : View.VISIBLE);
             if (hideKembali) {
                 syncingKembali = true;
                 etJumlahKembali.setText("0");
@@ -1311,6 +1372,9 @@ public class TransactionActivity extends AppCompatActivity {
                 syncingOngkir = false;
             }
         }
+        // 🧺 Mode bagi lokasi: ongkir diatur per lokasi — nominal order tunggal tetap tersembunyi
+        // walau mode ongkirnya diubah programatik (mis. tarif dari order-insights server).
+        if (multiLocMode) tilOngkir.setVisibility(View.GONE);
         updateTotal();
     }
 
@@ -1353,6 +1417,10 @@ public class TransactionActivity extends AppCompatActivity {
             if (jumlahRusak > jumlahKembali) jumlahRusak = jumlahKembali;
             double total = harga * jumlahRusak;
             tvTotalHarga.setText("Rp " + nfK.format(total));
+            return;
+        }
+        if (multiLocMode) {
+            updateCheckoutTotal();   // 🧺 Σ total tiap lokasi (rumus order tunggal per bagian)
             return;
         }
         double subtotal = 0;
@@ -1804,18 +1872,28 @@ public class TransactionActivity extends AppCompatActivity {
     private void applyResellerPricing() {
         double globalRate = settingsDao.getResellerKomisi();
         for (ProductEntry pe : productEntries) {
-            // Harga dasar = harga khusus produk untuk pelanggan ini bila diset, selain itu harga jual produk.
-            Double custOverride = (selectedCustomerPrices != null)
-                    ? selectedCustomerPrices.get(pe.product.getUuid()) : null;
-            double price = (custOverride != null) ? custOverride : pe.product.getHargaJual();
-            if (selectedResellerAddToPrice && selectedResellerId > 0) {
-                Double override = selectedResellerRates.get(pe.product.getId());
-                double rate = override != null ? override : globalRate;
-                price += rate;
-            }
+            // Harga dasar = harga khusus lokasi tujuan → harga khusus pelanggan (sudah dilebur di
+            // selectedCustomerPrices oleh refreshCustomerPrices) → harga jual produk.
+            double price = unitPrice(pe.product, selectedCustomerPrices, globalRate);
             pe.etPrice.setText(String.valueOf((long) price));
         }
         // setText memicu watcher → onEntriesChanged → updateTotal.
+        // 🧺 Mode bagi lokasi: reseller/harga berubah → harga tiap lokasi ikut dihitung ulang (sama
+        // seperti baris order tunggal: menimpa harga yang sempat diubah manual).
+        if (multiLocMode) repriceCheckoutParts();
+    }
+
+    /**
+     * Harga per pcs produk {@code p}: harga khusus {@code overrides} (lokasi → pelanggan, lihat
+     * Customer.priceOverridesFor) atau harga jual, + komisi reseller (override per produk, fallback
+     * {@code globalRate}) bila reseller terpilih memakai komisi-ke-harga. SATU rumus untuk baris order
+     * tunggal maupun tiap lokasi checkout ({@link CheckoutPart#unitPrice}).
+     */
+    private double unitPrice(Product p, java.util.Map<String, Double> overrides, double globalRate) {
+        Double custOverride = overrides != null ? overrides.get(p.getUuid()) : null;
+        boolean addKomisi = selectedResellerAddToPrice && selectedResellerId > 0;
+        return CheckoutPart.unitPrice(p.getHargaJual(), custOverride, addKomisi,
+                addKomisi ? selectedResellerRates.get(p.getId()) : null, globalRate);
     }
 
     /**
@@ -1934,16 +2012,18 @@ public class TransactionActivity extends AppCompatActivity {
      * memilih pelanggan (regular, Umum, atau pelanggan yang baru dibuat).
      */
     private void applySelectedCustomer(Customer c) {
+        // 🧺 Ganti pelanggan → pembagian lokasi pelanggan LAMA dibuang, form order tunggal kembali.
+        resetSplitMode();
         selectedCustomerId = c.getId();
         selectedCustomerName = c.getName();
         selectedCustomerPhone = c.getPhone() != null ? c.getPhone() : "";
-        selectedCustomerPrices = c.getProductPrices();    // harga khusus per produk (null = harga produk)
-        applyResellerPricing();                            // harga item ikut harga khusus produk (+ komisi bila ada)
         // Multi-lokasi: dest default = lokasi UTAMA; selectedWajibOngkir mengikuti flag lokasi
         // TERPILIH (fallback flag pelanggan legacy). Lokasi wajib-ongkir → default Ongkos Kirim
         // = Per Galon (opsi "Tanpa" dijaga popup di listener toggle). Cek tombol memicu listener
         // → updateOngkirUI() yang mengisi nominal ongkir default. Hanya untuk JUAL.
+        // applyCustomerLocations juga menghitung harga khusus efektif (pelanggan + lokasi tujuan).
         applyCustomerLocations(c);
+        applyResellerPricing();   // harga item ikut harga khusus pelanggan/lokasi (+ komisi bila ada)
         if (isJualSelected() && selectedWajibOngkir) applyPerGalonDefault();
         else if (isJualSelected() && toggleOngkirMode.getCheckedButtonId() == R.id.btnOngkirPerGalon) {
             updateOngkirUI();   // pelanggan tanpa tarif → nominal kembali ke default, bukan tarif pelanggan sebelumnya
@@ -2177,6 +2257,10 @@ public class TransactionActivity extends AppCompatActivity {
             selectedWajibOngkir = (c != null && c.isWajibOngkir()) || selectedOngkirRate > 0;
             ongkirAcknowledged = false;
         }
+        // Harga khusus efektif untuk tujuan default (lokasi utama). Pemanggil yang menerapkannya ke
+        // baris produk (applyResellerPricing) — di jalur preset baris produk belum dibangun di sini.
+        selectedPriceCustomer = c;
+        refreshCustomerPrices();
         updateKirimKeCard();
         // Koordinat efektif untuk wilayah: lokasi tujuan terpilih bila ada, else koordinat dasar
         // pelanggan → default perangkat penugasan mengikuti wilayah pelanggan.
@@ -2247,9 +2331,11 @@ public class TransactionActivity extends AppCompatActivity {
         // saja (tak ada yang bisa dipilih); multi = preview + picker "Ganti". Disembunyikan di
         // mode payout/promosi.
         boolean multi = selectedLocations.size() > 1;
+        // 🧺 Mode bagi lokasi: kartu ringkasan pembagian menggantikan kartu ini.
         boolean show = !payoutMode && !promosiMode
-                && isJualSelected() && selectedLocations.size() >= 1;
+                && isJualSelected() && selectedLocations.size() >= 1 && !multiLocMode;
         cardKirimKe.setVisibility(show ? View.VISIBLE : View.GONE);
+        refreshSplitEntry();
         if (tvSelectedKirimKe != null) {
             tvSelectedKirimKe.setText(selectedDestName != null && !selectedDestName.isEmpty()
                     ? selectedDestName : "—");
@@ -2297,13 +2383,18 @@ public class TransactionActivity extends AppCompatActivity {
         // selectedLocations.get(0).name oleh applyCustomerLocations() sebelum method ini dipanggil.
         String defaultLocName = selectedDestName != null && !selectedDestName.isEmpty()
                 ? selectedDestName : "lokasi utama";
-        new AlertDialog.Builder(this)
+        // 🧺 Pelanggan yang bisa dibagi (≥ 2 lokasi berkoordinat): tawarkan juga pembagian sekaligus.
+        boolean splittable = canSplit();
+        AlertDialog.Builder b = new AlertDialog.Builder(this)
                 .setTitle("📍 Pelanggan Multi-Lokasi")
                 .setMessage("Pelanggan \"" + c.getName() + "\" punya " + selectedLocations.size()
                         + " lokasi. Pastikan lokasi pengiriman pada kartu \"Kirim ke\" sudah "
-                        + "benar (default: " + defaultLocName + ").")
-                .setPositiveButton("OK", null)
-                .show();
+                        + "benar (default: " + defaultLocName + ")."
+                        + (splittable ? "\n\nPesan untuk beberapa lokasi sekaligus? Pakai \"🧺 Bagi ke "
+                                + "beberapa lokasi\" — tiap lokasi jadi pengiriman sendiri." : ""))
+                .setPositiveButton("OK", null);
+        if (splittable) b.setNeutralButton("🧺 Bagi lokasi", (d, w) -> openSplitSheet());
+        b.show();
     }
 
     /** Picker lokasi tujuan pengiriman. Tiap pergantian me-RE-DERIVE selectedWajibOngkir
@@ -2344,7 +2435,45 @@ public class TransactionActivity extends AppCompatActivity {
         else if (isJualSelected() && toggleOngkirMode.getCheckedButtonId() == R.id.btnOngkirPerGalon) {
             updateOngkirUI();   // lokasi tanpa tarif → nominal kembali ke default, bukan tarif lokasi sebelumnya
         }
+        repriceForDestination();   // harga khusus lokasi tujuan baru (bila beda dari lokasi sebelumnya)
         updateKirimKeCard();
+    }
+
+    /**
+     * Hitung ulang {@link #selectedCustomerPrices} = harga khusus pelanggan ditimpa harga khusus
+     * LOKASI TUJUAN ({@link Customer#priceOverridesFor}) — aturan yang SAMA dengan server/web/agen.
+     * Tujuan = lokasi "Kirim ke" terpilih; bila belum ada (atau namanya bukan milik pelanggan ini)
+     * dan pelanggan punya lokasi → lokasi UTAMA. Pelanggan tanpa lokasi = harga pelanggan saja.
+     * Hanya menghitung peta — penerapan ke baris produk tetap lewat applyResellerPricing().
+     */
+    private void refreshCustomerPrices() {
+        Customer src = selectedPriceCustomer;
+        if (src == null) {
+            selectedCustomerPrices = null;
+            return;
+        }
+        String dest = selectedDestName;
+        if (src.locationNamed(dest) == null) {
+            Customer.Location primary = src.getPrimaryLocation();
+            dest = primary != null ? primary.name : null;
+        }
+        selectedCustomerPrices = src.priceOverridesFor(dest);
+    }
+
+    /**
+     * Tujuan pengiriman berganti → harga khusus efektif dihitung ulang. Baris produk HANYA ditimpa
+     * bila petanya memang berubah (lokasi lama & baru punya harga berbeda) — pelanggan tanpa harga
+     * per lokasi tetap seperti dulu (ganti "Kirim ke" tak menyentuh harga yang sudah diedit manual).
+     * Bila berubah, perilakunya sama dengan ganti reseller: harga ditulis ulang (+ komisi bila ada).
+     */
+    private void repriceForDestination() {
+        java.util.Map<String, Double> before = selectedCustomerPrices;
+        refreshCustomerPrices();
+        if (java.util.Objects.equals(before, selectedCustomerPrices)) return;
+        if (promosiMode) applyPromosiPricing();   // Gratis tetap 0; Berbayar → harga lokasi baru
+        else applyResellerPricing();
+        Toast.makeText(this, "💲 Harga mengikuti lokasi \""
+                + (selectedDestName != null ? selectedDestName : "") + "\"", Toast.LENGTH_SHORT).show();
     }
 
     /** Tarif ongkir lokasi (Rp/galon) dari server; 0 bila tak ada. */
@@ -2837,6 +2966,8 @@ public class TransactionActivity extends AppCompatActivity {
         if (selectedCustomerId == -1) return true;       // belum ada pelanggan → belum ada statusnya
         // Promosi GRATIS memang pemberian tanpa ongkir — bukan ketidakcocokan (lihat applyPromosiPricing).
         if (promosiMode && isPromosiGratis()) return true;
+        // 🧺 Bagi ke beberapa lokasi: dicek PER LOKASI (status wajib ongkir milik lokasinya sendiri).
+        if (multiLocMode) return checkoutOngkirGate(onProceed);
 
         final double total = currentOngkirTotal();
         final boolean missing = selectedWajibOngkir && total <= 0;
@@ -2887,7 +3018,9 @@ public class TransactionActivity extends AppCompatActivity {
             return;
         }
         int monthly = transactionDao.countThisMonth();
-        if (monthly < BuildConfig.FREE_MAX_TRX_PER_MONTH) {
+        // 🧺 Bagi ke beberapa lokasi menulis SATU transaksi per lokasi → kuota dihitung per leg.
+        int adding = multiLocMode ? Math.max(1, CheckoutPart.active(checkoutParts).size()) : 1;
+        if (monthly + adding <= BuildConfig.FREE_MAX_TRX_PER_MONTH) {
             save();
             return;
         }
@@ -3036,6 +3169,10 @@ public class TransactionActivity extends AppCompatActivity {
 
         if (isJualBotolSelected()) {
             saveJualBotol();
+            return;
+        }
+        if (multiLocMode && isJualSelected()) {
+            saveCheckout();   // 🧺 satu leg JUAL per lokasi
             return;
         }
 
@@ -3597,6 +3734,7 @@ public class TransactionActivity extends AppCompatActivity {
                 Calendar picked = Calendar.getInstance();
                 picked.set(year, month, day, hour, minute, 0);
                 selectedTrxDate = trxDbFmt.format(picked.getTime());
+                trxDatePickedManually = true;
                 updateTanggalTrxButton();
             }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), true).show();
         }, cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)).show();
@@ -3724,6 +3862,60 @@ public class TransactionActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Isi SATU baris transaksi yang ditulis {@link #persistRow} — nilai yang dulu dibaca doSave langsung
+     * dari form. Order tunggal mengisinya dari form ({@link #doSave}); checkout multi-lokasi mengisinya
+     * per lokasi ({@link #doSaveCheckout}), jadi tiap leg melewati jalur tulis yang SAMA persis.
+     */
+    private static final class RowSpec {
+        boolean isJual;
+        List<TransactionItem> items = new ArrayList<>();   // item terbayar (tanpa bonus/gift)
+        int totalJumlah;
+        double ongkir;
+        String ongkirType;
+        double totalHarga;
+        String ownership;
+        double hargaBotol;
+        int kembali;
+        String tanggal;
+        String destName;
+        double destLat, destLng;
+        /** Checkout: nama tujuan SELALU ditulis (order tunggal hanya bila berkoordinat). */
+        boolean destAlways;
+        String assignedDeviceUuid;
+        double saldoUsed, refundUsed;
+        String note = "";
+    }
+
+    /** Konteks leg checkout multi-lokasi (null = order tunggal). */
+    private static final class CheckoutCtx {
+        final String uuid;
+        final int seq, size;
+        /** Order kembali pertama — dihitung SEKALI sebelum leg mana pun ditulis, berlaku untuk semua leg. */
+        final boolean firstRepeat;
+
+        CheckoutCtx(String uuid, int seq, int size, boolean firstRepeat) {
+            this.uuid = uuid;
+            this.seq = seq;
+            this.size = size;
+            this.firstRepeat = firstRepeat;
+        }
+
+        boolean isPrimary() { return seq == 1; }
+    }
+
+    /** Hasil {@link #persistRow}. */
+    private static final class SavedRow {
+        long id;
+        String uuid;
+        Transaction trx;
+        int totalJumlah;   // termasuk qty gift produk (leg utama)
+        boolean firstRepeat;
+        List<TransactionItem> bonusGranted = new ArrayList<>();
+        double hargaGR;
+        int rusak;
+    }
+
     private void doSave(boolean isJual, int totalJumlah, double ongkir,
                         double totalHarga, int jumlahKembali, String ongkirType,
                         String ownership, double hargaBotol) {
@@ -3746,196 +3938,41 @@ public class TransactionActivity extends AppCompatActivity {
             ongkirType = Transaction.ONGKIR_NONE;
         }
 
-        Transaction trx = new Transaction();
-        trx.setCustomerId(selectedCustomerId);
-        trx.setType(isJual ? Transaction.TYPE_JUAL : Transaction.TYPE_KEMBALI);
-        trx.setJumlahGalon(totalJumlah);
-        trx.setOngkir(ongkir);
-        trx.setOngkirType(ongkirType);
-        if (selectedTrxDate != null) trx.setTanggal(selectedTrxDate);
-        trx.setTotalHarga(totalHarga);
-        if (isJual) {
-            trx.setGalonOwnership(ownership);
-            trx.setHargaBotolGalon(hargaBotol);
-            trx.setPaymentMethod(pendingPayment); // metode bayar dipilih sebelum simpan
-            trx.setResellerId(selectedResellerId); // reseller afiliasi (0 = tidak ada)
-            // Lokasi tujuan pengiriman terpilih ("Kirim ke") — navigasi delivery memakai
-            // koordinat ini (fallback koordinat pelanggan bila 0/kosong).
-            if (selectedDestLat != 0 || selectedDestLng != 0) {
-                trx.setDeliveryDestName(selectedDestName);
-                trx.setDeliveryDestLat(selectedDestLat);
-                trx.setDeliveryDestLng(selectedDestLng);
-            }
-            // "Perangkat yang ditugaskan" (staf/marketing/SPV): null saat "Perangkat ini" → tanpa penugasan.
-            if (assignDeviceEligible) {
-                trx.setAssignedDeviceUuid(selectedAssignUuid());
-            }
-        } else if (Transaction.TYPE_KEMBALI.equals(trx.getType()) && assignDeviceEligible) {
-            // Ambil galon ditugaskan ke perangkat lain → tugas AMBIL GALON di antreannya (TransactionDao.insert).
-            trx.setAssignedDeviceUuid(selectedAssignUuid());
-        }
-        double hargaGR = 0;
-        int rusak = 0;
-        // 🎁 "Bonus Beli N Gratis 1" (cermin App\Support\ProductBonus di web, tapi dihitung dari
-        // riwayat transaksi PERANGKAT INI saja — {@see ProductBonusDao}): untuk tiap jenis produk
-        // TERBAYAR pada order ini, hitung akumulasi galon terbayar (termasuk baris ini) dikurangi
-        // yang SUDAH pernah diberikan; sisanya (bila > 0) ditambahkan sebagai baris gratis. Ledger-
-        // nya baru dicatat SETELAH transaksi ini benar-benar tersimpan (butuh _id-nya) — lihat bawah.
-        // Reuse TransactionItem sebagai pasangan (productName, qty) — productId/hargaPerGalon diabaikan.
-        List<TransactionItem> productBonusGranted = new ArrayList<>();
-        if (isJual) {
-            List<TransactionItem> itemsToSave = new ArrayList<>(items);
-            if (selectedCustomerId > 0) {
-                Customer bonusCust = customerDao.getById(selectedCustomerId);
-                if (bonusCust != null && bonusCust.isBonusEnabled()) {
-                    int threshold = settingsDao.getProductBonusThreshold();
-                    com.crowja.damiupos.db.ProductBonusDao pbDao = new com.crowja.damiupos.db.ProductBonusDao(DatabaseHelper.getInstance(this));
-                    java.util.Map<String, Integer> paidThisTrx = new java.util.LinkedHashMap<>();
-                    for (TransactionItem it : items) {
-                        if (it.hargaPerGalon > 0 && it.productName != null && !it.productName.isEmpty()) {
-                            paidThisTrx.merge(it.productName, it.jumlah, Integer::sum);
-                        }
-                    }
-                    for (java.util.Map.Entry<String, Integer> e : paidThisTrx.entrySet()) {
-                        String productName = e.getKey();
-                        int lifetimePaid = pbDao.lifetimePaidQty(selectedCustomerId, productName) + e.getValue();
-                        int alreadyGranted = pbDao.alreadyGranted(selectedCustomerId, productName);
-                        int owed = (lifetimePaid / threshold) - alreadyGranted;
-                        if (owed > 0) {
-                            itemsToSave.add(new TransactionItem(0, productName + " (Bonus)", owed, 0));
-                            productBonusGranted.add(new TransactionItem(0, productName, owed, 0));
-                        }
-                    }
-                }
-            }
-            // 🎁 Gift PRODUK dikonfirmasi "Ya" saat pelanggan dipilih (maybeWarnPendingGift) →
-            // baris gratis (Rp0) MENAMBAH galon fisik keluar (beda dari bonus di atas, yang murni
-            // promosi) — cermin App\Support\Gifts::applyProductGift mode 'append' di web. Statusnya
-            // "sungguh diberikan" (bukan sekadar tertulis) ditentukan SETELAH insert, di bawah —
-            // lihat blok redeemOne setelah transactionDao.insert(trx).
-            if (confirmedProductGiftId > 0) {
-                com.crowja.damiupos.db.CustomerGiftDao.Gift g = pendingConfirmedGift;
-                if (g != null) {
-                    itemsToSave.add(new TransactionItem(0, g.itemName, g.qty, 0));
-                    totalJumlah += g.qty;
-                }
-            }
-            trx.setItems(itemsToSave);
-            trx.setJumlahGalon(totalJumlah);
-            // Backward-compat: put first item's product_id and price as primary
-            if (!items.isEmpty()) {
-                TransactionItem first = items.get(0);
-                trx.setProductId(first.productId);
-                trx.setHargaPerGalon(first.hargaPerGalon);
-            }
-        } else if (totalHarga > 0) {
-            // Ganti rugi KEMBALI: compute & store per-galon price based on rusak count
-            hargaGR = parseDoubleOr(etHargaGantiRugi, 0);
-            rusak = parseIntOr(etJumlahRusak, -1);
-            if (rusak < 0) rusak = totalJumlah;
-            trx.setHargaPerGalon(hargaGR);
-        }
-        String catatan = etCatatan.getText() != null ? etCatatan.getText().toString().trim() : "";
-        // Promosi GRATIS: tandai supaya bisa dibedakan dari penjualan biasa (poin promosi tetap
-        // dihitung server dari pelanggan baru, marker hanya penanda). Berbayar = penjualan normal.
-        if (promosiMode && isPromosiGratis()) {
-            catatan = catatan.isEmpty() ? PROMO_MARKER : (PROMO_MARKER + " " + catatan);
-        }
-        // For ganti rugi, prepend a marker into catatan so receipt can detect on re-view
-        if (!isJual && totalHarga > 0) {
-            String marker = "[GANTI RUGI " + rusak + " galon rusak]";
-            catatan = catatan.isEmpty() ? marker : (marker + " " + catatan);
-        }
-        // Pelanggan reseller membayar sebagian/seluruh order dari saldo komisinya.
-        double saldoUsed = isJual ? saldoDipotong() : 0;
-        if (saldoUsed > 0) {
-            NumberFormat nfm = NumberFormat.getInstance(new Locale("id", "ID"));
-            String marker = "[SALDO KOMISI Rp " + nfm.format(Math.round(saldoUsed)) + "]";
-            catatan = catatan.isEmpty() ? marker : (marker + " " + catatan);
-        }
-        // Saldo REFUND dipakai membayar order ini. Seperti saldo komisi, TOTAL TIDAK dikurangi:
-        // refund adalah cara BAYAR, bukan diskon — kalau total dipotong, omzet & bonus penjualan
-        // ikut mengecil dan refund terhitung dua kali.
-        double refundUsed = isJual ? refundDipotong() : 0;
-        if (refundUsed > 0) {
-            NumberFormat nfr = NumberFormat.getInstance(new Locale("id", "ID"));
-            String marker = "[REFUND Rp " + nfr.format(Math.round(refundUsed)) + "]";
-            catatan = catatan.isEmpty() ? marker : (marker + " " + catatan);
-        }
-        // Catatan Order pelanggan (instruksi pengiriman tetap, mis. "titip satpam") — otomatis
-        // ditambahkan ke SETIAP transaksi baru pelanggan ini, cermin TransactionController::
-        // storePending di web. Dibaca langsung dari DB (bukan objek pelanggan di picker, yang bisa
-        // basi bila baru diedit) sesaat sebelum simpan.
-        if (selectedCustomerId > 0) {
-            Customer noteCust = customerDao.getById(selectedCustomerId);
-            String orderNote = noteCust != null && noteCust.getOrderNote() != null
-                    ? noteCust.getOrderNote().trim() : "";
-            if (!orderNote.isEmpty()) {
-                String tag = "[CATATAN ORDER] " + orderNote;
-                catatan = catatan.isEmpty() ? tag : (catatan + "\n" + tag);
-            }
-        }
-        // Pesanan Tertunda: tandai delivery_status + jadwal lanjut (TransactionDao.insert() yang
-        // menulis kolom-kolomnya) + tempel label jadwal ke Catatan — cermin App\Support\
-        // TertundaSchedule::noteLabel di web (StrukWa/WA hanya menampilkan teks setelah "Catatan:",
-        // jadi label ini WAJIB lewat sini, bukan ditempel belakangan).
-        if (isJual && tertundaRequested && tertundaResumeAtDb != null) {
-            try {
-                Date resumeDate = trxDbFmt.parse(tertundaResumeAtDb);
-                if (resumeDate != null) {
-                    trx.setDeliveryStatus(Transaction.DELIVERY_TERTUNDA);
-                    trx.setDeliveryTertundaResumeAt(DatabaseHelper.isoFrom(resumeDate.getTime()));
-                    String label = tertundaNoteLabel(resumeDate);
-                    catatan = catatan.isEmpty() ? label : (catatan + "\n" + label);
-                }
-            } catch (Exception ignored) {}
-        }
-        if (!catatan.isEmpty()) trx.setCatatan(catatan);
-        // ⚡ Tandai Prioritas: berlaku untuk order langsung MAUPUN Tertunda (TransactionDao.insert()
-        // yang menstempel orderPriorityAt/By sebenarnya) — cermin DeliveryController::prioritize.
-        if (isJual && cbPrioritas != null && cbPrioritas.isChecked()) {
-            trx.setPriorityRequested(true);
-            if (etPriorityReason != null) {
-                String reason = etPriorityReason.getText() != null
-                        ? etPriorityReason.getText().toString().trim() : "";
-                if (!reason.isEmpty()) trx.setOrderPriorityReason(reason);
-            }
-        }
-        // 🔁 Order kembali PERTAMA: pelanggan ini sudah PERSIS 1 transaksi (effectiveTrx — max lokal
-        // vs cross-device, cermin project_damiupos_effective_agg_max) sebelum order ini → pembelian
-        // ke-2 mereka, pertama kalinya balik lagi. Ditandai prioritas OTOMATIS (cermin
-        // TransactionController::store di web) KECUALI staf sudah mencentang "Tandai Prioritas"
-        // sendiri di atas (alasan manual staf menang, tidak ditimpa). TransactionDao.insert() sendiri
-        // yang menggerbang penulisan kolomnya ke baris yang benar-benar masuk antrian delivery.
-        boolean isFirstRepeatOrder = false;
-        if (isJual && selectedCustomerId > 0) {
-            Customer repeatCust = customerDao.getById(selectedCustomerId);
-            isFirstRepeatOrder = repeatCust != null && repeatCust.effectiveTrx() == 1;
-        }
-        if (isFirstRepeatOrder && !trx.isPriorityRequested()) {
-            trx.setPriorityRequested(true);
-            trx.setOrderPriorityReason("Order kembali pertama — otomatis diprioritaskan");
-        }
-        long newTrxId = transactionDao.insert(trx);
+        // Satu baris dari isian form — jalur tulis yang SAMA dengan tiap leg checkout multi-lokasi
+        // (doSaveCheckout). Efek sekali-per-order (gift produk, inbox, pelunasan hutang, saldo komisi,
+        // Selesaikan, struk) tetap di sini, sesudahnya.
+        RowSpec spec = new RowSpec();
+        spec.isJual = isJual;
+        spec.items = items;
+        spec.totalJumlah = totalJumlah;
+        spec.ongkir = ongkir;
+        spec.ongkirType = ongkirType;
+        spec.totalHarga = totalHarga;
+        spec.ownership = ownership;
+        spec.hargaBotol = hargaBotol;
+        spec.kembali = jumlahKembali;
+        spec.tanggal = selectedTrxDate;
+        spec.destName = selectedDestName;
+        spec.destLat = selectedDestLat;
+        spec.destLng = selectedDestLng;
+        spec.assignedDeviceUuid = selectedAssignUuid();
+        // Pelanggan reseller membayar sebagian/seluruh order dari saldo komisinya / saldo refund.
+        spec.saldoUsed = isJual ? saldoDipotong() : 0;
+        spec.refundUsed = isJual ? refundDipotong() : 0;
+        spec.note = etCatatan.getText() != null ? etCatatan.getText().toString().trim() : "";
+        SavedRow saved = persistRow(spec, null);
+        long newTrxId = saved.id;
+        Transaction trx = saved.trx;
+        totalJumlah = saved.totalJumlah;   // + qty gift produk, seperti dulu (dipakai dasar poin di bawah)
+        double hargaGR = saved.hargaGR;
+        int rusak = saved.rusak;
+        double saldoUsed = spec.saldoUsed;
+        double refundUsed = spec.refundUsed;
+        boolean isFirstRepeatOrder = saved.firstRepeat;
+        List<TransactionItem> productBonusGranted = saved.bonusGranted;
 
-        // Galon kembali (tukar botol) dipasangkan SETELAH JUAL-nya tersimpan, lewat
-        // applyReturnedGalon → syncPairedReturn, supaya baris KEMBALI mewarisi tanggal JUAL PERSIS.
-        //
-        // Dulu baris ini ditulis SEBELUM JUAL dan tanggalnya dibiarkan kosong kecuali staf memilih
-        // tanggal manual. Keduanya lalu jatuh ke DEFAULT kolom, datetime('now','localtime'), yang
-        // dievaluasi ULANG tiap INSERT dan hanya berpresisi DETIK — sementara di antara kedua insert
-        // itu ada penomoran struk plus beberapa query settings/user. Begitu keduanya melewati batas
-        // detik, tanggalnya berbeda dan pasangannya putus: getReturnedGalonForSale (cocok tanggal
-        // PERSIS) mengembalikan 0, sehingga dialog "Konfirmasi Galon Kembali" terbuka kosong padahal
-        // galonnya sudah dicatat. Lebih buruk lagi, mengkonfirmasi angka lain akan MENAMBAH baris
-        // KEMBALI baru alih-alih memperbarui baris yatim tadi — Galon Dipinjam pelanggan terhitung
-        // dua kali. Membaca ulang tanggal JUAL yang BENAR-BENAR tersimpan menutup celah itu tanpa
-        // mengubah format tanggal yang dipakai sisa aplikasi.
-        if (isJual && jumlahKembali > 0) {
-            transactionDao.applyReturnedGalon(newTrxId, jumlahKembali);
-        }
         ensureCustomerSavedInContacts();
-        // 🎁 Gift PRODUK dikonfirmasi "Ya" saat pelanggan dipilih: barisnya sudah tertulis (di atas,
+        // 🎁 Gift PRODUK dikonfirmasi "Ya" saat pelanggan dipilih: barisnya sudah tertulis (persistRow,
         // sebelum insert); sekarang KLAIM/LEKATKAN gift-nya — cermin App\Support\Gifts::
         // applyProductGift di web. Order yang masih di antrean delivery (PENDING/TERTUNDA) belum
         // sungguh sampai ke pelanggan → hanya DILEKATKAN, "sungguh diberikan" menunggu Selesai
@@ -3953,14 +3990,6 @@ public class TransactionActivity extends AppCompatActivity {
             confirmedProductGiftId = -1;
             pendingConfirmedGift = null;
         }
-        // Catat buku besar bonus SETELAH baris ini benar-benar tersimpan (butuh _id-nya) — item
-        // gratisnya sendiri sudah ikut items_json lewat trx.setItems(itemsToSave) di atas.
-        if (!productBonusGranted.isEmpty()) {
-            com.crowja.damiupos.db.ProductBonusDao pbDao = new com.crowja.damiupos.db.ProductBonusDao(DatabaseHelper.getInstance(this));
-            for (TransactionItem g : productBonusGranted) {
-                pbDao.insert(selectedCustomerId, g.productName, g.jumlah, newTrxId);
-            }
-        }
         // Pesanan Terjadwal: tandai inbox SELESAI TEPAT saat transaksi tersimpan (bukan saat tombol
         // ditekan) → flag selesai = "sudah dibuatkan transaksi". Batal simpan = inbox tetap PENDING.
         long inboxId = getIntent().getLongExtra(EXTRA_INBOX_ID, -1);
@@ -3968,24 +3997,6 @@ public class TransactionActivity extends AppCompatActivity {
             new com.crowja.damiupos.db.OrderInboxDao(DatabaseHelper.getInstance(this))
                     .updateStatus(inboxId, com.crowja.damiupos.model.OrderInbox.STATUS_APPROVED, newTrxId);
             com.crowja.damiupos.wa.OrderAlertService.refresh(this);
-        }
-        // Saldo refund terpakai → tulis baris 'usage' di buku besar (dibatasi ulang oleh DAO),
-        // ditautkan ke uuid transaksi ini supaya jejaknya jelas di web & perangkat lain.
-        if (refundUsed > 0) {
-            new com.crowja.damiupos.db.CustomerRefundDao(DatabaseHelper.getInstance(this))
-                    .spend(selectedCustomerId, refundUsed, transactionDao.getSyncUuidById(newTrxId),
-                            settingsDao.getCurrentUserName());
-        }
-
-        // Dibayar HUTANG → catat piutangnya di buku besar. Penjualannya TETAP tercatat penuh
-        // (galonnya sudah keluar, jadi omzet & bonus dihitung seperti biasa); yang belum masuk
-        // hanyalah UANGNYA. total_harga SENGAJA tak dikurangi — sama seperti refund, mengurangi
-        // total akan menyusutkan omzet sekaligus menghitung hutangnya dua kali.
-        if (isJual && Transaction.PAY_HUTANG.equals(pendingPayment)
-                && selectedCustomerId > 0 && trx.getTotalHarga() > 0) {
-            new com.crowja.damiupos.db.CustomerDebtDao(DatabaseHelper.getInstance(this))
-                    .charge(selectedCustomerId, trx.getTotalHarga(), "Penjualan dibayar nanti",
-                            transactionDao.getSyncUuidById(newTrxId), settingsDao.getCurrentUserName());
         }
 
         // Pelunasan hutang lama yang disetujui di dialog → baris 'payment' (dipagari ulang oleh DAO),
@@ -4024,8 +4035,8 @@ public class TransactionActivity extends AppCompatActivity {
         // dgn Selesaikan di Antrian Delivery → completed_by, kredit galon, finalisasi gift ikut).
         if (completeAfterSave) {
             completeAfterSave = false;
-            Transaction saved = transactionDao.getById(newTrxId);
-            if (saved != null && Transaction.DELIVERY_PENDING.equals(saved.getDeliveryStatus())) {
+            Transaction saved2 = transactionDao.getById(newTrxId);
+            if (saved2 != null && Transaction.DELIVERY_PENDING.equals(saved2.getDeliveryStatus())) {
                 transactionDao.markDelivered(newTrxId);
             }
         }
@@ -4162,6 +4173,933 @@ public class TransactionActivity extends AppCompatActivity {
                         + selectedCustomerName, Toast.LENGTH_SHORT).show();
                 finish();
             }
+        }
+    }
+
+    /**
+     * Tulis SATU baris transaksi beserta efek per-barisnya: bonus "Beli N Gratis 1" (+ buku besarnya),
+     * gift produk (leg utama saja), penanda catatan ([PROMOSI]/[SALDO KOMISI]/[REFUND]/[CATATAN ORDER]/
+     * jadwal tertunda), prioritas (termasuk order kembali pertama), insert, galon kembali berpasangan,
+     * pemakaian saldo refund, dan piutang HUTANG — semuanya ditautkan ke baris INI.
+     *
+     * <p>Order tunggal: {@code ctx} null — perilakunya sama persis dengan doSave sebelum pemisahan ini.
+     * Leg checkout: {@code ctx} menstempel trio checkout_uuid/seq/size, memakai keputusan order kembali
+     * pertama yang dihitung sekali untuk seluruh checkout, dan gift produk hanya di leg utama. Efek
+     * sekali-per-order (klaim gift produk, inbox, pelunasan hutang lama, saldo komisi, Selesaikan, struk)
+     * BUKAN di sini — pemanggil yang menjalankannya.
+     */
+    private SavedRow persistRow(RowSpec s, CheckoutCtx ctx) {
+        final boolean isJual = s.isJual;
+        int totalJumlah = s.totalJumlah;
+        Transaction trx = new Transaction();
+        trx.setCustomerId(selectedCustomerId);
+        trx.setType(isJual ? Transaction.TYPE_JUAL : Transaction.TYPE_KEMBALI);
+        trx.setJumlahGalon(totalJumlah);
+        trx.setOngkir(s.ongkir);
+        trx.setOngkirType(s.ongkirType);
+        if (s.tanggal != null) trx.setTanggal(s.tanggal);
+        trx.setTotalHarga(s.totalHarga);
+        if (isJual) {
+            trx.setGalonOwnership(s.ownership);
+            trx.setHargaBotolGalon(s.hargaBotol);
+            trx.setPaymentMethod(pendingPayment); // metode bayar dipilih sebelum simpan
+            trx.setResellerId(selectedResellerId); // reseller afiliasi (0 = tidak ada)
+            // Lokasi tujuan pengiriman terpilih ("Kirim ke") — navigasi delivery memakai
+            // koordinat ini (fallback koordinat pelanggan bila 0/kosong). Leg checkout SELALU membawa
+            // nama lokasinya (label 📍 struk & badge antrean).
+            if (s.destAlways || s.destLat != 0 || s.destLng != 0) {
+                trx.setDeliveryDestName(s.destName);
+                trx.setDeliveryDestLat(s.destLat);
+                trx.setDeliveryDestLng(s.destLng);
+            }
+            // "Perangkat yang ditugaskan" (staf/marketing/SPV): null saat "Perangkat ini" → tanpa penugasan.
+            if (assignDeviceEligible) {
+                trx.setAssignedDeviceUuid(s.assignedDeviceUuid);
+            }
+        } else if (Transaction.TYPE_KEMBALI.equals(trx.getType()) && assignDeviceEligible) {
+            // Ambil galon ditugaskan ke perangkat lain → tugas AMBIL GALON di antreannya (TransactionDao.insert).
+            trx.setAssignedDeviceUuid(s.assignedDeviceUuid);
+        }
+        double hargaGR = 0;
+        int rusak = 0;
+        // 🎁 "Bonus Beli N Gratis 1" (cermin App\Support\ProductBonus di web, tapi dihitung dari
+        // riwayat transaksi PERANGKAT INI saja — {@see ProductBonusDao}): untuk tiap jenis produk
+        // TERBAYAR pada order ini, hitung akumulasi galon terbayar (termasuk baris ini) dikurangi
+        // yang SUDAH pernah diberikan; sisanya (bila > 0) ditambahkan sebagai baris gratis. Ledger-
+        // nya baru dicatat SETELAH transaksi ini benar-benar tersimpan (butuh _id-nya) — lihat bawah.
+        // Leg checkout dihitung berurutan: leg berikutnya sudah melihat leg & ledger leg sebelumnya.
+        // Reuse TransactionItem sebagai pasangan (productName, qty) — productId/hargaPerGalon diabaikan.
+        List<TransactionItem> productBonusGranted = new ArrayList<>();
+        if (isJual) {
+            List<TransactionItem> itemsToSave = new ArrayList<>(s.items);
+            if (selectedCustomerId > 0) {
+                Customer bonusCust = customerDao.getById(selectedCustomerId);
+                if (bonusCust != null && bonusCust.isBonusEnabled()) {
+                    int threshold = settingsDao.getProductBonusThreshold();
+                    com.crowja.damiupos.db.ProductBonusDao pbDao = new com.crowja.damiupos.db.ProductBonusDao(DatabaseHelper.getInstance(this));
+                    java.util.Map<String, Integer> paidThisTrx = new java.util.LinkedHashMap<>();
+                    for (TransactionItem it : s.items) {
+                        if (it.hargaPerGalon > 0 && it.productName != null && !it.productName.isEmpty()) {
+                            paidThisTrx.merge(it.productName, it.jumlah, Integer::sum);
+                        }
+                    }
+                    for (java.util.Map.Entry<String, Integer> e : paidThisTrx.entrySet()) {
+                        String productName = e.getKey();
+                        int lifetimePaid = pbDao.lifetimePaidQty(selectedCustomerId, productName) + e.getValue();
+                        int alreadyGranted = pbDao.alreadyGranted(selectedCustomerId, productName);
+                        int owed = (lifetimePaid / threshold) - alreadyGranted;
+                        if (owed > 0) {
+                            itemsToSave.add(new TransactionItem(0, productName + " (Bonus)", owed, 0));
+                            productBonusGranted.add(new TransactionItem(0, productName, owed, 0));
+                        }
+                    }
+                }
+            }
+            // 🎁 Gift PRODUK dikonfirmasi "Ya" saat pelanggan dipilih (maybeWarnPendingGift) →
+            // baris gratis (Rp0) MENAMBAH galon fisik keluar (beda dari bonus di atas, yang murni
+            // promosi) — cermin App\Support\Gifts::applyProductGift mode 'append' di web. Statusnya
+            // "sungguh diberikan" (bukan sekadar tertulis) ditentukan SETELAH insert oleh pemanggil
+            // (redeemOne). Checkout: hanya leg UTAMA yang membawanya.
+            if (confirmedProductGiftId > 0 && (ctx == null || ctx.isPrimary())) {
+                com.crowja.damiupos.db.CustomerGiftDao.Gift g = pendingConfirmedGift;
+                if (g != null) {
+                    itemsToSave.add(new TransactionItem(0, g.itemName, g.qty, 0));
+                    totalJumlah += g.qty;
+                }
+            }
+            trx.setItems(itemsToSave);
+            trx.setJumlahGalon(totalJumlah);
+            // Backward-compat: put first item's product_id and price as primary
+            if (!s.items.isEmpty()) {
+                TransactionItem first = s.items.get(0);
+                trx.setProductId(first.productId);
+                trx.setHargaPerGalon(first.hargaPerGalon);
+            }
+        } else if (s.totalHarga > 0) {
+            // Ganti rugi KEMBALI: compute & store per-galon price based on rusak count
+            hargaGR = parseDoubleOr(etHargaGantiRugi, 0);
+            rusak = parseIntOr(etJumlahRusak, -1);
+            if (rusak < 0) rusak = totalJumlah;
+            trx.setHargaPerGalon(hargaGR);
+        }
+        String catatan = s.note != null ? s.note : "";
+        // Promosi GRATIS: tandai supaya bisa dibedakan dari penjualan biasa (poin promosi tetap
+        // dihitung server dari pelanggan baru, marker hanya penanda). Berbayar = penjualan normal.
+        if (promosiMode && isPromosiGratis()) {
+            catatan = catatan.isEmpty() ? PROMO_MARKER : (PROMO_MARKER + " " + catatan);
+        }
+        // For ganti rugi, prepend a marker into catatan so receipt can detect on re-view
+        if (!isJual && s.totalHarga > 0) {
+            String marker = "[GANTI RUGI " + rusak + " galon rusak]";
+            catatan = catatan.isEmpty() ? marker : (marker + " " + catatan);
+        }
+        // Pelanggan reseller membayar sebagian/seluruh order dari saldo komisinya (checkout: bagian
+        // leg INI dari pembagian rakus — tiap leg membawa penandanya sendiri).
+        double saldoUsed = s.saldoUsed;
+        if (saldoUsed > 0) {
+            NumberFormat nfm = NumberFormat.getInstance(new Locale("id", "ID"));
+            String marker = "[SALDO KOMISI Rp " + nfm.format(Math.round(saldoUsed)) + "]";
+            catatan = catatan.isEmpty() ? marker : (marker + " " + catatan);
+        }
+        // Saldo REFUND dipakai membayar order ini. Seperti saldo komisi, TOTAL TIDAK dikurangi:
+        // refund adalah cara BAYAR, bukan diskon — kalau total dipotong, omzet & bonus penjualan
+        // ikut mengecil dan refund terhitung dua kali.
+        double refundUsed = s.refundUsed;
+        if (refundUsed > 0) {
+            NumberFormat nfr = NumberFormat.getInstance(new Locale("id", "ID"));
+            String marker = "[REFUND Rp " + nfr.format(Math.round(refundUsed)) + "]";
+            catatan = catatan.isEmpty() ? marker : (marker + " " + catatan);
+        }
+        // Catatan Order pelanggan (instruksi pengiriman tetap, mis. "titip satpam") — otomatis
+        // ditambahkan ke SETIAP transaksi baru pelanggan ini, cermin TransactionController::
+        // storePending di web. Dibaca langsung dari DB (bukan objek pelanggan di picker, yang bisa
+        // basi bila baru diedit) sesaat sebelum simpan.
+        if (selectedCustomerId > 0) {
+            Customer noteCust = customerDao.getById(selectedCustomerId);
+            String orderNote = noteCust != null && noteCust.getOrderNote() != null
+                    ? noteCust.getOrderNote().trim() : "";
+            if (!orderNote.isEmpty()) {
+                String tag = "[CATATAN ORDER] " + orderNote;
+                catatan = catatan.isEmpty() ? tag : (catatan + "\n" + tag);
+            }
+        }
+        // Pesanan Tertunda: tandai delivery_status + jadwal lanjut (TransactionDao.insert() yang
+        // menulis kolom-kolomnya) + tempel label jadwal ke Catatan — cermin App\Support\
+        // TertundaSchedule::noteLabel di web (StrukWa/WA hanya menampilkan teks setelah "Catatan:",
+        // jadi label ini WAJIB lewat sini, bukan ditempel belakangan). Checkout: semua leg berbagi
+        // jadwal lanjut yang sama (tanggal leg-nya tetap +1 detik per seq).
+        if (isJual && tertundaRequested && tertundaResumeAtDb != null) {
+            try {
+                Date resumeDate = trxDbFmt.parse(tertundaResumeAtDb);
+                if (resumeDate != null) {
+                    trx.setDeliveryStatus(Transaction.DELIVERY_TERTUNDA);
+                    trx.setDeliveryTertundaResumeAt(DatabaseHelper.isoFrom(resumeDate.getTime()));
+                    String label = tertundaNoteLabel(resumeDate);
+                    catatan = catatan.isEmpty() ? label : (catatan + "\n" + label);
+                }
+            } catch (Exception ignored) {}
+        }
+        if (!catatan.isEmpty()) trx.setCatatan(catatan);
+        // ⚡ Tandai Prioritas: berlaku untuk order langsung MAUPUN Tertunda (TransactionDao.insert()
+        // yang menstempel orderPriorityAt/By sebenarnya) — cermin DeliveryController::prioritize.
+        if (isJual && cbPrioritas != null && cbPrioritas.isChecked()) {
+            trx.setPriorityRequested(true);
+            if (etPriorityReason != null) {
+                String reason = etPriorityReason.getText() != null
+                        ? etPriorityReason.getText().toString().trim() : "";
+                if (!reason.isEmpty()) trx.setOrderPriorityReason(reason);
+            }
+        }
+        // 🔁 Order kembali PERTAMA: pelanggan ini sudah PERSIS 1 ORDER JUAL (isFirstRepeatBeforeSave —
+        // order berbeda, max lokal vs cross-device) sebelum order ini → pembelian ke-2 mereka, pertama
+        // kalinya balik lagi. Ditandai prioritas OTOMATIS (cermin TransactionController::store di web,
+        // CheckoutOrchestrator::firstRepeat) KECUALI staf sudah mencentang "Tandai Prioritas" sendiri di
+        // atas (alasan manual staf menang, tidak ditimpa). TransactionDao.insert() sendiri yang
+        // menggerbang penulisan kolomnya ke baris yang benar-benar masuk antrian delivery.
+        // Checkout: keputusan dihitung SEKALI sebelum leg pertama ditulis — semua leg diprioritaskan
+        // bersama, planner RIT tak memecahnya.
+        boolean isFirstRepeatOrder = false;
+        if (ctx != null) {
+            isFirstRepeatOrder = isJual && ctx.firstRepeat;
+        } else if (isJual) {
+            isFirstRepeatOrder = isFirstRepeatBeforeSave();
+        }
+        if (isFirstRepeatOrder && !trx.isPriorityRequested()) {
+            trx.setPriorityRequested(true);
+            trx.setOrderPriorityReason("Order kembali pertama — otomatis diprioritaskan");
+        }
+        // 🧺 Leg checkout multi-lokasi: trio ditulis sekali saat insert (imutabel sesudahnya).
+        if (ctx != null) {
+            trx.setCheckoutUuid(ctx.uuid);
+            trx.setCheckoutSeq(ctx.seq);
+            trx.setCheckoutSize(ctx.size);
+        }
+        long newTrxId = transactionDao.insert(trx);
+        if (ctx != null && newTrxId <= 0) {
+            // Leg gagal tertulis → batalkan SELURUH checkout (pemanggil me-rollback transaksi DB).
+            throw new IllegalStateException("Leg " + ctx.seq + "/" + ctx.size + " gagal disimpan");
+        }
+
+        // Galon kembali (tukar botol) dipasangkan SETELAH JUAL-nya tersimpan, lewat
+        // applyReturnedGalon → syncPairedReturn, supaya baris KEMBALI mewarisi tanggal JUAL PERSIS.
+        //
+        // Dulu baris ini ditulis SEBELUM JUAL dan tanggalnya dibiarkan kosong kecuali staf memilih
+        // tanggal manual. Keduanya lalu jatuh ke DEFAULT kolom, datetime('now','localtime'), yang
+        // dievaluasi ULANG tiap INSERT dan hanya berpresisi DETIK — sementara di antara kedua insert
+        // itu ada penomoran struk plus beberapa query settings/user. Begitu keduanya melewati batas
+        // detik, tanggalnya berbeda dan pasangannya putus: getReturnedGalonForSale (cocok tanggal
+        // PERSIS) mengembalikan 0, sehingga dialog "Konfirmasi Galon Kembali" terbuka kosong padahal
+        // galonnya sudah dicatat. Lebih buruk lagi, mengkonfirmasi angka lain akan MENAMBAH baris
+        // KEMBALI baru alih-alih memperbarui baris yatim tadi — Galon Dipinjam pelanggan terhitung
+        // dua kali. Membaca ulang tanggal JUAL yang BENAR-BENAR tersimpan menutup celah itu tanpa
+        // mengubah format tanggal yang dipakai sisa aplikasi. (Leg checkout bertanggal beda +1 detik
+        // per seq → tiap KEMBALI menempel ke leg-nya sendiri.)
+        if (isJual && s.kembali > 0) {
+            transactionDao.applyReturnedGalon(newTrxId, s.kembali);
+        }
+        // Catat buku besar bonus SETELAH baris ini benar-benar tersimpan (butuh _id-nya) — item
+        // gratisnya sendiri sudah ikut items_json lewat trx.setItems(itemsToSave) di atas.
+        if (!productBonusGranted.isEmpty()) {
+            com.crowja.damiupos.db.ProductBonusDao pbDao = new com.crowja.damiupos.db.ProductBonusDao(DatabaseHelper.getInstance(this));
+            for (TransactionItem g : productBonusGranted) {
+                pbDao.insert(selectedCustomerId, g.productName, g.jumlah, newTrxId);
+            }
+        }
+        // Saldo refund terpakai → tulis baris 'usage' di buku besar (dibatasi ulang oleh DAO),
+        // ditautkan ke uuid transaksi ini supaya jejaknya jelas di web & perangkat lain.
+        if (refundUsed > 0) {
+            new com.crowja.damiupos.db.CustomerRefundDao(DatabaseHelper.getInstance(this))
+                    .spend(selectedCustomerId, refundUsed, transactionDao.getSyncUuidById(newTrxId),
+                            settingsDao.getCurrentUserName());
+        }
+
+        // Dibayar HUTANG → catat piutangnya di buku besar. Penjualannya TETAP tercatat penuh
+        // (galonnya sudah keluar, jadi omzet & bonus dihitung seperti biasa); yang belum masuk
+        // hanyalah UANGNYA. total_harga SENGAJA tak dikurangi — sama seperti refund, mengurangi
+        // total akan menyusutkan omzet sekaligus menghitung hutangnya dua kali. Leg checkout: satu
+        // piutang per leg (receipt_no-nya sendiri, checkout_uuid ikut tercatat oleh DAO) — ditagih
+        // di pintu leg itu, bukan sebagai "hutang lama" di pintu leg saudaranya.
+        if (isJual && Transaction.PAY_HUTANG.equals(pendingPayment)
+                && selectedCustomerId > 0 && trx.getTotalHarga() > 0) {
+            new com.crowja.damiupos.db.CustomerDebtDao(DatabaseHelper.getInstance(this))
+                    .charge(selectedCustomerId, trx.getTotalHarga(), "Penjualan dibayar nanti",
+                            transactionDao.getSyncUuidById(newTrxId), settingsDao.getCurrentUserName());
+        }
+
+        SavedRow out = new SavedRow();
+        out.id = newTrxId;
+        out.uuid = transactionDao.getSyncUuidById(newTrxId);
+        out.trx = trx;
+        out.totalJumlah = totalJumlah;
+        out.firstRepeat = isFirstRepeatOrder;
+        out.bonusGranted = productBonusGranted;
+        out.hargaGR = hargaGR;
+        out.rusak = rusak;
+        return out;
+    }
+
+    // ===================================================================================
+    // 🧺 Checkout multi-lokasi — "Bagi ke beberapa lokasi"
+    // ===================================================================================
+
+    /**
+     * Mode bagi lokasi boleh ditawarkan? JUAL air biasa (bukan promosi / pencairan / Jual Botol),
+     * pelanggan terdaftar bukan Umum, ≥ 2 lokasi BERKOORDINAT (lokasi tanpa koordinat dibuang server,
+     * jadi tak bisa jadi leg di web/agen — aturan dibuat sama), bukan akun marketing (v1), DAN gerbang
+     * rollout dashboard sudah dinyalakan ({@link #checkoutEnabled()}).
+     */
+    private boolean canSplit() {
+        return isJualSelected() && !isJualBotolSelected() && !promosiMode && !payoutMode
+                && !splitBlockedForRole && selectedCustomerId > 0 && !isUmumCustomer()
+                && checkoutEnabled()
+                && CheckoutPart.splittableIndexes(selectedLocations).size() >= CheckoutConstants.MIN_LEGS;
+    }
+
+    /**
+     * Gerbang rollout checkout multi-lokasi — SATU-SATUNYA sumber: vonis server "checkout_multi_enabled"
+     * dari /api/me ({@link SyncSettings#isCheckoutMultiEnabled()}, disimpan OnlineTasks.refreshConfig &amp;
+     * {@link #refreshAssignRosterAsync()}). Default MATI (server lama / HP belum terdaftar). Selama mati
+     * HP tak menawarkan "🧺 Bagi lokasi" dan menolak menyimpan pembagian — order satu lokasi berjalan
+     * persis seperti biasa.
+     */
+    private boolean checkoutEnabled() {
+        SyncSettings cfg = new SyncSettings(settingsDao);
+        return cfg.isEnrolled() && cfg.isCheckoutMultiEnabled();
+    }
+
+    /**
+     * 🔁 Order kembali pertama: pelanggan terpilih sudah PERSIS 1 ORDER JUAL sebelum order baru disimpan.
+     * Satu-satunya sumber untuk order tunggal MAUPUN checkout ({@code CustomerDao.effectiveJualOrders}:
+     * COUNT DISTINCT checkout_uuid/uuid, max lokal vs srv_jual_orders) — sama dengan
+     * CheckoutOrchestrator::firstRepeat di server, jadi pelanggan yang order pertamanya checkout 2 lokasi
+     * tetap dikenali di HP &amp; web. Dulu order tunggal memakai Customer.effectiveTrx() (hitung BARIS: tiap
+     * leg + KEMBALI ikut) sehingga HP dan web berbeda vonis.
+     */
+    private boolean isFirstRepeatBeforeSave() {
+        return selectedCustomerId > 0 && customerDao.effectiveJualOrders(selectedCustomerId) == 1;
+    }
+
+    /** Pintu masuk (di bawah kartu Kirim ke) vs kartu ringkasan pembagian. */
+    private void refreshSplitEntry() {
+        if (tvSplitEntry != null) {
+            tvSplitEntry.setVisibility(!multiLocMode && canSplit() ? View.VISIBLE : View.GONE);
+        }
+        if (cardCheckoutParts != null) {
+            cardCheckoutParts.setVisibility(multiLocMode ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    /** Mode bagi lokasi AKTIF → sembunyikan input order tunggal (isinya ada per lokasi di lembar). */
+    private void applySplitVisibility() {
+        refreshSplitEntry();
+        if (!multiLocMode) return;
+        View[] hide = {cardItems, cardKirimKe, ongkirModeContainer, tilOngkir, cardKembali, cardAssignDevice};
+        for (View v : hide) if (v != null) v.setVisibility(View.GONE);
+    }
+
+    /** Matikan mode bagi lokasi tanpa tanya (ganti pelanggan) — form order tunggal dipulihkan. */
+    private void resetSplitMode() {
+        boolean was = multiLocMode;
+        multiLocMode = false;
+        checkoutParts.clear();
+        splitOtherDeviceConfirmed[0] = false;
+        if (was) updateTypeUI();   // memulihkan kartu item / Kirim ke / ongkir / kembali / perangkat
+        else refreshSplitEntry();
+    }
+
+    /** Terapkan hasil lembar pembagian (on=true) atau kembali ke order satu lokasi (on=false). */
+    private void setSplitMode(boolean on, List<CheckoutPart> parts) {
+        boolean was = multiLocMode;
+        multiLocMode = on && parts != null;
+        checkoutParts.clear();
+        if (multiLocMode) checkoutParts.addAll(parts);
+        else splitOtherDeviceConfirmed[0] = false;
+        ongkirAcknowledged = false;   // isi berubah → konfirmasi ongkir lama gugur
+        returnOverWarnCount = 0;      // galon kembali berubah → gerbang peringatan diulang
+        if (was != multiLocMode) updateTypeUI();   // sembunyikan / pulihkan form order tunggal
+        else updateTotal();
+        refreshSplitEntry();
+    }
+
+    /** Jenis air dalam urutan form (= urutan baris item penjualan). */
+    private List<Product> formProducts() {
+        List<Product> out = new ArrayList<>();
+        for (ProductEntry pe : productEntries) out.add(pe.product);
+        return out;
+    }
+
+    /**
+     * Bagian default tiap lokasi berkoordinat: harga = harga khusus LOKASI itu (Customer.priceOverridesFor)
+     * + komisi reseller, ongkir dari tarif lokasinya (CheckoutPart.withDefaults — tanpa fallback ongkir
+     * order terakhir), perangkat dari wilayah lokasinya. Jumlah yang sudah diisi di form order tunggal
+     * dibawa ke lokasi "Kirim ke" terpilih (selain itu ke lokasi pertama), lokasi lain mulai dari 0.
+     */
+    private List<CheckoutPart> buildDefaultParts() {
+        List<CheckoutPart> out = new ArrayList<>();
+        double globalRate = settingsDao.getResellerKomisi();
+        List<Integer> idxs = CheckoutPart.splittableIndexes(selectedLocations);
+        int carryTo = idxs.contains(selectedDestIndex) ? selectedDestIndex : (idxs.isEmpty() ? -1 : idxs.get(0));
+        for (int idx : idxs) {
+            Customer.Location loc = selectedLocations.get(idx);
+            CheckoutPart part = CheckoutPart.withDefaults(loc, idx);
+            java.util.Map<String, Double> overrides = selectedPriceCustomer != null
+                    ? selectedPriceCustomer.priceOverridesFor(loc.name) : null;
+            for (ProductEntry pe : productEntries) {
+                part.setPrice(pe.product.getId(), unitPrice(pe.product, overrides, globalRate));
+                part.setQty(pe.product.getId(), idx == carryTo ? Math.max(0, parseIntOr(pe.etQty, 0)) : 0);
+            }
+            part.assignedDeviceUuid = defaultDeviceFor(loc);
+            out.add(part);
+        }
+        return out;
+    }
+
+    /**
+     * Perangkat default satu lokasi — cermin selectWilayahDefaultDevice: STAF/MARKETING = diri sendiri;
+     * selain itu override penugasan pelanggan (web) → perangkat wilayah koordinat LOKASI ini. null =
+     * perangkat ini (juga bila hasilnya perangkat ini sendiri / tak ada di roster).
+     */
+    private String defaultDeviceFor(Customer.Location loc) {
+        if (!assignDeviceEligible || assignDefaultSelf || loc == null) return null;
+        SyncSettings cfg = new SyncSettings(settingsDao);
+        String dev;
+        if (selectedAssignOverride != null && !selectedAssignOverride.trim().isEmpty()) {
+            dev = selectedAssignOverride.trim();
+        } else {
+            dev = Wilayah.deviceForCoord(cfg.getBranchCenter(), cfg.getWilayahZones(), loc.lat, loc.lng);
+        }
+        if (dev == null || dev.equals(cfg.getDeviceUuid())) return null;
+        return assignUuids.indexOf(dev) > 0 ? dev : null;
+    }
+
+    /** Label perangkat (roster di picker penugasan) untuk uuid; "Perangkat ini" bila null. */
+    private String deviceLabelFor(String uuid) {
+        if (uuid == null || uuid.trim().isEmpty()) return "Perangkat ini";
+        int pos = assignUuids.indexOf(uuid);
+        if (pos > 0 && spinnerAssignDevice != null && pos < spinnerAssignDevice.getCount()) {
+            return String.valueOf(spinnerAssignDevice.getItemAtPosition(pos));
+        }
+        return OPEN_DISPATCH_TARGET.equals(uuid) ? "🎲 Pesanan Terbuka (Lelang)" : "Perangkat lain";
+    }
+
+    /** Reseller/harga pelanggan berubah saat mode aktif → harga tiap lokasi dihitung ulang. */
+    private void repriceCheckoutParts() {
+        double globalRate = settingsDao.getResellerKomisi();
+        for (CheckoutPart part : checkoutParts) {
+            java.util.Map<String, Double> overrides = selectedPriceCustomer != null
+                    ? selectedPriceCustomer.priceOverridesFor(part.loc != null ? part.loc.name : null) : null;
+            for (ProductEntry pe : productEntries) {
+                part.setPrice(pe.product.getId(), unitPrice(pe.product, overrides, globalRate));
+            }
+        }
+        updateTotal();
+    }
+
+    /** Buka lembar pembagian: bagian yang sudah ada (mode aktif) atau bagian default tiap lokasi. */
+    private void openSplitSheet() {
+        if (!multiLocMode && !canSplit()) {
+            Toast.makeText(this, "Pembagian lokasi butuh pelanggan dengan minimal 2 lokasi berkoordinat",
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
+        List<CheckoutPart> base = multiLocMode && !checkoutParts.isEmpty() ? checkoutParts : buildDefaultParts();
+        if (base.size() < CheckoutConstants.MIN_LEGS) {
+            Toast.makeText(this, "Pelanggan ini belum punya 2 lokasi berkoordinat", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        CheckoutSplitSheet.Config cfg = new CheckoutSplitSheet.Config();
+        cfg.products = formProducts();
+        if (assignDeviceEligible && spinnerAssignDevice != null && spinnerAssignDevice.getCount() > 1) {
+            cfg.deviceUuids = new ArrayList<>(assignUuids);
+            cfg.deviceLabels = new ArrayList<>();
+            for (int i = 0; i < spinnerAssignDevice.getCount() && i < assignUuids.size(); i++) {
+                cfg.deviceLabels.add(String.valueOf(spinnerAssignDevice.getItemAtPosition(i)));
+            }
+            if (cfg.deviceLabels.size() != cfg.deviceUuids.size()) {   // roster sedang diisi ulang
+                cfg.deviceUuids = null;
+                cfg.deviceLabels = null;
+            }
+        }
+        cfg.openDispatchUuid = OPEN_DISPATCH_TARGET;
+        cfg.confirmOtherDevice = assignDefaultSelf;
+        cfg.otherDeviceConfirmed = splitOtherDeviceConfirmed;
+        cfg.showKembali = isPinjamSelected() && !isUmumCustomer();
+        cfg.held = selectedHeld;
+        cfg.beli = isBeliSelected();
+        cfg.hargaBotol = parseDoubleOr(etHargaBotol, 0);
+        cfg.defaultOngkir = settingsDao.getDefaultOngkir();
+        cfg.modeOn = multiLocMode;
+        CheckoutSplitSheet.show(this, base, cfg, new CheckoutSplitSheet.Listener() {
+            @Override public void onApply(List<CheckoutPart> parts) {
+                if (isFinishing() || isDestroyed()) return;
+                setSplitMode(true, parts);
+            }
+
+            @Override public void onDisable() {
+                if (isFinishing() || isDestroyed()) return;
+                setSplitMode(false, null);
+                Toast.makeText(TransactionActivity.this, "Kembali ke order satu lokasi", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    /** Total gabungan = Σ total tiap lokasi aktif (dasar potongan saldo komisi & refund). */
+    private void updateCheckoutTotal() {
+        boolean beli = isBeliSelected();
+        double hb = beli ? parseDoubleOr(etHargaBotol, 0) : 0;
+        double total = CheckoutPart.grandTotal(checkoutParts, beli, hb);
+        NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
+        tvTotalHarga.setText("Rp " + nf.format(total));
+        lastJualTotal = total;
+        updateSisaBayar();
+        renderCheckoutPartsCard();
+    }
+
+    /** Kartu ringkasan: satu baris per lokasi aktif — ketuk untuk mengubah pembagian. */
+    private void renderCheckoutPartsCard() {
+        if (llCheckoutParts == null) return;
+        llCheckoutParts.removeAllViews();
+        if (!multiLocMode) return;
+        boolean beli = isBeliSelected();
+        double hb = beli ? parseDoubleOr(etHargaBotol, 0) : 0;
+        boolean pinjam = isPinjamSelected();
+        NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
+        int colorMain = androidx.core.content.ContextCompat.getColor(this, R.color.text_primary);
+        int colorSub = androidx.core.content.ContextCompat.getColor(this, R.color.text_secondary);
+        List<Product> products = formProducts();
+        int pad = (int) (4 * getResources().getDisplayMetrics().density);
+        for (CheckoutPart p : CheckoutPart.active(checkoutParts)) {
+            SpannableStringBuilder sb = new SpannableStringBuilder();
+            appendStyled(sb, "📍 " + p.name() + " — " + p.galon() + " galon · Rp "
+                    + nf.format(Math.round(p.total(beli, hb))), colorMain, true, 1f);
+            StringBuilder detail = new StringBuilder();
+            for (TransactionItem it : p.toItems(products)) {
+                if (detail.length() > 0) detail.append(", ");
+                detail.append(it.jumlah).append("× ").append(it.productName);
+            }
+            if (Transaction.ONGKIR_PER_GALON.equals(p.ongkirType)) {
+                detail.append(" · ongkir Rp ").append(nf.format(Math.round(p.storedOngkir()))).append("/galon");
+            } else if (Transaction.ONGKIR_BORONGAN.equals(p.ongkirType)) {
+                detail.append(" · ongkir borongan Rp ").append(nf.format(Math.round(p.storedOngkir())));
+            } else {
+                detail.append(" · tanpa ongkir");
+            }
+            if (pinjam && p.kembali > 0) detail.append(" · kembali ").append(p.kembali);
+            if (assignDeviceEligible) detail.append(" · 📱 ").append(deviceLabelFor(p.assignedDeviceUuid));
+            if (p.note != null && !p.note.trim().isEmpty()) detail.append(" · 📝 ").append(p.note.trim());
+            appendStyled(sb, "\n" + detail, colorSub, false, 0.85f);
+            TextView row = new TextView(this);
+            row.setText(sb);
+            row.setTextSize(13);
+            row.setPadding(0, pad, 0, pad);
+            row.setOnClickListener(v -> openSplitSheet());
+            llCheckoutParts.addView(row);
+        }
+    }
+
+    /**
+     * Gerbang ongkir PER LOKASI (pengganti ongkirGate order tunggal di mode bagi lokasi): tiap lokasi
+     * dibandingkan dengan status wajib ongkir LOKASINYA sendiri, popup menyebut nama lokasinya.
+     * Lanjut tetap butuh DUA klik, dan konfirmasinya gugur begitu pembagian diubah (setSplitMode).
+     */
+    private boolean checkoutOngkirGate(Runnable onProceed) {
+        NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
+        StringBuilder lines = new StringBuilder();
+        boolean anyMissing = false;
+        for (CheckoutPart p : CheckoutPart.active(checkoutParts)) {
+            if (p.ongkirMissing()) {
+                anyMissing = true;
+                lines.append("• 📍 ").append(p.name())
+                        .append(": wajib ongkir, tetapi TANPA ONGKIR (Rp 0).\n");
+            } else if (p.ongkirUnexpected()) {
+                lines.append("• 📍 ").append(p.name()).append(": bebas ongkir, tetapi dikenakan ongkir Rp ")
+                        .append(nf.format(Math.round(p.ongkirTotal()))).append(".\n");
+            }
+        }
+        if (lines.length() == 0) return true;
+        final AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle(anyMissing ? "⚠️ Lokasi Wajib Ongkir" : "⚠️ Lokasi Bebas Ongkir")
+                .setMessage("Ongkir tidak cocok dengan status lokasinya:\n\n" + lines
+                        + "\nPerbaiki dulu, atau tekan \"Tetap lanjutkan\" DUA KALI "
+                        + "untuk melanjutkan dengan keputusan Anda.")
+                .setNegativeButton("Perbaiki dulu", (d, w) -> openSplitSheet())
+                .setPositiveButton("Tetap lanjutkan", null)   // listener dipasang manual di bawah
+                .create();
+        dlg.setOnShowListener(d -> {
+            final int[] clicks = {0};
+            final android.widget.Button go = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
+            go.setOnClickListener(v -> {
+                if (++clicks[0] < 2) {
+                    go.setText("Klik sekali lagi untuk lanjut");
+                    return;
+                }
+                ongkirAcknowledged = true;
+                dlg.dismiss();
+                onProceed.run();
+            });
+        });
+        dlg.show();
+        return false;
+    }
+
+    /**
+     * Validasi + SATU popup konfirmasi untuk seluruh checkout (per lokasi + total gabungan), lalu SATU
+     * metode bayar dan (sekali) tawaran pelunasan hutang lama → {@link #doSaveCheckout}.
+     */
+    private void saveCheckout() {
+        if (!checkoutEnabled()) {
+            // Gerbang dimatikan dari dashboard setelah lembar dibuka (sinkron di tengah sesi) → jangan
+            // buat checkout; isi pembagian TIDAK dibuang, staf memilih sendiri lewat lembar.
+            Toast.makeText(this, "🧺 Pembagian lokasi sedang dinonaktifkan dari dashboard. Matikan "
+                    + "pembagian lalu simpan per lokasi.", Toast.LENGTH_LONG).show();
+            openSplitSheet();
+            return;
+        }
+        List<CheckoutPart> legs = CheckoutPart.active(checkoutParts);
+        if (legs.size() < CheckoutConstants.MIN_LEGS) {
+            Toast.makeText(this, "Isi galon minimal di " + CheckoutConstants.MIN_LEGS
+                    + " lokasi — atau matikan pembagian lokasi.", Toast.LENGTH_LONG).show();
+            openSplitSheet();
+            return;
+        }
+        if (legs.size() > CheckoutConstants.MAX_LEGS) {
+            Toast.makeText(this, "Maksimal " + CheckoutConstants.MAX_LEGS + " lokasi per pesanan",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        final boolean beli = isBeliSelected();
+        final double hargaBotol = beli ? parseDoubleOr(etHargaBotol, 0) : 0;
+        if (beli && hargaBotol <= 0) {
+            etHargaBotol.setError("Harga botol harus > 0");
+            return;
+        }
+        // Tiap lokasi = order sendiri → wajib berbayar (aturan yang sama dengan order tunggal/server).
+        for (CheckoutPart p : legs) {
+            if (p.total(beli, hargaBotol) <= 0) {
+                Toast.makeText(this, "📍 " + p.name() + " totalnya Rp 0 — tiap lokasi harus berbayar.",
+                        Toast.LENGTH_LONG).show();
+                openSplitSheet();
+                return;
+            }
+        }
+        final boolean pinjam = isPinjamSelected();
+        int totalGalon = 0, totalKembali = 0;
+        for (CheckoutPart p : legs) {
+            totalGalon += p.galon();
+            if (pinjam) totalKembali += Math.max(0, p.kembali);
+        }
+        // Galon kembali (Σ semua lokasi) melebihi galon DIPINJAM → peringatan tegas 2×, lalu boleh lanjut.
+        if (selectedCustomerId > 0 && !isUmumCustomer() && totalKembali > selectedHeld) {
+            returnOverWarnCount++;
+            blinkView(cardCheckoutParts);
+            Toast.makeText(this, "❗ Galon kembali (" + totalKembali + ") melebihi galon dipinjam "
+                    + "pelanggan (" + selectedHeld + "). Periksa lagi — tekan Simpan sekali lagi untuk tetap lanjut.",
+                    Toast.LENGTH_LONG).show();
+            if (returnOverWarnCount < 2) return;
+        }
+
+        NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
+        SpannableStringBuilder msg = new SpannableStringBuilder();
+        int colorKeluar = Color.parseColor("#D32F2F");
+        int colorKembali = Color.parseColor("#2E7D32");
+        int colorInfo = Color.parseColor("#1565C0");
+        int colorSub = Color.parseColor("#616161");
+        if (beli) {
+            appendStyled(msg, "Botol Galon Dibeli: " + totalGalon + " botol\n", colorInfo, true, 1.15f);
+        } else if (isBawaSendiriSelected()) {
+            appendStyled(msg, "Botol Galon Bawa Sendiri: " + totalGalon + " botol\n", colorInfo, true, 1.15f);
+        } else {
+            appendStyled(msg, "Botol Galon Keluar (Pinjam): " + totalGalon + " botol galon\n", colorKeluar, true, 1.15f);
+        }
+        appendStyled(msg, "Botol Galon Kembali: " + totalKembali + " botol galon\n\n", colorKembali, true, 1.15f);
+        msg.append("Pelanggan: ").append(selectedCustomerName).append("\n");
+        msg.append("Dibagi ke ").append(String.valueOf(legs.size())).append(" lokasi:\n");
+        List<Product> products = formProducts();
+        double total = 0;
+        for (CheckoutPart p : legs) {
+            total += p.total(beli, hargaBotol);
+            appendStyled(msg, "📍 " + p.name(), colorInfo, true, 1f);
+            msg.append(": ").append(p.summary(products, beli, hargaBotol)).append("\n");
+            StringBuilder extra = new StringBuilder();
+            if (pinjam && p.kembali > 0) extra.append("↩ kembali ").append(p.kembali).append(" galon");
+            if (assignDeviceEligible) {
+                if (extra.length() > 0) extra.append(" · ");
+                extra.append("📱 ").append(deviceLabelFor(p.assignedDeviceUuid));
+            }
+            if (p.note != null && !p.note.trim().isEmpty()) {
+                if (extra.length() > 0) extra.append(" · ");
+                extra.append("📝 ").append(p.note.trim());
+            }
+            if (extra.length() > 0) appendStyled(msg, "   " + extra + "\n", colorSub, false, 0.9f);
+        }
+        msg.append("\n");
+        appendStyled(msg, "Total: Rp " + nf.format(total), colorInfo, true, 1.1f);
+        double saldoPotong = saldoDipotong();
+        if (saldoPotong > 0) {
+            appendStyled(msg, "\nDibayar dari Saldo Komisi: − Rp " + nf.format(Math.round(saldoPotong)),
+                    colorKembali, true, 1.0f);
+            appendStyled(msg, "\nSisa Dibayar: Rp " + nf.format(Math.round(Math.max(0, total - saldoPotong))),
+                    colorInfo, true, 1.05f);
+        }
+        appendStyled(msg, "\n\n💵 Bayar per lokasi — tiap lokasi membayar bagiannya sendiri di pintunya "
+                + "(metode bayar sama untuk semua).", colorSub, false, 0.9f);
+        if (completeAfterSave) {
+            appendStyled(msg, "\n✅ Simpan & Selesaikan: hanya lokasi yang diantar perangkat ini yang langsung "
+                    + "ditandai Selesai.", colorSub, false, 0.9f);
+        }
+        boolean tertunda = tertundaRequested && tertundaResumeAtDb != null;
+        if (!tertunda && trxDatePickedManually && selectedTrxDate != null
+                && selectedTrxDate.compareTo(trxDbFmt.format(new Date())) < 0) {
+            appendStyled(msg, "\n🕒 Tanggal mundur tidak dipakai — pembagian lokasi memakai waktu sekarang.",
+                    colorSub, false, 0.9f);
+        }
+
+        // Salinan: lembar pembagian bisa dibuka ulang di antara dialog, jangan ikut berubah di tengah jalan.
+        final List<CheckoutPart> snapshot = new ArrayList<>();
+        for (CheckoutPart p : legs) snapshot.add(p.copy());
+        final String ownership = umumSafeOwnership(getSelectedOwnership());
+        new AlertDialog.Builder(this)
+                .setTitle("Konfirmasi Transaksi — " + legs.size() + " Lokasi")
+                .setMessage(msg)
+                .setPositiveButton("Lanjut", (d, w) ->
+                        // SATU metode bayar untuk semua leg; tiap leg tetap ditagih di pintunya sendiri.
+                        showPaymentPicker(method -> {
+                            pendingPayment = method;
+                            // Hutang LAMA ditawarkan sekali (sebelum leg mana pun lahir → hutang segar
+                            // leg saudara tak ikut terhitung); pelunasannya ditautkan ke leg utama.
+                            askSettleDebt(method, () -> doSaveCheckout(snapshot, ownership, hargaBotol, pinjam));
+                        }))
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /**
+     * Simpan checkout: N leg JUAL dalam SATU transaksi DB (semua atau tidak sama sekali), uuid/seq/size
+     * bersama, tanggal leg = dasar + (seq−1) detik (dasar = max(tanggal terpilih, sekarang), tertunda =
+     * jadwal lanjut). Per leg (persistRow): harga & ongkir lokasinya, perangkatnya, KEMBALI-nya, bonus,
+     * penanda & pemakaian saldo/refund bagiannya, piutang HUTANG-nya. Sekali per checkout (leg utama):
+     * gift produk, pelunasan hutang lama, SATU pencairan saldo komisi gabungan, inbox; lalu Selesaikan
+     * (hanya leg perangkat ini), sinkron, dan struk GABUNGAN (ReceiptActivity EXTRA_CHECKOUT_UUID).
+     */
+    private void doSaveCheckout(List<CheckoutPart> legs, String ownership, double hargaBotol, boolean pinjam) {
+        if (ownership != null && !isUmumCustomer()) {
+            settingsDao.setLastGalonOwnership(ownership);
+        }
+        final int n = legs.size();
+        final boolean beli = Transaction.OWNERSHIP_BELI.equals(ownership);
+        final boolean tertunda = tertundaRequested && tertundaResumeAtDb != null;
+        final String base = CheckoutPart.baseTanggal(selectedTrxDate, trxDbFmt.format(new Date()),
+                tertunda, tertundaResumeAtDb);
+        final String[] tanggal = new String[n];
+        for (int k = 0; k < n; k++) {
+            tanggal[k] = CheckoutConstants.legTanggal(base, k + 1);
+            if (tanggal[k] == null) {
+                // Leg bertanggal kembar merusak pasangan KEMBALI-nya → tolak menyimpan sama sekali.
+                Toast.makeText(this, "Tanggal transaksi tidak valid — pembagian lokasi tidak disimpan",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+        }
+        final String checkoutUuid = CheckoutConstants.newCheckoutUuid();
+        // 🔁 Order kembali pertama: SEKALI, sebelum leg mana pun ditulis, dihitung per ORDER JUAL
+        // (checkout = 1 order) — kalau dihitung per leg, leg 2 akan melihat leg 1 sebagai order ke-2.
+        final boolean firstRepeat = isFirstRepeatBeforeSave();
+        // "Simpan & Selesaikan" dibaca SEKALI di sini.
+        final boolean complete = completeAfterSave;
+        completeAfterSave = false;
+
+        final double[] totals = new double[n];
+        for (int k = 0; k < n; k++) totals[k] = legs.get(k).total(beli, hargaBotol);
+        // Saldo komisi lalu saldo refund dibagi RAKUS per leg (tak pernah melebihi total leg-nya).
+        final double[] saldo = CheckoutPart.allocate(saldoDipotong(), totals);
+        final double[] refundCaps = new double[n];
+        for (int k = 0; k < n; k++) refundCaps[k] = totals[k] - saldo[k];
+        final double[] refund = CheckoutPart.allocate(refundDipotong(), refundCaps);
+        double saldoSum = 0, refundSum = 0;
+        for (int k = 0; k < n; k++) {
+            saldoSum += saldo[k];
+            refundSum += refund[k];
+        }
+        final String checkoutNote = etCatatan.getText() != null ? etCatatan.getText().toString().trim() : "";
+        final List<Product> products = formProducts();
+        final String operatorName = settingsDao.getCurrentUserName();
+        final long inboxId = getIntent().getLongExtra(EXTRA_INBOX_ID, -1);
+
+        final SavedRow[] rows = new SavedRow[n];
+        double paidDebt = 0;
+        Exception failure = null;
+        android.database.sqlite.SQLiteDatabase db = DatabaseHelper.getInstance(this).getWritableDatabase();
+        db.beginTransaction();
+        try {
+            for (int k = 0; k < n; k++) {
+                CheckoutPart p = legs.get(k);
+                RowSpec s = new RowSpec();
+                s.isJual = true;
+                s.items = p.toItems(products);
+                s.totalJumlah = p.galon();
+                s.ongkirType = p.ongkirType != null ? p.ongkirType : Transaction.ONGKIR_NONE;
+                s.ongkir = p.storedOngkir();
+                s.totalHarga = totals[k];
+                s.ownership = ownership;
+                s.hargaBotol = beli ? hargaBotol : 0;
+                s.kembali = pinjam ? Math.max(0, p.kembali) : 0;
+                s.tanggal = tanggal[k];
+                s.destName = p.name();
+                s.destLat = p.loc != null ? p.loc.lat : 0;
+                s.destLng = p.loc != null ? p.loc.lng : 0;
+                s.destAlways = true;
+                s.assignedDeviceUuid = p.assignedDeviceUuid;
+                s.saldoUsed = saldo[k];
+                s.refundUsed = refund[k];
+                s.note = CheckoutPart.legNote(checkoutNote, p.note);
+                rows[k] = persistRow(s, new CheckoutCtx(checkoutUuid, k + 1, n, firstRepeat));
+            }
+            String leg1Uuid = rows[0].uuid;
+            // 🎁 Gift PRODUK (barisnya sudah di leg utama) → klaim/lekatkan ke leg utama.
+            if (confirmedProductGiftId > 0 && leg1Uuid != null && !leg1Uuid.isEmpty()) {
+                Transaction savedForGift = transactionDao.getById(rows[0].id);
+                String gds = savedForGift != null ? savedForGift.getDeliveryStatus() : null;
+                boolean giftQueued = Transaction.DELIVERY_PENDING.equals(gds)
+                        || Transaction.DELIVERY_TERTUNDA.equals(gds);
+                new com.crowja.damiupos.db.CustomerGiftDao(DatabaseHelper.getInstance(this))
+                        .redeemOne(confirmedProductGiftId, leg1Uuid, operatorName, giftQueued);
+            }
+            // Pelunasan hutang LAMA (uang tambahan) → SATU baris 'payment', ditautkan ke leg utama,
+            // penanda [BAYAR HUTANG] hanya di leg utama.
+            if (pendingDebtPay > 0 && selectedCustomerId > 0) {
+                paidDebt = new com.crowja.damiupos.db.CustomerDebtDao(DatabaseHelper.getInstance(this))
+                        .pay(selectedCustomerId, pendingDebtPay, leg1Uuid, operatorName, "Dilunasi saat transaksi");
+                if (paidDebt > 0) {
+                    String bayarMarker = "[BAYAR HUTANG Rp "
+                            + java.text.NumberFormat.getNumberInstance(new java.util.Locale("in", "ID"))
+                                    .format(Math.round(paidDebt)) + "]";
+                    String catatanKini = rows[0].trx.getCatatan() != null ? rows[0].trx.getCatatan() : "";
+                    if (!catatanKini.contains("[BAYAR HUTANG")) {
+                        transactionDao.updateCatatan(rows[0].id,
+                                (catatanKini.isEmpty() ? "" : catatanKini + "\n") + bayarMarker);
+                    }
+                }
+            }
+            // Saldo komisi: SATU pencairan untuk jumlah gabungan (penanda [SALDO KOMISI] tetap per leg).
+            if (saldoSum > 0) {
+                new com.crowja.damiupos.db.ResellerWithdrawalDao(DatabaseHelper.getInstance(this))
+                        .insert(selectedCustomerId, com.crowja.damiupos.db.ResellerWithdrawalDao.TYPE_UANG,
+                                0, saldoSum, "Bayar transaksi pakai saldo komisi", 0);
+            }
+            // Pesanan Terjadwal: inbox SELESAI, ditautkan ke leg utama.
+            if (inboxId > 0) {
+                new com.crowja.damiupos.db.OrderInboxDao(DatabaseHelper.getInstance(this))
+                        .updateStatus(inboxId, com.crowja.damiupos.model.OrderInbox.STATUS_APPROVED, rows[0].id);
+            }
+            db.setTransactionSuccessful();
+        } catch (Exception e) {
+            failure = e;
+        } finally {
+            db.endTransaction();
+        }
+        if (failure != null) {
+            android.util.Log.e("TransactionActivity", "doSaveCheckout gagal", failure);
+            Toast.makeText(this, "Gagal menyimpan pembagian lokasi — tidak ada yang tersimpan. "
+                    + (failure.getMessage() != null ? failure.getMessage() : ""), Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        if (confirmedProductGiftId > 0) {
+            confirmedProductGiftId = -1;
+            pendingConfirmedGift = null;
+        }
+        if (paidDebt > 0) {
+            Toast.makeText(this, "Pelunasan hutang dicatat: Rp "
+                    + java.text.NumberFormat.getNumberInstance(new java.util.Locale("in", "ID"))
+                            .format(Math.round(paidDebt)), Toast.LENGTH_LONG).show();
+        }
+        pendingDebtPay = 0;
+        if (inboxId > 0) com.crowja.damiupos.wa.OrderAlertService.refresh(this);
+        ensureCustomerSavedInContacts();
+        // "Simpan & Selesaikan": HANYA leg yang diantar perangkat ini (belum ditugaskan ke perangkat
+        // lain) — Selesai & kredit galon leg lain milik kurir yang benar-benar mengantarnya.
+        if (complete) {
+            String me = new SyncSettings(settingsDao).getDeviceUuid();
+            for (Transaction leg : transactionDao.getByCheckoutUuid(checkoutUuid)) {
+                if (Transaction.DELIVERY_PENDING.equals(leg.getDeliveryStatus()) && !leg.isHandledByOtherDevice(me)) {
+                    transactionDao.markDelivered(leg.getId());
+                }
+            }
+        }
+        // N leg JUAL baru masuk Antrian Delivery → dorong segera ke dashboard.
+        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+
+        Intent r = new Intent(this, ReceiptActivity.class);
+        // Struk GABUNGAN semua leg — ReceiptActivity membaca leg tersimpan (getByCheckoutUuid) dan
+        // hanya mengisi extras yang belum ada di sini.
+        r.putExtra(ReceiptActivity.EXTRA_CHECKOUT_UUID, checkoutUuid);
+        r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_NAME, selectedCustomerName);
+        r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_PHONE, selectedCustomerPhone);
+        r.putExtra(ReceiptActivity.EXTRA_CUSTOMER_ID, selectedCustomerId);
+        // Gift & popup gift produk → leg UTAMA.
+        r.putExtra(ReceiptActivity.EXTRA_GIFT_TRX_UUID, rows[0].uuid);
+        r.putExtra(ReceiptActivity.EXTRA_GIFT_TRX_ID, rows[0].id);
+        Transaction leg1 = transactionDao.getById(rows[0].id);
+        if (firstRepeat) {
+            r.putExtra(ReceiptActivity.EXTRA_FIRST_REPEAT_ORDER, true);
+            r.putExtra(ReceiptActivity.EXTRA_FIRST_REPEAT_PRIORITIZED,
+                    leg1 != null && leg1.getOrderPriorityAt() != null);
+        }
+        // 🎁 Bonus "Beli N Gratis 1" yang terpenuhi di leg mana pun.
+        StringBuilder bonus = new StringBuilder();
+        for (int k = 0; k < n; k++) {
+            for (TransactionItem g : rows[k].bonusGranted) {
+                if (bonus.length() > 0) bonus.append(", ");
+                bonus.append(g.jumlah).append("× ").append(g.productName)
+                        .append(" (").append(legs.get(k).name()).append(")");
+            }
+        }
+        if (bonus.length() > 0) r.putExtra(ReceiptActivity.EXTRA_PRODUCT_BONUS_GRANTED, bonus.toString());
+        if (forwardedInboxSenderName != null) {
+            r.putExtra(ReceiptActivity.EXTRA_INBOX_SENDER_NAME, forwardedInboxSenderName);
+        }
+        r.putExtra(ReceiptActivity.EXTRA_OWNERSHIP, ownership);
+        r.putExtra(ReceiptActivity.EXTRA_HARGA_BOTOL, beli ? hargaBotol : 0);
+        r.putExtra(ReceiptActivity.EXTRA_CATATAN, checkoutNote);
+        if (pendingPayment != null) r.putExtra(ReceiptActivity.EXTRA_PAYMENT_METHOD, pendingPayment);
+        if (saldoSum > 0) {
+            r.putExtra(ReceiptActivity.EXTRA_SALDO_DIPOTONG, saldoSum);
+            r.putExtra(ReceiptActivity.EXTRA_SALDO_AFTER, Math.max(0, resellerSaldo - saldoSum));
+        }
+        if (refundSum > 0) r.putExtra(ReceiptActivity.EXTRA_REFUND_DIPOTONG, refundSum);
+        if (settingsDao.isPointsEnabled()) {
+            // Poin atas dasar GABUNGAN (satu checkout = satu pembelian), dihitung seperti order tunggal.
+            double ppa = settingsDao.getPointsPerAmount();
+            int reward = settingsDao.getPointsRewardThreshold();
+            double basis = 0;
+            for (int k = 0; k < n; k++) {
+                double b = totals[k] - ((beli ? hargaBotol : 0) * rows[k].totalJumlah);
+                basis += Math.max(0, b);
+            }
+            int pointsThisTrx = (int) Math.floor(basis / ppa);
+            double lifetimePrev = transactionDao.getTotalJualPointsBasisByCustomer(selectedCustomerId);
+            double lifetime = lifetimePrev + basis;
+            int totalPoints = (int) Math.floor(lifetime / ppa);
+            int pointsBefore = (int) Math.floor(lifetimePrev / ppa);
+            int rewardsBefore = reward > 0 ? pointsBefore / reward : 0;
+            int rewardsAfter = reward > 0 ? totalPoints / reward : 0;
+            r.putExtra(ReceiptActivity.EXTRA_POINTS_ENABLED, true);
+            r.putExtra(ReceiptActivity.EXTRA_POINTS_EARNED, pointsThisTrx);
+            r.putExtra(ReceiptActivity.EXTRA_POINTS_TOTAL, totalPoints);
+            r.putExtra(ReceiptActivity.EXTRA_POINTS_REWARD, reward);
+            r.putExtra(ReceiptActivity.EXTRA_REWARD_UNLOCKED, rewardsAfter > rewardsBefore);
+            r.putExtra(ReceiptActivity.EXTRA_REWARDS_NEW_COUNT, rewardsAfter - rewardsBefore);
+        }
+        // JUAL masuk Antrian Delivery → struk dikirim ke pelanggan saat order Selesai.
+        r.putExtra(ReceiptActivity.EXTRA_DEFER_CUSTOMER_SEND, true);
+
+        final Intent receiptIntent = r;
+        String leg1Tanggal = leg1 != null ? leg1.getTanggal() : tanggal[0];
+        if (transactionDao.isRepeatFromFreePromo(selectedCustomerId, leg1Tanggal)) {
+            showRepeatPromoDialog(selectedCustomerName, () -> { startActivity(receiptIntent); finish(); });
+        } else {
+            startActivity(receiptIntent);
+            finish();
         }
     }
 }

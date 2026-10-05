@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 101;
+    private static final int DATABASE_VERSION = 102;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -124,6 +124,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
      *  kelayakan link pesan-ulang mandiri kampanye ORDER (bandingkan dgn campaigns.min_repeat_orders,
      *  {@see CampaignDao}). Cermin App\Models\Campaign::customerIsEligible() di server. */
     public static final String COL_SRV_PAID_JUAL_COUNT = "srv_paid_jual_count";
+    /** Jumlah ORDER JUAL lintas perangkat (agg_jual_orders server, pull-only, excludingTertunda):
+     *  COUNT(DISTINCT COALESCE(checkout_uuid, uuid)) — checkout multi-lokasi N leg = SATU order.
+     *  Dasar "order kembali pertama" (lihat CustomerDao.effectiveJualOrders). SENGAJA tanpa DEFAULT:
+     *  NULL = server belum pernah mengirimnya (server lama / baris belum ditarik ulang), beda dari 0. */
+    public static final String COL_SRV_JUAL_ORDERS = "srv_jual_orders";
     // Harga khusus per produk untuk pelanggan ini: JSON { product_uuid: harga }.
     // NULL/kosong = ikut harga produk standar. Disinkron apa adanya (string JSON).
     public static final String COL_PRODUCT_PRICES = "product_prices";
@@ -356,6 +361,16 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_DELIVERY_DEST_NAME = "delivery_dest_name";
     public static final String COL_DELIVERY_DEST_LAT = "delivery_dest_lat";
     public static final String COL_DELIVERY_DEST_LNG = "delivery_dest_lng";
+    /** CHECKOUT MULTI-LOKASI: satu checkout = N baris JUAL biasa ("leg"), satu per lokasi tujuan,
+     *  diikat tiga kolom ini — cermin transactions.checkout_uuid/seq/size di server. Semuanya NULL
+     *  (order biasa) ATAU semuanya terisi (2 ≤ size ≤ 10, 1 ≤ seq ≤ size; seq 1 = leg UTAMA).
+     *  Ditulis SEKALI saat insert lalu imutabel (server men-skip-nya pada UPDATE). KEMBALI berpasangan
+     *  TIDAK distempel — pasangannya tetap pelanggan + tanggal PERSIS (tanggal tiap leg beda 1 detik).
+     *  HP bisa hanya memegang SATU leg (leg lain dirutekan ke perangkat lain): fitur HP tak boleh
+     *  menganggap saudara leg-nya ada lokal — badge cukup dari seq/size. Disinkron dua arah. */
+    public static final String COL_CHECKOUT_UUID = "checkout_uuid";
+    public static final String COL_CHECKOUT_SEQ = "checkout_seq";
+    public static final String COL_CHECKOUT_SIZE = "checkout_size";
     /** "Perangkat yang ditugaskan" (marketing/SPV memilih perangkat penangan saat buat transaksi):
      *  NIAT penugasan ke perangkat LAIN. Server menerjemahkannya pada insert → delivery_device_uuid
      *  (rute antrian ke perangkat itu) + staff_uuid = staf yang clock-in di sana (kredit galon/komisi
@@ -553,6 +568,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_QUICK_ORDER_LINK + " TEXT, " +
                     COL_SRV_SALDO + " REAL DEFAULT 0, " +
                     COL_SRV_PAID_JUAL_COUNT + " INTEGER DEFAULT 0, " +
+                    COL_SRV_JUAL_ORDERS + " INTEGER, " +
                     COL_FOLLOWUP_EXCLUDED_AT + " TEXT, " +
                     COL_FOLLOWUP_EXCLUDE_REASON + " TEXT, " +
                     COL_LAST_FOLLOWUP_AT + " TEXT, " +
@@ -662,6 +678,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_COMPLAINED_AT + " TEXT, " +
                     COL_CHAT_SESSION_AT + " TEXT, " +
                     COL_DELIVERY_PROOF_REQUIRED + " INTEGER DEFAULT 0, " +
+                    COL_CHECKOUT_UUID + " TEXT, " +
+                    COL_CHECKOUT_SEQ + " INTEGER, " +
+                    COL_CHECKOUT_SIZE + " INTEGER, " +
                     // BUKTI SELESAI pengiriman: path lokal (TIDAK disinkron) + URL server (disinkron).
                     // Nama kolom WAJIB photo_path/photo_url — konvensi bersama pipeline MediaUploader.
                     COL_PHOTO_PATH + " TEXT, " +
@@ -987,6 +1006,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_DEBT_AMOUNT = "amount";             // SELALU positif
     public static final String COL_DEBT_REASON = "reason";
     public static final String COL_DEBT_TRX_UUID = "transaction_uuid"; // raw uuid (tak di-resolve lokal)
+    /** checkout_uuid leg asal baris 'debt' (HUTANG penjualan leg checkout multi-lokasi), disalin dari
+     *  transaksinya saat dicatat — cermin customer_debts.checkout_uuid di server. Raw uuid, dua arah.
+     *  Di pintu leg lain, hutang SEGAR saudara leg-nya dikecualikan dari "hutang sebelumnya" lewat
+     *  kolom ini SAJA (tabel ini branch-wide, transaksi saudaranya belum tentu ada di HP kurir). */
+    public static final String COL_DEBT_CHECKOUT_UUID = "checkout_uuid";
     public static final String COL_DEBT_BY = "created_by_name";
 
     private static final String CREATE_TABLE_CUSTOMER_DEBTS =
@@ -997,6 +1021,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_DEBT_AMOUNT + " REAL DEFAULT 0, " +
                     COL_DEBT_REASON + " TEXT, " +
                     COL_DEBT_TRX_UUID + " TEXT, " +
+                    COL_DEBT_CHECKOUT_UUID + " TEXT, " +
                     COL_DEBT_BY + " TEXT, " +
                     COL_CREATED_AT + " TEXT, " +
                     COL_SYNC_UUID + " TEXT, " +
@@ -1766,6 +1791,21 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             // sampai pull berikutnya membawa flag-nya.
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_PROOF_REQUIRED + " INTEGER DEFAULT 0");
         }
+        if (oldVersion < 102) {
+            // 🧺 Checkout multi-lokasi (lihat COL_CHECKOUT_UUID). Aditif & NULL = order biasa, jadi
+            // perilaku semua baris lama tak berubah. Leg web/agen yang sempat ditarik APK lama (kolomnya
+            // terbuang) terisi lewat tarik-ulang sekali di SyncEngine.pull (kunci v102).
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_CHECKOUT_UUID + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_CHECKOUT_SEQ + " INTEGER");
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_CHECKOUT_SIZE + " INTEGER");
+            // Hutang segar leg saudara dikecualikan dari "hutang sebelumnya" di pintu leg lain.
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMER_DEBTS + " ADD COLUMN " + COL_DEBT_CHECKOUT_UUID + " TEXT");
+            // Jumlah ORDER (bukan baris) lintas perangkat — tanpa DEFAULT: NULL = belum dikirim server.
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_SRV_JUAL_ORDERS + " INTEGER");
+            // Inline, bukan lewat createIndexes() (tak jalan saat upgrade — lihat blok <93).
+            tryExec(db, "CREATE INDEX IF NOT EXISTS idx_trx_checkout ON " + TABLE_TRANSACTIONS
+                + "(" + COL_CHECKOUT_UUID + ") WHERE " + COL_CHECKOUT_UUID + " IS NOT NULL");
+        }
     }
 
     /** @see #onUpgrade — dipanggil sekali saat naik ke versi 81. */
@@ -1892,6 +1932,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         tryExec(db, "CREATE INDEX IF NOT EXISTS idx_trx_delivery ON " + TABLE_TRANSACTIONS + "(" + COL_DELIVERY_STATUS + ") WHERE " + COL_DELIVERY_STATUS + " IS NOT NULL");
         tryExec(db, "CREATE INDEX IF NOT EXISTS idx_trx_delivery_done ON " + TABLE_TRANSACTIONS
                 + "(" + COL_DELIVERY_DONE_AT + ") WHERE " + COL_DELIVERY_DONE_AT + " IS NOT NULL");
+        // Leg checkout multi-lokasi (TransactionDao.getByCheckoutUuid) — partial: mayoritas baris NULL.
+        tryExec(db, "CREATE INDEX IF NOT EXISTS idx_trx_checkout ON " + TABLE_TRANSACTIONS
+                + "(" + COL_CHECKOUT_UUID + ") WHERE " + COL_CHECKOUT_UUID + " IS NOT NULL");
         // attendance(user_id, ts) — tiap insert transaksi cek hasInToday + semua query shift.
         tryExec(db, "CREATE INDEX IF NOT EXISTS idx_att_user_ts ON " + TABLE_ATTENDANCE + "(" + COL_ATT_USER_ID + "," + COL_ATT_TS + ")");
         // order_inbox.status / expenses.category / salary_items.user_id.

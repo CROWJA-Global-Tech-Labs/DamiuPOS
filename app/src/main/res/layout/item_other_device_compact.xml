@@ -46,8 +46,26 @@
                     android:textSize="14sp"
                     android:textStyle="bold" />
 
+                <!-- "📍 [Lokasi · ]Wilayah (jarak)" — TEPAT DI BAWAH nama pelanggan, hitam pekat
+                     (@color/text_strong) + tebal supaya terbaca sekilas di jalan. Nama lokasi
+                     (Kediaman/Kedai/…) hanya diawalkan bila pelanggan punya >1 lokasi; wilayah =
+                     hasil reverse-geocode koordinat utama (server). Teks disusun SATU tempat:
+                     DeliveryQueueActivity.queueLocationLine / areaLabel. GONE bila tak ada wilayah
+                     maupun jarak. Boleh 2 baris supaya jarak di ujung tak terpotong wilayah panjang. -->
+                <TextView
+                    android:id="@+id/tvAdminArea"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:ellipsize="end"
+                    android:maxLines="2"
+                    android:textColor="@color/text_strong"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
                 <!-- Khusus Tab 1 "Antrian Saya": "⚡ PRIORITAS: alasan" besar+berkedip di bawah nama
-                     (lihat blinkViewForever di QueueAdapter). GONE default, Tab 2/3 tak pernah
+                     dan baris 📍 (lihat blinkViewForever di QueueAdapter). GONE default, Tab 2/3 tak pernah
                      mengisinya. -->
                 <TextView
                     android:id="@+id/tvPriorityBig"
@@ -192,19 +210,6 @@
                     android:textColor="#D32F2F"
                     android:textSize="12sp"
                     android:textStyle="bold"
-                    android:visibility="gone" />
-
-                <!-- "📍 Dusun, Desa, Kec. X" — hasil reverse-geocode koordinat pelanggan (server),
-                     DI BAGIAN PALING BAWAH kartu. GONE selama belum di-geocode / tanpa koordinat. -->
-                <TextView
-                    android:id="@+id/tvAdminArea"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
-                    android:ellipsize="end"
-                    android:maxLines="1"
-                    android:textColor="@color/grey_medium"
-                    android:textSize="11sp"
                     android:visibility="gone" />
 
                 <!-- "📝 catatan order" — DISEMATKAN PALING BAWAH kartu, di ketiga tab (Antrian Saya,

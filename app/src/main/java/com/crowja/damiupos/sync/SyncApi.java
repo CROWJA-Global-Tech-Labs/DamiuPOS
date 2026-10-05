@@ -28,6 +28,24 @@ public class SyncApi {
             this.code = code;
             this.body = message;
         }
+
+        /** Pesan ramah dari body galat server — {@code {"message":"..."}} atau
+         *  {@code {"error":{"message":"..."}}}; null bila body kosong / bukan JSON / tanpa pesan. */
+        @Nullable
+        public String serverMessage() {
+            if (body == null || body.trim().isEmpty()) return null;
+            try {
+                JSONObject o = new JSONObject(body);
+                String m = o.optString("message", "");
+                if (m.isEmpty()) {
+                    JSONObject err = o.optJSONObject("error");
+                    if (err != null) m = err.optString("message", "");
+                }
+                return m.isEmpty() ? null : m;
+            } catch (Exception e) {
+                return null;   // mis. halaman galat HTML dari proxy/CDN
+            }
+        }
     }
 
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
@@ -141,6 +159,40 @@ public class SyncApi {
         JSONObject body = new JSONObject();
         body.put("customer_uuid", customerUuid);
         return post(cfg.getBaseUrl() + "/api/customers/share-link", body, cfg.getToken());
+    }
+
+    /**
+     * "🔗 Gabungkan" (Gabung Pelanggan dari HP, cermin tombol Gabung di web): lebur beberapa
+     * pelanggan jadi satu. SERVER yang mengeksekusi — semua transaksi/data dipindah ke
+     * {@code survivorUuid}, salinan lain dihapus (tombstone) lalu hilang dari HP lewat pull berikutnya.
+     * Body {@code {survivor_uuid, uuids:[≥2, termasuk survivor], collect_phones, actor?}}; balas
+     * {@code {"ok":true,"survivor_uuid":"…","merged":N,"message":"…"}}. Ditolak → {@link SyncException}
+     * berbody {@code {"ok":false,"message":"…"}} (403 tak berwenang; 422 validasi: "Umum", kurang dari
+     * 2 baris, survivor tak ada di daftar, lintas cabang) — ambil pesannya via
+     * {@link SyncException#serverMessage()}. Branch-scoped by the token. Panggil DI LUAR main thread.
+     *
+     * <p>Token perangkat hanya mengenali PERANGKAT; server menggerbang ORANG-nya lewat header
+     * {@code X-Staff-Uuid} (Admin aktif cabang ini). Tanpa identitas
+     * staf server SELALU menolak 403 — jadi pemanggil wajib mengisi {@code staffUuid}. Dikirim juga
+     * sebagai field body {@code staff_uuid} (fallback server bila header terbuang proxy).
+     *
+     * @param staffUuid sync_uuid staf yang login di HP (bukan id lokal)
+     * @param actor nama operator yang tampil di HP (untuk jejak audit); null/kosong = tak dikirim
+     */
+    public JSONObject mergeCustomers(String survivorUuid, java.util.List<String> uuids,
+                                     boolean collectPhones, String staffUuid,
+                                     @Nullable String actor) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("survivor_uuid", survivorUuid);
+        org.json.JSONArray arr = new org.json.JSONArray();
+        for (String u : uuids) {
+            if (u != null && !u.isEmpty()) arr.put(u);
+        }
+        body.put("uuids", arr);
+        body.put("collect_phones", collectPhones);
+        if (actor != null && !actor.trim().isEmpty()) body.put("actor", actor.trim());
+        if (staffUuid != null && !staffUuid.isEmpty()) body.put("staff_uuid", staffUuid);
+        return post(cfg.getBaseUrl() + "/api/customers/merge", body, cfg.getToken(), staffUuid);
     }
 
     /**
@@ -300,6 +352,13 @@ public class SyncApi {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** Histori transaksi pelanggan LINTAS PERANGKAT (semua salinan orang yang sama), terbaru dulu.
+     *  Balas {@code {total, page, has_more, transactions:[...]}}. */
+    public JSONObject customerTransactions(String customerUuid, int page) throws Exception {
+        return get(cfg.getBaseUrl() + "/api/customers/" + customerUuid + "/transactions?per_page=30&page="
+                + Math.max(1, page), cfg.getToken());
     }
 
     public JSONObject orderInsights(String customerUuid) throws Exception {

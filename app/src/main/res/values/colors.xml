@@ -11,6 +11,11 @@
     <color name="grey_dark">#616161</color>
     <color name="text_primary">#212121</color>
     <color name="text_secondary">#757575</color>
+    <!-- Teks "hitam pekat" untuk label yang harus terbaca sekilas (baris 📍 lokasi + jarak di kartu
+         antrean). Aplikasi sengaja Light-only (Theme.MaterialComponents.Light, forceDarkAllowed=false,
+         kartu antrean berlatar terang hardcoded) — JANGAN beri override values-night putih: resource
+         -night tetap terpilih saat HP dalam mode gelap, sehingga teks putih jatuh di kartu putih. -->
+    <color name="text_strong">#000000</color>
     <color name="green">#2E7D32</color>
     <color name="red">#C62828</color>
     <color name="whatsapp_green">#25D366</color>

@@ -177,6 +177,43 @@
                 app:iconSize="16dp" />
         </LinearLayout>
 
+        <!-- Tarif ongkir/galon lokasi ini — SAMA dengan field "Ongkir/galon lokasi ini" di web
+             (customers.locations[].ongkir), tersinkron dua arah. Kosong = belum diatur. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:hint="Ongkir/galon lokasi ini (Rp)">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etOngkirRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="number"
+                    android:maxLength="7" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnOngkirDefaultRow"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="0dp"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:text="↺ Pakai default"
+                android:textAllCaps="false"
+                android:textSize="12sp" />
+        </LinearLayout>
+
         <TextView
             android:id="@+id/tvHitungOngkirRow"
             android:layout_width="match_parent"
@@ -185,6 +222,45 @@
             android:textColor="@color/text_secondary"
             android:textSize="12sp"
             android:visibility="gone" />
+
+        <!-- Harga khusus LOKASI ini per produk — SAMA dengan field harga per lokasi di form web
+             (customers.locations[].prices), tersinkron dua arah. Seksi terlipat; ketuk header untuk
+             membuka. Header menampilkan jumlah harga yang diatur. Baris per produk diisi dari kode
+             (CustomerFormActivity#buildLocationPriceFields); petunjuk abu-abu di tiap kolom = harga
+             yang berlaku bila kolom dikosongkan (harga pelanggan, lalu harga standar). -->
+        <TextView
+            android:id="@+id/tvLokasiHargaHeader"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:background="?attr/selectableItemBackground"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:text="▸ Harga khusus lokasi ini (opsional)"
+            android:textColor="@color/primary"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/llLokasiHarga"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Hanya berlaku untuk order yang dikirim ke lokasi ini. Kosongkan = ikut harga abu-abu di kolom (harga pelanggan, atau harga standar)."
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:id="@+id/llLokasiHargaRows"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </LinearLayout>
 
         <!-- Koleksi foto lokasi (maks 5): thumbnail bisa dihapus (✕) + tombol "+ Foto" mengambil
              foto baru & mengunggahnya. Diisi/dirender dari kode (jumlah foto berubah-ubah). -->

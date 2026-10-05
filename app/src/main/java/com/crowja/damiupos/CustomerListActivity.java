@@ -62,6 +62,14 @@ public class CustomerListActivity extends AppCompatActivity
     private com.google.android.material.checkbox.MaterialCheckBox cbWilayahSaya;
     private boolean marketingUser = false;
     private boolean canDeleteCustomer = true;   // Admin/owner saja boleh hapus pelanggan dari HP
+    /** "🔗 Gabungkan" (≥2 dipilih): lebur permanen lintas perangkat lewat server — setara
+     *  kewenangan pemilik di web (canDestroy) → HANYA Admin yang login (multi user aktif), cermin
+     *  gerbang CustomerMergeController. HP satu-pengguna (pemilik) tak punya identitas staf → server
+     *  selalu 403, jadi aksinya disembunyikan (gabung lewat dashboard web). Staf/SPV/Marketing/
+     *  Viewer/Pengisian juga tak melihatnya. Butuh sinkronisasi online. */
+    private boolean canMergeCustomer = false;
+    /** Daftar yang SEDANG tampil (sudah dedup per orang) — sumber nama & angka di dialog Gabung. */
+    private List<Customer> shownCustomers = new java.util.ArrayList<>();
     /** Filter "Ditambahkan" — rentang tanggal pendaftaran (created_at). Null = semua tanggal.
      *  STATIC (in-memory, level proses): filter TETAP berlaku saat user berpindah-pindah activity
      *  lalu kembali ke daftar pelanggan, dan otomatis BERSIH saat aplikasi di-restart (proses mati).
@@ -120,6 +128,13 @@ public class CustomerListActivity extends AppCompatActivity
         // Hapus pelanggan: Admin saja (uid<=0 = mode single-user/owner = boleh). Non-admin: tombol
         // "Hapus" di mode seleksi disembunyikan + aksi di-guard.
         canDeleteCustomer = uid <= 0 || cur == null || cur.canDeleteCustomer();
+        // Gabung: lebih ketat dari Hapus — aturan SAMA dengan server (CustomerMergeController):
+        // wajib Admin yang login, karena server menggerbang ORANG lewat X-Staff-Uuid. Multi user
+        // mati = tak ada yang login = tak ada identitas staf = server pasti 403 → sembunyikan
+        // (juga mengabaikan uid basi yang tertinggal saat multi user dimatikan dari web). Sync uuid
+        // staf dicek saat aksi dijalankan (bisa baru tersinkron setelah layar ini dibuka).
+        canMergeCustomer = new com.crowja.damiupos.sync.SyncSettings(sess).isEnrolled()
+                && sess.isMultiUserEnabled() && cur != null && cur.isAdmin();
         cbHariIni = findViewById(R.id.cbHariIni);
         if (marketingUser) {
             cbHariIni.setVisibility(View.VISIBLE);
@@ -184,7 +199,29 @@ public class CustomerListActivity extends AppCompatActivity
     protected void onResume() {
         super.onResume();
         loadCustomers(etSearch.getText().toString().trim());
+        // Muat ulang begitu sync membawa data baru — terutama tombstone salinan yang barusan
+        // dilebur lewat "🔗 Gabungkan" (dan perubahan pelanggan dari web/HP lain).
+        android.content.IntentFilter f = new android.content.IntentFilter(
+                com.crowja.damiupos.sync.SyncEngine.ACTION_SYNCED);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(syncedReceiver, f, android.content.Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(syncedReceiver, f);
+        }
     }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        try { unregisterReceiver(syncedReceiver); } catch (Throwable ignored) {}
+    }
+
+    private final android.content.BroadcastReceiver syncedReceiver = new android.content.BroadcastReceiver() {
+        @Override
+        public void onReceive(android.content.Context ctx, Intent intent) {
+            if (!isFinishing() && !isDestroyed()) loadCustomers(etSearch.getText().toString().trim());
+        }
+    };
 
     /**
      * Cek Free tier limit ({@link BuildConfig#FREE_MAX_CUSTOMERS}) sebelum
@@ -293,6 +330,7 @@ public class CustomerListActivity extends AppCompatActivity
             java.util.Collections.sort(list, (a, b) ->
                     Double.compare(b.getKonsumsiPerHari(), a.getKonsumsiPerHari()));
         }
+        shownCustomers = list;
         adapter.setData(list);
 
         if (list.isEmpty()) {
@@ -331,7 +369,12 @@ public class CustomerListActivity extends AppCompatActivity
                         .setIcon(android.R.drawable.ic_menu_delete)
                         .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
             }
-            menu.add(0, 102, 1, "Pilih Semua")
+            // "Gabungkan" — minimal 2 terpilih & hanya peran berwenang (Admin/pemilik).
+            if (canMergeCustomer && selectedCount >= 2) {
+                menu.add(0, 103, 1, "🔗 Gabungkan")
+                        .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+            }
+            menu.add(0, 102, 2, "Pilih Semua")
                     .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
         } else {
             // Normal mode — menu existing
@@ -361,6 +404,7 @@ public class CustomerListActivity extends AppCompatActivity
         if (id == 4) { startActivity(new Intent(this, CustomerMapActivity.class)); return true; }
         if (id == 101) { confirmDeleteSelected(); return true; }
         if (id == 102) { adapter.selectAll(); return true; }
+        if (id == 103) { startMergeSelected(); return true; }
         return super.onOptionsItemSelected(item);
     }
 
@@ -644,6 +688,324 @@ public class CustomerListActivity extends AppCompatActivity
                 })
                 .setNegativeButton("Batal", null)
                 .show();
+    }
+
+    // ==========================================================================
+    // Gabung Pelanggan ("🔗 Gabungkan") — cermin tombol Gabung di web, dieksekusi SERVER
+    // ==========================================================================
+
+    /** Nama dasar "Umum" (tanpa akhiran "#N", huruf besar/kecil & spasi diabaikan) — cermin
+     *  CustomerMerge::baseKey di server: pelanggan kios generik tak boleh pernah dilebur. */
+    private static boolean isUmumName(String name) {
+        if (name == null) return false;
+        String base = name.replaceAll("\\s*#\\d+\\s*$", "").trim().replaceAll("\\s+", " ");
+        return CustomerDao.UMUM_NAME.equalsIgnoreCase(base);
+    }
+
+    /** Baris pelanggan sudah ter-push ke server (synced=1)? Perubahan lokal yang belum terkirim
+     *  membuatnya synced=0 lagi sampai sync berikutnya. */
+    private boolean isPushed(long customerId) {
+        try (android.database.Cursor c = DatabaseHelper.getInstance(this).getReadableDatabase().query(
+                DatabaseHelper.TABLE_CUSTOMERS, new String[]{DatabaseHelper.COL_SYNCED},
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)},
+                null, null, null)) {
+            return c.moveToFirst() && c.getInt(0) == 1;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** sync_uuid staf yang login — identitas ORANG yang diminta server (header X-Staff-Uuid).
+     *  Null bila tak ada yang login atau baris stafnya belum tersinkron (belum punya uuid). */
+    private String mergeStaffUuid() {
+        DatabaseHelper db = DatabaseHelper.getInstance(this);
+        long uid = new SettingsDao(db).getCurrentUserId();
+        if (uid <= 0) return null;
+        String u = new com.crowja.damiupos.db.UserDao(db).getSyncUuidById(uid);
+        return u == null || u.trim().isEmpty() ? null : u.trim();
+    }
+
+    /** Akun Admin yang login belum tersinkron → server tak bisa memverifikasinya (403). Sinkron dulu,
+     *  JANGAN kirim permintaan yang pasti ditolak setelah dua dialog konfirmasi. */
+    private void showStaffNotSyncedDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("Sinkronkan Dulu")
+                .setMessage("Akun Anda belum tersinkron ke server, jadi server belum bisa memastikan "
+                        + "Anda Admin.\n\nSinkronkan dulu, tunggu sebentar, lalu ulangi Gabungkan.")
+                .setPositiveButton("Sinkronkan Sekarang", (d, w) -> {
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                    Toast.makeText(this, "Sinkronisasi dimulai…", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /** "🔗 Gabungkan": validasi pilihan (bukan "Umum", semua sudah tersinkron) → dialog pilih data
+     *  yang dipertahankan. Server yang mengeksekusi (pindah semua referensi + tombstone salinan
+     *  lain), sama dengan tombol Gabung di web — jadi hasilnya identik di semua perangkat. */
+    private void startMergeSelected() {
+        if (!canMergeCustomer) {   // guard: menu hanya muncul utk peran berwenang
+            Toast.makeText(this, "Hanya Admin yang login yang boleh menggabungkan pelanggan — "
+                    + "atau gabungkan lewat dashboard web", Toast.LENGTH_LONG).show();
+            return;
+        }
+        // Cek identitas staf SEBELUM dialog: tanpa sync uuid server pasti menolak.
+        if (mergeStaffUuid() == null) {
+            showStaffNotSyncedDialog();
+            return;
+        }
+        Set<Long> ids = adapter.getSelectedIds();
+        // Urutan mengikuti daftar yang tampil (bukan urutan HashSet) supaya mudah dicocokkan.
+        List<Customer> picked = new java.util.ArrayList<>();
+        for (Customer c : shownCustomers) if (ids.contains(c.getId())) picked.add(c);
+        if (picked.size() < 2) {
+            Toast.makeText(this, "Pilih minimal 2 pelanggan untuk digabung", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        for (Customer c : picked) {
+            if (isUmumName(c.getName())) {
+                new AlertDialog.Builder(this)
+                        .setTitle("Tidak Bisa Digabung")
+                        .setMessage("Pelanggan “" + c.getName() + "” tidak boleh digabung — riwayat "
+                                + "pembeli umum tiap perangkat harus tetap terpisah. Hilangkan centangnya dulu.")
+                        .setPositiveButton("OK", null)
+                        .show();
+                return;
+            }
+        }
+        // Server hanya mengenal pelanggan yang SUDAH terkirim. Baris tanpa uuid / dengan perubahan
+        // lokal yang belum di-push → sinkron dulu: push susulan sesudah lebur bisa menghidupkan
+        // lagi salinan yang barusan dihapus server.
+        List<String> uuids = new java.util.ArrayList<>();
+        List<String> unsynced = new java.util.ArrayList<>();
+        for (Customer c : picked) {
+            String u = customerDao.getSyncUuidById(c.getId());
+            if (u == null || u.isEmpty() || !isPushed(c.getId())) unsynced.add(c.getName());
+            else uuids.add(u);
+        }
+        if (!unsynced.isEmpty()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Sinkronkan Dulu")
+                    .setMessage("Pelanggan berikut belum tersinkron ke server:\n\n• "
+                            + android.text.TextUtils.join("\n• ", unsynced)
+                            + "\n\nSinkronkan dulu, tunggu sebentar, lalu ulangi Gabungkan.")
+                    .setPositiveButton("Sinkronkan Sekarang", (d, w) -> {
+                        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                        Toast.makeText(this, "Sinkronisasi dimulai…", Toast.LENGTH_SHORT).show();
+                    })
+                    .setNegativeButton("Batal", null)
+                    .show();
+            return;
+        }
+        showMergeChoiceDialog(picked, uuids);
+    }
+
+    /** Dialog 1/2: "Pertahankan data dari:" (radio, default = transaksi terbanyak) + centang
+     *  "Kumpulkan semua nomor HP" + peringatan permanen. {@code uuids} sejajar dengan {@code picked}. */
+    private void showMergeChoiceDialog(List<Customer> picked, List<String> uuids) {
+        float dp = getResources().getDisplayMetrics().density;
+        int pad = Math.round(16 * dp);
+        int colPrimary = ContextCompat.getColor(this, R.color.text_primary);
+        int colSecondary = ContextCompat.getColor(this, R.color.text_secondary);
+
+        android.widget.LinearLayout root = new android.widget.LinearLayout(this);
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        root.setPadding(pad, pad / 2, pad, pad / 2);
+
+        TextView label = new TextView(this);
+        label.setText("Pertahankan data dari:");
+        label.setTextColor(colPrimary);
+        label.setTextSize(14f);
+        label.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        root.addView(label);
+
+        // Default = transaksi terbanyak (seri → galon terbanyak): biasanya salinan "utama".
+        int best = 0;
+        for (int i = 1; i < picked.size(); i++) {
+            Customer a = picked.get(i), b = picked.get(best);
+            if (a.getTotalTransaksi() > b.getTotalTransaksi()
+                    || (a.getTotalTransaksi() == b.getTotalTransaksi()
+                        && a.getGalonTotalOrdered() > b.getGalonTotalOrdered())) {
+                best = i;
+            }
+        }
+
+        final android.widget.RadioGroup group = new android.widget.RadioGroup(this);
+        group.setOrientation(android.widget.RadioGroup.VERTICAL);
+        int bestId = View.NO_ID;
+        for (int i = 0; i < picked.size(); i++) {
+            Customer c = picked.get(i);
+            android.widget.RadioButton rb = new android.widget.RadioButton(this);
+            rb.setId(View.generateViewId());
+            rb.setTag(i);
+            rb.setTextColor(colPrimary);
+            rb.setPadding(rb.getPaddingLeft(), pad / 3, rb.getPaddingRight(), pad / 3);
+
+            android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
+            sb.append(c.getName() != null && !c.getName().isEmpty() ? c.getName() : "(tanpa nama)");
+            sb.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD),
+                    0, sb.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            int s = sb.length();
+            String phone = c.getPhone() != null && !c.getPhone().trim().isEmpty()
+                    ? c.getPhone().trim() : "tanpa nomor";
+            sb.append("\n").append(phone)
+                    .append("  ·  ").append(String.valueOf(c.getTotalTransaksi())).append(" trx")
+                    .append("  ·  ").append(String.valueOf(c.getGalonTotalOrdered())).append(" galon");
+            List<String> origins = c.getOriginLabels();
+            if (origins != null && !origins.isEmpty()) {
+                sb.append("\n📱 ").append(android.text.TextUtils.join(" + ", origins));
+            } else if (c.isMine()) {
+                sb.append("\n📱 Perangkat ini");
+            }
+            sb.setSpan(new android.text.style.ForegroundColorSpan(colSecondary),
+                    s, sb.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            sb.setSpan(new android.text.style.RelativeSizeSpan(0.85f),
+                    s, sb.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            rb.setText(sb);
+            group.addView(rb);
+            if (i == best) bestId = rb.getId();
+        }
+        if (bestId != View.NO_ID) group.check(bestId);   // check() SETELAH addView — setChecked lebih awal diabaikan grup
+        root.addView(group);
+
+        final com.google.android.material.checkbox.MaterialCheckBox cbPhones =
+                new com.google.android.material.checkbox.MaterialCheckBox(this);
+        cbPhones.setText("Kumpulkan semua nomor HP");
+        cbPhones.setTextColor(colPrimary);
+        cbPhones.setChecked(true);
+        android.widget.LinearLayout.LayoutParams lpCb = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        lpCb.topMargin = pad / 2;
+        root.addView(cbPhones, lpCb);
+
+        TextView hint = new TextView(this);
+        hint.setText("Nomor HP pelanggan lain ditambahkan sebagai nomor tambahan pelanggan yang dipertahankan.");
+        hint.setTextColor(colSecondary);
+        hint.setTextSize(12f);
+        root.addView(hint);
+
+        TextView warn = new TextView(this);
+        warn.setText("⚠ Tidak bisa dibatalkan. Transaksi & data semua pelanggan terpilih dipindah ke "
+                + "pelanggan yang dipertahankan; sisanya terhapus di semua perangkat dan web.");
+        warn.setTextColor(ContextCompat.getColor(this, R.color.red));
+        warn.setTextSize(13f);
+        warn.setPadding(0, pad / 2, 0, 0);
+        root.addView(warn);
+
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(root);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Gabungkan " + picked.size() + " Pelanggan")
+                .setView(scroll)
+                .setPositiveButton("Lanjut", (d, w) -> {
+                    android.view.View sel = group.findViewById(group.getCheckedRadioButtonId());
+                    if (sel == null || !(sel.getTag() instanceof Integer)) return;
+                    int idx = (Integer) sel.getTag();
+                    confirmMergeFinal(picked.get(idx), uuids.get(idx), uuids, picked.size(),
+                            cbPhones.isChecked());
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    /** Dialog 2/2 (destruktif): konfirmasi akhir sebelum dikirim ke server. */
+    private void confirmMergeFinal(Customer survivor, String survivorUuid, List<String> uuids,
+                                   int count, boolean collectPhones) {
+        String name = survivor.getName() != null ? survivor.getName() : "";
+        AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle("Yakin Gabungkan?")
+                .setMessage(count + " pelanggan akan dilebur ke “" + name + "”.\n\n"
+                        + "Semua transaksi & data dipindah ke pelanggan ini"
+                        + (collectPhones ? ", nomor HP lainnya dikumpulkan" : "")
+                        + ". Pelanggan lainnya TERHAPUS di semua perangkat dan web.\n\n"
+                        + "Tindakan ini TIDAK BISA dibatalkan.")
+                .setPositiveButton("Ya, Gabungkan", (d, w) -> runMerge(survivorUuid, uuids, collectPhones))
+                .setNegativeButton("Batal", null)
+                .show();
+        android.widget.Button pos = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
+        if (pos != null) pos.setTextColor(ContextCompat.getColor(this, R.color.red));
+    }
+
+    /** Kirim ke server di thread latar (+ indikator proses). Sukses → toast pesan server, keluar mode
+     *  seleksi, sync sekarang; salinan yang dilebur hilang saat pull membawa tombstone-nya
+     *  (syncedReceiver memuat ulang daftar). */
+    private void runMerge(String survivorUuid, List<String> uuids, boolean collectPhones) {
+        // Diresolusi ulang di sini (bukan dibawa dari awal): staf bisa berganti/logout di antara dialog.
+        final String staffUuid = mergeStaffUuid();
+        if (staffUuid == null) {
+            showStaffNotSyncedDialog();
+            return;
+        }
+        int pad = Math.round(16 * getResources().getDisplayMetrics().density);
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        box.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        box.setPadding(pad * 3 / 2, pad, pad * 3 / 2, pad);
+        box.addView(new android.widget.ProgressBar(this));
+        TextView msg = new TextView(this);
+        msg.setText("Menggabungkan pelanggan…");
+        msg.setTextColor(ContextCompat.getColor(this, R.color.text_primary));
+        msg.setPadding(pad, 0, 0, 0);
+        box.addView(msg);
+        final AlertDialog progress = new AlertDialog.Builder(this)
+                .setView(box)
+                .setCancelable(false)
+                .show();
+
+        final android.content.Context app = getApplicationContext();
+        final String actor = new SettingsDao(DatabaseHelper.getInstance(this)).getCurrentUserName();
+        new Thread(() -> {
+            String ok = null;
+            String err = null;
+            boolean maybeApplied = false;   // sukses, atau putus di tengah (server mungkin sudah melebur)
+            try {
+                com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                        new SettingsDao(DatabaseHelper.getInstance(app)));
+                org.json.JSONObject r = new com.crowja.damiupos.sync.SyncApi(cfg)
+                        .mergeCustomers(survivorUuid, uuids, collectPhones, staffUuid, actor);
+                if (r.optBoolean("ok", true)) {
+                    ok = r.optString("message", "");
+                    if (ok.isEmpty()) ok = r.optInt("merged", uuids.size()) + " pelanggan digabung.";
+                    maybeApplied = true;
+                } else {
+                    err = r.optString("message", "");
+                    if (err.isEmpty()) err = "Server menolak penggabungan.";
+                }
+            } catch (com.crowja.damiupos.sync.SyncApi.SyncException se) {
+                err = se.serverMessage();
+                if (err == null) {
+                    err = se.code == 403 ? "Anda tidak berwenang menggabungkan pelanggan."
+                            : se.code == 401 ? "Perangkat tidak lagi terotorisasi — hubungkan ulang di Pengaturan."
+                            : se.code == 422 ? "Pelanggan terpilih tidak bisa digabung."
+                            : "Gagal menggabungkan (kode " + se.code + ").";
+                }
+            } catch (Exception e) {
+                err = "Gagal menggabungkan — periksa koneksi internet, lalu cek daftar sebelum mengulang.";
+                maybeApplied = true;
+            }
+            // Tarik hasil lebur (tombstone + transaksi yang dipindah) secepatnya.
+            if (maybeApplied) com.crowja.damiupos.sync.SyncScheduler.syncNow(app);
+
+            final String fOk = ok;
+            final String fErr = err;
+            runOnUiThread(() -> {
+                try { if (progress.isShowing()) progress.dismiss(); } catch (Exception ignored) { }
+                if (isFinishing() || isDestroyed()) return;
+                if (fOk != null) {
+                    Toast.makeText(this, fOk, Toast.LENGTH_LONG).show();
+                    adapter.clearSelection();
+                    loadCustomers(etSearch.getText().toString().trim());
+                } else {
+                    new AlertDialog.Builder(this)
+                            .setTitle("Gagal Menggabungkan")
+                            .setMessage(fErr)
+                            .setPositiveButton("OK", null)
+                            .show();
+                }
+            });
+        }).start();
     }
 
     @Override

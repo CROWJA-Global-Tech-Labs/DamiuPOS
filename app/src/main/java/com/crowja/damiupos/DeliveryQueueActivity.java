@@ -78,6 +78,7 @@ import com.crowja.damiupos.R.id;
 import com.crowja.damiupos.R.layout;
 import com.crowja.damiupos.R.menu;
 import com.crowja.damiupos.adapter.TransactionAdapter;
+import com.crowja.damiupos.checkout.CheckoutStrukText;
 import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.CustomerDebtDao;
 import com.crowja.damiupos.db.CustomerRefundDao;
@@ -292,6 +293,26 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          DeliveryQueueActivity.this.tick.postDelayed(this, 1000L);
       }
    };
+   /** Daftar "Antrean Saya" / "Antrean Lain" di dialog antrean penuh mode terpandu — adapter
+    *  TERPISAH dari adapter utama; dipegang lemah hanya supaya {@link #destAreaRefresh} ikut
+    *  mem-bind ulang kartunya selama dialog itu terbuka. */
+   private java.lang.ref.WeakReference<QueueAdapter> guidedMyQueueAdapterRef;
+   private java.lang.ref.WeakReference<OtherQueueRowAdapter> guidedOtherRowsAdapterRef;
+   /** Wilayah lokasi non-utama baru tiba (DestAreaCache) → bind ulang baris 📍 semua kartu antrean
+    *  yang sedang tampil supaya "Kedai" menjadi "Kedai · Desa, Kec. X" tanpa menunggu refresh. */
+   private final Runnable destAreaRefresh = () -> {
+      if (this.isFinishing() || this.isDestroyed()) return;
+      if (this.adapter != null) this.adapter.notifyDataSetChanged();
+      if (this.openDispatchAdapter != null) this.openDispatchAdapter.notifyDataSetChanged();
+      if (this.otherDevicesAdapter != null) this.otherDevicesAdapter.notifyDataSetChanged();
+      QueueAdapter gm = this.guidedMyQueueAdapterRef != null ? this.guidedMyQueueAdapterRef.get() : null;
+      if (gm != null) gm.notifyDataSetChanged();
+      OtherQueueRowAdapter go = this.guidedOtherRowsAdapterRef != null ? this.guidedOtherRowsAdapterRef.get() : null;
+      if (go != null && go.hostDialog != null && go.hostDialog.isShowing()) {
+         // Baris "Antrean Lain" menyimpan teks 📍 jadi → susun ulang (urutan Umur/Jarak dipertahankan).
+         go.setData(this.buildOtherQueueRows(), go.byDistance);
+      }
+   };
    private final BroadcastReceiver syncedReceiver = new BroadcastReceiver() {
       public void onReceive(Context context, Intent intent) {
          if (!DeliveryQueueActivity.this.selectionMode) {
@@ -348,6 +369,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    protected void onCreate(Bundle savedInstanceState) {
       super.onCreate(savedInstanceState);
       this.setContentView(layout.activity_delivery_queue);
+      DestAreaCache.init(this);
       // Hanya pada peluncuran pertama: rotasi/rekreasi tak boleh membuka ulang popup pesanan.
       if (savedInstanceState == null && this.getIntent() != null) {
          this.pendingFocusTrxId = this.getIntent().getLongExtra(EXTRA_FOCUS_TRX_ID, -1L);
@@ -1284,6 +1306,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       SettingsDao lateCfg = new SettingsDao(DatabaseHelper.getInstance(this));
       lateMs = (long)lateCfg.getDeliveryMaxAgeMinutes() * 60000L;
       this.revokeLateCredit = lateCfg.isRevokeCreditLateEnabled();
+      DestAreaCache.addListener(this.destAreaRefresh);
       this.loadData();
       this.openPendingFocus();
       this.loadOtherDevices();
@@ -1305,6 +1328,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    protected void onPause() {
       super.onPause();
+      DestAreaCache.removeListener(this.destAreaRefresh);
       this.tick.removeCallbacks(this.ticker);
       this.tick.removeCallbacks(this.strategyResortTicker);
       this.tick.removeCallbacks(this.guidedRitRefillTicker);
@@ -1569,31 +1593,319 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * lokasi LAIN (tujuan berjarak > 100 m dari lokasi utama) karena itu menampilkan nama lokasi
     * tujuannya, bukan wilayah lokasi utama yang keliru. Jarak di kartu sudah dihitung dari tujuan.
     *
+    * <p>Pelanggan dengan LEBIH DARI SATU lokasi: nama lokasi tujuan (delivery_dest_name, atau lokasi
+    * utama bila kosong) selalu diawalkan sebelum wilayahnya — "Kediaman · Pandeyan, Kec. Ngemplak"
+    * (tujuan = lokasi utama, wilayah dari server) atau "Kedai · Kartasura, Kec. Kartasura" (lokasi
+    * lain, wilayah dari {@link DestAreaCache}; "Kedai" saja selama wilayahnya belum tiba / tak ada
+    * datanya). Pelanggan satu lokasi: wilayah saja.</p>
+    *
     * <p>Tujuan milik RESELLER ("Reseller: Kediaman", dipilih reseller dari link pemesanannya) SELALU
     * diberi label "Dikirim ke lokasi reseller: …" walau dekat lokasi utama afiliasi — nama di kartu
     * tetap si afiliasi, jadi tanpa label ini kurir mengetuk pintu rumah yang salah.</p>
     */
    static String areaLabel(Customer c, double destLat, double destLng, String destName) {
-      if (Transaction.isResellerDestName(destName)) {
-         return Transaction.resellerDestLabel(destName);
+      String dn = cleanLabel(destName);
+      if (Transaction.isResellerDestName(dn)) {
+         return Transaction.resellerDestLabel(dn);
       }
-      String area = c != null ? c.getAdminArea() : "";
+      String area = c != null ? cleanLabel(c.getAdminArea()) : "";
       boolean destGeo = destLat != 0.0 || destLng != 0.0;
       boolean primaryGeo = c != null && (c.getLatitude() != 0.0 || c.getLongitude() != 0.0);
       boolean elsewhere = destGeo && (!primaryGeo
             || haversineKm(c.getLatitude(), c.getLongitude(), destLat, destLng) > 0.1);
+      // Pelanggan MULTI-LOKASI: nama lokasi tujuan (Kediaman/Kedai/…) diawalkan supaya kurir tahu
+      // pintu MANA yang dituju, lalu wilayah lokasi ITU: milik server untuk lokasi UTAMA, dari
+      // DestAreaCache untuk lokasi lain — tak pernah wilayah utama yang keliru untuk "Kedai".
+      List<Customer.Location> locs = c != null ? c.getLocations() : null;
+      if (locationCount(locs) > 1) {
+         Customer.Location primary = c.getPrimaryLocation();
+         String primaryName = primary != null ? cleanLabel(primary.name) : "";
+         String locName = dn;
+         if (locName.isEmpty()) {
+            if (destGeo) {
+               // Order lama tanpa nama tujuan: cocokkan koordinatnya ke salah satu lokasi (<= 100 m).
+               for (Customer.Location l : locs) {
+                  if (l != null && (l.lat != 0.0 || l.lng != 0.0)
+                        && haversineKm(l.lat, l.lng, destLat, destLng) <= 0.1) {
+                     locName = cleanLabel(l.name);
+                     break;
+                  }
+               }
+            } else {
+               locName = primaryName;   // tanpa tujuan = diantar ke lokasi utama
+            }
+         }
+         if (!locName.isEmpty()) {
+            boolean atPrimary = destGeo ? !elsewhere : locName.equalsIgnoreCase(primaryName);
+            String where = atPrimary ? area : "";
+            if (where.isEmpty()) {
+               // Lokasi LAIN (atau utama yang belum di-geocode server): wilayahnya dari
+               // DestAreaCache — titik tujuan order, atau titik lokasi bernama itu bila order tak
+               // membawa koordinat. Belum diketahui → nama lokasi saja dulu; kartu di-bind ulang
+               // begitu wilayahnya tiba.
+               double aLat = destGeo ? destLat : 0.0;
+               double aLng = destGeo ? destLng : 0.0;
+               if (!destGeo) {
+                  Customer.Location byName = atPrimary ? primary : null;
+                  if (byName == null) {
+                     for (Customer.Location l : locs) {
+                        if (l != null && locName.equalsIgnoreCase(cleanLabel(l.name))) {
+                           byName = l;
+                           break;
+                        }
+                     }
+                  }
+                  if (byName != null) {
+                     aLat = byName.lat;
+                     aLng = byName.lng;
+                  }
+               }
+               String cached = DestAreaCache.lookup(aLat, aLng);
+               if (cached != null) where = cached;
+            }
+            return where.isEmpty() ? locName : locName + " · " + where;
+         }
+      }
       if (elsewhere) {
-         String n = destName == null ? "" : destName.trim();
-         return "Kirim ke: " + (n.isEmpty() || "null".equals(n) ? "lokasi lain" : n);
+         return "Kirim ke: " + (dn.isEmpty() ? "lokasi lain" : dn);
       }
       return area;
    }
 
    static String areaLabel(Customer c, Transaction t) {
-      boolean dest = t.getDeliveryDestLat() != 0.0 || t.getDeliveryDestLng() != 0.0
-            || t.isResellerDestination();
-      return dest ? areaLabel(c, t.getDeliveryDestLat(), t.getDeliveryDestLng(), t.getDeliveryDestName())
-            : (c != null ? c.getAdminArea() : "");
+      return areaLabel(c, t.getDeliveryDestLat(), t.getDeliveryDestLng(), t.getDeliveryDestName());
+   }
+
+   /** Jumlah lokasi bernama pelanggan (entri null diabaikan). */
+   private static int locationCount(List<Customer.Location> locs) {
+      if (locs == null) return 0;
+      int n = 0;
+      for (Customer.Location l : locs) {
+         if (l != null) n++;
+      }
+      return n;
+   }
+
+   /** Trim + literal "null" (jebakan org.json optString) → "". */
+   private static String cleanLabel(String s) {
+      if (s == null) return "";
+      String v = s.trim();
+      return "null".equalsIgnoreCase(v) ? "" : v;
+   }
+
+   /**
+    * Wilayah ("Desa, Kec. X") titik lokasi NON-utama pelanggan multi-lokasi. Server hanya menyimpan
+    * desa/kecamatan untuk KOORDINAT UTAMA (GeocodeCustomers) dan Customer.Location tak punya field
+    * wilayah, jadi tanpa ini order ke "Kedai" hanya bisa berlabel "Kedai". HP bertanya ke
+    * GET /api/geocode/reverse (App\Support\ReverseGeocode di server — sumber & format yang sama
+    * dengan desa/kecamatan pelanggan) SEKALI per titik lalu menyimpannya permanen di
+    * SharedPreferences. Kunci = koordinat dibulatkan 4 desimal (~11 m): lokasi yang digeser memicu
+    * tanya ulang dengan sendirinya.
+    *
+    * <p>{@link #lookup} tak pernah memblok UI: belum diketahui → null + diantre di SATU thread latar
+    * (jeda >= 1,1 dtk antar panggilan — hormat batas 1 req/dtk Nominatim di server). Begitu wilayah
+    * baru tiba, listener terdaftar (layar antrean yang sedang tampil) dipanggil di main thread untuk
+    * bind ulang kartunya. Gagal jaringan / belum terdaftar → coba lagi paling cepat 5 menit kemudian;
+    * "tak ada data wilayah" (404) diingat 7 hari.</p>
+    */
+   static final class DestAreaCache {
+      private static final String PREFS = "dest_area_cache";
+      private static final long NEG_TTL_MS = 7L * 24L * 3600_000L;
+      private static final long RETRY_MS = 5L * 60_000L;
+      private static final long GAP_MS = 1100L;
+      private static final java.util.concurrent.ConcurrentHashMap<String, String> MEM =
+            new java.util.concurrent.ConcurrentHashMap<>();
+      private static final java.util.concurrent.ConcurrentHashMap<String, Long> FAILED_AT =
+            new java.util.concurrent.ConcurrentHashMap<>();
+      private static final java.util.Set<String> INFLIGHT =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+      private static final java.util.concurrent.CopyOnWriteArraySet<Runnable> LISTENERS =
+            new java.util.concurrent.CopyOnWriteArraySet<>();
+      private static final java.util.concurrent.ExecutorService EXEC =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
+      private static final Handler MAIN = new Handler(Looper.getMainLooper());
+      private static final Runnable FIRE = () -> {
+         for (Runnable r : LISTENERS) r.run();
+      };
+      private static volatile Context appCtx;
+      /** Waktu panggilan server terakhir — hanya disentuh thread EXEC. */
+      private static long lastCallAt;
+
+      private DestAreaCache() { }
+
+      /** Dipanggil onCreate layar antrean; memuat cache tersimpan ke memori di latar. */
+      static void init(Context ctx) {
+         if (appCtx != null || ctx == null) return;
+         final Context app = ctx.getApplicationContext();
+         appCtx = app;
+         EXEC.execute(() -> {
+            try {
+               boolean any = false;
+               for (java.util.Map.Entry<String, ?> e : prefs(app).getAll().entrySet()) {
+                  Object v = e.getValue();
+                  if (v instanceof String && ((String) v).startsWith("+")) {
+                     String area = ((String) v).substring(1);
+                     MEM.putIfAbsent(e.getKey(), area);
+                     any |= !area.isEmpty();
+                  }
+               }
+               if (any) fire();
+            } catch (Exception ignored) {
+            }
+         });
+      }
+
+      static void addListener(Runnable r) {
+         if (r != null) LISTENERS.add(r);
+      }
+
+      static void removeListener(Runnable r) {
+         if (r != null) LISTENERS.remove(r);
+      }
+
+      /** Wilayah titik ini; "" = server tak punya data wilayahnya; null = belum diketahui (sedang
+       *  / akan diambil di latar, listener dipanggil setibanya). */
+      static String lookup(double lat, double lng) {
+         if (lat == 0.0 && lng == 0.0) return "";
+         final String k = String.format(Locale.US, "%.4f,%.4f", lat, lng);
+         String v = MEM.get(k);
+         if (v != null) return v;
+         final Context ctx = appCtx;
+         if (ctx == null) return null;
+         Long failed = FAILED_AT.get(k);
+         if (failed != null && System.currentTimeMillis() - failed < RETRY_MS) return null;
+         if (INFLIGHT.add(k)) {
+            try {
+               EXEC.execute(() -> fetch(ctx, k, lat, lng));
+            } catch (Exception e) {
+               INFLIGHT.remove(k);
+            }
+         }
+         return null;
+      }
+
+      private static android.content.SharedPreferences prefs(Context ctx) {
+         return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+      }
+
+      private static void fire() {
+         MAIN.removeCallbacks(FIRE);
+         MAIN.postDelayed(FIRE, 400L);
+      }
+
+      private static void fetch(Context ctx, String k, double lat, double lng) {
+         boolean resolved = false;
+         try {
+            String known = MEM.get(k);   // init() bisa saja baru memuatnya
+            if (known != null) {
+               resolved = !known.isEmpty();
+               return;
+            }
+            android.content.SharedPreferences sp = prefs(ctx);
+            String stored = sp.getString(k, null);
+            if (stored != null && stored.startsWith("+")) {
+               String area = stored.substring(1);
+               MEM.put(k, area);
+               resolved = !area.isEmpty();
+               return;
+            }
+            if (stored != null && stored.startsWith("-")) {
+               long at = 0L;
+               try {
+                  at = Long.parseLong(stored.substring(1));
+               } catch (NumberFormatException ignored) {
+               }
+               if (System.currentTimeMillis() - at < NEG_TTL_MS) {
+                  MEM.put(k, "");
+                  return;
+               }
+            }
+            SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(ctx)));
+            okhttp3.HttpUrl base = cfg.isEnrolled()
+                  ? okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/geocode/reverse") : null;
+            if (base == null) {
+               FAILED_AT.put(k, System.currentTimeMillis());
+               return;
+            }
+            long wait = lastCallAt + GAP_MS - System.currentTimeMillis();
+            if (wait > 0L) Thread.sleep(wait);
+            lastCallAt = System.currentTimeMillis();
+            okhttp3.Request req = new okhttp3.Request.Builder()
+                  .url(base.newBuilder()
+                        .addQueryParameter("lat", String.valueOf(lat))
+                        .addQueryParameter("lng", String.valueOf(lng))
+                        .build())
+                  .header("Accept", "application/json")
+                  .header("Authorization", "Bearer " + cfg.getToken())
+                  .get()
+                  .build();
+            try (okhttp3.Response r = com.crowja.damiupos.sync.Http.SHARED.newCall(req).execute()) {
+               if (r.code() == 404) {
+                  // Titik tanpa data administratif (atau server lama tanpa rute ini): ingat 7 hari.
+                  MEM.put(k, "");
+                  sp.edit().putString(k, "-" + System.currentTimeMillis()).apply();
+                  return;
+               }
+               if (!r.isSuccessful()) {
+                  FAILED_AT.put(k, System.currentTimeMillis());
+                  return;
+               }
+               String body = r.body() != null ? r.body().string() : "";
+               JSONObject o = new JSONObject(body.isEmpty() ? "{}" : body);
+               // Format = Customer.getAdminArea(): "Desa, Kec. X" (kecamatan sudah berprefiks dari server).
+               String desa = cleanLabel(o.optString("desa", ""));
+               String kec = cleanLabel(o.optString("kecamatan", ""));
+               String area = desa.isEmpty() ? kec : (kec.isEmpty() ? desa : desa + ", " + kec);
+               if (area.isEmpty()) area = cleanLabel(o.optString("formatted", ""));
+               MEM.put(k, area);
+               sp.edit().putString(k, "+" + area).apply();
+               resolved = !area.isEmpty();
+            }
+         } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            FAILED_AT.put(k, System.currentTimeMillis());
+         } catch (Exception e) {
+            FAILED_AT.put(k, System.currentTimeMillis());
+         } finally {
+            INFLIGHT.remove(k);
+            if (resolved) fire();
+         }
+      }
+   }
+
+   /**
+    * Baris "📍" kartu antrean — diletakkan TEPAT DI BAWAH nama pelanggan, teks hitam pekat
+    * (@color/text_strong): "📍 Kedai · Kartasura (1,2 km)", "📍 Kartasura (850 m)", atau
+    * "📍 1,2 km" bila wilayah belum di-geocode. "" bila tak ada apa pun untuk ditampilkan.
+    * Dipakai SEMUA kartu antrean (Antrian Saya, Perangkat Lain, Pesanan Terbuka, Antrean Lain
+    * mode terpandu, OtherDeviceQueueActivity) supaya formatnya satu.
+    */
+   static String queueLocationLine(String place, String jarak) {
+      String p = cleanLabel(place);
+      String j = cleanLabel(jarak);
+      if (p.isEmpty() && j.isEmpty()) return "";
+      if (p.isEmpty()) return "📍 " + j;
+      return "📍 " + p + (j.isEmpty() ? "" : " (" + j + ")");
+   }
+
+   /** Baris "📍" untuk order JSON server (tab Perangkat Lain dsb.): tujuan hanya dianggap bila
+    *  dest_name terisi — tanpa itu koordinat baris = koordinat utama pelanggan versi server. */
+   static String queueLocationLine(Customer c, JSONObject o, String jarak) {
+      String dn = cleanLabel(o.optString("dest_name", ""));
+      String place = dn.isEmpty()
+            ? areaLabel(c, 0.0, 0.0, "")
+            : areaLabel(c, o.optDouble("latitude", 0.0), o.optDouble("longitude", 0.0), dn);
+      return queueLocationLine(place, jarak);
+   }
+
+   static void bindLocationLine(TextView tv, String text) {
+      if (tv == null) return;
+      if (text == null || text.isEmpty()) {
+         tv.setVisibility(View.GONE);
+      } else {
+         tv.setText(text);
+         tv.setVisibility(View.VISIBLE);
+      }
    }
 
    /** " · 🧾 KODE-DDMMYYHHMM-XXXXX" untuk baris meta kartu antrean — ID transaksi yang sama dengan di
@@ -1641,6 +1953,42 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (receiptNo == null) return "";
       String r = receiptNo.trim();
       return r.isEmpty() || "null".equals(r) ? "" : " · 🧾 " + r;
+   }
+
+   /**
+    * " · 🧺 Lokasi 1/2" untuk baris meta kartu antrean — order ini satu leg dari checkout
+    * multi-lokasi (satu pesanan, beberapa lokasi tujuan, tiap lokasi dibayar di pintunya sendiri).
+    * Cukup dari kolom baris INI: HP kurir sering hanya memegang leg ini. Nama lokasinya sudah ada di
+    * baris 📍. Order biasa → "" (kartu persis seperti dulu).
+    */
+   static String checkoutLegSuffix(Transaction t) {
+      if (t == null || !t.isCheckoutLeg()) return "";
+      String b = CheckoutStrukText.legBadge(t.getCheckoutSeq(), t.getCheckoutSize());
+      return b.isEmpty() ? "" : " · " + b;
+   }
+
+   /** Versi baris JSON server (tab Perangkat Lain / Antrean Lain): blok "checkout" {seq, size} dari
+    *  Reports::shapeQueueRow, atau kolom datar checkout_seq/checkout_size. Server lama → "". */
+   static String checkoutLegSuffix(JSONObject o) {
+      if (o == null) return "";
+      JSONObject co = o.optJSONObject("checkout");
+      int seq = co != null ? co.optInt("seq", 0) : o.optInt("checkout_seq", 0);
+      int size = co != null ? co.optInt("size", 0) : o.optInt("checkout_size", 0);
+      String b = CheckoutStrukText.legBadge(seq, size);
+      return b.isEmpty() ? "" : " · " + b;
+   }
+
+   /** Pengingat penagihan leg checkout untuk popup Selesai / Detail Order ("" untuk order biasa).
+    *  Leg HUTANG / sudah LUNAS diberi kalimat sendiri — tak ada yang ditagih untuk pesanan itu. */
+   static String checkoutCollectHint(Transaction t) {
+      if (t == null || !t.isCheckoutLeg()) return "";
+      return CheckoutStrukText.collectHint(t.getCheckoutSeq(), t.getCheckoutSize(), t.getDeliveryDestName(),
+            t.getPaymentMethod(), t.isPaymentConfirmed());
+   }
+
+   /** checkout_uuid leg ini untuk pengecualian hutang segar leg saudara; null untuk order biasa. */
+   private static String legCheckoutUuid(Transaction t) {
+      return t != null && t.isCheckoutLeg() ? t.getCheckoutUuid() : null;
    }
 
    /** Popup catatan pengiriman lengkap, satu poin per baris. */
@@ -3028,6 +3376,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          SyncScheduler.syncNow(this.getApplicationContext());
          Toast.makeText(this, list.size() == 1 ? "Mengantar: " + safe(((Transaction)list.get(0)).getCustomerName()) : "Mengantar " + list.size() + " order sekaligus", 0).show();
          this.requireSelfOrderStrukThen(list);
+         // ▶ Jalankan rit = langsung susun rute terpendek (terdekat dulu) dari posisi HP — sama dengan
+         // menekan "Urutkan Rute Terpendek". Jeda singkat supaya stempel jalan ikut tersinkron dulu.
+         if (list.size() > 1) {
+            this.rv.postDelayed(() -> {
+               if (!this.isFinishing() && !this.isDestroyed()) this.autoRerouteAfterAdd();
+            }, 2000L);
+         }
       }
    }
 
@@ -3927,6 +4282,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       listAdapter.setData(this.adapter.data);
       rv.setAdapter(listAdapter);
       root.addView(rv);
+      this.guidedMyQueueAdapterRef = new java.lang.ref.WeakReference<>(listAdapter);
 
       search.addTextChangedListener(new TextWatcher() {
          public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
@@ -3981,6 +4337,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       final OtherQueueRowAdapter listAdapter = new OtherQueueRowAdapter(hostDialog);
       rv.setAdapter(listAdapter);
+      this.guidedOtherRowsAdapterRef = new java.lang.ref.WeakReference<>(listAdapter);
       List<OtherQueueRow> rows = this.buildOtherQueueRows();
       listAdapter.setData(rows, false);
       empty.setVisibility(rows.isEmpty() ? View.VISIBLE : View.GONE);
@@ -4112,15 +4469,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       String deviceLabel = o.optString("device_group_label", "");
       if (!deviceLabel.isEmpty()) meta.append(meta.length() > 0 ? " · " : "").append("📱 ").append(deviceLabel);
       meta.append(meta.length() > 0 ? " · " : "").append(o.optInt("galon", 0)).append(" galon");
+      meta.append(checkoutLegSuffix(o));
       meta.append(receiptSuffix(o.optString("receipt_no", "")));
       meta.append(orderedSuffix(o.optString("ordered_at", "")));
       meta.append(sourceWaSuffix(o.optString("source_wa", "")));
       double ongkir = o.optDouble("ongkir", 0.0);
-      String adminArea = o.optString("dest_name", "").isEmpty() || "null".equals(o.optString("dest_name", ""))
-            ? (c != null ? c.getAdminArea() : "")
-            : areaLabel(c, o.optDouble("latitude", 0.0), o.optDouble("longitude", 0.0), o.optString("dest_name", ""));
+      String locationLine = queueLocationLine(c, o, formatJarak(distKm));
       return new OtherQueueRow(o, null, badgeName, o.optString("note", ""), meta.toString(),
-            ongkir > 0.0, !adminArea.isEmpty() ? "📍 " + adminArea : "", o.optString("items", ""),
+            ongkir > 0.0, locationLine, o.optString("items", ""),
             elapsedMs, distKm, o.optBoolean("pickup_only", false));
    }
 
@@ -4128,12 +4484,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       String badgeName = (t.isOpenDispatch() ? "🎲 " : "") + (t.isCustomerPriority() ? "⭐ " : "")
             + (t.isCustomerDataIncomplete() ? "❗ " : "") + (t.isComplained() ? "😠 " : "") + safe(t.getCustomerName());
       long elapsedMs = elapsedMillis(t.getDeliveryQueuedAt());
-      double distKm = distOrInf(t, this.myLat, this.myLng);
-      String meta = t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + receiptSuffix(t.getReceiptNo()) + orderedSuffix(t) + sourceWaSuffix(t.getSourceWa());
+      // distKmFromMe (bukan distOrInf): tanpa fix GPS (myLat/myLng masih 0,0 — izin ditolak, belum
+      // ada lastLocation) jarak = MAX_VALUE → formatJarak null → baris 📍 tanpa jarak, bukan
+      // "12.000 km" yang diukur dari titik 0,0. Cermin rowFromJson & QueueAdapter/OpenDispatchAdapter.
+      double tLat = effectiveLat(t);
+      double tLng = effectiveLng(t);
+      double distKm = (tLat == 0.0 && tLng == 0.0) ? Double.MAX_VALUE : this.distKmFromMe(tLat, tLng);
+      String meta = t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + checkoutLegSuffix(t) + receiptSuffix(t.getReceiptNo()) + orderedSuffix(t) + sourceWaSuffix(t.getSourceWa());
       Customer c = t.getCustomerId() > 0 ? this.customerDao.getById(t.getCustomerId()) : null;
-      String adminArea = areaLabel(c, t);
+      String locationLine = queueLocationLine(areaLabel(c, t), formatJarak(distKm));
       return new OtherQueueRow(null, t, badgeName, t.getCatatan(), meta, t.getOngkir() > 0.0,
-            adminArea.isEmpty() ? "" : "📍 " + adminArea, null, elapsedMs, distKm, isPickupOnly(t));
+            locationLine, null, elapsedMs, distKm, isPickupOnly(t));
    }
 
    private double distKmFromMe(double lat, double lng) {
@@ -4163,6 +4524,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private class OtherQueueRowAdapter extends RecyclerView.Adapter<OtherQueueRowAdapter.VH> {
       private final Dialog hostDialog;
       private List<OtherQueueRow> data = new ArrayList<>();
+      /** Urutan aktif (tombol Umur/Jarak) — dipertahankan saat baris disusun ulang. */
+      private boolean byDistance = false;
 
       OtherQueueRowAdapter(Dialog hostDialog) {
          this.hostDialog = hostDialog;
@@ -4174,6 +4537,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
 
       void sort(boolean byDistance) {
+         this.byDistance = byDistance;
          if (byDistance) {
             this.data.sort((a, b) -> Double.compare(a.distKm, b.distKm));
          } else {
@@ -4201,12 +4565,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          } else {
             DeliveryQueueActivity.this.bindProductChips(h.productChips, row.trx);
          }
-         if (!row.adminAreaText.isEmpty()) {
-            h.tvAdminArea.setText(row.adminAreaText);
-            h.tvAdminArea.setVisibility(View.VISIBLE);
-         } else {
-            h.tvAdminArea.setVisibility(View.GONE);
-         }
+         DeliveryQueueActivity.bindLocationLine(h.tvAdminArea, row.adminAreaText);
          h.btnMore.setVisibility(View.GONE);
          boolean delivering = row.json != null && DeliveryQueueActivity.isBeingDelivered(row.json);
          h.btnTakeOver.setText(delivering ? "🚚" : "📥");
@@ -4348,7 +4707,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (km == Double.MAX_VALUE) {
          return null;
       } else {
-         return km < (double)1.0F ? Math.round(km * (double)1000.0F) + " m" : String.format(Locale.US, "%.1f km", km);
+         // Koma desimal Indonesia ("1,2 km") — sama dengan tab Perangkat Lain & OtherDeviceQueueActivity,
+         // supaya baris 📍 di semua kartu antrean berformat satu. Hanya untuk tampilan (tak diparse).
+         return km < (double)1.0F ? Math.round(km * (double)1000.0F) + " m" : String.format(Locale.US, "%.1f km", km).replace('.', ',');
       }
    }
 
@@ -4850,6 +5211,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       sb.append("Total: ").append(this.rp(t.getTotalHarga()));
       sb.append(this.refundSummaryText(t));
       sb.append(this.debtSummaryText(t));
+      // 🧺 Leg checkout multi-lokasi: yang ditagih di pintu ini HANYA pesanan lokasi ini.
+      String legHint = checkoutCollectHint(t);
+      if (!legHint.isEmpty()) sb.append("\n\n").append(legHint);
       return sb.toString();
    }
 
@@ -4866,18 +5230,36 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * <p>Piutang milik transaksi INI SENDIRI dikecualikan — order yang memang dibuat berstatus
     * HUTANG akan terhitung dua kali kalau ikut dijumlahkan. Tak ada tunggakan → '' (dialognya tetap
     * ringkas untuk mayoritas order yang lunas).</p>
+    *
+    * <p>🧺 Leg checkout multi-lokasi: HUTANG SEGAR leg saudaranya (checkout_uuid sama di
+    * customer_debts, tabel branch-wide) juga BUKAN hutang lama — tiap lokasi ditagih di pintunya
+    * sendiri. Tak bergantung pada transaksi saudara ada di HP ini. Hutang LAMA-nya pun hanya ditagih
+    * di satu pintu ({@code TransactionDao.oldDebtDoor}); di pintu lain baris ini menyebut di mana
+    * ditagihnya dan "Total harus diterima" = penjualan lokasi ini saja.</p>
     */
    private String debtSummaryText(Transaction t) {
       if (t == null || t.getCustomerId() <= 0L) {
          return "";
       } else {
          String trxUuid = (new TransactionDao(DatabaseHelper.getInstance(this))).getSyncUuidById(t.getId());
-         double prior = (new CustomerDebtDao(DatabaseHelper.getInstance(this)))
-               .balanceExcludingTransaction(t.getCustomerId(), trxUuid);
-         return prior <= (double)0.0F
-               ? ""
-               : "\nHutang sebelumnya: " + this.rp(prior)
-                     + "\nTotal harus diterima: " + this.rp(t.getTotalHarga() + prior);
+         CustomerDebtDao debtDao = new CustomerDebtDao(DatabaseHelper.getInstance(this));
+         String co = legCheckoutUuid(t);
+         double prior = co != null
+               ? debtDao.balanceExcludingTransaction(t.getCustomerId(), trxUuid, co)
+               : debtDao.balanceExcludingTransaction(t.getCustomerId(), trxUuid);
+         if (prior <= (double)0.0F) {
+            return "";
+         }
+         // 🧺 Hutang lama ditagih di SATU pintu (DebtBalance::priorForDoor). Pintu lain: tagihannya
+         // hanya penjualan lokasi ini — kurir diberi tahu di mana hutang lamanya ditagih.
+         CheckoutStrukText.DebtDoor door = co != null ? this.dao.oldDebtDoor(t) : null;
+         if (door != null && !door.here) {
+            // Leg pintu tagih tak ada di HP ini (dirutekan ke HP lain / di-void) → kalimat bersyarat.
+            return "\n" + CheckoutStrukText.oldDebtElsewhereLine(door, this.rp(prior))
+                  + "\nTotal harus diterima: " + this.rp(t.getTotalHarga());
+         }
+         return "\nHutang sebelumnya: " + this.rp(prior)
+               + "\nTotal harus diterima: " + this.rp(t.getTotalHarga() + prior);
       }
    }
 
@@ -4980,13 +5362,52 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       CustomerDebtDao debtDaoAdj = new CustomerDebtDao(DatabaseHelper.getInstance(this));
       double existingDebt = t.getCustomerId() > 0L ? debtDaoAdj.balanceFor(t.getCustomerId()) : (double)0.0F;
-      double priorDebt = t.getCustomerId() > 0L ? debtDaoAdj.balanceExcludingTransaction(t.getCustomerId(), (new TransactionDao(DatabaseHelper.getInstance(this))).getSyncUuidById(t.getId())) : (double)0.0F;
+      String adjTrxUuid = (new TransactionDao(DatabaseHelper.getInstance(this))).getSyncUuidById(t.getId());
+      // 🧺 Leg checkout: hutang segar leg saudara (checkout_uuid sama) BUKAN hutang lama di pintu ini —
+      // dikecualikan dari tagihan, lewat customer_debts.checkout_uuid (tak butuh transaksi saudaranya).
+      String adjCheckout = legCheckoutUuid(t);
+      // oldDebt = hutang LAMA sebenarnya (batas pelunasan yang boleh diterima di pintu ini);
+      // priorDebt = yang DITAGIH di pintu ini. Leg checkout yang bukan pintu tagih hutang lama
+      // (DebtBalance::priorForDoor) → 0: hanya penjualan lokasi ini. Order tunggal: keduanya sama.
+      double oldDebt = t.getCustomerId() <= 0L ? (double)0.0F
+            : (adjCheckout != null
+               ? debtDaoAdj.balanceExcludingTransaction(t.getCustomerId(), adjTrxUuid, adjCheckout)
+               : debtDaoAdj.balanceExcludingTransaction(t.getCustomerId(), adjTrxUuid));
+      CheckoutStrukText.DebtDoor debtDoor = adjCheckout != null ? this.dao.oldDebtDoor(t) : null;
+      boolean debtElsewhere = debtDoor != null && !debtDoor.here;
+      double priorDebt = debtElsewhere ? (double)0.0F : oldDebt;
+      String legHint = checkoutCollectHint(t);
+      if (!legHint.isEmpty()) {
+         TextView tvLeg = new TextView(this);
+         tvLeg.setText(legHint);
+         tvLeg.setTextColor(-10395295);
+         tvLeg.setPadding(0, 0, 0, gap);
+         box.addView(tvLeg);
+      }
       if (existingDebt > (double)0.0F) {
          TextView debtNow = new TextView(this);
-         debtNow.setText("\ud83e\uddfe Hutang pelanggan saat ini: " + this.rp(existingDebt));
+         // Angka hutang pelanggan sesungguhnya (termasuk tagihan lokasi lain pesanan ini) — tapi yang
+         // DITAGIH di pintu ini hanya penjualan lokasi ini + hutang lama (lihat "Jumlah Dibayar").
+         double siblingFresh = adjCheckout != null && t.getCustomerId() > 0L
+               ? Math.max(0.0, debtDaoAdj.balanceExcludingTransaction(t.getCustomerId(), adjTrxUuid, null) - oldDebt)
+               : 0.0;
+         debtNow.setText("\ud83e\uddfe Hutang pelanggan saat ini: " + this.rp(existingDebt)
+               + (siblingFresh > 0.0 ? "\n(termasuk " + this.rp(siblingFresh)
+                     + " tagihan lokasi lain pesanan ini — ditagih di lokasinya sendiri)" : ""));
          debtNow.setTextColor(-4645860);
          debtNow.setPadding(0, 0, 0, gap);
          box.addView(debtNow);
+      }
+      if (debtElsewhere && oldDebt > (double)0.0F) {
+         // 🧺 Bukan pintu tagih hutang lama: JANGAN ditagih di sini (kurir pintu tagih yang menagihnya),
+         // tapi uang lebih yang tetap diserahkan pelanggan dicatat sebagai pelunasan s/d hutang lama.
+         // Leg pintu tagih tak ada di HP ini (debtDoor.known false: dirutekan ke HP lain, di-void, atau
+         // sudah Selesai di sana) → instruksi bersyarat, bukan perintah pasti ke lokasi yang mungkin tutup.
+         TextView tvDoor = new TextView(this);
+         tvDoor.setText(CheckoutStrukText.oldDebtElsewhereInstruction(debtDoor, this.rp(oldDebt)));
+         tvDoor.setTextColor(-10395295);
+         tvDoor.setPadding(0, 0, 0, gap);
+         box.addView(tvDoor);
       }
 
       TextView lblPaid = new TextView(this);
@@ -5055,6 +5476,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             owedHint.setVisibility(0);
          } else if (priorDebt > (double)0.0F) {
             owedHint.setText("✅ Hutang lama " + this.rp(priorDebt) + " ikut LUNAS dengan pembayaran ini.");
+            owedHint.setTextColor(-15368131);
+            owedHint.setVisibility(0);
+         } else if (debtElsewhere && oldDebt > (double)0.0F && paid > liveTotal) {
+            // 🧺 Pelunasan SUKARELA di pintu yang bukan pintu tagih — dibatasi hutang lama sebenarnya,
+            // sama dengan TransactionDao.applyDeliveryAdjustment ($oldDebtCap di web).
+            double toOld = Math.min(paid - liveTotal, oldDebt);
+            owedHint.setText("✅ " + this.rp(toOld) + " dicatat sebagai pelunasan hutang lama"
+                  + (toOld >= oldDebt ? " (LUNAS)." : " (sisa " + this.rp(oldDebt - toOld) + " "
+                        + debtDoor.where() + ")."));
             owedHint.setTextColor(-15368131);
             owedHint.setVisibility(0);
          } else {
@@ -5872,6 +6302,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          sb.append(debtLines.startsWith("\n") ? debtLines.substring(1) : debtLines).append('\n');
       }
 
+      // 🧺 Leg checkout multi-lokasi: tagih HANYA pesanan lokasi ini (sama dengan popup Tandai Selesai).
+      String legHint = checkoutCollectHint(t);
+      if (!legHint.isEmpty()) {
+         sb.append(legHint).append('\n');
+      }
+
       String detailNote = displayNote(t.getCatatan());
       if (detailNote != null) {
          sb.append("\nCatatan: ").append(detailNote).append('\n');
@@ -6111,7 +6547,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       card.addView(tvName);
 
       TextView tvMeta = new TextView(this);
-      tvMeta.setText(t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + receiptSuffix(t.getReceiptNo()) + orderedSuffix(t) + sourceWaSuffix(t.getSourceWa()));
+      tvMeta.setText(t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + checkoutLegSuffix(t) + receiptSuffix(t.getReceiptNo()) + orderedSuffix(t) + sourceWaSuffix(t.getSourceWa()));
       tvMeta.setTextSize(13f);
       tvMeta.setTextColor(-10395295);
       card.addView(tvMeta);
@@ -7210,7 +7646,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             : (t.getCustomerAddress() != null && !t.getCustomerAddress().trim().isEmpty()
                   ? t.getCustomerAddress().trim() + areaSuffix : "");
       d.detailChips = this.buildQueueDetailChips(t);
-      String extra = (this.refundSummaryText(t) + this.debtSummaryText(t)).trim();
+      String legHint = checkoutCollectHint(t);   // 🧺 leg checkout: tagih hanya lokasi ini
+      String extra = (this.refundSummaryText(t) + this.debtSummaryText(t)
+            + (legHint.isEmpty() ? "" : "\n" + legHint)).trim();
       d.detailExtra = extra.isEmpty() ? null : extra;
       d.photoLocalPath = destLoc != null && destLoc.photo != null && !destLoc.photo.trim().isEmpty()
             ? null   // foto lokasi tersimpan sbg URL server (lihat photoUrl), bukan path lokal
@@ -8546,20 +8984,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
          int galon = q.optInt("galon", 0);
          meta.append(meta.length() > 0 ? " · " : "").append(galon).append(" galon");
+         meta.append(DeliveryQueueActivity.checkoutLegSuffix(q));
          meta.append(DeliveryQueueActivity.receiptSuffix(this.str(q, "receipt_no")));
          h.tvMeta.setText(meta.toString());
          double ongkir = q.optDouble("ongkir", (double)0.0F);
          h.tvOngkir.setVisibility(ongkir > (double)0.0F ? 0 : 8);
          DeliveryQueueActivity.bindPickupOnlyBadge(h.tvPickupOnly, q.optBoolean("pickup_only", false));
          DeliveryQueueActivity.this.bindOtherDeviceChips(h.productChips, this.str(q, "items"));
-         String adminArea = this.str(q, "dest_name").isEmpty() ? (c != null ? c.getAdminArea() : "")
-               : DeliveryQueueActivity.areaLabel(c, lat, lng, this.str(q, "dest_name"));
-         if (!adminArea.isEmpty()) {
-            h.tvAdminArea.setText("\ud83d\udccd " + adminArea + (jarakOther != null ? " (" + jarakOther + ")" : ""));
-            h.tvAdminArea.setVisibility(0);
-         } else {
-            h.tvAdminArea.setVisibility(8);
-         }
+         DeliveryQueueActivity.bindLocationLine(h.tvAdminArea, DeliveryQueueActivity.queueLocationLine(c, q, jarakOther));
 
          h.btnMore.setOnClickListener((v) -> DeliveryQueueActivity.this.showOtherDeviceMoreMenu(v, q));
          // Sedang diantar → 📥 diganti 🚚 redup; detail yang terbuka tak punya tombol Ambil Alih.
@@ -8775,6 +9207,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             h.tvPriorityBig.setAlpha(1.0F);
             h.tvNoFoto.setVisibility(8);
             h.tvNoLokasi.setVisibility(8);
+            // Kartu VOID DIAJUKAN sengaja minimal (meta/umur juga disembunyikan) — dan holder daur
+            // ulang tak boleh membawa baris 📍 milik kartu sebelumnya.
+            h.tvAdminArea.setVisibility(8);
             h.tvMeta.setText("");
             h.tvMeta.setVisibility(8);
             h.tvVoidTotal.setText(t.getJumlahGalon() + " galon · Rp " + DeliveryQueueActivity.formatRupiah(t.getTotalHarga()));
@@ -8813,6 +9248,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             String jarak = DeliveryQueueActivity.this.myLat == (double)0.0F && DeliveryQueueActivity.this.myLng == (double)0.0F ? null : DeliveryQueueActivity.formatJarak(DeliveryQueueActivity.distOrInf(t, DeliveryQueueActivity.this.myLat, DeliveryQueueActivity.this.myLng));
             h.jarakLabel = jarak;
             meta.append(t.getJumlahGalon()).append(" galon").append(t.wasManuallyEdited() ? " ✏️" : "").append(" · Rp ").append(DeliveryQueueActivity.formatRupiah(t.getTotalHarga()));
+            meta.append(DeliveryQueueActivity.checkoutLegSuffix(t));
             meta.append(DeliveryQueueActivity.receiptSuffix(t.getReceiptNo()));
             meta.append(DeliveryQueueActivity.orderedSuffix(t) + sourceWaSuffix(t.getSourceWa()));
             h.tvMeta.setText(meta.toString());
@@ -8828,13 +9264,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                h.tvIssue.setVisibility(8);
             }
 
-            String adminArea = DeliveryQueueActivity.areaLabel(cust, t);
-            if (!adminArea.isEmpty()) {
-               h.tvAdminArea.setText("\ud83d\udccd " + adminArea + (jarak != null ? " (" + jarak + ")" : ""));
-               h.tvAdminArea.setVisibility(0);
-            } else {
-               h.tvAdminArea.setVisibility(8);
-            }
+            DeliveryQueueActivity.bindLocationLine(h.tvAdminArea,
+                  DeliveryQueueActivity.queueLocationLine(DeliveryQueueActivity.areaLabel(cust, t), jarak));
 
             long elapsedMs = DeliveryQueueActivity.elapsedMillis(t.getDeliveryQueuedAt());
             DeliveryQueueActivity.bindElapsedBadge(h.tvElapsed, elapsedMs);
@@ -9075,6 +9506,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
          String jarak = DeliveryQueueActivity.this.myLat == (double)0.0F && DeliveryQueueActivity.this.myLng == (double)0.0F ? null : DeliveryQueueActivity.formatJarak(DeliveryQueueActivity.distOrInf(t, DeliveryQueueActivity.this.myLat, DeliveryQueueActivity.this.myLng));
          meta.append(meta.length() > 0 ? " · " : "").append(t.getJumlahGalon()).append(" galon");
+         meta.append(DeliveryQueueActivity.checkoutLegSuffix(t));
          meta.append(DeliveryQueueActivity.receiptSuffix(t.getReceiptNo()));
          meta.append(DeliveryQueueActivity.orderedSuffix(t) + sourceWaSuffix(t.getSourceWa()));
          h.tvMeta.setText(meta.toString());
@@ -9082,13 +9514,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          DeliveryQueueActivity.bindPickupOnlyBadge(h.tvPickupOnly, DeliveryQueueActivity.isPickupOnly(t));
          DeliveryQueueActivity.this.bindProductChips(h.productChips, t);
          Customer custAA = t.getCustomerId() > 0L ? DeliveryQueueActivity.this.customerDao.getById(t.getCustomerId()) : null;
-         String adminArea = DeliveryQueueActivity.areaLabel(custAA, t);
-         if (!adminArea.isEmpty()) {
-            h.tvAdminArea.setText("\ud83d\udccd " + adminArea + (jarak != null ? " (" + jarak + ")" : ""));
-            h.tvAdminArea.setVisibility(0);
-         } else {
-            h.tvAdminArea.setVisibility(8);
-         }
+         DeliveryQueueActivity.bindLocationLine(h.tvAdminArea,
+               DeliveryQueueActivity.queueLocationLine(DeliveryQueueActivity.areaLabel(custAA, t), jarak));
 
          boolean lateOpen = DeliveryQueueActivity.isLate(t);
          if (lateOpen) {

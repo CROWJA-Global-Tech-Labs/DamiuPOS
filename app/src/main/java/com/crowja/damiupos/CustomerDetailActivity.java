@@ -67,7 +67,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
     private com.google.android.material.button.MaterialButton btnBayarHutang;
     private com.google.android.material.button.MaterialButton btnCatatHutang;
     private com.crowja.damiupos.db.CustomerDebtDao debtDao;
-    private TextView tvEmptyHistory, tvHistoryHeader, tvHistoryNote;
+    private TextView tvEmptyHistory, tvHistoryHeader, tvHistoryNote, tvHistoryMore;
     private RecyclerView rvTransactions;
     private TransactionAdapter adapter;
     private ShapeableImageView ivFoto;
@@ -77,6 +77,9 @@ public class CustomerDetailActivity extends AppCompatActivity {
     private MaterialCardView cardDeliveryMetric;
     private TextView tvDeliveryAvg, tvDeliveryCount;
     private MaterialCardView cardLastOrder, cardPricelist;
+    /** 💰 Total belanja seumur hidup (order-insights → lifetime) — hanya saat terhubung server. */
+    private MaterialCardView cardLifetime;
+    private TextView tvLifetimeTotal, tvLifetimeMeta;
     /** Penanda permintaan order-insights terbaru — balasan lama (pelanggan/loadData sebelumnya) dibuang. */
     private int lastOrderRequest;
     /** ⏱ Waktu Pengiriman: bahan analisis kecepatan antar, bukan urusan sehari-hari kurir/staf —
@@ -116,6 +119,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
         tvIssueBanner = findViewById(R.id.tvIssueBanner);
         tvIssueBanner.setOnClickListener(v -> showFlagProblemDialog());
         tvHistoryHeader = findViewById(R.id.tvHistoryHeader);
+        tvHistoryMore = findViewById(R.id.tvHistoryMore);
+        tvHistoryMore.setOnClickListener(v -> showAllTransactionsDialog());
         tvHistoryNote = findViewById(R.id.tvHistoryNote);
         ivFoto = findViewById(R.id.ivFoto);
         cardMap = findViewById(R.id.cardMap);
@@ -136,6 +141,9 @@ public class CustomerDetailActivity extends AppCompatActivity {
         tvDeliveryCount = findViewById(R.id.tvDeliveryCount);
         cardLastOrder = findViewById(R.id.cardLastOrder);
         cardPricelist = findViewById(R.id.cardPricelist);
+        cardLifetime = findViewById(R.id.cardLifetime);
+        tvLifetimeTotal = findViewById(R.id.tvLifetimeTotal);
+        tvLifetimeMeta = findViewById(R.id.tvLifetimeMeta);
 
         User u = new UserDao(dbHelper).getById(settingsDao.getCurrentUserId());
         canSeeDeliveryMetric = u != null && (u.isAdmin() || u.isMarketing() || u.isSpv());
@@ -771,6 +779,10 @@ public class CustomerDetailActivity extends AppCompatActivity {
         renderPricelist(customer);
         renderLastOrder(transactions);
 
+        // "Selengkapnya ›" → popup histori dari server (semua perangkat); perlu terhubung server.
+        boolean enrolled = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled();
+        tvHistoryMore.setVisibility(enrolled && (mergedTrx > 0 || !transactions.isEmpty()) ? View.VISIBLE : View.GONE);
+
         int otherDevices = mergedTrx - transactions.size();
         if (otherDevices > 0 && !transactions.isEmpty()) {
             tvHistoryNote.setText("+" + otherDevices + " transaksi lain tercatat di perangkat lain");
@@ -798,7 +810,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
      * Harga yang berlaku untuk pelanggan ini per produk — rumus SAMA dengan Transaksi Baru
      * ({@code TransactionActivity#applyResellerPricing}): harga khusus pelanggan (product_prices)
      * bila ada, selain itu harga jual produk; lalu + komisi bila reseller afiliasinya (dirinya sendiri
-     * bila ia reseller, else reseller tertaut) memakai "Tambahkan Komisi ke Harga".
+     * bila ia reseller, else reseller tertaut) memakai "Tambahkan Komisi ke Harga". Lokasi yang punya
+     * harga khusus sendiri mendapat sub-daftar "📍 nama lokasi" berisi harga efektif order ke sana.
      */
     private void renderPricelist(Customer c) {
         android.widget.LinearLayout rows = findViewById(R.id.pricelistRows);
@@ -826,11 +839,74 @@ public class CustomerDetailActivity extends AppCompatActivity {
         double globalRate = settingsDao.getResellerKomisi();
 
         rows.removeAllViews();
-        boolean anySpecial = false;
         int primary = androidx.core.content.ContextCompat.getColor(this, R.color.text_primary);
         int secondary = androidx.core.content.ContextCompat.getColor(this, R.color.text_secondary);
+
+        // Lokasi yang punya harga khusus sendiri (locations[i].prices) → sub-daftar per lokasi dengan
+        // harga EFEKTIF (Customer#priceOverridesFor, aturan sama dengan Transaksi Baru/server). Nama
+        // ganda/kosong dilewati: harganya memang tak pernah terpakai (pencocokan nama ambil yang pertama).
+        java.util.List<Customer.Location> priced = new java.util.ArrayList<>();
+        if (c.getLocations() != null) {
+            for (Customer.Location l : c.getLocations()) {
+                if (l != null && l.prices != null && !l.prices.isEmpty() && c.locationNamed(l.name) == l) {
+                    priced.add(l);
+                }
+            }
+        }
+        if (!priced.isEmpty()) {
+            rows.addView(pricelistCaption("Harga dasar pelanggan (lokasi tanpa harga khusus)", secondary, false));
+        }
+        java.util.Map<String, Double> base = c.getProductPrices() != null
+                ? c.getProductPrices() : new java.util.HashMap<>();
+        boolean anySpecial = addPriceRows(rows, products, base, addKomisi, rates, globalRate, primary, secondary);
+        for (Customer.Location l : priced) {
+            rows.addView(pricelistCaption("📍 " + l.name.trim(), primary, true));
+            anySpecial |= addPriceRows(rows, products, c.priceOverridesFor(l.name),
+                    addKomisi, rates, globalRate, primary, secondary);
+        }
+
+        StringBuilder sb = new StringBuilder();
+        if (anySpecial) {
+            sb.append(priced.isEmpty() ? "⭐ = harga khusus pelanggan ini (harga standar dicoret)."
+                    : "⭐ = harga khusus (harga standar dicoret).");
+        }
+        if (!priced.isEmpty()) {
+            if (sb.length() > 0) sb.append('\n');
+            sb.append("📍 = harga untuk order yang dikirim ke lokasi itu (menimpa harga dasar pelanggan).");
+        }
+        if (addKomisi) {
+            if (sb.length() > 0) sb.append('\n');
+            sb.append("Termasuk komisi reseller ").append(reseller.getName()).append(" (Tambahkan Komisi ke Harga).");
+        }
+        if (note != null) {
+            note.setText(sb.toString());
+            note.setVisibility(sb.length() > 0 ? View.VISIBLE : View.GONE);
+        }
+        cardPricelist.setVisibility(View.VISIBLE);
+    }
+
+    /** Judul kecil di dalam kartu Daftar Harga (judul sub-daftar lokasi / keterangan harga dasar). */
+    private TextView pricelistCaption(String text, int color, boolean bold) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextSize(bold ? 13f : 12f);
+        tv.setTextColor(color);
+        if (bold) tv.setTypeface(tv.getTypeface(), android.graphics.Typeface.BOLD);
+        tv.setPadding(0, dp(bold ? 10 : 4), 0, dp(2));
+        return tv;
+    }
+
+    /**
+     * Baris harga per produk ke {@code rows}: harga = {@code overrides[uuid]} bila ada, selain itu harga
+     * jual produk; + komisi bila reseller afiliasinya "Tambahkan Komisi ke Harga". Harga khusus yang
+     * beda dari harga standar → ⭐ + harga standar dicoret. Balikkan true bila ada harga khusus.
+     */
+    private boolean addPriceRows(android.widget.LinearLayout rows, List<com.crowja.damiupos.model.Product> products,
+                                 java.util.Map<String, Double> overrides, boolean addKomisi,
+                                 java.util.Map<Long, Double> rates, double globalRate, int primary, int secondary) {
+        boolean anySpecial = false;
         for (com.crowja.damiupos.model.Product p : products) {
-            Double override = c.getPriceFor(p.getUuid());
+            Double override = p.getUuid() != null ? overrides.get(p.getUuid()) : null;
             double price = override != null ? override : p.getHargaJual();
             if (addKomisi) {
                 Double r = rates.get(p.getId());
@@ -873,18 +949,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
             row.addView(tvPrice);
             rows.addView(row);
         }
-
-        StringBuilder sb = new StringBuilder();
-        if (anySpecial) sb.append("⭐ = harga khusus pelanggan ini (harga standar dicoret).");
-        if (addKomisi) {
-            if (sb.length() > 0) sb.append('\n');
-            sb.append("Termasuk komisi reseller ").append(reseller.getName()).append(" (Tambahkan Komisi ke Harga).");
-        }
-        if (note != null) {
-            note.setText(sb.toString());
-            note.setVisibility(sb.length() > 0 ? View.VISIBLE : View.GONE);
-        }
-        cardPricelist.setVisibility(View.VISIBLE);
+        return anySpecial;
     }
 
     // ------------------------------------------------------------------ Transaksi Terakhir
@@ -914,22 +979,27 @@ public class CustomerDetailActivity extends AppCompatActivity {
         }
 
         com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
-        if (!cfg.isEnrolled()) return;
-        final String uuid = customerDao.getSyncUuidById(customerId);
-        if (uuid == null || uuid.isEmpty()) return;
+        final String uuid = cfg.isEnrolled() ? customerDao.getSyncUuidById(customerId) : null;
+        if (uuid == null || uuid.isEmpty()) {
+            bindLifetime(null);   // tanpa server tak ada angka lintas perangkat → sembunyikan
+            return;
+        }
         final int req = ++lastOrderRequest;
         final long localMs = lt != null ? com.crowja.damiupos.util.Ts.millis(lt.getTanggal()) : Long.MIN_VALUE;
         new Thread(() -> {
-            org.json.JSONObject lo;
+            org.json.JSONObject lo, life;
             try {
                 org.json.JSONObject res = new com.crowja.damiupos.sync.SyncApi(cfg).orderInsights(uuid);
                 lo = res.optJSONObject("last_order");
+                life = res.optJSONObject("lifetime");
             } catch (Exception e) {
-                return;   // offline → baris lokal tetap tampil
+                return;   // offline → baris lokal tetap tampil (kartu seumur hidup tetap seperti sebelumnya)
             }
-            final org.json.JSONObject flo = lo;
+            final org.json.JSONObject flo = lo, flife = life;
             runOnUiThread(() -> {
-                if (req != lastOrderRequest || isFinishing() || isDestroyed() || flo == null) return;
+                if (req != lastOrderRequest || isFinishing() || isDestroyed()) return;
+                bindLifetime(flife);
+                if (flo == null) return;
                 long srvMs = com.crowja.damiupos.util.Ts.millis(flo.optString("tanggal", ""));
                 if (localMs != Long.MIN_VALUE && localMs != Long.MAX_VALUE && srvMs != Long.MAX_VALUE
                         && localMs > srvMs) {
@@ -996,6 +1066,28 @@ public class CustomerDetailActivity extends AppCompatActivity {
         cardLastOrder.setVisibility(View.VISIBLE);
     }
 
+    /**
+     * 💰 Total belanja seumur hidup dari order-insights {@code lifetime} = {total, trx, galon} (JUAL
+     * selesai, SEMUA salinan orang ini lintas perangkat — CustomerLifetime::totals di server). HP tak
+     * menghitungnya sendiri: transaksi lokal terisolasi per-perangkat, angkanya pasti kurang. null
+     * (tak terhubung / server lama tanpa kunci) atau belum pernah belanja → kartu disembunyikan.
+     */
+    private void bindLifetime(org.json.JSONObject life) {
+        if (cardLifetime == null) return;
+        double total = life != null ? life.optDouble("total", 0) : 0;
+        int trx = life != null ? life.optInt("trx", 0) : 0;
+        int galon = life != null ? life.optInt("galon", 0) : 0;
+        if (life == null || Double.isNaN(total) || (trx <= 0 && total <= 0)) {
+            cardLifetime.setVisibility(View.GONE);
+            return;
+        }
+        String meta = trx + " transaksi · " + galon + " galon";
+        tvLifetimeTotal.setText(rupiah(total));
+        tvLifetimeMeta.setText(meta);
+        cardLifetime.setContentDescription("Total belanja seumur hidup: " + rupiah(total) + " · " + meta);
+        cardLifetime.setVisibility(View.VISIBLE);
+    }
+
     private java.util.List<Object[]> localBadges(Transaction t) {
         java.util.Map<String, com.crowja.damiupos.model.Product> byName = new java.util.HashMap<>();
         for (com.crowja.damiupos.model.Product p : new com.crowja.damiupos.db.ProductDao(dbHelper).getAll()) {
@@ -1022,6 +1114,154 @@ public class CustomerDetailActivity extends AppCompatActivity {
         }
         if (out.isEmpty() && t.getJumlahGalon() > 0) out.add(new Object[]{t.getJumlahGalon() + " gal", 0xFF64748B});
         return out;
+    }
+
+    // ------------------------------------------------------------------ Histori lengkap (popup)
+
+    /** Popup histori transaksi LINTAS PERANGKAT: waktu, item, total, pembayaran, status, siapa yang
+     *  mencatat & menyelesaikan. 30 per halaman, "Muat lagi" untuk berikutnya. */
+    private void showAllTransactionsDialog() {
+        final String uuid = customerDao.getSyncUuidById(customerId);
+        if (uuid == null || uuid.isEmpty()) {
+            android.widget.Toast.makeText(this, "Pelanggan ini belum tersinkron ke server.", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final android.widget.LinearLayout list = new android.widget.LinearLayout(this);
+        list.setOrientation(android.widget.LinearLayout.VERTICAL);
+        list.setPadding(dp(16), dp(4), dp(16), dp(8));
+        final TextView status = new TextView(this);
+        status.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.text_secondary));
+        status.setPadding(0, dp(8), 0, dp(8));
+        status.setText("Memuat…");
+        final com.google.android.material.button.MaterialButton more =
+                new com.google.android.material.button.MaterialButton(this, null,
+                        com.google.android.material.R.attr.borderlessButtonStyle);
+        more.setText("Muat lagi");
+        more.setAllCaps(false);
+        more.setVisibility(View.GONE);
+        android.widget.LinearLayout wrap = new android.widget.LinearLayout(this);
+        wrap.setOrientation(android.widget.LinearLayout.VERTICAL);
+        wrap.addView(list);
+        wrap.addView(status);
+        wrap.addView(more);
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(wrap);
+
+        final androidx.appcompat.app.AlertDialog dlg = new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle(getString(R.string.histori_transaksi))
+                .setView(scroll)
+                .setPositiveButton("Tutup", null)
+                .show();
+        final int[] page = {1};
+        final Runnable[] load = new Runnable[1];
+        load[0] = () -> {
+            more.setEnabled(false);
+            status.setVisibility(View.VISIBLE);
+            status.setText("Memuat…");
+            final int p = page[0];
+            final com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+            new Thread(() -> {
+                org.json.JSONObject res = null;
+                try {
+                    res = new com.crowja.damiupos.sync.SyncApi(cfg).customerTransactions(uuid, p);
+                } catch (Exception ignored) {
+                }
+                final org.json.JSONObject fres = res;
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed() || !dlg.isShowing()) return;
+                    more.setEnabled(true);
+                    if (fres == null) {
+                        status.setText("Gagal memuat — periksa koneksi internet.");
+                        more.setText("Coba lagi");
+                        more.setVisibility(View.VISIBLE);
+                        return;
+                    }
+                    dlg.setTitle(getString(R.string.histori_transaksi) + " (" + fres.optInt("total", 0) + ")");
+                    org.json.JSONArray arr = fres.optJSONArray("transactions");
+                    for (int i = 0; arr != null && i < arr.length(); i++) {
+                        org.json.JSONObject t = arr.optJSONObject(i);
+                        if (t != null) list.addView(historyRow(t));
+                    }
+                    boolean hasMore = fres.optBoolean("has_more", false);
+                    status.setVisibility(list.getChildCount() == 0 ? View.VISIBLE : View.GONE);
+                    if (list.getChildCount() == 0) status.setText(getString(R.string.belum_ada_transaksi));
+                    more.setText("Muat lagi");
+                    more.setVisibility(hasMore ? View.VISIBLE : View.GONE);
+                    if (hasMore) page[0] = p + 1;
+                });
+            }).start();
+        };
+        more.setOnClickListener(v -> load[0].run());
+        load[0].run();
+    }
+
+    /** Satu baris histori: waktu · struk / item · total · bayar · status / oleh · tujuan / selesai oleh. */
+    private View historyRow(org.json.JSONObject t) {
+        android.widget.LinearLayout row = new android.widget.LinearLayout(this);
+        row.setOrientation(android.widget.LinearLayout.VERTICAL);
+        row.setPadding(0, dp(10), 0, dp(10));
+        int primary = androidx.core.content.ContextCompat.getColor(this, R.color.text_primary);
+        int secondary = androidx.core.content.ContextCompat.getColor(this, R.color.text_secondary);
+        java.text.SimpleDateFormat full = new java.text.SimpleDateFormat("EEE, d MMM yyyy HH:mm", new java.util.Locale("id", "ID"));
+        java.text.SimpleDateFormat shortFmt = new java.text.SimpleDateFormat("EEE, d MMM HH:mm", new java.util.Locale("id", "ID"));
+
+        boolean kembali = "KEMBALI".equals(str(t, "type"));
+        long ms = com.crowja.damiupos.util.Ts.millis(str(t, "tanggal"));
+        String when = ms == Long.MAX_VALUE ? str(t, "tanggal") : full.format(new java.util.Date(ms));
+        String receipt = str(t, "receipt_no");
+        TextView l1 = new TextView(this);
+        l1.setTextColor(primary);
+        l1.setTextSize(14);
+        l1.setTypeface(null, android.graphics.Typeface.BOLD);
+        l1.setText((kembali ? "↩ " : "") + when + (receipt.isEmpty() ? "" : "  ·  🧾 " + receipt));
+        row.addView(l1);
+
+        StringBuilder l2 = new StringBuilder();
+        if (kembali) {
+            l2.append("Galon kembali ").append(t.optInt("galon", 0));
+        } else {
+            String items = str(t, "items");
+            l2.append(items.isEmpty() ? t.optInt("galon", 0) + " galon" : items);
+            l2.append(" · ").append(rupiah(t.optDouble("total", 0)));
+            String pay = payLabel(str(t, "payment_method"));
+            if (!pay.isEmpty()) l2.append(" · ").append(pay);
+        }
+        String st = str(t, "delivery_status");
+        if (!st.isEmpty()) l2.append(" · ").append(statusLabel(st));
+        TextView t2 = new TextView(this);
+        t2.setTextColor(primary);
+        t2.setTextSize(13);
+        t2.setText(l2.toString());
+        row.addView(t2);
+
+        StringBuilder l3 = new StringBuilder();
+        String staff = str(t, "staff");
+        String device = str(t, "device");
+        String who = staff.isEmpty() ? device : (device.isEmpty() ? staff : staff + " (" + device + ")");
+        if (!who.isEmpty()) l3.append("Oleh ").append(who);
+        String dest = str(t, "dest");
+        if (!dest.isEmpty()) l3.append(l3.length() > 0 ? " · " : "").append("ke ").append(dest);
+        long doneMs = com.crowja.damiupos.util.Ts.millis(str(t, "done_at"));
+        String by = str(t, "completed_by");
+        if (doneMs != Long.MAX_VALUE && !str(t, "done_at").isEmpty()) {
+            l3.append(l3.length() > 0 ? "\n" : "").append("✅ Selesai ").append(shortFmt.format(new java.util.Date(doneMs)));
+            if (!by.isEmpty()) l3.append(" oleh ").append(by);
+        }
+        if (l3.length() > 0) {
+            TextView t3 = new TextView(this);
+            t3.setTextColor(secondary);
+            t3.setTextSize(12);
+            t3.setText(l3.toString());
+            row.addView(t3);
+        }
+        View divider = new View(this);
+        divider.setBackgroundColor(0x22888888);
+        android.widget.LinearLayout outer = new android.widget.LinearLayout(this);
+        outer.setOrientation(android.widget.LinearLayout.VERTICAL);
+        outer.addView(row);
+        outer.addView(divider, new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 1));
+        return outer;
     }
 
     private static String statusLabel(String s) {
