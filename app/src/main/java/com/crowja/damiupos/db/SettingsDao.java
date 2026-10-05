@@ -20,6 +20,10 @@ public class SettingsDao {
     private static volatile boolean BYPASS_PRO = BuildConfig.BYPASS_PRO;
 
     public static final String KEY_DEFAULT_ONGKIR = "default_ongkir";
+    /** Default Ongkir per Lokasi (Rp/galon; Konfigurasi web → Parameter Bisnis, tersinkron) — praisi
+     *  tarif lokasi baru + tombol "Pakai default" di form pelanggan. Cermin AppSetting::LOCATION_ONGKIR_DEFAULT. */
+    public static final String KEY_LOCATION_ONGKIR_DEFAULT = "location_ongkir_default";
+    public static final double DEFAULT_LOCATION_ONGKIR = 1000;
     public static final String KEY_POINTS_ENABLED = "points_enabled";
     public static final String KEY_POINTS_PER_AMOUNT = "points_per_amount";
     public static final String KEY_POINTS_REWARD_THRESHOLD = "points_reward_threshold";
@@ -234,7 +238,7 @@ public class SettingsDao {
      * device-spesifik (ringtone).
      */
     public static final Set<String> SHAREABLE_KEYS = new HashSet<>(Arrays.asList(
-            KEY_DEFAULT_ONGKIR,
+            KEY_DEFAULT_ONGKIR, KEY_LOCATION_ONGKIR_DEFAULT,
             KEY_POINTS_ENABLED, KEY_POINTS_PER_AMOUNT, KEY_POINTS_REWARD_THRESHOLD,
             KEY_PRODUCT_BONUS_THRESHOLD,
             KEY_DEPOT_NAME, KEY_DEPOT_ADDRESS, KEY_DEPOT_PHONE, KEY_DEPOT_LOGO_URL,
@@ -563,6 +567,14 @@ public class SettingsDao {
         }
         if (!out.isEmpty()) set(K_PENDING_INCOMPLETE, "");
         return out;
+    }
+
+    public double getLocationOngkirDefault() {
+        try {
+            return Double.parseDouble(get(KEY_LOCATION_ONGKIR_DEFAULT, String.valueOf(DEFAULT_LOCATION_ONGKIR)));
+        } catch (NumberFormatException e) {
+            return DEFAULT_LOCATION_ONGKIR;
+        }
     }
 
     public double getDefaultOngkir() {

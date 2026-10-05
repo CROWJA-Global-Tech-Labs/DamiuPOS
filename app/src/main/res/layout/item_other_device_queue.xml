@@ -22,6 +22,21 @@
             android:textSize="16sp"
             android:textStyle="bold" />
 
+        <!-- "📍 [Lokasi · ]Wilayah (jarak dari posisi kurir ini)" — TEPAT DI BAWAH nama, hitam pekat.
+             Formatnya satu dengan kartu Antrian Delivery (DeliveryQueueActivity.queueLocationLine);
+             jarak menyusul begitu GPS memberi fix. GONE bila tak ada wilayah maupun jarak. -->
+        <TextView
+            android:id="@+id/tvLocation"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:textColor="@color/text_strong"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/tvPhone"
             android:layout_width="match_parent"
@@ -95,18 +110,6 @@
             android:textColor="@color/white"
             android:textSize="12sp"
             android:textStyle="bold" />
-
-        <!-- Jarak dari posisi KURIR INI ke titik antar order tsb — dasar keputusan ambil alih
-             (order rekan yang kebetulan searah/lebih dekat). Diisi setelah GPS didapat. -->
-        <TextView
-            android:id="@+id/tvDistance"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:textColor="@color/primary"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
 
         <!-- "📝 catatan order" — DISEMATKAN paling bawah ISI kartu (baris tombol tetap paling akhir;
              menaruh catatan di bawah tombol akan mengubur aksinya). Sama dgn kartu ketiga tab di

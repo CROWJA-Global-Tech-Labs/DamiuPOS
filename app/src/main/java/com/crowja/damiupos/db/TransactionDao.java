@@ -23,6 +23,26 @@ public class TransactionDao {
         this.dbHelper = dbHelper;
     }
 
+    /**
+     * Order ber-"Kirim ke" NAMA lokasi tapi tanpa koordinat tujuan (order web/agen WA/lama) → ambil
+     * koordinat lokasi bernama itu dari daftar lokasi pelanggan. Tanpa ini navigasi, jarak & rute
+     * jatuh ke koordinat pelanggan = lokasi PERTAMA, padahal tujuan order lokasi lain.
+     */
+    static void resolveDestByName(Transaction t, String customerLocationsJson) {
+        if (t.getDeliveryDestLat() != 0 || t.getDeliveryDestLng() != 0) return;
+        String name = t.getDeliveryDestName();
+        if (name == null || name.trim().isEmpty() || t.isResellerDestination()) return;
+        if (customerLocationsJson == null || customerLocationsJson.isEmpty()) return;
+        for (com.crowja.damiupos.model.Customer.Location l : CustomerDao.parseLocations(customerLocationsJson)) {
+            if (l != null && l.name != null && name.trim().equalsIgnoreCase(l.name.trim())
+                    && (l.lat != 0 || l.lng != 0)) {
+                t.setDeliveryDestLat(l.lat);
+                t.setDeliveryDestLng(l.lng);
+                return;
+            }
+        }
+    }
+
     public long insert(Transaction trx) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues values = new ContentValues();
@@ -67,6 +87,14 @@ public class TransactionDao {
             String receiptNo = uniqueReceiptNo(db, code, receiptStamp(effectiveTanggal));
             values.put(DatabaseHelper.COL_RECEIPT_NO, receiptNo);
             trx.setReceiptNo(receiptNo);
+        }
+        // 🧺 Leg checkout multi-lokasi: trio ditulis SEKALI di sini (imutabel sesudahnya), hanya untuk
+        // JUAL dan hanya bila UTUH & sah — selain itu kolomnya dibiarkan NULL supaya order biasa tak
+        // pernah ikut ter-push sebagai 0 (push membuang kolom null). KEMBALI berpasangan tak distempel.
+        if (Transaction.TYPE_JUAL.equals(trx.getType()) && trx.isCheckoutLeg()) {
+            values.put(DatabaseHelper.COL_CHECKOUT_UUID, trx.getCheckoutUuid().trim());
+            values.put(DatabaseHelper.COL_CHECKOUT_SEQ, trx.getCheckoutSeq());
+            values.put(DatabaseHelper.COL_CHECKOUT_SIZE, trx.getCheckoutSize());
         }
         // Resolve operator SEKALI (sebelumnya id/nama/role di-query 5-6× per transaksi).
         SettingsDao sdao = new SettingsDao(dbHelper);
@@ -484,6 +512,12 @@ public class TransactionDao {
                 t.setCompletedByName(getStr(c, DatabaseHelper.COL_COMPLETED_BY_NAME));
                 t.setProofPath(getStr(c, "proof_path"));
                 t.setProofUrl(getStr(c, "proof_url"));
+                mapCheckout(t, c);
+                // Tujuan "Kirim ke" — badge leg "🧺 1/2 · Rumah" butuh namanya (layar riwayat lama tak
+                // membacanya, jadi order biasa tampil persis seperti dulu).
+                t.setDeliveryDestName(getStr(c, DatabaseHelper.COL_DELIVERY_DEST_NAME));
+                t.setDeliveryDestLat(getDouble(c, DatabaseHelper.COL_DELIVERY_DEST_LAT));
+                t.setDeliveryDestLng(getDouble(c, DatabaseHelper.COL_DELIVERY_DEST_LNG));
                 t.setCustomerName(getStr(c, "cust_name"));
                 t.setCustomerPhone(getStr(c, "cust_phone"));
                 t.setCustomerAddress(getStr(c, "cust_addr"));
@@ -512,7 +546,8 @@ public class TransactionDao {
                 + "c." + DatabaseHelper.COL_PHONE + " AS cust_phone, "
                 + "c." + DatabaseHelper.COL_ADDRESS + " AS cust_addr, "
                 + "c." + DatabaseHelper.COL_LATITUDE + " AS cust_lat, "
-                + "c." + DatabaseHelper.COL_LONGITUDE + " AS cust_lng "
+                + "c." + DatabaseHelper.COL_LONGITUDE + " AS cust_lng, "
+                + "c." + DatabaseHelper.COL_LOCATIONS + " AS cust_locs "
                 + "FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t "
                 + "LEFT JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c ON c."
                 + DatabaseHelper.COL_ID + " = t." + DatabaseHelper.COL_CUSTOMER_ID + " "
@@ -543,11 +578,14 @@ public class TransactionDao {
                 t.setDeliveryDestName(getStr(c, DatabaseHelper.COL_DELIVERY_DEST_NAME));
                 t.setDeliveryDestLat(getDouble(c, DatabaseHelper.COL_DELIVERY_DEST_LAT));
                 t.setDeliveryDestLng(getDouble(c, DatabaseHelper.COL_DELIVERY_DEST_LNG));
+                resolveDestByName(t, getStr(c, "cust_locs"));
                 t.setLastManualEditAt(getStr(c, DatabaseHelper.COL_LAST_MANUAL_EDIT_AT));
                 t.setVoidRequestPendingAt(getStr(c, DatabaseHelper.COL_VOID_REQUEST_PENDING_AT));
                 t.setComplainedAt(getStr(c, DatabaseHelper.COL_COMPLAINED_AT));
                 t.setChatSessionAt(getStr(c, DatabaseHelper.COL_CHAT_SESSION_AT));
                 t.setDeliveryProofRequired(getLong(c, DatabaseHelper.COL_DELIVERY_PROOF_REQUIRED) != 0);
+                // 🧺 Leg checkout multi-lokasi — semua leg ditunda bersama, badge k/N di daftar ini juga.
+                mapCheckout(t, c);
                 String itemsJson = getStr(c, DatabaseHelper.COL_ITEMS_JSON);
                 if (itemsJson != null) t.setItems(TransactionItem.listFromJson(itemsJson));
                 t.setCustomerName(getStr(c, "cust_name"));
@@ -602,6 +640,7 @@ public class TransactionDao {
                 + "c." + DatabaseHelper.COL_ADDRESS + " AS cust_addr, "
                 + "c." + DatabaseHelper.COL_LATITUDE + " AS cust_lat, "
                 + "c." + DatabaseHelper.COL_LONGITUDE + " AS cust_lng, "
+                + "c." + DatabaseHelper.COL_LOCATIONS + " AS cust_locs, "
                 // Foto rumah (lokal ATAU terunggah) — untuk tanda "data belum lengkap" di kartu antrian.
                 + "c." + DatabaseHelper.COL_PHOTO_URL + " AS cust_photo, "
                 + "c." + DatabaseHelper.COL_PHOTO_PATH + " AS cust_photo_path, "
@@ -698,6 +737,9 @@ public class TransactionDao {
                 t.setDeliveryDestName(getStr(c, DatabaseHelper.COL_DELIVERY_DEST_NAME));
                 t.setDeliveryDestLat(getDouble(c, DatabaseHelper.COL_DELIVERY_DEST_LAT));
                 t.setDeliveryDestLng(getDouble(c, DatabaseHelper.COL_DELIVERY_DEST_LNG));
+                resolveDestByName(t, getStr(c, "cust_locs"));
+                // 🧺 Leg checkout multi-lokasi → badge "k/N · tujuan" di kartu antrean (dari baris INI saja).
+                mapCheckout(t, c);
                 String itemsJson = getStr(c, DatabaseHelper.COL_ITEMS_JSON);
                 if (itemsJson != null) t.setItems(TransactionItem.listFromJson(itemsJson));
                 t.setCustomerName(getStr(c, "cust_name"));
@@ -869,6 +911,137 @@ public class TransactionDao {
         return i >= 0 ? c.getString(i) : null;
     }
 
+    /** Trio checkout multi-lokasi dari cursor ber-{@code t.*} (kolom absen/NULL → order biasa). */
+    private static void mapCheckout(Transaction t, Cursor c) {
+        t.setCheckoutUuid(getStr(c, DatabaseHelper.COL_CHECKOUT_UUID));
+        t.setCheckoutSeq((int) getLong(c, DatabaseHelper.COL_CHECKOUT_SEQ));
+        t.setCheckoutSize((int) getLong(c, DatabaseHelper.COL_CHECKOUT_SIZE));
+    }
+
+    /** Pembaca kolom per NAMA (absen/NULL → null / 0) — Cursor di produksi, Map di uji JVM. */
+    interface ColumnReader {
+        String str(String col);
+        double dbl(String col);
+    }
+
+    private static ColumnReader reader(final Cursor c) {
+        return new ColumnReader() {
+            @Override public String str(String col) { return getStr(c, col); }
+            @Override public double dbl(String col) { return getDouble(c, col); }
+        };
+    }
+
+    /**
+     * Kolom PENGIRIMAN satu leg checkout: status & jadwalnya, tujuan "Kirim ke", perangkat penangan.
+     * Dipakai {@link #getByCheckoutUuid} — struk gabungan ("Bayar per lokasi: Rumah Rp8.000 · Kedai
+     * Rp15.000") dan "Simpan & Selesaikan" (hanya leg PENDING milik perangkat ini) butuh semuanya.
+     *
+     * <p>SENGAJA tidak dipasang di {@link #cursorToTransaction}: pemanggil order tunggalnya (daftar
+     * transaksi, getById di struk, dst.) selama ini menerima null untuk kolom-kolom ini, dan
+     * mengisinya diam-diam mengubah perilaku mereka (badge status di TransactionAdapter, bendera
+     * "queued" gift di struk). Perbaikan di sana harus disengaja, bukan efek samping checkout.
+     */
+    static void mapLegDelivery(Transaction t, ColumnReader r) {
+        t.setDeliveryStatus(r.str(DatabaseHelper.COL_DELIVERY_STATUS));
+        t.setDeliveryQueuedAt(r.str(DatabaseHelper.COL_DELIVERY_QUEUED_AT));
+        t.setDeliveryTertundaAt(r.str(DatabaseHelper.COL_DELIVERY_TERTUNDA_AT));
+        t.setDeliveryTertundaResumeAt(r.str(DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT));
+        t.setDeliveryOpenDispatchAt(r.str(DatabaseHelper.COL_DELIVERY_OPEN_DISPATCH_AT));
+        t.setDeliveryDoneAt(r.str(DatabaseHelper.COL_DELIVERY_DONE_AT));
+        t.setCompletedByName(r.str(DatabaseHelper.COL_COMPLETED_BY_NAME));
+        t.setDeliveryDestName(r.str(DatabaseHelper.COL_DELIVERY_DEST_NAME));
+        t.setDeliveryDestLat(r.dbl(DatabaseHelper.COL_DELIVERY_DEST_LAT));
+        t.setDeliveryDestLng(r.dbl(DatabaseHelper.COL_DELIVERY_DEST_LNG));
+        t.setAssignedDeviceUuid(r.str(DatabaseHelper.COL_ASSIGNED_DEVICE_UUID));
+        t.setDeliveryDeviceUuid(r.str(DatabaseHelper.COL_DELIVERY_DEVICE_UUID));
+    }
+
+    // ----------------------------------------------------------- 🧺 Checkout multi-lokasi
+
+    /**
+     * Leg checkout {@code checkoutUuid} yang ADA DI HP INI, urut checkout_seq (leg utama dulu). Hanya
+     * JUAL; salinan lokal kembar dari leg yang sama (seq sama) dibuang, yang _id terkecil menang.
+     *
+     * <p><b>BISA TIDAK LENGKAP.</b> Leg yang dirutekan ke perangkat lain tak pernah ditarik HP ini
+     * (pull terisolasi per perangkat). Lengkap HANYA di HP pembuat checkout; HP kurir sering memegang
+     * satu leg saja. Jangan dipakai menyimpulkan identitas/jumlah saudara leg (pakai checkout_size)
+     * atau mengecualikan hutang saudara (pakai CustomerDebtDao, berbasis customer_debts.checkout_uuid).
+     *
+     * <p>Tiap leg membawa kolom pengirimannya ({@link #mapLegDelivery}: status, tujuan "Kirim ke",
+     * perangkat penangan) — beda dari {@link #getById} yang tak memetakannya.
+     */
+    public List<Transaction> getByCheckoutUuid(String checkoutUuid) {
+        List<Transaction> list = new ArrayList<>();
+        if (checkoutUuid == null || checkoutUuid.trim().isEmpty()) return list;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String query = "SELECT t.*, c.name AS customer_name, c.phone AS customer_phone, p.name AS product_name, " +
+                "c." + DatabaseHelper.COL_LOCATIONS + " AS cust_locs " +
+                "FROM transactions t " +
+                "JOIN customers c ON t.customer_id = c._id " +
+                "LEFT JOIN products p ON t.product_id = p._id " +
+                "WHERE t." + DatabaseHelper.COL_CHECKOUT_UUID + " = ? AND t.type = ? " +
+                "ORDER BY t." + DatabaseHelper.COL_CHECKOUT_SEQ + " ASC, t._id ASC";
+        java.util.Set<Integer> seenSeq = new java.util.HashSet<>();
+        try (Cursor cursor = db.rawQuery(query, new String[]{checkoutUuid.trim(), Transaction.TYPE_JUAL})) {
+            ColumnReader r = reader(cursor);
+            while (cursor.moveToNext()) {
+                Transaction t = cursorToTransaction(cursor);
+                if (!seenSeq.add(t.getCheckoutSeq())) continue;   // salinan lokal kembar leg yang sama
+                mapLegDelivery(t, r);
+                // Leg web/agen bisa membawa NAMA tujuan saja → koordinat dari lokasi bernama itu.
+                resolveDestByName(t, getStr(cursor, "cust_locs"));
+                list.add(t);
+            }
+        }
+        return list;
+    }
+
+    /**
+     * 🧺 Pintu tagih hutang LAMA untuk leg {@code t} — cermin {@code DebtBalance::oldDebtDoor}, dinilai
+     * dari leg yang ADA di HP ini ({@link com.crowja.damiupos.checkout.CheckoutStrukText#oldDebtDoor}:
+     * leg ber-seq lebih kecil yang tak dikenal dianggap masih terbuka). Order tunggal → di sini.
+     * Dipakai popup Selesai (prefill + "Total harus diterima") dan {@link #applyDeliveryAdjustment}.
+     */
+    public com.crowja.damiupos.checkout.CheckoutStrukText.DebtDoor oldDebtDoor(Transaction t) {
+        if (t == null || !t.isCheckoutLeg()) {
+            return com.crowja.damiupos.checkout.CheckoutStrukText.oldDebtDoor(0, 0, null, null);
+        }
+        List<com.crowja.damiupos.checkout.CheckoutStrukText.Leg> legs = new ArrayList<>();
+        for (Transaction s : getByCheckoutUuid(t.getCheckoutUuid())) {
+            com.crowja.damiupos.checkout.CheckoutStrukText.Leg l =
+                    new com.crowja.damiupos.checkout.CheckoutStrukText.Leg();
+            l.seq = s.getCheckoutSeq();
+            l.destName = s.getDeliveryDestName();
+            l.deliveryStatus = s.getDeliveryStatus();
+            legs.add(l);
+        }
+        return com.crowja.damiupos.checkout.CheckoutStrukText.oldDebtDoor(
+                t.getCheckoutSeq(), t.getCheckoutSize(), t.getDeliveryDestName(), legs);
+    }
+
+    /**
+     * sync_uuid leg checkout yang ADA DI HP INI (urut seq) — termasuk baris yang menanyakannya.
+     * LOKAL SAJA, lihat peringatan {@link #getByCheckoutUuid}: cukup untuk struk gabungan di HP
+     * pembuat, TIDAK untuk logika uang di pintu kurir.
+     */
+    public List<String> getCheckoutSiblingUuids(String checkoutUuid) {
+        List<String> out = new ArrayList<>();
+        if (checkoutUuid == null || checkoutUuid.trim().isEmpty()) return out;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        try (Cursor c = db.query(DatabaseHelper.TABLE_TRANSACTIONS,
+                new String[]{DatabaseHelper.COL_SYNC_UUID},
+                DatabaseHelper.COL_CHECKOUT_UUID + "=? AND " + DatabaseHelper.COL_TYPE + "=? AND "
+                        + DatabaseHelper.COL_SYNC_UUID + " IS NOT NULL",
+                new String[]{checkoutUuid.trim(), Transaction.TYPE_JUAL}, null, null,
+                DatabaseHelper.COL_CHECKOUT_SEQ + " ASC, " + DatabaseHelper.COL_TRX_ID + " ASC")) {
+            while (c.moveToNext()) {
+                String u = c.getString(0);
+                if (u != null && !u.isEmpty() && !out.contains(u)) out.add(u);
+            }
+        }
+        return out;
+    }
+
     // -- Tanggal: campuran 2 format --
     // tanggal bisa tersimpan sebagai UTC ISO ("…Z", hasil sinkron dari server) ATAU
     // wall-clock LOKAL "yyyy-MM-dd HH:mm:ss" (dibuat langsung di perangkat). Untuk
@@ -906,13 +1079,128 @@ public class TransactionDao {
 
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
+        String trxUuid = getSyncUuidById(id);
         // Penjualannya batal → piutang yang lahir dari penjualan itu ikut batal. Tombstone (bukan
         // hard delete) supaya penghapusannya menyebar ke server & perangkat lain; baris PEMBAYARAN
         // tak disentuh (cicilan yang terlanjur diterima tetap fakta, sisa hutang jatuh ke 0 sendiri).
-        new CustomerDebtDao(dbHelper).voidForTransaction(getSyncUuidById(id));
+        new CustomerDebtDao(dbHelper).voidForTransaction(trxUuid);
+        // 🎁 Gift yang baru DILEKATKAN ke penjualan ini dilepas SEBELUM barisnya hilang — tanpa ini
+        // gift menunjuk transaksi yang sudah dihapus dan lenyap selamanya dari daftar pending.
+        releaseAttachedGifts(db, id, trxUuid);
         return dbHelper.syncDelete(db, DatabaseHelper.TABLE_TRANSACTIONS, "transactions",
                 DatabaseHelper.COL_TRX_ID + "=?",
                 new String[]{String.valueOf(id)});
+    }
+
+    /** Leg saudara kandidat ahli waris gift (lihat {@link #pickGiftHeir}). */
+    static final class GiftHeirCandidate {
+        final int seq;
+        final String uuid;
+        final String deliveryStatus;
+
+        GiftHeirCandidate(int seq, String uuid, String deliveryStatus) {
+            this.seq = seq;
+            this.uuid = uuid;
+            this.deliveryStatus = deliveryStatus;
+        }
+    }
+
+    /**
+     * Ahli waris gift leg checkout yang di-void: leg saudara ber-seq TERKECIL yang masih di antrean
+     * (PENDING/TERTUNDA) — hanya leg seperti itu yang nanti ditandai Selesai lalu menuntaskan gift-nya
+     * (markDelivered → finalizeAttachedForTransaction). Leg yang sudah Selesai/tanpa antrean tak
+     * pernah menuntaskannya lagi, jadi bukan ahli waris. Salinan kembar leg yang di-void (sync_uuid
+     * sama) dilewati. Null = tak ada → gift kembali pending.
+     */
+    static String pickGiftHeir(List<GiftHeirCandidate> legs, String voidedUuid) {
+        if (legs == null) return null;
+        String voided = voidedUuid != null ? voidedUuid.trim() : "";
+        GiftHeirCandidate best = null;
+        for (GiftHeirCandidate l : legs) {
+            if (l == null || l.uuid == null || l.uuid.trim().isEmpty()) continue;
+            if (l.uuid.trim().equals(voided)) continue;
+            if (!Transaction.DELIVERY_PENDING.equals(l.deliveryStatus)
+                    && !Transaction.DELIVERY_TERTUNDA.equals(l.deliveryStatus)) continue;
+            if (best == null || l.seq < best.seq) best = l;
+        }
+        return best != null ? best.uuid.trim() : null;
+    }
+
+    /**
+     * Nilai pending_transaction_uuid gift terlekat setelah transaksinya di-void: uuid ahli waris
+     * (gift CUSTOM ikut pindah ke leg saudara) atau "" = kembali pending. Gift PRODUK selalu kembali
+     * pending: wujudnya baris item Rp 0 di leg yang batal, jadi tak bisa "ikut" ke leg lain — popup
+     * gift produk menawarkannya lagi di JUAL berikutnya.
+     */
+    static String giftAttachmentAfterVoid(boolean productGift, String heirUuid) {
+        if (productGift || heirUuid == null || heirUuid.trim().isEmpty()) return "";
+        return heirUuid.trim();
+    }
+
+    /**
+     * 🎁 Void penjualan → gift yang DILEKATKAN padanya ({@code pending_transaction_uuid}, belum
+     * {@code redeemed_at}) dilepas: leg checkout menyerahkan gift CUSTOM ke ahli warisnya
+     * ({@link #pickGiftHeir}, dari leg saudara yang ADA DI HP INI saja); selain itu kembali pending.
+     * Gift yang sudah TUNTAS tak disentuh — sudah sungguh diserahkan. Cermin
+     * App\Support\Gifts::detachForTransaction di web (critique downstream #5).
+     *
+     * <p>"Lepas" ditulis sebagai STRING KOSONG, bukan NULL: push HP membuang kolom null (server tak
+     * pernah tahu → lekatan lama hidup lagi saat pull), sedangkan "" ikut terkirim lalu menjadi NULL
+     * di server lewat middleware global ConvertEmptyStringsToNull. Di HP, "" sudah berarti "belum
+     * dilekatkan" (CustomerGiftDao.NOT_ATTACHED). redeemed_by_name ikut dikosongkan saat kembali
+     * pending: keputusan pemberiannya ikut batal bersama penjualannya.
+     */
+    private void releaseAttachedGifts(SQLiteDatabase db, long trxId, String trxUuid) {
+        if (trxUuid == null || trxUuid.trim().isEmpty()) return;
+        List<long[]> gifts = new ArrayList<>();   // {giftId, 1 = produk}
+        try (Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMER_GIFTS,
+                new String[]{DatabaseHelper.COL_ID, DatabaseHelper.COL_GIFT_ITEM_TYPE},
+                DatabaseHelper.COL_GIFT_PENDING_TRX_UUID + "=? AND (" + DatabaseHelper.COL_GIFT_REDEEMED_AT
+                        + " IS NULL OR " + DatabaseHelper.COL_GIFT_REDEEMED_AT + "='')",
+                new String[]{trxUuid.trim()}, null, null, null)) {
+            while (c.moveToNext()) {
+                gifts.add(new long[]{c.getLong(0), "product".equals(c.getString(1)) ? 1 : 0});
+            }
+        }
+        if (gifts.isEmpty()) return;
+        String heir = checkoutGiftHeir(db, trxId, trxUuid.trim());
+        for (long[] g : gifts) {
+            String target = giftAttachmentAfterVoid(g[1] == 1, heir);
+            ContentValues v = new ContentValues();
+            v.put(DatabaseHelper.COL_GIFT_PENDING_TRX_UUID, target);
+            if (target.isEmpty()) v.put(DatabaseHelper.COL_GIFT_REDEEMED_BY, "");
+            dbHelper.syncUpdate(db, DatabaseHelper.TABLE_CUSTOMER_GIFTS, v,
+                    DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(g[0])});
+        }
+    }
+
+    /** Ahli waris gift untuk transaksi {@code trxId} bila ia leg checkout; null untuk order biasa. */
+    private String checkoutGiftHeir(SQLiteDatabase db, long trxId, String trxUuid) {
+        String co = null;
+        int seq = 0, size = 0;
+        try (Cursor c = db.query(DatabaseHelper.TABLE_TRANSACTIONS,
+                new String[]{DatabaseHelper.COL_CHECKOUT_UUID, DatabaseHelper.COL_CHECKOUT_SEQ,
+                        DatabaseHelper.COL_CHECKOUT_SIZE},
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)}, null, null, null)) {
+            if (c.moveToFirst()) {
+                co = c.isNull(0) ? null : c.getString(0);
+                seq = c.isNull(1) ? 0 : c.getInt(1);
+                size = c.isNull(2) ? 0 : c.getInt(2);
+            }
+        }
+        if (!com.crowja.damiupos.checkout.CheckoutConstants.isValidTrio(co, seq, size)) return null;
+        List<GiftHeirCandidate> legs = new ArrayList<>();
+        try (Cursor c = db.query(DatabaseHelper.TABLE_TRANSACTIONS,
+                new String[]{DatabaseHelper.COL_CHECKOUT_SEQ, DatabaseHelper.COL_SYNC_UUID,
+                        DatabaseHelper.COL_DELIVERY_STATUS},
+                DatabaseHelper.COL_CHECKOUT_UUID + "=? AND " + DatabaseHelper.COL_TYPE + "=? AND "
+                        + DatabaseHelper.COL_TRX_ID + "<>?",
+                new String[]{co.trim(), Transaction.TYPE_JUAL, String.valueOf(trxId)}, null, null, null)) {
+            while (c.moveToNext()) {
+                legs.add(new GiftHeirCandidate(c.isNull(0) ? 0 : c.getInt(0), c.getString(1), c.getString(2)));
+            }
+        }
+        return pickGiftHeir(legs, trxUuid);
     }
 
     /**
@@ -981,11 +1269,17 @@ public class TransactionDao {
         String payment = paymentMethod;
         // HUTANG SEBELUMNYA — tagihan di pintu = penjualan ini + piutang lama, persis seperti yang
         // dicetak di struk. Baris milik transaksi INI dikecualikan supaya tak terhitung dua kali &
-        // supaya penekanan "Selesai" berulang menghasilkan angka yang sama.
+        // supaya penekanan "Selesai" berulang menghasilkan angka yang sama. 🧺 Leg checkout: hutang
+        // SEGAR leg saudaranya juga bukan "hutang lama" — tiap leg ditagih di pintunya sendiri.
         CustomerDebtDao debtDao = new CustomerDebtDao(dbHelper);
         String trxUuid = getSyncUuidById(trxId);
-        double priorDebt = debtDao.balanceExcludingTransaction(t.getCustomerId(), trxUuid);
-        double expected = Math.round((total + priorDebt) * 100d) / 100d;
+        double priorDebt = debtDao.balanceExcludingTransaction(t.getCustomerId(), trxUuid,
+                t.isCheckoutLeg() ? t.getCheckoutUuid() : null);
+        // 🧺 Hutang lama DITAGIH di satu pintu saja (DebtBalance::priorForDoor): di pintu lain tagihannya
+        // hanya penjualan lokasi ini — jadi bayar pas subtotal di sana BUKAN "bayar sebagian". priorDebt
+        // tetap batas pelunasan sukarela (toOldDebt di bawah), sama dengan $oldDebtCap di web.
+        double doorPrior = t.isCheckoutLeg() && !oldDebtDoor(t).here ? 0 : priorDebt;
+        double expected = Math.round((total + doorPrior) * 100d) / 100d;
         double owed;
         double toOldDebt = 0;
         if (received != null) {
@@ -1201,6 +1495,31 @@ public class TransactionDao {
                 DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
     }
 
+    /**
+     * Status pengiriman (+ jadwal lanjut TERTUNDA) untuk {@link #getById}. Pembacanya: gift PRODUK di
+     * struk &amp; Transaksi Baru (order yang masih antre → gift DILEKATKAN, bukan langsung diberikan),
+     * tanggal kampanye order tertunda di struk, dan "Simpan &amp; Selesaikan" (hanya PENDING yang
+     * ditandai Selesai). Dulu tak terpetakan sama sekali → semuanya membaca null diam-diam.
+     *
+     * <p>SENGAJA hanya di getById, BUKAN {@link #cursorToTransaction}: daftar transaksi, histori
+     * pelanggan, dan laporan shift (ShiftReporter menyaring PENDING/TERTUNDA) tetap persis seperti
+     * sebelumnya — lihat juga catatan {@link #mapLegDelivery}.
+     */
+    static void mapByIdDelivery(Transaction t, ColumnReader r) {
+        t.setDeliveryStatus(r.str(DatabaseHelper.COL_DELIVERY_STATUS));
+        t.setDeliveryTertundaResumeAt(r.str(DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT));
+    }
+
+    /**
+     * Order masih di antrean delivery (PENDING/TERTUNDA) → gift produknya baru DILEKATKAN; "sungguh
+     * diberikan" menunggu Selesai (markDelivered → CustomerGiftDao.finalizeAttachedForTransaction).
+     * Null (bukan delivery) / DONE → langsung diberikan.
+     */
+    public static boolean isQueuedForDelivery(String deliveryStatus) {
+        return Transaction.DELIVERY_PENDING.equals(deliveryStatus)
+                || Transaction.DELIVERY_TERTUNDA.equals(deliveryStatus);
+    }
+
     /** Get a single transaction by id, or null */
     public Transaction getById(long id) {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
@@ -1214,6 +1533,7 @@ public class TransactionDao {
         Transaction t = null;
         if (cursor.moveToFirst()) {
             t = cursorToTransaction(cursor);
+            mapByIdDelivery(t, reader(cursor));
             int phoneIdx = cursor.getColumnIndex("customer_phone");
             if (phoneIdx >= 0) {
                 // We'll stash phone into productName isn't a thing; skip — caller can lookup via CustomerDao
@@ -1817,6 +2137,14 @@ public class TransactionDao {
         if (proofReqIdx >= 0 && !cursor.isNull(proofReqIdx)) {
             t.setDeliveryProofRequired(cursor.getLong(proofReqIdx) != 0);
         }
+        // 🧺 Trio checkout multi-lokasi — getById dipakai struk & dialog Selesai (pengecualian hutang
+        // saudara leg), jadi WAJIB terpetakan di sini juga. Sama pola: guard indeks + NULL.
+        int coUuidIdx = cursor.getColumnIndex(DatabaseHelper.COL_CHECKOUT_UUID);
+        if (coUuidIdx >= 0 && !cursor.isNull(coUuidIdx)) t.setCheckoutUuid(cursor.getString(coUuidIdx));
+        int coSeqIdx = cursor.getColumnIndex(DatabaseHelper.COL_CHECKOUT_SEQ);
+        if (coSeqIdx >= 0 && !cursor.isNull(coSeqIdx)) t.setCheckoutSeq(cursor.getInt(coSeqIdx));
+        int coSizeIdx = cursor.getColumnIndex(DatabaseHelper.COL_CHECKOUT_SIZE);
+        if (coSizeIdx >= 0 && !cursor.isNull(coSizeIdx)) t.setCheckoutSize(cursor.getInt(coSizeIdx));
         return t;
     }
 }

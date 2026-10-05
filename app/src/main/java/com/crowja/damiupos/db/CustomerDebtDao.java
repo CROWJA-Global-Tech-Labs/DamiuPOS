@@ -153,36 +153,92 @@ public class CustomerDebtDao {
      * KALI (baris hutang milik transaksi ini sendiri sudah termasuk di sana), dan mengecualikan
      * baris pembayarannya membuat perhitungan IDEMPOTEN — menekan Selesai dua kali menghasilkan
      * angka yang sama, bukan menumpuk.
+     *
+     * <p>🧺 Bila transaksinya leg checkout multi-lokasi (dicari dari baris transaksi LOKAL-nya —
+     * leg yang sedang diselesaikan selalu ada di HP ini), hutang SEGAR leg saudaranya ikut
+     * dikecualikan; lihat {@link #balanceExcludingTransaction(long, String, String)}.
      */
     public double balanceExcludingTransaction(long customerId, String trxUuid) {
+        return balanceExcludingTransaction(customerId, trxUuid, checkoutUuidForTrxUuid(trxUuid));
+    }
+
+    /**
+     * Seperti {@link #balanceExcludingTransaction(long, String)} dengan checkout_uuid leg yang
+     * sudah diketahui pemanggil (null/kosong = order biasa → perilaku lama persis). Cermin
+     * {@code DebtBalance::forExcludingTransaction} dengan pengecualian checkout_uuid di server.
+     *
+     * <p>Pembayaran per lokasi: tiap leg ditagih DI PINTUNYA SENDIRI untuk subtotalnya sendiri, jadi
+     * HUTANG leg saudara yang baru lahir dari checkout yang sama BUKAN "hutang lama" pelanggan di
+     * pintu leg ini. Dikenali lewat {@code customer_debts.checkout_uuid} — tabel itu branch-wide,
+     * sedangkan transaksi saudaranya belum tentu ada di HP kurir ini, jadi JANGAN pernah berbasis
+     * daftar sync_uuid saudara dari transaksi lokal. Aturan persisnya di {@link #priorDebtOf}.
+     */
+    public double balanceExcludingTransaction(long customerId, String trxUuid, String checkoutUuid) {
         if (customerId <= 0) return 0;
         String[] group = groupArgs(customerId);
-        String where = DatabaseHelper.COL_DEBT_CUSTOMER_ID + " IN (" + placeholders(group.length) + ")";
-        String[] args = group;
-        if (trxUuid != null && !trxUuid.isEmpty()) {
-            where += " AND (" + DatabaseHelper.COL_DEBT_TRX_UUID + " IS NULL OR "
-                    + DatabaseHelper.COL_DEBT_TRX_UUID + "<>?)";
-            args = new String[group.length + 1];
-            System.arraycopy(group, 0, args, 0, group.length);
-            args[group.length] = trxUuid;
-        }
+        List<LedgerRow> rows = new ArrayList<>();
         Cursor c = dbHelper.getReadableDatabase().rawQuery(
-                "SELECT " + DatabaseHelper.COL_DEBT_KIND + ", SUM(" + DatabaseHelper.COL_DEBT_AMOUNT + ")"
+                "SELECT " + DatabaseHelper.COL_DEBT_KIND + ", " + DatabaseHelper.COL_DEBT_AMOUNT + ", "
+                        + DatabaseHelper.COL_DEBT_TRX_UUID + ", " + DatabaseHelper.COL_DEBT_CHECKOUT_UUID
                         + " FROM " + DatabaseHelper.TABLE_CUSTOMER_DEBTS
-                        + " WHERE " + where
-                        + " GROUP BY " + DatabaseHelper.COL_DEBT_KIND, args);
-        double debt = 0, paid = 0;
+                        + " WHERE " + DatabaseHelper.COL_DEBT_CUSTOMER_ID + " IN (" + placeholders(group.length) + ")",
+                group);
         try {
             while (c.moveToNext()) {
-                String kind = c.getString(0);
-                double amt = c.getDouble(1);
-                if (KIND_PAYMENT.equals(kind)) paid += amt; else debt += amt;
+                rows.add(new LedgerRow(c.getString(0), c.isNull(1) ? 0 : c.getDouble(1),
+                        c.getString(2), c.getString(3)));
             }
         } finally {
             c.close();
         }
+        return priorDebtOf(rows, trxUuid, checkoutUuid);
+    }
+
+    /** Satu baris buku besar mentah — bahan {@link #priorDebtOf} (murni, diuji di JVM). */
+    static final class LedgerRow {
+        final String kind;
+        final double amount;
+        final String trxUuid;
+        final String checkoutUuid;
+
+        LedgerRow(String kind, double amount, String trxUuid, String checkoutUuid) {
+            this.kind = kind;
+            this.amount = amount;
+            this.trxUuid = trxUuid;
+            this.checkoutUuid = checkoutUuid;
+        }
+    }
+
+    /**
+     * "Hutang sebelumnya" (≥ 0) dari baris buku besar seorang ORANG: Σdebt − Σpayment, dipagari 0
+     * SEKALI di akhir (sama seperti {@link #balanceFor}). Dikecualikan:
+     * <ol>
+     *   <li>SEMUA baris bertaut transaksi ini sendiri (debt & payment) — idempoten (perilaku lama);</li>
+     *   <li>baris DEBT ber-checkout_uuid sama — hutang segar leg saudara, ditagih di pintunya sendiri.</li>
+     * </ol>
+     * Baris PAYMENT leg saudara SENGAJA tetap dihitung: di HP pembayaran bertaut transaksi hanya lahir
+     * sebagai pelunasan hutang LAMA ("Sekalian Lunasi Hutang" di leg utama, atau kelebihan bayar di
+     * pintu leg lain), jadi memang mengurangi hutang lama yang ditagih di pintu ini.
+     */
+    static double priorDebtOf(Iterable<LedgerRow> rows, String trxUuid, String checkoutUuid) {
+        boolean hasTrx = trxUuid != null && !trxUuid.isEmpty();
+        boolean hasCheckout = checkoutUuid != null && !checkoutUuid.trim().isEmpty();
+        String co = hasCheckout ? checkoutUuid.trim() : null;
+        double debt = 0, paid = 0;
+        for (LedgerRow r : rows) {
+            if (r == null) continue;
+            if (hasTrx && trxUuid.equals(r.trxUuid)) continue;
+            boolean isPayment = KIND_PAYMENT.equals(r.kind);
+            if (hasCheckout && !isPayment && r.checkoutUuid != null && co.equals(r.checkoutUuid.trim())) continue;
+            if (isPayment) paid += r.amount; else debt += r.amount;
+        }
         double sisa = debt - paid;
         return sisa > 0 ? Math.round(sisa * 100d) / 100d : 0;
+    }
+
+    /** checkout_uuid transaksi LOKAL ber-sync_uuid ini; null bila bukan leg / tak ada di HP ini. */
+    public String checkoutUuidForTrxUuid(String trxUuid) {
+        return trxRefs(trxUuid)[1];
     }
 
     /**
@@ -280,16 +336,24 @@ public class CustomerDebtDao {
         return sum;
     }
 
-    /** receipt_no baris transactions ber-sync_uuid ini; null bila tak ada/tak ditemukan. */
-    private String receiptNoForTrxUuid(String trxUuid) {
+    /** {receipt_no, checkout_uuid} baris transactions ber-sync_uuid ini; elemen null bila tak
+     *  ada/tak ditemukan (satu query untuk keduanya — write() butuh dua-duanya per baris hutang). */
+    private String[] trxRefs(String trxUuid) {
+        String[] out = new String[2];
+        if (trxUuid == null || trxUuid.isEmpty()) return out;
         Cursor c = dbHelper.getReadableDatabase().query(DatabaseHelper.TABLE_TRANSACTIONS,
-                new String[]{DatabaseHelper.COL_RECEIPT_NO},
+                new String[]{DatabaseHelper.COL_RECEIPT_NO, DatabaseHelper.COL_CHECKOUT_UUID},
                 DatabaseHelper.COL_SYNC_UUID + "=?", new String[]{trxUuid}, null, null, null, "1");
         try {
-            return c.moveToFirst() ? c.getString(0) : null;
+            if (c.moveToFirst()) {
+                out[0] = c.getString(0);
+                String co = c.getString(1);
+                out[1] = (co != null && !co.trim().isEmpty()) ? co.trim() : null;
+            }
         } finally {
             c.close();
         }
+        return out;
     }
 
     /**
@@ -375,6 +439,10 @@ public class CustomerDebtDao {
         ContentValues v = new ContentValues();
         v.put(DatabaseHelper.COL_DEBT_CUSTOMER_ID, customerId);
         v.put(DatabaseHelper.COL_DEBT_AMOUNT, Math.round(total * 100d) / 100d);
+        // 🧺 Baris hutang leg yang belum membawa checkout_uuid (mis. ditulis server sebelum ia ikut
+        // menyalinnya) dilengkapi sekalian — nilainya imutabel, jadi menimpanya selalu aman.
+        String checkoutUuid = checkoutUuidForTrxUuid(trxUuid);
+        if (checkoutUuid != null) v.put(DatabaseHelper.COL_DEBT_CHECKOUT_UUID, checkoutUuid);
         dbHelper.syncUpdate(dbHelper.getWritableDatabase(), DatabaseHelper.TABLE_CUSTOMER_DEBTS, v,
                 DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(rowId)});
     }
@@ -397,9 +465,15 @@ public class CustomerDebtDao {
         // penjualan yang bisa dikenali — cermin App\Support\DebtBalance::write di web. Hanya untuk
         // baris `debt` (bukan `payment` — reason pembayaran tetap teks manusiawi); transaksi lama/
         // tanpa receipt_no jatuh ke teks default pemanggil apa adanya.
+        // 🧺 Hutang leg checkout multi-lokasi ikut membawa checkout_uuid leg-nya (cermin
+        // DebtBalance::syncForTransaction di web) — dasar pengecualian di pintu leg saudara. Hanya baris
+        // `debt`: pembayaran bertaut transaksi = pelunasan hutang LAMA, tetap berlaku di pintu mana pun.
+        String checkoutUuid = null;
         if (KIND_DEBT.equals(kind) && trxUuid != null && !trxUuid.isEmpty()) {
-            String receiptNo = receiptNoForTrxUuid(trxUuid);
+            String[] refs = trxRefs(trxUuid);
+            String receiptNo = refs[0];
             if (receiptNo != null && !receiptNo.isEmpty()) reason = receiptNo;
+            checkoutUuid = refs[1];
         }
         String now = DatabaseHelper.nowIso();
         ContentValues v = new ContentValues();
@@ -408,6 +482,7 @@ public class CustomerDebtDao {
         v.put(DatabaseHelper.COL_DEBT_AMOUNT, amount);
         if (reason != null && !reason.isEmpty()) v.put(DatabaseHelper.COL_DEBT_REASON, reason);
         if (trxUuid != null && !trxUuid.isEmpty()) v.put(DatabaseHelper.COL_DEBT_TRX_UUID, trxUuid);
+        if (checkoutUuid != null) v.put(DatabaseHelper.COL_DEBT_CHECKOUT_UUID, checkoutUuid);
         if (byName != null && !byName.isEmpty()) v.put(DatabaseHelper.COL_DEBT_BY, byName);
         v.put(DatabaseHelper.COL_CREATED_AT, now);
         v.put(DatabaseHelper.COL_SYNC_UUID, UUID.randomUUID().toString());

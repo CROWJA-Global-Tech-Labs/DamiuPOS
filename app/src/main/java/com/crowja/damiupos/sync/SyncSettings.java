@@ -85,6 +85,9 @@ public class SyncSettings {
     private static final String K_INTRO_WA_ZONES = "sync_intro_wa_zones";
     /** Perangkat ini "Pengiriman Terpandu" (dicentang admin di web → /api/me). */
     private static final String K_GUIDED_DELIVERY = "sync_guided_delivery";
+    /** 🧺 Gerbang checkout multi-lokasi dari /api/me ("checkout_multi_enabled") — kunci LOKAL (bukan
+     *  app_settings tersinkron), jadi tak pernah terdorong balik ke server. */
+    private static final String K_CHECKOUT_MULTI = "sync_checkout_multi_enabled";
 
     // Track this device's staff location while clocked in (default on when enrolled).
     private static final String K_LOC_ENABLED = "sync_loc_enabled";
@@ -169,6 +172,30 @@ public class SyncSettings {
 
     public boolean isGuidedDeliveryDevice()        { return "1".equals(settings.get(K_GUIDED_DELIVERY, "0")); }
     public void setGuidedDeliveryDevice(boolean v) { settings.set(K_GUIDED_DELIVERY, v ? "1" : "0"); }
+
+    /**
+     * 🧺 HP ini boleh MEMBUAT checkout multi-lokasi? Keputusan SERVER lewat /api/me — setelan dashboard
+     * DAN gerbang rollout (semua HP delivery sudah ber-APK baru) dinilai di server, HP hanya menyimpan
+     * vonisnya (OnlineTasks.refreshConfig). Default MATI: server lama tak mengirim kuncinya. Leg yang
+     * SUDAH ada tetap tampil/diantar normal — gerbang ini hanya untuk membuat yang baru.
+     */
+    public boolean isCheckoutMultiEnabled()        { return "1".equals(settings.get(K_CHECKOUT_MULTI, "0")); }
+    public void setCheckoutMultiEnabled(boolean v) { settings.set(K_CHECKOUT_MULTI, v ? "1" : "0"); }
+
+    /**
+     * Nilai mentah {@code r.opt("checkout_multi_enabled")} dari /api/me → aktif? Kontraknya boolean;
+     * 1 / "1" / "true" ikut diterima. Kunci absen (server lama), null, 0, atau nilai lain = MATI.
+     * Murni — diuji di JVM (src/test).
+     */
+    public static boolean parseCheckoutMultiEnabled(Object raw) {
+        if (raw instanceof Boolean) return (Boolean) raw;
+        if (raw instanceof Number) return ((Number) raw).doubleValue() == 1;
+        if (raw instanceof String) {
+            String v = ((String) raw).trim();
+            return "1".equals(v) || "true".equalsIgnoreCase(v);
+        }
+        return false;
+    }
 
     // Throttle cek versi/config: hemat request pada HP 24/7 (pull sudah membawa data + heartbeat).
     public long getVersionCheckAt() { return parseLong(settings.get(K_VERSION_CHECK_AT, "0")); }
@@ -391,6 +418,7 @@ public class SyncSettings {
     public void clear() {
         setToken("");
         setEnabled(false);
+        setCheckoutMultiEnabled(false);   // vonis server lama tak berlaku lagi tanpa server
     }
 
     private static String trimSlash(String url) {

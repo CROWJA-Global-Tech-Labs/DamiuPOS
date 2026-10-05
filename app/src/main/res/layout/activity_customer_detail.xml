@@ -272,6 +272,60 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- TOTAL BELANJA SEUMUR HIDUP: JUAL selesai lintas SEMUA salinan/perangkat orang ini (server
+                 order-insights → lifetime, CustomerLifetime::totals). Gone bila belum terhubung server,
+                 offline, kunci tak ada, atau belum pernah belanja. Diisi CustomerDetailActivity#bindLifetime. -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardLifetime"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:visibility="gone"
+                app:cardCornerRadius="10dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="14dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="💰 Total belanja seumur hidup"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:gravity="end"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvLifetimeTotal"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Rp 0"
+                            android:textColor="@color/primary"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvLifetimeMeta"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
             <!-- HUTANG pelanggan (piutang depot). Kartu hanya tampil bila ADA sisa hutang; tombol
                  "Catat Pembayaran" boleh ditekan siapa pun yang login (kurirlah yang menerima uangnya
                  di lapangan). Buku besar ada di CustomerDebtDao — sisa TIDAK pernah disimpan sbg kolom. -->
@@ -585,15 +639,36 @@
             </com.google.android.material.card.MaterialCardView>
 
             <!-- Transaction History -->
-            <TextView
-                android:id="@+id/tvHistoryHeader"
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
-                android:text="@string/histori_transaksi"
-                android:textColor="@color/text_primary"
-                android:textSize="16sp"
-                android:textStyle="bold" />
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tvHistoryHeader"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/histori_transaksi"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <!-- Popup histori LINTAS PERANGKAT (server) — HP hanya menyimpan transaksinya sendiri. -->
+                <TextView
+                    android:id="@+id/tvHistoryMore"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="?attr/selectableItemBackground"
+                    android:padding="6dp"
+                    android:text="Selengkapnya ›"
+                    android:textColor="@color/primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+            </LinearLayout>
 
             <!-- Catatan bila sebagian transaksi orang ini ada di perangkat lain (isolasi per-perangkat). -->
             <TextView

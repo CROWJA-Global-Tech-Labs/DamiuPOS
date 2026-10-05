@@ -93,7 +93,8 @@ public final class OnlineTasks {
         fetchCommands(ctx, cfg, api);
     }
 
-    /** /api/me → apply live config (location reporting interval) + status Kontrol Versi. */
+    /** /api/me → apply live config (location reporting interval) + status Kontrol Versi + gerbang
+     *  🧺 checkout multi-lokasi. */
     private static void refreshConfig(Context ctx, SyncSettings cfg, SyncApi api) {
         try {
             JSONObject r = api.me();
@@ -141,6 +142,9 @@ public final class OnlineTasks {
             cfg.setIntroWaDevice(r.optBoolean("is_intro_wa", false));
             JSONArray iwz = r.optJSONArray("intro_wa_zones");
             cfg.setIntroWaZones(iwz != null ? iwz.toString() : "");
+            // 🧺 Gerbang checkout multi-lokasi: vonis SERVER dari gerbang rollout APK (/api/me checkout_multi_enabled).
+            // Sengaja TANPA r.has(): kunci absen (server lama/di-rollback) = MATI, bukan "biarkan".
+            cfg.setCheckoutMultiEnabled(SyncSettings.parseCheckoutMultiEnabled(r.opt("checkout_multi_enabled")));
             // Paket PANTUN follow-up: dicek bareng /me (tiap 15 menit) tapi hanya benar-benar
             // diunduh saat versinya berubah — praktis sekali saja lalu diam. Sengaja TIDAK lewat
             // pipa sinkron: korpusnya 10.000 baris identik untuk semua cabang (lihat docblock

@@ -18,8 +18,10 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
+import com.crowja.damiupos.model.Customer;
 import com.crowja.damiupos.sync.SyncApi;
 import com.crowja.damiupos.sync.SyncScheduler;
 import com.crowja.damiupos.sync.SyncSettings;
@@ -61,6 +63,8 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
     private String peekDeviceName;
     /** Posisi kurir INI (GPS terakhir). NaN = belum ada fix → baris jarak tak ditampilkan. */
     private double myLat = Double.NaN, myLng = Double.NaN;
+    /** Salinan LOKAL pelanggan (sinkron branch-wide) — sumber wilayah & daftar lokasinya untuk baris 📍. */
+    private CustomerDao customerDao;
 
     // Badge umur pesanan live per detik — cermin PERSIS DeliveryQueueActivity.tick/ticker (Antrian
     // Saya sendiri). Layar ini dulunya menampilkan "45 mnt lalu" statis (dihitung sekali saat data
@@ -78,6 +82,8 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         lateMs = (long) new SettingsDao(DatabaseHelper.getInstance(this)).getDeliveryMaxAgeMinutes() * 60000L;
+        customerDao = new CustomerDao(DatabaseHelper.getInstance(this));
+        DeliveryQueueActivity.DestAreaCache.init(this);
         setContentView(R.layout.activity_other_device_queue);
 
         String deviceUuid = getIntent().getStringExtra(EXTRA_DEVICE_UUID);
@@ -114,15 +120,22 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         });
     }
 
+    /** Wilayah lokasi non-utama baru tiba (DeliveryQueueActivity.DestAreaCache) → bind ulang baris 📍. */
+    private final Runnable destAreaRefresh = () -> {
+        if (!isFinishing() && !isDestroyed() && adapter != null) adapter.notifyDataSetChanged();
+    };
+
     @Override
     protected void onResume() {
         super.onResume();
+        DeliveryQueueActivity.DestAreaCache.addListener(destAreaRefresh);
         tick.postDelayed(ticker, 1000);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
+        DeliveryQueueActivity.DestAreaCache.removeListener(destAreaRefresh);
         tick.removeCallbacks(ticker);
     }
 
@@ -487,14 +500,23 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
                 h.tvItems.setVisibility(View.GONE);
             }
 
+            // Baris 📍 (lokasi tujuan + wilayah + jarak) di bawah nama — tujuan & jaraknya sudah
+            // di sana, jadi baris alamat tinggal menyisakan alamat jalan (order ke lokasi utama)
+            // atau penanda jemput galon.
+            String custUuid = str(q, "customer_uuid");
+            Customer cust = custUuid.isEmpty() ? null : customerDao.getBySyncUuid(custUuid);
+            double km = distanceKmTo(q);
+            DeliveryQueueActivity.bindLocationLine(h.tvLocation, DeliveryQueueActivity.queueLocationLine(
+                    cust, q, Double.isNaN(km) ? null : formatKm(km)));
+
             boolean pickupOnly = q.optBoolean("pickup_only", false);
-            String destName = q.optString("dest_name", "");
-            String address = q.optString("address", "");
+            String destName = str(q, "dest_name");
+            String address = str(q, "address");
             StringBuilder addr = new StringBuilder();
-            if (!destName.isEmpty() && !destName.equals("null")) {
-                addr.append(pickupOnly ? "🪣 Ambil di: " : "📍 Kirim ke: ").append(destName);
-            } else if (!address.isEmpty() && !address.equals("null")) {
-                addr.append("📍 ").append(address);
+            if (!destName.isEmpty()) {
+                if (pickupOnly) addr.append("🪣 Ambil di: ").append(destName);
+            } else if (!address.isEmpty()) {
+                addr.append("🏠 ").append(address);
             }
             if (addr.length() > 0) {
                 h.tvAddress.setText(addr.toString());
@@ -524,15 +546,6 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
             h.tvQueued.setText(elapsedPrefix(queuedMs) + formatElapsedBadge(queuedMs));
             applyQueueTimerState(h.tvQueued, queuedMs);
 
-            // Jarak dari posisi kurir ini ke titik antar order.
-            double km = distanceKmTo(q);
-            if (!Double.isNaN(km)) {
-                h.tvDistance.setText("📏 " + formatKm(km) + " dari posisi Anda");
-                h.tvDistance.setVisibility(View.VISIBLE);
-            } else {
-                h.tvDistance.setVisibility(View.GONE);
-            }
-
             // Catatan order di kaki kartu — sumbernya 'note' dari server (Reports::shapeQueueRow);
             // baris ini milik perangkat LAIN, jadi tak pernah ada salinan lokalnya di HP ini.
             // Penyaringnya SATU dengan ketiga tab Antrian Delivery, supaya catatan yang sama tak
@@ -554,7 +567,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         public int getItemCount() { return data.size(); }
 
         class VH extends RecyclerView.ViewHolder {
-            TextView tvCustomer, tvPhone, tvOrder, tvItems, tvAddress, tvPriority, tvOpenDispatch, tvQueued, tvDistance, tvOrderNote;
+            TextView tvCustomer, tvLocation, tvPhone, tvOrder, tvItems, tvAddress, tvPriority, tvOpenDispatch, tvQueued, tvOrderNote;
             MaterialButton btnNavigasi, btnAmbilAlih, btnWaChat;
 
             VH(View v) {
@@ -562,6 +575,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
                 btnWaChat = v.findViewById(R.id.btnWaChat);
                 tvOrderNote = v.findViewById(R.id.tvOrderNote);
                 tvCustomer = v.findViewById(R.id.tvCustomer);
+                tvLocation = v.findViewById(R.id.tvLocation);
                 tvPhone = v.findViewById(R.id.tvPhone);
                 tvOrder = v.findViewById(R.id.tvOrder);
                 tvItems = v.findViewById(R.id.tvItems);
@@ -569,7 +583,6 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
                 tvPriority = v.findViewById(R.id.tvPriority);
                 tvOpenDispatch = v.findViewById(R.id.tvOpenDispatch);
                 tvQueued = v.findViewById(R.id.tvQueued);
-                tvDistance = v.findViewById(R.id.tvDistance);
                 btnNavigasi = v.findViewById(R.id.btnNavigasi);
                 btnAmbilAlih = v.findViewById(R.id.btnAmbilAlih);
             }

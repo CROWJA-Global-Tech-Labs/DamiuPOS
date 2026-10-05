@@ -379,6 +379,50 @@ public class CustomerDao {
         return base;
     }
 
+    /**
+     * Jumlah ORDER JUAL lokal (alias {@code jual_orders}) — cermin COUNT(DISTINCT COALESCE(checkout_uuid,
+     * uuid)) server: semua leg checkout multi-lokasi = SATU order; salinan lokal kembar satu baris
+     * tersinkron (sync_uuid sama) juga satu. Sengaja TIDAK ditempel ke {@link #AGG_COLS}: COUNT
+     * DISTINCT di tiap query daftar pelanggan mahal di HP lama, sedangkan angkanya hanya perlu saat
+     * menyimpan transaksi ({@link #effectiveJualOrders}).
+     */
+    static final String JUAL_ORDERS_COL =
+            "COUNT(DISTINCT CASE WHEN t.type='JUAL' THEN COALESCE(NULLIF(t." + DatabaseHelper.COL_CHECKOUT_UUID
+            + ",''), t." + DatabaseHelper.COL_SYNC_UUID + ", CAST(t._id AS TEXT)) END) AS jual_orders ";
+
+    /**
+     * Jumlah ORDER JUAL EFEKTIF pelanggan (salinan {@code customerId} ini saja, se-altitude dengan
+     * customer_uuid persis di web) — dasar "🔁 order kembali PERTAMA" (== 1 sebelum order baru
+     * disimpan): max(order lokal, srv_jual_orders server). Beda dari {@code Customer.effectiveTrx()}
+     * yang menghitung BARIS (KEMBALI & tiap leg checkout ikut terhitung), sehingga pelanggan yang
+     * order pertamanya checkout 2 lokasi tetap dikenali sebagai order kembali pertama berikutnya.
+     *
+     * <p>srv_jual_orders NULL = server belum pernah mengirim agg_jual_orders (server lama, atau baris
+     * pelanggan belum ditarik ulang) → angka server dijatuhkan ke srv_trx (hitungan baris lama) supaya
+     * order di perangkat lain tetap terlihat; lebih baik terlewat memprioritaskan daripada salah.
+     * Pelanggan tak ditemukan → 0.
+     */
+    public int effectiveJualOrders(long customerId) {
+        if (customerId <= 0) return 0;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String query = "SELECT c." + DatabaseHelper.COL_SRV_JUAL_ORDERS + ", c." + DatabaseHelper.COL_SRV_TRX + ", "
+                + JUAL_ORDERS_COL
+                + "FROM customers c LEFT JOIN transactions t ON c._id = t.customer_id "
+                + "WHERE c._id = ? GROUP BY c._id";
+        try (Cursor c = db.rawQuery(query, new String[]{String.valueOf(customerId)})) {
+            if (!c.moveToFirst()) return 0;
+            Integer srvOrders = c.isNull(0) ? null : c.getInt(0);
+            int srvTrx = c.isNull(1) ? 0 : c.getInt(1);
+            return effectiveJualOrders(c.getInt(2), srvOrders, srvTrx);
+        }
+    }
+
+    /** Aturan murni {@link #effectiveJualOrders(long)} — diuji di JVM. */
+    static int effectiveJualOrders(int localOrders, Integer srvJualOrders, int srvTrx) {
+        int srv = srvJualOrders != null ? srvJualOrders : srvTrx;
+        return Math.max(Math.max(0, localOrders), Math.max(0, srv));
+    }
+
     /** Kolom agregat pelanggan dari LEFT JOIN transactions LOKAL — dipakai bersama beberapa query. */
     private static final String AGG_COLS =
             "COALESCE(SUM(CASE WHEN t.type='JUAL' AND COALESCE(t.galon_ownership,'PINJAM')='PINJAM' THEN t.jumlah_galon ELSE 0 END),0) AS galon_keluar, " +
@@ -1890,6 +1934,18 @@ public class CustomerDao {
                     // Round-trip tarif ongkir per lokasi milik server (HP tak mengeditnya) — tanpa ini
                     // push edit pelanggan menghapus tarif tiap lokasinya di server.
                     if (l.ongkir != null && !l.ongkir.isNaN()) o.put("ongkir", l.ongkir.doubleValue());
+                    // Harga per lokasi — SELALU dikirim (termasuk {} = sengaja dikosongkan) supaya
+                    // server bisa membedakannya dari APK lama yang tak mengenal kunci ini.
+                    org.json.JSONObject prices = new org.json.JSONObject();
+                    if (l.prices != null) {
+                        for (java.util.Map.Entry<String, Double> e : l.prices.entrySet()) {
+                            if (e.getKey() != null && !e.getKey().trim().isEmpty() && e.getValue() != null
+                                    && !e.getValue().isNaN() && e.getValue() >= 0) {
+                                prices.put(e.getKey().trim(), e.getValue().doubleValue());
+                            }
+                        }
+                    }
+                    o.put("prices", prices);
                     // Round-trip foto per-lokasi apa adanya — kalau di-drop, edit pelanggan (web ATAU
                     // HP, keduanya bisa mengubah koleksi sekarang) akan menghapus foto lokasi saat
                     // push balik.
@@ -1950,6 +2006,18 @@ public class CustomerDao {
                 }
                 String id = o.isNull("id") ? "" : o.optString("id", "").trim();
                 if (!id.isEmpty() && !"null".equalsIgnoreCase(id)) loc.id = id;
+                // Harga per lokasi {product_uuid: harga}; nilai kosong/non-angka/negatif diabaikan
+                // (= ikut harga pelanggan), cermin Customer::normalizePriceMap di server.
+                org.json.JSONObject pricesObj = o.optJSONObject("prices");
+                if (pricesObj != null) {
+                    java.util.Iterator<String> keys = pricesObj.keys();
+                    while (keys.hasNext()) {
+                        String k = keys.next();
+                        if (k == null || k.trim().isEmpty() || pricesObj.isNull(k)) continue;
+                        double v = pricesObj.optDouble(k, Double.NaN);
+                        if (!Double.isNaN(v) && v >= 0) loc.prices.put(k.trim(), v);
+                    }
+                }
                 // optString() mengembalikan STRING "null" untuk JSON null (jebakan org.json) — nilai
                 // itu ikut terdorong balik ke server sebagai {"photo":"null"}, membuat web memasang
                 // tag "Foto" tanpa foto DAN memblokir fallback ke foto pelanggan. isNull() dulu.

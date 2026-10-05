@@ -116,8 +116,44 @@ public final class DeliveryPlanner {
             }
         }
         if (!cur.stops.isEmpty()) trips.add(cur);
+        if (mode == MODE_NEAREST) nearestFirstWithinTrips(trips, depotLat, depotLng);
 
         return trips;
+    }
+
+    /**
+     * TERDEKAT DULU, TERJAUH TERAKHIR di dalam tiap rit. Potongan umur ({@link #costKm}) hanya
+     * menentukan order MANA yang naik ke rit lebih awal; begitu muatan sudah di kendaraan, urutan
+     * antar memakai jarak MURNI dari cabang — kalau tidak, order tua yang jauh jadi pemberhentian
+     * pertama dan muatan penuh "dibawa jalan-jalan". Kelompok tetap (⚡/⭐ dulu, AMBIL GALON terakhir)
+     * dan urutan manual (delivery_seq) tetap dipatuhi. CERMIN DeliveryPlan::nearestFirstWithinTrips.
+     */
+    private static void nearestFirstWithinTrips(List<Trip> trips, double dLat, double dLng) {
+        for (Trip trip : trips) {
+            List<Transaction> s = trip.stops;
+            List<Transaction> out = new ArrayList<>(s.size());
+            double[] cur = {dLat, dLng};
+            int i = 0;
+            while (i < s.size()) {
+                int j = i;
+                while (j + 1 < s.size() && runKey(s.get(j + 1)) == runKey(s.get(i))) j++;
+                List<Transaction> manual = new ArrayList<>();
+                List<Transaction> auto = new ArrayList<>();
+                for (Transaction t : s.subList(i, j + 1)) (t.getDeliverySeq() > 0 ? manual : auto).add(t);
+                out.addAll(manual);
+                cur = lastGeo(out, cur[0], cur[1]);
+                out.addAll(nearestChain(auto, cur[0], cur[1], false));
+                cur = lastGeo(out, cur[0], cur[1]);
+                i = j + 1;
+            }
+            s.clear();
+            s.addAll(out);
+        }
+    }
+
+    /** Kelompok pemberhentian: 0 = ⚡/⭐ prioritas, 1 = biasa, 2 = AMBIL GALON SAJA. */
+    private static int runKey(Transaction t) {
+        return isPickupOnly(t) ? 2 : (isPriority(t) ? 0 : 1);
     }
 
     /** AMBIL GALON SAJA paling belakang; lalu prioritas; di dalam grup: manual, lalu mode. */
@@ -168,7 +204,7 @@ public final class DeliveryPlanner {
             Collections.sort(auto, (a, b) -> safe(a.getDeliveryQueuedAt()).compareTo(safe(b.getDeliveryQueuedAt())));
             out.addAll(auto);
         } else {
-            out.addAll(nearestChain(auto, dLat, dLng));
+            out.addAll(nearestChain(auto, dLat, dLng, true));
         }
         return out;
     }
@@ -176,7 +212,7 @@ public final class DeliveryPlanner {
     /** Rantai tetangga-terdekat dari cabang — "terdekat" diukur dengan {@link #costKm} (jarak
      *  dikurangi potongan umur), jadi order yang sudah lama menunggu ikut ditarik maju; pemberhentian
      *  tanpa koordinat ditaruh paling belakang. */
-    private static List<Transaction> nearestChain(List<Transaction> stops, double dLat, double dLng) {
+    private static List<Transaction> nearestChain(List<Transaction> stops, double dLat, double dLng, boolean ageBonus) {
         List<Transaction> geo = new ArrayList<>();
         List<Transaction> noGeo = new ArrayList<>();
         for (Transaction t : stops) (hasGeo(t) ? geo : noGeo).add(t);
@@ -190,7 +226,8 @@ public final class DeliveryPlanner {
             int best = 0;
             double bestD = Double.MAX_VALUE;
             for (int i = 0; i < geo.size(); i++) {
-                double d = costKm(km(curLat, curLng, lat(geo.get(i)), lng(geo.get(i))), geo.get(i));
+                double raw = km(curLat, curLng, lat(geo.get(i)), lng(geo.get(i)));
+                double d = ageBonus ? costKm(raw, geo.get(i)) : raw;
                 if (d < bestD) { bestD = d; best = i; }
             }
             Transaction next = geo.remove(best);

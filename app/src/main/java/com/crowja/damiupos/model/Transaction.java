@@ -139,9 +139,20 @@ public class Transaction {
     // "Perangkat yang ditugaskan" (marketing/SPV): uuid perangkat lain yang ditugaskan menangani
     // transaksi ini. null/kosong = perangkat sendiri (tanpa penugasan). Server yang menerjemahkannya.
     private String assignedDeviceUuid;
+    /** Perangkat tujuan hasil RUTE server (delivery_device_uuid; pull-only, server-authoritative).
+     *  null/kosong = belum di-route (tetap di HP asal). HANYA terisi dari query yang memetakannya
+     *  (TransactionDao.getByCheckoutUuid) — baris dari query lain selalu null di sini. */
+    private String deliveryDeviceUuid;
     /** ID transaksi struk (<KODE>-<DDMMYYHHMM>-<5 karakter acak>) — cermin App\Support\ReceiptNumber (web).
      *  Ditetapkan SEKALI di TransactionDao.insert() untuk baris JUAL, tak pernah diubah. */
     private String receiptNo;
+    /** 🧺 Checkout multi-lokasi: uuid bersama semua leg JUAL satu checkout (raw uuid, seperti
+     *  customer_debts.transaction_uuid — bukan Ref lokal), urutan leg (1 = UTAMA) & jumlah legnya.
+     *  null/0 = order biasa. Ditetapkan SEKALI saat insert, imutabel. Lihat DatabaseHelper.COL_CHECKOUT_UUID
+     *  — HP bisa hanya memegang leg ini saja, jadi jangan menganggap saudaranya ada lokal. */
+    private String checkoutUuid;
+    private int checkoutSeq;
+    private int checkoutSize;
     private List<TransactionItem> items = new ArrayList<>();
 
     public Transaction() {}
@@ -413,11 +424,52 @@ public class Transaction {
     public String getAssignedDeviceUuid() { return assignedDeviceUuid; }
     public void setAssignedDeviceUuid(String v) { this.assignedDeviceUuid = v; }
 
+    public String getDeliveryDeviceUuid() { return deliveryDeviceUuid; }
+    public void setDeliveryDeviceUuid(String v) { this.deliveryDeviceUuid = v; }
+
+    /**
+     * Order/leg ini ditangani perangkat LAIN, bukan {@code thisDeviceUuid}? Benar bila NIAT penugasan
+     * (assigned_device_uuid) ATAU rute server (delivery_device_uuid) terisi dan bukan perangkat ini.
+     * Untuk "Simpan & Selesaikan" checkout: hanya leg milik perangkat ini yang boleh diselesaikan
+     * di sini, supaya Selesai & kredit galon jatuh ke kurir yang benar-benar mengantar.
+     * thisDeviceUuid kosong (HP belum terhubung) → penugasan apa pun dianggap perangkat lain.
+     */
+    public boolean isHandledByOtherDevice(String thisDeviceUuid) {
+        String me = thisDeviceUuid != null ? thisDeviceUuid.trim() : "";
+        return isOtherDevice(assignedDeviceUuid, me) || isOtherDevice(deliveryDeviceUuid, me);
+    }
+
+    private static boolean isOtherDevice(String uuid, String me) {
+        if (uuid == null) return false;
+        String u = uuid.trim();
+        return !u.isEmpty() && !u.equalsIgnoreCase(me);
+    }
+
     public double getDeliveryDestLat() { return deliveryDestLat; }
     public void setDeliveryDestLat(double v) { this.deliveryDestLat = v; }
 
     public double getDeliveryDestLng() { return deliveryDestLng; }
     public void setDeliveryDestLng(double v) { this.deliveryDestLng = v; }
+
+    public String getCheckoutUuid() { return checkoutUuid; }
+    public void setCheckoutUuid(String v) { this.checkoutUuid = v; }
+
+    public int getCheckoutSeq() { return checkoutSeq; }
+    public void setCheckoutSeq(int v) { this.checkoutSeq = v; }
+
+    public int getCheckoutSize() { return checkoutSize; }
+    public void setCheckoutSize(int v) { this.checkoutSize = v; }
+
+    /** Baris ini salah satu leg checkout multi-lokasi? Trio-nya harus utuh & sah (aturan yang sama
+     *  dengan sanitasi server) — trio setengah jadi diperlakukan sebagai order biasa. */
+    public boolean isCheckoutLeg() {
+        return com.crowja.damiupos.checkout.CheckoutConstants.isValidTrio(checkoutUuid, checkoutSeq, checkoutSize);
+    }
+
+    /** Leg UTAMA (seq 1) — pemegang efek sekali-per-checkout: bayar hutang, gift, sesi chat. */
+    public boolean isCheckoutPrimary() {
+        return isCheckoutLeg() && checkoutSeq == 1;
+    }
 
     public List<TransactionItem> getItems() { return items; }
     public void setItems(List<TransactionItem> items) {

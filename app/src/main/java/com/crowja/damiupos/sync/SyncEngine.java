@@ -225,6 +225,11 @@ public class SyncEngine {
                     // push; server hanya mengisi bila baris ini lahir DI WEB (Transaction::booted).
                     // Dua arah agar HP juga melihat receipt_no baris yang dibuat di web/perangkat lain.
                     DatabaseHelper.COL_RECEIPT_NO,
+                    // 🧺 Checkout multi-lokasi — DUA ARAH: HP menulisnya SEKALI saat membuat leg (ter-push
+                    // karena non-null; order biasa NULL → tak pernah terkirim), server menolak perubahannya
+                    // pada UPDATE (imutabel); leg web/agen/perangkat lain datang lewat pull.
+                    DatabaseHelper.COL_CHECKOUT_UUID, DatabaseHelper.COL_CHECKOUT_SEQ,
+                    DatabaseHelper.COL_CHECKOUT_SIZE,
             }, new Ref[]{
                     new Ref(DatabaseHelper.COL_CUSTOMER_ID, "customer_uuid", DatabaseHelper.TABLE_CUSTOMERS),
                     new Ref(DatabaseHelper.COL_TRX_PRODUCT_ID, "product_uuid", DatabaseHelper.TABLE_PRODUCTS),
@@ -306,6 +311,9 @@ public class SyncEngine {
             new Spec("customer_debts", DatabaseHelper.TABLE_CUSTOMER_DEBTS, new String[]{
                     DatabaseHelper.COL_DEBT_KIND, DatabaseHelper.COL_DEBT_AMOUNT,
                     DatabaseHelper.COL_DEBT_REASON, DatabaseHelper.COL_DEBT_TRX_UUID,
+                    // 🧺 checkout_uuid hutang leg (raw, dua arah) — pengecualian hutang leg saudara di
+                    // pintu kurir mana pun, tanpa perlu transaksi saudaranya ada lokal.
+                    DatabaseHelper.COL_DEBT_CHECKOUT_UUID,
                     DatabaseHelper.COL_DEBT_BY, DatabaseHelper.COL_CREATED_AT,
             }, new Ref[]{
                     new Ref(DatabaseHelper.COL_DEBT_CUSTOMER_ID, "customer_uuid", DatabaseHelper.TABLE_CUSTOMERS),
@@ -1193,6 +1201,10 @@ public class SyncEngine {
      *  Mencegah loop tak berujung kalau server keliru selalu melaporkan has_more. */
     private static final int MAX_PULL_PAGES = 60;
 
+    /** Penanda tarik-ulang sekali untuk DB v102 (checkout multi-lokasi) — lihat {@link #pull}.
+     *  Kunci setelan lokal (bukan SHAREABLE_KEYS), tak pernah ter-push. */
+    private static final String K_REPULL_CHECKOUT_V102 = "sync_repull_checkout_v102";
+
     private int pull() throws Exception {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         // One-time recovery: re-pull staff & products from scratch so web-added rows whose insert
@@ -1227,6 +1239,18 @@ public class SyncEngine {
             String back = SyncSettings.trxLookbackCursor(cfg.getCursor("transactions"));
             if (back != null) cfg.setCursor("transactions", back);   // null = kosong / gagal parse → biarkan
             cfg.markTrxLookbackRepulled();
+        }
+        // DB v102 (🧺 checkout multi-lokasi), SEKALI: (1) pelanggan ditarik ulang dari epoch supaya
+        // srv_jual_orders (agg_jual_orders) terisi untuk SEMUA pelanggan — agregat server hanya ikut
+        // baris pelanggan yang berubah; (2) transaksi & hutang mundur 72 jam supaya leg web/agen &
+        // baris hutangnya yang sempat ditarik APK lama (trio checkout_* terbuang) mendapat kolomnya.
+        if (!"1".equals(settingsDao.get(K_REPULL_CHECKOUT_V102, "0"))) {
+            cfg.setCursor("customers", "1970-01-01 00:00:00.000000");
+            String trxBack = SyncSettings.trxLookbackCursor(cfg.getCursor("transactions"));
+            if (trxBack != null) cfg.setCursor("transactions", trxBack);
+            String debtBack = SyncSettings.trxLookbackCursor(cfg.getCursor("customer_debts"));
+            if (debtBack != null) cfg.setCursor("customer_debts", debtBack);
+            settingsDao.set(K_REPULL_CHECKOUT_V102, "1");
         }
 
         int applied = 0;
@@ -1502,6 +1526,7 @@ public class SyncEngine {
                             obj.isNull("quick_order_link") ? null : obj.optString("quick_order_link", null));
                     sv.put(DatabaseHelper.COL_SRV_SALDO, obj.optDouble("agg_saldo", 0));
                     sv.put(DatabaseHelper.COL_SRV_PAID_JUAL_COUNT, obj.optInt("agg_paid_jual_count", 0));
+                    putJualOrdersAgg(sv, obj);
                     // Desa/Kecamatan (reverse-geocode server) — pull-only, sama pola dgn origin_label.
                     sv.put(DatabaseHelper.COL_DESA, obj.isNull("desa") ? null : obj.optString("desa", null));
                     sv.put(DatabaseHelper.COL_KECAMATAN, obj.isNull("kecamatan") ? null : obj.optString("kecamatan", null));
@@ -1524,6 +1549,9 @@ public class SyncEngine {
             v.put(DatabaseHelper.COL_EDITED_AT, editedAt);
             v.put(DatabaseHelper.COL_SYNCED, 1);
             for (String col : s.dataCols) {
+                // Kolom checkout_* imutabel: kunci yang TAK ADA sama sekali (server belum bermigrasi —
+                // fillColumns-nya membuang kolom tak dikenal) ≠ nilai null. Jangan hapus trio lokal.
+                if (KEEP_LOCAL_WHEN_ABSENT.contains(col) && !obj.has(col)) continue;
                 putTyped(v, col, obj.opt(col));
             }
             for (Ref ref : s.refs) {
@@ -1567,6 +1595,7 @@ public class SyncEngine {
                         obj.isNull("quick_order_link") ? null : obj.optString("quick_order_link", null));
                 v.put(DatabaseHelper.COL_SRV_SALDO, obj.optDouble("agg_saldo", 0));
                 v.put(DatabaseHelper.COL_SRV_PAID_JUAL_COUNT, obj.optInt("agg_paid_jual_count", 0));
+                putJualOrdersAgg(v, obj);
                 // Desa/Kecamatan (reverse-geocode server) — pull-only, sama pola dgn origin_label.
                 v.put(DatabaseHelper.COL_DESA, obj.isNull("desa") ? null : obj.optString("desa", null));
                 v.put(DatabaseHelper.COL_KECAMATAN, obj.isNull("kecamatan") ? null : obj.optString("kecamatan", null));
@@ -1806,6 +1835,26 @@ public class SyncEngine {
         if (c.moveToFirst()) id = c.getLong(0);
         c.close();
         return id;
+    }
+
+    /**
+     * Kolom data yang TIDAK dihapus saat pull bila kuncinya absen dari baris server: trio checkout
+     * multi-lokasi (transactions) & checkout_uuid (customer_debts) — imutabel sejak insert. Server
+     * yang belum bermigrasi membuang kolom tak dikenal lalu mengembalikan barisnya tanpa kunci itu;
+     * tanpa pagar ini pull berikutnya meng-NULL-kan trio lokal dan pengelompokan leg hilang. Server
+     * yang sudah bermigrasi SELALU mengirim kuncinya (null pun), jadi perilakunya tak berubah di sana.
+     */
+    private static final Set<String> KEEP_LOCAL_WHEN_ABSENT = new java.util.HashSet<>(java.util.Arrays.asList(
+            DatabaseHelper.COL_CHECKOUT_UUID, DatabaseHelper.COL_CHECKOUT_SEQ,
+            DatabaseHelper.COL_CHECKOUT_SIZE, DatabaseHelper.COL_DEBT_CHECKOUT_UUID));
+
+    /** agg_jual_orders (jumlah ORDER JUAL, checkout N leg = 1) → srv_jual_orders HANYA bila server
+     *  mengirimnya: kunci absen (server lama) membiarkan kolom NULL = "belum diketahui", bukan 0 —
+     *  CustomerDao.effectiveJualOrders lalu jatuh ke srv_trx. */
+    private static void putJualOrdersAgg(ContentValues v, JSONObject obj) {
+        if (obj.has("agg_jual_orders") && !obj.isNull("agg_jual_orders")) {
+            v.put(DatabaseHelper.COL_SRV_JUAL_ORDERS, obj.optInt("agg_jual_orders", 0));
+        }
     }
 
     private static void putTyped(ContentValues v, String col, Object val) {

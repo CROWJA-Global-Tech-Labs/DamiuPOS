@@ -18,6 +18,8 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.core.content.FileProvider;
 
+import com.crowja.damiupos.checkout.CheckoutConstants;
+import com.crowja.damiupos.checkout.CheckoutStrukText;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.db.TransactionDao;
@@ -96,6 +98,14 @@ public class ReceiptActivity extends AppCompatActivity {
     public static final String EXTRA_JUMLAH_KEMBALI = "jumlah_kembali";
     /** True = pelanggan baru (transaksi ini yang pertama untuk pelanggan tsb) → ditandai di struk. */
     public static final String EXTRA_IS_NEW_CUSTOMER = "is_new_customer";
+    /** 🧺 uuid checkout multi-lokasi → struk GABUNGAN semua leg yang ada di HP ini (Transaksi Baru
+     *  mode "Bagi ke beberapa lokasi"). Nilainya sama dengan CheckoutConstants.EXTRA_CHECKOUT_UUID. */
+    public static final String EXTRA_CHECKOUT_UUID = CheckoutConstants.EXTRA_CHECKOUT_UUID;
+    /** Leg checkout yang dibuka SENDIRIAN (HP kurir hanya memegang leg ini) — seq/size/tujuan untuk
+     *  baris pengenal "📍 Kedai · Lokasi 2/2" di struk tunggalnya. Diisi hydrateFromTransaction. */
+    private static final String EXTRA_LONE_LEG_SEQ = "lone_leg_seq";
+    private static final String EXTRA_LONE_LEG_SIZE = "lone_leg_size";
+    private static final String EXTRA_LONE_LEG_DEST = "lone_leg_dest";
 
     // --- Struk Pencairan Komisi (reseller) ---
     public static final String EXTRA_IS_KOMISI_PAYOUT = "is_komisi_payout";
@@ -117,6 +127,14 @@ public class ReceiptActivity extends AppCompatActivity {
     private String receiptText; // versi teks monospace (untuk printer Bluetooth)
     private long loadedTransactionId = -1;
 
+    // 🧺 Struk GABUNGAN checkout multi-lokasi — non-null hanya bila ≥ 2 leg checkout ada di HP ini
+    // (lihat hydrateCheckout). Selama null, SEMUA jalur struk berperilaku persis seperti dulu.
+    private List<CheckoutStrukText.Leg> checkoutLegs;
+    private String checkoutUuid;
+    private int checkoutSize;
+    /** _id leg UTAMA (seq terkecil yang ada di HP ini) — pemegang efek sekali-per-checkout. */
+    private long checkoutPrimaryId = -1;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -135,8 +153,24 @@ public class ReceiptActivity extends AppCompatActivity {
 
         // If invoked with EXTRA_TRANSACTION_ID, hydrate extras from DB
         long trxId = getIntent().getLongExtra(EXTRA_TRANSACTION_ID, -1);
+        String checkoutUuidExtra = getIntent().getStringExtra(EXTRA_CHECKOUT_UUID);
         if (trxId > 0) {
+            // Leg checkout dengan ≥ 2 leg di HP ini → otomatis struk gabungan (lihat di dalamnya).
             hydrateFromTransaction(trxId);
+        } else if (checkoutUuidExtra != null && !checkoutUuidExtra.trim().isEmpty()) {
+            // 🧺 Baru disimpan lewat "Bagi ke beberapa lokasi": satu struk untuk SEMUA leg. Extras
+            // pemanggil (poin, gift, order kembali pertama, …) dipertahankan — hanya yang absen diisi.
+            if (!hydrateCheckout(checkoutUuidExtra.trim(), false)) {
+                // < 2 leg di HP ini (mestinya mustahil di HP pembuat) → struk leg tunggal biasa.
+                List<com.crowja.damiupos.model.Transaction> one = new TransactionDao(DatabaseHelper.getInstance(this))
+                        .getByCheckoutUuid(checkoutUuidExtra.trim());
+                if (one.isEmpty()) {
+                    Toast.makeText(this, "Transaksi tidak ditemukan", Toast.LENGTH_SHORT).show();
+                    finish();
+                    return;
+                }
+                hydrateFromTransaction(one.get(0).getId());
+            }
         }
 
         // Teks monospace tetap dibangun untuk printer Bluetooth (58mm); kartu modern
@@ -333,7 +367,27 @@ public class ReceiptActivity extends AppCompatActivity {
             finish();
             return;
         }
+        // 🧺 Leg checkout multi-lokasi yang saudaranya juga ada di HP ini (HP pembuat) → struk
+        // GABUNGAN semua leg. HP yang hanya memegang leg ini (kurir) jatuh ke struk tunggal di bawah,
+        // diberi baris pengenal "📍 Kedai · Lokasi 2/2" — saudaranya tak pernah diasumsikan ada lokal.
         Intent i = getIntent();
+        if (t.isCheckoutLeg()) {
+            List<com.crowja.damiupos.model.Transaction> localLegs = dao.getByCheckoutUuid(t.getCheckoutUuid());
+            if (hydrateCheckout(localLegs, true)) {
+                if (getSupportActionBar() != null) {
+                    getSupportActionBar().setTitle("Struk Transaksi");
+                }
+                return;
+            }
+            // getById tak memetakan tujuan "Kirim ke" — ambil dari baris leg (getByCheckoutUuid).
+            String dest = null;
+            for (com.crowja.damiupos.model.Transaction r : localLegs) {
+                if (r.getId() == id) dest = r.getDeliveryDestName();
+            }
+            i.putExtra(EXTRA_LONE_LEG_SEQ, t.getCheckoutSeq());
+            i.putExtra(EXTRA_LONE_LEG_SIZE, t.getCheckoutSize());
+            i.putExtra(EXTRA_LONE_LEG_DEST, dest);
+        }
         i.putExtra(EXTRA_CUSTOMER_NAME, t.getCustomerName());
         i.putExtra(EXTRA_CUSTOMER_ID, t.getCustomerId());   // re-share dari struk tersimpan tetap bawa kampanye
         // Gift yang di-klaim transaksi ini → struk yang dibuka ulang tetap menampilkan hadiahnya.
@@ -460,6 +514,186 @@ public class ReceiptActivity extends AppCompatActivity {
         if (getSupportActionBar() != null) {
             getSupportActionBar().setTitle("Struk Transaksi");
         }
+    }
+
+    // ============================ 🧺 Checkout multi-lokasi ============================
+
+    /** Struk ini struk GABUNGAN checkout multi-lokasi (≥ 2 leg di HP ini)? */
+    private boolean isCheckoutMode() {
+        return checkoutLegs != null && !checkoutLegs.isEmpty();
+    }
+
+    /** {@link #hydrateCheckout(List, boolean)} dari uuid checkout. */
+    private boolean hydrateCheckout(String uuid, boolean override) {
+        if (uuid == null || uuid.trim().isEmpty()) return false;
+        return hydrateCheckout(new TransactionDao(DatabaseHelper.getInstance(this))
+                .getByCheckoutUuid(uuid.trim()), override);
+    }
+
+    /**
+     * Siapkan struk GABUNGAN dari leg checkout yang ADA DI HP INI (urut seq — lihat
+     * TransactionDao.getByCheckoutUuid). Hanya bila ≥ 2 leg lokal, praktisnya HP pembuat checkout;
+     * HP kurir yang memegang satu leg tetap memakai struk tunggal (saudara leg tak pernah diasumsikan
+     * ada lokal). Tiap leg dibaca dari barisnya SENDIRI — item, ongkir, total, galon kembali, potongan
+     * refund/saldo, pelunasan hutang lama — jadi bagian 📍 tiap lokasi sama dengan struk order
+     * tunggal ke lokasi itu.
+     *
+     * @param override true = timpa extras dari DB (dibuka ulang dari riwayat, seperti
+     *                 hydrateFromTransaction); false = hanya isi yang absen (Transaksi Baru sudah
+     *                 menyusun poin / gift / popup order kembali pertama sendiri).
+     * @return false (tanpa mengubah apa pun) bila leg lokal kurang dari 2.
+     */
+    private boolean hydrateCheckout(List<com.crowja.damiupos.model.Transaction> rows, boolean override) {
+        if (rows == null || rows.size() < CheckoutConstants.MIN_LEGS) return false;
+        DatabaseHelper h = DatabaseHelper.getInstance(this);
+        TransactionDao dao = new TransactionDao(h);
+        com.crowja.damiupos.db.CustomerDebtDao debtDao = new com.crowja.damiupos.db.CustomerDebtDao(h);
+        com.crowja.damiupos.db.CustomerRefundDao refundDao = new com.crowja.damiupos.db.CustomerRefundDao(h);
+        List<CheckoutStrukText.Leg> legs = new ArrayList<>();
+        int size = 0;
+        double sumTotal = 0, pointsBasis = 0;
+        for (com.crowja.damiupos.model.Transaction t : rows) {
+            legs.add(toCheckoutLeg(t, dao, debtDao, refundDao));
+            size = Math.max(size, t.getCheckoutSize());
+            sumTotal += t.getTotalHarga();
+            // Dasar poin per leg seperti order tunggal: harga botol galon dikecualikan.
+            pointsBasis += Math.max(0, t.getTotalHarga() - (t.getHargaBotolGalon() * t.getJumlahGalon()));
+        }
+        com.crowja.damiupos.model.Transaction primary = rows.get(0);
+        checkoutLegs = legs;
+        checkoutUuid = primary.getCheckoutUuid();
+        checkoutSize = Math.max(size, legs.size());
+        checkoutPrimaryId = primary.getId();
+
+        Intent i = getIntent();
+        putStrExtra(i, EXTRA_CUSTOMER_NAME, primary.getCustomerName(), override);
+        if (override || !i.hasExtra(EXTRA_CUSTOMER_ID)) i.putExtra(EXTRA_CUSTOMER_ID, primary.getCustomerId());
+        if (override || !i.hasExtra(EXTRA_CUSTOMER_PHONE)) {
+            com.crowja.damiupos.model.Customer c =
+                    new com.crowja.damiupos.db.CustomerDao(h).getById(primary.getCustomerId());
+            if (c != null) i.putExtra(EXTRA_CUSTOMER_PHONE, c.getPhone());
+        }
+        // Leg UTAMA = pemegang efek sekali-per-checkout: gift, pelunasan hutang lama, keputusan
+        // kampanye server, akun WA pengirim struk.
+        putStrExtra(i, EXTRA_GIFT_TRX_UUID, legs.get(0).uuid, override);
+        putStrExtra(i, EXTRA_RECEIPT_NO, primary.getReceiptNo(), override);
+        putStrExtra(i, EXTRA_DELIVERY_TOKEN, primary.getDeliveryToken(), override);
+        putStrExtra(i, EXTRA_PAYMENT_METHOD, primary.getPaymentMethod(), override);
+        if (override || !i.hasExtra(EXTRA_IS_NEW_CUSTOMER)) {
+            i.putExtra(EXTRA_IS_NEW_CUSTOMER, dao.isNewCustomerOnDay(primary.getCustomerId(), primary.getTanggal()));
+        }
+        if (override || !i.hasExtra(EXTRA_TOTAL_HARGA)) i.putExtra(EXTRA_TOTAL_HARGA, sumTotal);
+        // Poin atas dasar GABUNGAN semua leg — satu checkout = satu pembelian bagi pelanggan.
+        SettingsDao s = new SettingsDao(h);
+        if ((override || !i.hasExtra(EXTRA_POINTS_ENABLED)) && s.isPointsEnabled()) {
+            double ppa = s.getPointsPerAmount();
+            int reward = s.getPointsRewardThreshold();
+            double lifetime = dao.getTotalJualPointsBasisByCustomer(primary.getCustomerId());
+            i.putExtra(EXTRA_POINTS_ENABLED, true);
+            i.putExtra(EXTRA_POINTS_EARNED, (int) Math.floor(pointsBasis / ppa));
+            i.putExtra(EXTRA_POINTS_TOTAL, (int) Math.floor(lifetime / ppa));
+            i.putExtra(EXTRA_POINTS_REWARD, reward);
+        }
+        return true;
+    }
+
+    /** Baca ulang semua leg dari DB (mis. sesudah gift produk menulis ulang item leg utama). */
+    private void reloadCheckoutLegs() {
+        if (checkoutUuid == null) return;
+        List<com.crowja.damiupos.model.Transaction> rows =
+                new TransactionDao(DatabaseHelper.getInstance(this)).getByCheckoutUuid(checkoutUuid);
+        hydrateCheckout(rows, false);
+    }
+
+    private static void putStrExtra(Intent i, String key, String value, boolean override) {
+        if (value == null || value.isEmpty()) return;
+        if (override || !i.hasExtra(key)) i.putExtra(key, value);
+    }
+
+    /** Satu baris transaksi leg → data cetak {@link CheckoutStrukText.Leg}. */
+    private CheckoutStrukText.Leg toCheckoutLeg(com.crowja.damiupos.model.Transaction t, TransactionDao dao,
+                                                com.crowja.damiupos.db.CustomerDebtDao debtDao,
+                                                com.crowja.damiupos.db.CustomerRefundDao refundDao) {
+        CheckoutStrukText.Leg l = new CheckoutStrukText.Leg();
+        l.id = t.getId();
+        l.uuid = dao.getSyncUuidById(t.getId());
+        l.seq = t.getCheckoutSeq();
+        l.destName = t.getDeliveryDestName();
+        l.receiptNo = t.getReceiptNo();
+        if (t.getItems() != null) l.items = new ArrayList<>(t.getItems());
+        l.productName = t.getProductName();
+        l.jumlah = t.getJumlahGalon();
+        l.hargaPerGalon = t.getHargaPerGalon();
+        l.ongkir = t.getOngkir();
+        l.ongkirType = t.getOngkirType();
+        l.total = t.getTotalHarga();
+        l.beliBotol = "BELI".equals(t.getGalonOwnership());
+        l.hargaBotol = t.getHargaBotolGalon();
+        l.token = t.getDeliveryToken();
+        // Tiap leg bertanggal BEDA (+1 detik per seq), jadi KEMBALI berpasangannya tetap tepat.
+        l.kembali = dao.getReturnedGalonForSale(t.getCustomerId(), t.getTanggal());
+        l.paymentMethod = t.getPaymentMethod();
+        l.paymentConfirmed = t.isPaymentConfirmed();
+        boolean hasUuid = l.uuid != null && !l.uuid.isEmpty();
+        // Potongan SALDO REFUND dari BUKU BESAR; penanda catatan hanya cadangan (seperti order tunggal).
+        double refund = hasUuid ? refundDao.usedForTransaction(l.uuid) : 0;
+        if (refund <= 0) refund = rpMarker(t.getCatatan(), "REFUND");
+        l.refundUsed = refund;
+        l.saldoUsed = rpMarker(t.getCatatan(), "SALDO KOMISI");
+        l.debtPaid = hasUuid ? debtDao.paidForTransaction(l.uuid) : 0;
+        l.rawCatatan = t.getCatatan();
+        l.note = customerNote(t.getCatatan());
+        l.deliveryStatus = t.getDeliveryStatus();
+        l.tertundaResumeAt = t.getDeliveryTertundaResumeAt();
+        return l;
+    }
+
+    /** Nominal penanda "[MARKER Rp 12.000]" di catatan; 0 bila tak ada. */
+    private static double rpMarker(String catatan, String marker) {
+        if (catatan == null || !catatan.contains("[" + marker)) return 0;
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("\\[" + java.util.regex.Pattern.quote(marker) + " Rp ([0-9.]+)\\]").matcher(catatan);
+        if (!m.find()) return 0;
+        try {
+            return Double.parseDouble(m.group(1).replace(".", ""));
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /** Leg struk gabungan ber-_id ini; null bila bukan struk gabungan / tak ada. */
+    private CheckoutStrukText.Leg checkoutLegById(long id) {
+        if (!isCheckoutMode() || id <= 0) return null;
+        for (CheckoutStrukText.Leg l : checkoutLegs) {
+            if (l.id == id) return l;
+        }
+        return null;
+    }
+
+    /** "Lokasi 2/2 · Kedai" untuk leg yang dibuka sendirian (HP kurir); "" untuk order biasa. */
+    private String loneLegLabel() {
+        return loneLegLabel(" · ");
+    }
+
+    /** {@link #loneLegLabel()} dengan pemisah sendiri — printer 58mm memakai ": " (ASCII saja). */
+    private String loneLegLabel(String sep) {
+        Intent in = getIntent();
+        int seq = in.getIntExtra(EXTRA_LONE_LEG_SEQ, 0);
+        int size = in.getIntExtra(EXTRA_LONE_LEG_SIZE, 0);
+        if (CheckoutStrukText.legBadge(seq, size).isEmpty()) return "";
+        String dest = in.getStringExtra(EXTRA_LONE_LEG_DEST);
+        dest = dest != null ? dest.trim() : "";
+        return "Lokasi " + seq + "/" + size + (dest.isEmpty() || "null".equalsIgnoreCase(dest) ? "" : sep + dest);
+    }
+
+    /** ID transaksi struk untuk keterangan gambar: semua leg pada struk gabungan, selain itu satu. */
+    private String receiptNosLabel() {
+        if (!isCheckoutMode()) return getIntent().getStringExtra(EXTRA_RECEIPT_NO);
+        List<String> nos = new ArrayList<>();
+        for (CheckoutStrukText.Leg l : checkoutLegs) {
+            if (l.receiptNo != null && !l.receiptNo.trim().isEmpty()) nos.add(l.receiptNo.trim());
+        }
+        return String.join(", ", nos);
     }
 
     /** Format `tanggal` transaksi → "dd/MM/yyyy HH:mm" untuk catatan struk Web. Toleran terhadap
@@ -595,7 +829,15 @@ public class ReceiptActivity extends AppCompatActivity {
             }
         }).start();
 
-        cardText(R.id.rcTypeChip, isPayout ? "Pencairan Komisi" : (isGantiRugi ? "Ganti Rugi" : "Penjualan"));
+        // 🧺 Kotak "Bayar per lokasi" disisipkan di bawah baris Pembayaran khusus struk gabungan —
+        // buang sisa gambar sebelumnya (kartu ini bisa digambar ulang, mis. sesudah popup gift).
+        View oldPayBox = receiptCard.findViewWithTag(CHECKOUT_PAY_BOX_TAG);
+        if (oldPayBox != null && oldPayBox.getParent() instanceof android.view.ViewGroup) {
+            ((android.view.ViewGroup) oldPayBox.getParent()).removeView(oldPayBox);
+        }
+        String loneLegChip = loneLegLabel();
+        cardText(R.id.rcTypeChip, isPayout ? "Pencairan Komisi" : (isGantiRugi ? "Ganti Rugi"
+                : (loneLegChip.isEmpty() ? "Penjualan" : "Penjualan · " + loneLegChip)));
 
         // --- Meta tanggal + nomor ---
         cardText(R.id.rcMetaDate, new SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.US).format(new Date()));
@@ -631,6 +873,11 @@ public class ReceiptActivity extends AppCompatActivity {
         LinearLayout items = receiptCard.findViewById(R.id.rcItems);
         items.removeAllViews();
         double totalHarga = in.getDoubleExtra(EXTRA_TOTAL_HARGA, 0);
+
+        if (isCheckoutMode() && !isPayout && !isGantiRugi) {
+            populateCheckoutCard(items, nf, dotColor, greyDot);
+            return;
+        }
 
         if (isPayout) {
             boolean air = "AIR".equals(in.getStringExtra(EXTRA_PAYOUT_TYPE));
@@ -733,23 +980,7 @@ public class ReceiptActivity extends AppCompatActivity {
                 hide(R.id.rcSaldoBox);
             }
             // Poin
-            if (in.getBooleanExtra(EXTRA_POINTS_ENABLED, false)) {
-                int earned = in.getIntExtra(EXTRA_POINTS_EARNED, 0);
-                int total = in.getIntExtra(EXTRA_POINTS_TOTAL, 0);
-                int reward = in.getIntExtra(EXTRA_POINTS_REWARD, 0);
-                cardText(R.id.rcPointsEarned, "+" + earned);
-                cardText(R.id.rcPointsTotal, String.valueOf(total));
-                if (reward > 0) {
-                    int remaining = reward - (total % reward);
-                    cardText(R.id.rcPointsNext, remaining + " poin lagi");
-                    show(R.id.rcPointsNextRow);
-                } else {
-                    hide(R.id.rcPointsNextRow);
-                }
-                show(R.id.rcPointsBox);
-            } else {
-                hide(R.id.rcPointsBox);
-            }
+            bindCardPoints(in);
         }
 
         // PELUNASAN HUTANG LAMA lewat transaksi ini ("Sekalian Lunasi Hutang" saat checkout) -- uang
@@ -778,6 +1009,177 @@ public class ReceiptActivity extends AppCompatActivity {
         // (EXTRA_TEXT) supaya gambar struk tetap bersih dan link-nya bisa diklik.
     }
 
+    /** Kotak poin loyalitas kartu struk (dari extras) — struk tunggal & gabungan. */
+    private void bindCardPoints(Intent in) {
+        if (in.getBooleanExtra(EXTRA_POINTS_ENABLED, false)) {
+            int earned = in.getIntExtra(EXTRA_POINTS_EARNED, 0);
+            int total = in.getIntExtra(EXTRA_POINTS_TOTAL, 0);
+            int reward = in.getIntExtra(EXTRA_POINTS_REWARD, 0);
+            cardText(R.id.rcPointsEarned, "+" + earned);
+            cardText(R.id.rcPointsTotal, String.valueOf(total));
+            if (reward > 0) {
+                int remaining = reward - (total % reward);
+                cardText(R.id.rcPointsNext, remaining + " poin lagi");
+                show(R.id.rcPointsNextRow);
+            } else {
+                hide(R.id.rcPointsNextRow);
+            }
+            show(R.id.rcPointsBox);
+        } else {
+            hide(R.id.rcPointsBox);
+        }
+    }
+
+    /** Penanda kotak "Bayar per lokasi" yang disisipkan ke kartu (supaya bisa dibuang saat digambar ulang). */
+    private static final String CHECKOUT_PAY_BOX_TAG = "checkout_pay_box";
+
+    /**
+     * 🧺 Kartu struk GABUNGAN: satu bagian per lokasi (item_receipt_checkout_section — 📍 nama lokasi,
+     * badge "Lokasi k/N", ID transaksi leg, baris produk/ongkir seperti order tunggal, galon kembali,
+     * catatan khusus leg, Subtotal), lalu Total gabungan, potongan saldo, metode bayar dan kotak
+     * "Bayar per lokasi" (item_receipt_checkout_pay). Warna tetap terang — kartu ini di-capture jadi PNG
+     * berlatar putih, sama seperti bagian kartu lainnya.
+     */
+    private void populateCheckoutCard(LinearLayout items, NumberFormat nf, int dotColor, int greyDot) {
+        Intent in = getIntent();
+        List<CheckoutStrukText.Leg> legs = checkoutLegs;
+        int n = legs.size();
+        int size = Math.max(checkoutSize, n);
+        cardShow(R.id.rcMetaNo, CheckoutConstants.BADGE_ICON + " "
+                + (n < size ? n + " dari " + size : String.valueOf(n)) + " lokasi");
+
+        boolean same = CheckoutStrukText.samePayment(legs);
+        List<String> notes = new ArrayList<>();
+        for (CheckoutStrukText.Leg l : legs) notes.add(l.note);
+        CheckoutStrukText.NoteSplit split = CheckoutStrukText.splitNotes(notes);
+        double sumTotal = 0, sumRefund = 0, sumSaldo = 0, sumDebt = 0;
+        for (int k = 0; k < n; k++) {
+            CheckoutStrukText.Leg l = legs.get(k);
+            sumTotal += l.total;
+            sumRefund += l.refundUsed;
+            sumSaldo += l.saldoUsed;
+            sumDebt += l.debtPaid;
+
+            View sec = getLayoutInflater().inflate(R.layout.item_receipt_checkout_section, items, false);
+            ((TextView) sec.findViewById(R.id.rcLegTitle)).setText("📍 " + l.label());
+            ((TextView) sec.findViewById(R.id.rcLegBadge)).setText("Lokasi " + l.seq + "/" + size);
+            TextView rno = sec.findViewById(R.id.rcLegReceipt);
+            if (l.receiptNo != null && !l.receiptNo.trim().isEmpty()) {
+                rno.setText(l.receiptNo.trim());
+                rno.setVisibility(View.VISIBLE);
+            } else {
+                rno.setVisibility(View.GONE);
+            }
+            LinearLayout legItems = sec.findViewById(R.id.rcLegItems);
+            int galon = 0;
+            if (l.items != null && !l.items.isEmpty()) {
+                for (TransactionItem it : l.items) {
+                    addCardRow(legItems, it.productName != null ? it.productName : "-",
+                            it.jumlah + " × Rp " + nf.format(it.hargaPerGalon),
+                            "Rp " + nf.format(it.getSubtotal()), dotColor);
+                    galon += it.jumlah;
+                }
+            } else if (l.jumlah > 0) {
+                addCardRow(legItems, l.productName != null && !l.productName.isEmpty() ? l.productName : "Air minum",
+                        l.jumlah + " × Rp " + nf.format(l.hargaPerGalon),
+                        "Rp " + nf.format(l.jumlah * l.hargaPerGalon), dotColor);
+                galon = l.jumlah;
+            }
+            if ("per_galon".equals(l.ongkirType) && l.ongkir > 0) {
+                addCardRow(legItems, "Ongkos kirim", galon + " × Rp " + nf.format(l.ongkir),
+                        "Rp " + nf.format(galon * l.ongkir), greyDot);
+            } else if ("borongan".equals(l.ongkirType) && l.ongkir > 0) {
+                addCardRow(legItems, "Ongkos kirim (borongan)", null, "Rp " + nf.format(l.ongkir), greyDot);
+            }
+            if (l.kembali > 0) {
+                ((TextView) sec.findViewById(R.id.rcLegKembaliVal)).setText(l.kembali + " botol");
+                sec.findViewById(R.id.rcLegKembaliRow).setVisibility(View.VISIBLE);
+            }
+            TextView legNote = sec.findViewById(R.id.rcLegNote);
+            String rem = split.perLeg.get(k);
+            if (!rem.isEmpty()) {
+                legNote.setText("Catatan: " + rem);
+                legNote.setVisibility(View.VISIBLE);
+            }
+            ((TextView) sec.findViewById(R.id.rcLegSubtotal)).setText("Rp " + nf.format(l.total));
+            String legPay = same ? "" : paymentLabel(l.paymentMethod, l.paymentConfirmed);
+            TextView legPayView = sec.findViewById(R.id.rcLegPay);
+            if (!legPay.isEmpty()) {
+                legPayView.setText("Pembayaran: " + legPay);
+                legPayView.setVisibility(View.VISIBLE);
+            }
+            items.addView(sec);
+        }
+        // Galon kembali sudah tampil per lokasi.
+        hide(R.id.rcKembaliRow);
+
+        // Potongan saldo komisi / refund — jumlah semua leg; "Sisa dibayar" = uang yang benar-benar
+        // diserahkan hari ini (Total gabungan termasuk pelunasan hutang lama, dikurangi potongan).
+        double grand = sumTotal + sumDebt;
+        if (sumSaldo > 0 || sumRefund > 0) {
+            if (sumSaldo > 0) {
+                cardText(R.id.rcSaldoDipotong, "− Rp " + nf.format(Math.round(sumSaldo)));
+                show(R.id.rcSaldoKomisiRow);
+            } else {
+                hide(R.id.rcSaldoKomisiRow);
+            }
+            if (sumRefund > 0) {
+                cardText(R.id.rcRefundDipotong, "− Rp " + nf.format(Math.round(sumRefund)));
+                show(R.id.rcRefundRow);
+            } else {
+                hide(R.id.rcRefundRow);
+            }
+            cardText(R.id.rcSisaBayar, "Rp " + nf.format(Math.round(Math.max(0, grand - sumSaldo - sumRefund))));
+            double saldoSisa = in.getDoubleExtra(EXTRA_SALDO_AFTER, -1);
+            if (sumSaldo > 0 && saldoSisa >= 0) {
+                cardText(R.id.rcSisaSaldo, "Rp " + nf.format(Math.round(saldoSisa)));
+                show(R.id.rcSisaSaldoRow);
+            } else {
+                hide(R.id.rcSisaSaldoRow);
+            }
+            show(R.id.rcSaldoBox);
+        } else {
+            hide(R.id.rcSaldoBox);
+        }
+        bindCardPoints(in);
+
+        cardText(R.id.rcTotalValue, "Rp " + nf.format(grand));
+        String payLabel = same ? paymentLabel(legs.get(0).paymentMethod, legs.get(0).paymentConfirmed) : "Per lokasi";
+        if (!payLabel.isEmpty()) {
+            cardText(R.id.rcPaymentPill, payLabel);
+            show(R.id.rcPaymentRow);
+        } else {
+            hide(R.id.rcPaymentRow);
+        }
+        addCheckoutPayBox(legs, nf);
+
+        cardNotes(split.common);
+        renderGiftBox();
+        maybeOfferProductGift();
+    }
+
+    /**
+     * Kotak "Bayar per lokasi" tepat di bawah baris Pembayaran: tiap lokasi dibayar DI PINTUNYA
+     * SENDIRI untuk tagihannya sendiri (subtotal − potongan saldo + pelunasan hutang lama bila
+     * ditagih di sana). Keputusan owner — tak ada stempel "dibayar untuk semua lokasi". Leg HUTANG /
+     * sudah LUNAS tak ditagih di pintunya → tak ikut; semua leg begitu → kotak tak dipasang (cermin
+     * StrukWa::rincianCheckout & CheckoutStrukText.perLocationLine).
+     */
+    private void addCheckoutPayBox(List<CheckoutStrukText.Leg> legs, NumberFormat nf) {
+        List<CheckoutStrukText.Leg> door = CheckoutStrukText.doorLegs(legs);
+        if (door.isEmpty()) return;
+        View payRow = receiptCard.findViewById(R.id.rcPaymentRow);
+        if (payRow == null || !(payRow.getParent() instanceof android.view.ViewGroup)) return;
+        android.view.ViewGroup parent = (android.view.ViewGroup) payRow.getParent();
+        View box = getLayoutInflater().inflate(R.layout.item_receipt_checkout_pay, parent, false);
+        box.setTag(CHECKOUT_PAY_BOX_TAG);
+        LinearLayout rows = box.findViewById(R.id.rcLegPayRows);
+        for (CheckoutStrukText.Leg l : door) {
+            addCardRow(rows, "📍 " + l.label(), null, "Rp " + nf.format(Math.round(l.doorAmount())), null);
+        }
+        parent.addView(box, parent.indexOfChild(payRow) + 1);
+    }
+
     /** Gift yang di-klaim transaksi ini → kotak amber "🎁 GIFT UNTUK ANDA" + alasan pada gambar struk. */
     /** Popup gift produk hanya sekali per layar struk (renderGiftBox bisa dipanggil ulang). */
     private boolean giftOffered = false;
@@ -794,6 +1196,11 @@ public class ReceiptActivity extends AppCompatActivity {
         final String trxUuid = getIntent().getStringExtra(EXTRA_GIFT_TRX_UUID);
         final long custId = getIntent().getLongExtra(EXTRA_CUSTOMER_ID, -1);
         if (trxId <= 0 || trxUuid == null || trxUuid.isEmpty() || custId <= 0) return;
+        // 🧺 Struk gabungan: gift produk ditulis ke LEG UTAMA (EXTRA_GIFT_TRX_ID) — item & total-nya
+        // dari leg itu sendiri, bukan gabungan semua lokasi. Leg-nya tak ditemukan → jangan tawarkan
+        // (menulis item gabungan ke satu leg akan merusak barisnya).
+        final CheckoutStrukText.Leg giftLeg = checkoutLegById(trxId);
+        if (isCheckoutMode() && giftLeg == null) return;
 
         final com.crowja.damiupos.db.CustomerGiftDao giftDao =
                 new com.crowja.damiupos.db.CustomerGiftDao(DatabaseHelper.getInstance(this));
@@ -803,8 +1210,10 @@ public class ReceiptActivity extends AppCompatActivity {
         giftOffered = true;
 
         final com.crowja.damiupos.db.CustomerGiftDao.Gift gift = gifts.get(0);
-        final java.util.List<TransactionItem> items = new java.util.ArrayList<>(
-                TransactionItem.listFromJson(getIntent().getStringExtra(EXTRA_ITEMS_JSON)));
+        final java.util.List<TransactionItem> items = giftLeg != null
+                ? new java.util.ArrayList<>(giftLeg.items)
+                : new java.util.ArrayList<>(
+                        TransactionItem.listFromJson(getIntent().getStringExtra(EXTRA_ITEMS_JSON)));
 
         // Satu daftar pilihan: tambah (nama gift) → tambah (tukar ke tiap item dibeli) → gratiskan
         // tiap baris yang jumlahnya cukup. Indeksnya dipetakan lewat dua list paralel di bawah.
@@ -838,7 +1247,7 @@ public class ReceiptActivity extends AppCompatActivity {
                 .setItems(labels.toArray(new String[0]), (d, which) -> {
                     int swap = swapIdx.get(which);
                     int free = freeIdx.get(which);
-                    double total = getIntent().getDoubleExtra(EXTRA_TOTAL_HARGA, 0);
+                    double total = giftLeg != null ? giftLeg.total : getIntent().getDoubleExtra(EXTRA_TOTAL_HARGA, 0);
                     int galon = 0;
                     for (TransactionItem it : items) galon += it.jumlah;
 
@@ -867,17 +1276,23 @@ public class ReceiptActivity extends AppCompatActivity {
                     // Order yang masih di antrean delivery (PENDING/TERTUNDA) belum sungguh sampai
                     // ke pelanggan — gift-nya baru DILEKATKAN, "sungguh diberikan" menunggu Selesai
                     // (TransactionDao.markDelivered → CustomerGiftDao.finalizeAttachedForTransaction).
+                    // getById kini memetakan delivery_status (dulu selalu null → gift order antre
+                    // langsung "diberikan" padahal galonnya belum sampai).
                     com.crowja.damiupos.model.Transaction freshTrx = tdaoGift.getById(trxId);
                     String ds = freshTrx != null ? freshTrx.getDeliveryStatus() : null;
-                    boolean queued = com.crowja.damiupos.model.Transaction.DELIVERY_PENDING.equals(ds)
-                            || com.crowja.damiupos.model.Transaction.DELIVERY_TERTUNDA.equals(ds);
+                    boolean queued = TransactionDao.isQueuedForDelivery(ds);
                     giftDao.redeemOne(gift.localId, trxUuid,
                             new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this))
                                     .getCurrentUserName(), queued);
 
                     // Struk digambar ulang dari extras → perbarui dulu, lalu susun ulang layar ini.
-                    getIntent().putExtra(EXTRA_ITEMS_JSON, TransactionItem.listToJson(items));
-                    getIntent().putExtra(EXTRA_TOTAL_HARGA, total);
+                    // Struk gabungan: baca ulang SEMUA leg dari DB (leg utama baru saja berubah).
+                    if (giftLeg != null) {
+                        reloadCheckoutLegs();
+                    } else {
+                        getIntent().putExtra(EXTRA_ITEMS_JSON, TransactionItem.listToJson(items));
+                        getIntent().putExtra(EXTRA_TOTAL_HARGA, total);
+                    }
                     com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
                     // Gambar ulang di tempat, BUKAN recreate(): onCreate menjadwalkan iklan
                     // interstitial, jadi menyusun ulang activity akan memunculkan iklan kedua.
@@ -923,6 +1338,21 @@ public class ReceiptActivity extends AppCompatActivity {
 
     /** Gift di-klaim (redeemed) oleh transaksi struk ini — kosong bila tak ada / uuid tak diketahui. */
     private java.util.List<com.crowja.damiupos.db.CustomerGiftDao.Gift> redeemedGifts() {
+        if (isCheckoutMode()) {
+            // 🧺 Gift bisa melekat ke leg mana pun (leg utama, atau ahli waris saat leg utama di-void)
+            // — kumpulkan dari SEMUA leg, sekali per gift. Cermin Gifts::redeemedBy atas uuid leg (web).
+            com.crowja.damiupos.db.CustomerGiftDao gDao =
+                    new com.crowja.damiupos.db.CustomerGiftDao(DatabaseHelper.getInstance(this));
+            java.util.List<com.crowja.damiupos.db.CustomerGiftDao.Gift> out = new java.util.ArrayList<>();
+            java.util.Set<Long> seen = new java.util.HashSet<>();
+            for (CheckoutStrukText.Leg l : checkoutLegs) {
+                if (l.uuid == null || l.uuid.isEmpty()) continue;
+                for (com.crowja.damiupos.db.CustomerGiftDao.Gift g : gDao.redeemedForTransaction(l.uuid)) {
+                    if (seen.add(g.localId)) out.add(g);
+                }
+            }
+            return out;
+        }
         String trxUuid = getIntent().getStringExtra(EXTRA_GIFT_TRX_UUID);
         if (trxUuid == null || trxUuid.isEmpty()) return new java.util.ArrayList<>();
         return new com.crowja.damiupos.db.CustomerGiftDao(DatabaseHelper.getInstance(this))
@@ -1031,6 +1461,9 @@ public class ReceiptActivity extends AppCompatActivity {
         if (getIntent().getBooleanExtra(EXTRA_IS_KOMISI_PAYOUT, false)) {
             return buildPayoutReceipt();
         }
+        if (isCheckoutMode()) {
+            return buildCheckoutReceipt();
+        }
         String customerName = getIntent().getStringExtra(EXTRA_CUSTOMER_NAME);
         String customerPhone = getIntent().getStringExtra(EXTRA_CUSTOMER_PHONE);
         String productName = getIntent().getStringExtra(EXTRA_PRODUCT_NAME);
@@ -1060,22 +1493,7 @@ public class ReceiptActivity extends AppCompatActivity {
         StringBuilder sb = new StringBuilder();
 
         // Header
-        if (depotName != null && !depotName.isEmpty()) {
-            sb.append(centerBlock(depotName.toUpperCase(Locale.getDefault()))).append("\n");
-        } else {
-            sb.append(center("DAMIU POS")).append("\n");
-        }
-        if (depotAddress != null && !depotAddress.isEmpty()) {
-            for (String ln : depotAddress.split("\\r?\\n")) {
-                sb.append(centerBlock(ln)).append("\n");
-            }
-        } else {
-            sb.append(center("Depot Air Minum Isi Ulang")).append("\n");
-        }
-        if (depotPhone != null && !depotPhone.isEmpty()) {
-            sb.append(centerBlock("HP: " + depotPhone)).append("\n");
-        }
-        sb.append(line('=')).append("\n");
+        appendPrinterHeader(sb, depotName, depotAddress, depotPhone);
 
         // Date
         sb.append("Tgl: ").append(tanggal).append("\n");
@@ -1105,45 +1523,16 @@ public class ReceiptActivity extends AppCompatActivity {
         if (getIntent().getBooleanExtra(EXTRA_IS_NEW_CUSTOMER, false)) {
             sb.append(center("** PELANGGAN BARU **")).append("\n");
         }
+        // 🧺 Leg checkout yang dibuka sendirian (HP kurir): lokasi yang mana dari berapa.
+        String loneLeg = loneLegLabel(": ");
+        if (!loneLeg.isEmpty()) {
+            sb.append(wrapText(loneLeg)).append("\n");
+        }
 
         sb.append(line('-')).append("\n");
 
         // Items — detailed breakdown
-        int totalGalon = 0;
-        if (items != null && !items.isEmpty()) {
-            for (TransactionItem it : items) {
-                sb.append(wrapText(it.productName != null ? it.productName : "-")).append("\n");
-                sb.append(leftRight(
-                        "  " + it.jumlah + " x Rp " + nf.format(it.hargaPerGalon),
-                        "Rp " + nf.format(it.getSubtotal()))).append("\n");
-                totalGalon += it.jumlah;
-            }
-        } else {
-            // Legacy single-product fallback (dilewati untuk kunjungan tanpa barang: jumlah 0)
-            if (jumlah > 0) {
-                if (productName != null && !productName.isEmpty()) {
-                    sb.append(wrapText(productName)).append("\n");
-                } else {
-                    sb.append("Air minum\n");
-                }
-                double subtotalAir = jumlah * hargaPerGalon;
-                sb.append(leftRight(
-                        "  " + jumlah + " x Rp " + nf.format(hargaPerGalon),
-                        "Rp " + nf.format(subtotalAir))).append("\n");
-            }
-            totalGalon = jumlah;
-        }
-
-        if ("per_galon".equals(ongkirType) && ongkir > 0) {
-            double subtotalOngkir = totalGalon * ongkir;
-            sb.append("Ongkos kirim\n");
-            sb.append(leftRight(
-                    "  " + totalGalon + " x Rp " + nf.format(ongkir),
-                    "Rp " + nf.format(subtotalOngkir))).append("\n");
-        } else if ("borongan".equals(ongkirType) && ongkir > 0) {
-            sb.append("Ongkos kirim (borongan)\n");
-            sb.append(leftRight("", "Rp " + nf.format(ongkir))).append("\n");
-        }
+        appendPrinterItems(sb, items, productName, jumlah, hargaPerGalon, ongkir, ongkirType, nf);
 
         // Botol galon kosong yang ditukar/dikembalikan pelanggan pada penjualan ini.
         int jumlahKembali = getIntent().getIntExtra(EXTRA_JUMLAH_KEMBALI, 0);
@@ -1206,6 +1595,78 @@ public class ReceiptActivity extends AppCompatActivity {
             sb.append(line('-')).append("\n");
         }
 
+        appendPrinterTail(sb, settingsDao, catatan);
+        return sb.toString();
+    }
+
+    /** Kepala struk printer: nama/alamat/telepon depot + garis '='. Dipakai struk tunggal & gabungan. */
+    private void appendPrinterHeader(StringBuilder sb, String depotName, String depotAddress, String depotPhone) {
+        if (depotName != null && !depotName.isEmpty()) {
+            sb.append(centerBlock(depotName.toUpperCase(Locale.getDefault()))).append("\n");
+        } else {
+            sb.append(center("DAMIU POS")).append("\n");
+        }
+        if (depotAddress != null && !depotAddress.isEmpty()) {
+            for (String ln : depotAddress.split("\\r?\\n")) {
+                sb.append(centerBlock(ln)).append("\n");
+            }
+        } else {
+            sb.append(center("Depot Air Minum Isi Ulang")).append("\n");
+        }
+        if (depotPhone != null && !depotPhone.isEmpty()) {
+            sb.append(centerBlock("HP: " + depotPhone)).append("\n");
+        }
+        sb.append(line('=')).append("\n");
+    }
+
+    /**
+     * Baris produk + ongkos kirim SATU order di struk printer (58mm). Dipakai struk tunggal & tiap
+     * bagian lokasi struk gabungan, supaya satu leg tercetak persis seperti order biasa ke lokasinya.
+     * @return total galon (dasar ongkir per galon)
+     */
+    private int appendPrinterItems(StringBuilder sb, List<TransactionItem> items, String productName,
+                                   int jumlah, double hargaPerGalon, double ongkir, String ongkirType,
+                                   NumberFormat nf) {
+        int totalGalon = 0;
+        if (items != null && !items.isEmpty()) {
+            for (TransactionItem it : items) {
+                sb.append(wrapText(it.productName != null ? it.productName : "-")).append("\n");
+                sb.append(leftRight(
+                        "  " + it.jumlah + " x Rp " + nf.format(it.hargaPerGalon),
+                        "Rp " + nf.format(it.getSubtotal()))).append("\n");
+                totalGalon += it.jumlah;
+            }
+        } else {
+            // Legacy single-product fallback (dilewati untuk kunjungan tanpa barang: jumlah 0)
+            if (jumlah > 0) {
+                if (productName != null && !productName.isEmpty()) {
+                    sb.append(wrapText(productName)).append("\n");
+                } else {
+                    sb.append("Air minum\n");
+                }
+                double subtotalAir = jumlah * hargaPerGalon;
+                sb.append(leftRight(
+                        "  " + jumlah + " x Rp " + nf.format(hargaPerGalon),
+                        "Rp " + nf.format(subtotalAir))).append("\n");
+            }
+            totalGalon = jumlah;
+        }
+
+        if ("per_galon".equals(ongkirType) && ongkir > 0) {
+            double subtotalOngkir = totalGalon * ongkir;
+            sb.append("Ongkos kirim\n");
+            sb.append(leftRight(
+                    "  " + totalGalon + " x Rp " + nf.format(ongkir),
+                    "Rp " + nf.format(subtotalOngkir))).append("\n");
+        } else if ("borongan".equals(ongkirType) && ongkir > 0) {
+            sb.append("Ongkos kirim (borongan)\n");
+            sb.append(leftRight("", "Rp " + nf.format(ongkir))).append("\n");
+        }
+        return totalGalon;
+    }
+
+    /** Ekor struk printer: poin loyalitas, catatan, gift, salam penutup. Dipakai struk tunggal & gabungan. */
+    private void appendPrinterTail(StringBuilder sb, SettingsDao settingsDao, String catatan) {
         // Points section
         boolean pointsEnabled = getIntent().getBooleanExtra(EXTRA_POINTS_ENABLED, false);
         if (pointsEnabled) {
@@ -1274,7 +1735,115 @@ public class ReceiptActivity extends AppCompatActivity {
         if (generatedBy != null && !generatedBy.trim().isEmpty()) {
             sb.append(center("Struk dibuat oleh: " + generatedBy)).append("\n");
         }
+    }
 
+    /**
+     * 🧺 Struk printer (58mm) GABUNGAN checkout multi-lokasi: kepala & pelanggan sekali, lalu satu
+     * bagian per lokasi (baris produk/ongkir persis struk order tunggal + galon kembali + Subtotal),
+     * lalu TOTAL gabungan, potongan saldo, metode bayar, dan rincian "Bayar per lokasi" — tiap lokasi
+     * dibayar di pintunya sendiri (keputusan owner), tanpa stempel "dibayar untuk semua".
+     */
+    private String buildCheckoutReceipt() {
+        Intent in = getIntent();
+        List<CheckoutStrukText.Leg> legs = checkoutLegs;
+        NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
+        String tanggal = new SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.US).format(new Date());
+        SettingsDao settingsDao = new SettingsDao(DatabaseHelper.getInstance(this));
+        StringBuilder sb = new StringBuilder();
+        appendPrinterHeader(sb, settingsDao.getDepotName(), settingsDao.getDepotAddress(), settingsDao.getDepotPhone());
+        sb.append("Tgl: ").append(tanggal).append("\n");
+        sb.append(line('-')).append("\n");
+
+        String customerName = in.getStringExtra(EXTRA_CUSTOMER_NAME);
+        String customerPhone = in.getStringExtra(EXTRA_CUSTOMER_PHONE);
+        sb.append("Pelanggan:\n");
+        StringBuilder custLine = new StringBuilder("  ");
+        custLine.append(customerName != null && !customerName.isEmpty() ? customerName : "-");
+        if (customerPhone != null && !customerPhone.isEmpty()) {
+            custLine.append(" (").append(customerPhone).append(")");
+        }
+        sb.append(wrapText(custLine.toString())).append("\n");
+        if (in.getBooleanExtra(EXTRA_IS_NEW_CUSTOMER, false)) {
+            sb.append(center("** PELANGGAN BARU **")).append("\n");
+        }
+
+        int n = legs.size();
+        int size = Math.max(checkoutSize, n);
+        sb.append(line('-')).append("\n");
+        sb.append(centerBlock("** PESANAN " + (n < size ? n + " DARI " + size : String.valueOf(n)) + " LOKASI **")).append("\n");
+
+        boolean same = CheckoutStrukText.samePayment(legs);
+        List<String> notes = new ArrayList<>();
+        for (CheckoutStrukText.Leg l : legs) notes.add(l.note);
+        CheckoutStrukText.NoteSplit split = CheckoutStrukText.splitNotes(notes);
+        double sumTotal = 0, sumRefund = 0, sumSaldo = 0, sumDebt = 0;
+        for (int k = 0; k < n; k++) {
+            CheckoutStrukText.Leg l = legs.get(k);
+            sumTotal += l.total;
+            sumRefund += l.refundUsed;
+            sumSaldo += l.saldoUsed;
+            sumDebt += l.debtPaid;
+            sb.append(line('-')).append("\n");
+            sb.append(wrapText("LOKASI " + l.seq + "/" + size + ": " + l.label())).append("\n");
+            if (l.receiptNo != null && !l.receiptNo.trim().isEmpty()) {
+                sb.append(wrapText("No: " + l.receiptNo.trim())).append("\n");
+            }
+            appendPrinterItems(sb, l.items, l.productName, l.jumlah, l.hargaPerGalon, l.ongkir,
+                    l.ongkirType != null ? l.ongkirType : "per_galon", nf);
+            if (l.kembali > 0) {
+                sb.append(leftRight("Galon kembali", l.kembali + " botol")).append("\n");
+            }
+            if (!split.perLeg.get(k).isEmpty()) {
+                sb.append(wrapText("Catatan: " + split.perLeg.get(k))).append("\n");
+            }
+            sb.append(leftRight("Subtotal", "Rp " + nf.format(l.total))).append("\n");
+            String legPay = same ? "" : paymentLabel(l.paymentMethod, l.paymentConfirmed);
+            if (!legPay.isEmpty()) sb.append(leftRight("Pembayaran", legPay)).append("\n");
+        }
+        sb.append(line('-')).append("\n");
+
+        // Pelunasan hutang LAMA (sekali per checkout, ditagih di pintu leg utama) — dilebur ke TOTAL.
+        if (sumDebt > 0) {
+            long custId = in.getLongExtra(EXTRA_CUSTOMER_ID, -1);
+            List<String> origins = custId > 0
+                    ? new com.crowja.damiupos.db.CustomerDebtDao(DatabaseHelper.getInstance(this)).originReceiptsFor(custId, 1)
+                    : new ArrayList<>();
+            String ket = !origins.isEmpty() ? "Pembelian Sebelumnya " + String.join(", ", origins) : "Hutang Sebelumnya";
+            sb.append(leftRight("Hutang (" + ket + ")", "Rp " + nf.format(Math.round(sumDebt)))).append("\n");
+        }
+        double grand = sumTotal + sumDebt;
+        sb.append(leftRight("TOTAL", "Rp " + nf.format(grand))).append("\n");
+        if (sumSaldo > 0) {
+            sb.append(leftRight("Dari saldo komisi", "- Rp " + nf.format(Math.round(sumSaldo)))).append("\n");
+        }
+        if (sumRefund > 0) {
+            sb.append(leftRight("Dari saldo refund", "- Rp " + nf.format(Math.round(sumRefund)))).append("\n");
+        }
+        if (sumSaldo > 0 || sumRefund > 0) {
+            sb.append(leftRight("Sisa dibayar", "Rp " + nf.format(Math.round(Math.max(0, grand - sumSaldo - sumRefund))))).append("\n");
+            double saldoSisa = in.getDoubleExtra(EXTRA_SALDO_AFTER, -1);
+            if (sumSaldo > 0 && saldoSisa >= 0) {
+                sb.append(leftRight("Sisa saldo komisi", "Rp " + nf.format(Math.round(saldoSisa)))).append("\n");
+            }
+        }
+        sb.append(line('=')).append("\n");
+
+        String payLabel = same ? paymentLabel(legs.get(0).paymentMethod, legs.get(0).paymentConfirmed) : "";
+        if (!payLabel.isEmpty()) {
+            sb.append(leftRight("Pembayaran dengan", payLabel)).append("\n");
+        }
+        // Tiap lokasi DIBAYAR DI PINTUNYA SENDIRI — kurir/pelanggan melihat berapa per lokasi. Leg
+        // HUTANG / sudah LUNAS tak ditagih → tak ikut; semua begitu → blok ini tak dicetak.
+        List<CheckoutStrukText.Leg> doorLegs = CheckoutStrukText.doorLegs(legs);
+        if (!doorLegs.isEmpty()) {
+            sb.append("Bayar per lokasi:\n");
+            for (CheckoutStrukText.Leg l : doorLegs) {
+                sb.append(leftRight("  " + l.label(), "Rp " + nf.format(Math.round(l.doorAmount())))).append("\n");
+            }
+        }
+        sb.append(line('-')).append("\n");
+
+        appendPrinterTail(sb, settingsDao, split.common);
         return sb.toString();
     }
 
@@ -1523,7 +2092,7 @@ public class ReceiptActivity extends AppCompatActivity {
         // WA Bridge server DULU (gambar struk + caption singkat, akun dipilih server sesuai
         // prioritas); gagal → share gambar ke WhatsApp HP seperti dulu.
         String phone = getIntent().getStringExtra(EXTRA_CUSTOMER_PHONE);
-        String receiptNo = getIntent().getStringExtra(EXTRA_RECEIPT_NO);
+        String receiptNo = receiptNosLabel();   // struk gabungan: ID transaksi semua lokasi
         String imgCaption = "Struk pembelian Anda"
                 + (receiptNo != null && !receiptNo.isEmpty() ? " (" + receiptNo + ")" : "")
                 + ". Terima kasih 🙏";
@@ -1724,6 +2293,9 @@ public class ReceiptActivity extends AppCompatActivity {
      * Data dari intent extras (items_json / fallback produk tunggal + ongkir + total + metode bayar).
      */
     private String composeTextStruk() {
+        if (isCheckoutMode()) {
+            return composeCheckoutTextStruk();
+        }
         try {
             java.text.NumberFormat nf = java.text.NumberFormat.getInstance(new java.util.Locale("id", "ID"));
             android.content.Intent in = getIntent();
@@ -1732,61 +2304,26 @@ public class ReceiptActivity extends AppCompatActivity {
             String receiptNo = in.getStringExtra(EXTRA_RECEIPT_NO);
             StringBuilder sb = new StringBuilder("🧾 *Rincian Pembelian"
                     + (receiptNo != null && !receiptNo.isEmpty() ? " #" + receiptNo : "") + "*");
-            int totalGalon = 0;
-            double itemsSum = 0;   // untuk rekonsiliasi ongkir dari total yang dibayar
+            // 🧺 Leg checkout yang dibuka sendirian (HP kurir): lokasi mana + pengingat bayar per lokasi.
+            String loneLeg = CheckoutStrukText.loneLegLine(in.getIntExtra(EXTRA_LONE_LEG_SEQ, 0),
+                    in.getIntExtra(EXTRA_LONE_LEG_SIZE, 0), in.getStringExtra(EXTRA_LONE_LEG_DEST));
+            if (!loneLeg.isEmpty()) sb.append("\n").append(loneLeg);
             String itemsJson = in.getStringExtra(EXTRA_ITEMS_JSON);
             List<TransactionItem> items = itemsJson != null ? TransactionItem.listFromJson(itemsJson) : null;
-            if (items != null && !items.isEmpty()) {
-                for (TransactionItem it : items) {
-                    if (it.jumlah <= 0) continue;
-                    totalGalon += it.jumlah;
-                    itemsSum += it.jumlah * it.hargaPerGalon;
-                    sb.append("\n").append(it.productName != null ? it.productName : "Produk")
-                            .append(" ").append(it.jumlah)
-                            .append(" x Rp").append(nf.format(Math.round(it.hargaPerGalon)))
-                            .append(" = Rp").append(nf.format(Math.round(it.jumlah * it.hargaPerGalon)));
-                }
-            } else {
-                // Transaksi lama tanpa items_json → satu baris dari extras produk tunggal.
-                String pname = in.getStringExtra(EXTRA_PRODUCT_NAME);
-                int jumlah = in.getIntExtra(EXTRA_JUMLAH, 0);
-                double harga = in.getDoubleExtra(EXTRA_HARGA_PER_GALON, 0);
-                if (jumlah > 0) {
-                    totalGalon = jumlah;
-                    itemsSum = jumlah * harga;
-                    sb.append("\n").append(pname != null ? pname : "Air Minum")
-                            .append(" ").append(jumlah)
-                            .append(" x Rp").append(nf.format(Math.round(harga)))
-                            .append(" = Rp").append(nf.format(Math.round(jumlah * harga)));
-                }
-            }
             double ongkir = in.getDoubleExtra(EXTRA_ONGKIR, 0);
             String ongkirType = in.getStringExtra(EXTRA_ONGKIR_TYPE);
             double total = in.getDoubleExtra(EXTRA_TOTAL_HARGA, 0);
-            // ONGKIR — angkanya DITURUNKAN dari total yang benar-benar dibayar (cermin PERSIS
-            // StrukWa::rincian + Transaction::strukExtras di web): sisa total yang tak dijelaskan
-            // baris produk & botol dikembalikan ke ongkir. Satu rumus melayani ketiga bentuk
-            // penyimpanan (tarif per galon HP / nilai datar / order web yang meleburnya ke total),
-            // dan "Gratis Ongkir" hanya diklaim bila baris yang DICETAK berjumlah pas dengan *Total*.
-            double botol = "BELI".equals(in.getStringExtra(EXTRA_OWNERSHIP))
-                    ? in.getDoubleExtra(EXTRA_HARGA_BOTOL, 0) * totalGalon : 0;
-            double colOngkir = ongkir <= 0 ? 0
-                    : ("per_galon".equals(ongkirType) ? ongkir * totalGalon : ongkir);
-            double unexplained = total - itemsSum - botol - colOngkir;
-            double paidOngkir = unexplained > 0.5 ? colOngkir + unexplained : colOngkir;
-            if (paidOngkir > 0.5 && ongkir > 0 && totalGalon > 0
-                    && Math.abs(ongkir * totalGalon - paidOngkir) < 1) {
-                sb.append("\nOngkir Per Galon Rp").append(nf.format(Math.round(ongkir)))
-                        .append(" x ").append(totalGalon)
-                        .append(" = Rp").append(nf.format(Math.round(paidOngkir)));
-            } else if (paidOngkir > 0.5) {
-                sb.append("\nOngkir = Rp").append(nf.format(Math.round(paidOngkir)));
-            } else if (isDeliveryOrder(in) && itemsSum > 0 && Math.abs(total - itemsSum - botol) <= 0.5) {
-                // Diantar & seluruh rupiah sudah dijelaskan baris cetak → ongkirnya memang digratiskan.
-                // Cermin App\Support\StrukWa::rincian di web (isFreeDelivery) — teks "Gratis Ongkir"
-                // (bukan "FREE") supaya pelanggan langsung paham tanpa perlu tahu bahasa Inggris.
-                sb.append("\nGratis Ongkir");
-            }
+            // Baris produk + ONGKIR — angka ongkir DITURUNKAN dari total yang benar-benar dibayar
+            // (cermin PERSIS StrukWa::rincian + Transaction::strukExtras di web): sisa total yang tak
+            // dijelaskan baris produk & botol dikembalikan ke ongkir. Satu rumus melayani ketiga bentuk
+            // penyimpanan (tarif per galon HP / nilai datar / order web yang meleburnya ke total), dan
+            // "Gratis Ongkir" hanya diklaim bila baris yang DICETAK berjumlah pas dengan *Total*.
+            // Rumusnya di CheckoutStrukText.rincianItems — dipakai juga tiap lokasi struk gabungan.
+            sb.append(CheckoutStrukText.rincianItems(items,
+                    in.getStringExtra(EXTRA_PRODUCT_NAME), in.getIntExtra(EXTRA_JUMLAH, 0),
+                    in.getDoubleExtra(EXTRA_HARGA_PER_GALON, 0), ongkir, ongkirType, total,
+                    "BELI".equals(in.getStringExtra(EXTRA_OWNERSHIP)), in.getDoubleExtra(EXTRA_HARGA_BOTOL, 0),
+                    isDeliveryOrder(in), nf));
             // Metode pembayaran DILEBUR ke baris Total (satu baris) — "*Total: Rp5.000 (Bayar
             // Tunai)*", DILEWATI bila ada pelunasan hutang lama (di bawah) -- *Total* sudah gabungan
             // dua hal berbeda, jadi tak dilabeli satu metode bayar saja. Cermin App\Support\StrukWa
@@ -1834,24 +2371,9 @@ public class ReceiptActivity extends AppCompatActivity {
                         .append(nf.format(Math.round(Math.max(0, grandTotal - refundDipotong))))
                         .append("*").append(debtPaidNow > 0 ? "" : (payLabel != null ? payLabel : ""));
             }
-            if (pay != null && !pay.isEmpty()) {
-                // QRIS: link statis PER CABANG airfrez.com/{slug}-qris (slug dari /api/me, diatur
-                // admin di Kelola Cabang) — satu QRIS per cabang, bukan lagi satu untuk semua
-                // cabang (tiap cabang punya rekening/merchant sendiri). Halaman itu sendiri
-                // live-fetch gambar QRIS terkini, jadi tak perlu di-update di sini saat admin
-                // re-upload. Slug kosong = cabang belum dikonfigurasi → tak ada baris disematkan.
-                if ("QRIS".equalsIgnoreCase(pay)) {
-                    String slug = new com.crowja.damiupos.sync.SyncSettings(
-                            new SettingsDao(DatabaseHelper.getInstance(this))).getBranchSlug();
-                    if (slug != null && !slug.trim().isEmpty()) {
-                        sb.append("\nUnduh gambar QRIS: https://airfrez.com/").append(slug.trim()).append("-qris");
-                    }
-                } else if ("TRANSFER".equalsIgnoreCase(pay)) {
-                    String bankDetail = new SettingsDao(DatabaseHelper.getInstance(this)).getBankTransferDetail();
-                    if (bankDetail != null && !bankDetail.trim().isEmpty()) {
-                        sb.append("\n").append(bankDetail.trim());
-                    }
-                }
+            String payInfo = payInfoLine(pay);
+            if (!payInfo.isEmpty()) {
+                sb.append("\n").append(payInfo);
             }
             // Order ini dibuat OTOMATIS oleh fitur "Pesanan Terjadwal" (web-only, ScheduledOrders::
             // createAutoTertunda) — deteksi lewat header audit di catatan MENTAH (sebelum
@@ -1890,6 +2412,80 @@ public class ReceiptActivity extends AppCompatActivity {
                 // bukan simpulan status. Cermin App\Support\StrukWa::rincian di web.
             }
             return sb.toString();
+        } catch (Throwable t) {
+            return "";   // struk teks best-effort — jangan gagalkan pengiriman pesan
+        }
+    }
+
+    /**
+     * Baris info pembayaran untuk struk teks (tanpa "\n" di depan; "" bila tak ada):
+     * QRIS → link statis PER CABANG airfrez.com/{slug}-qris (slug dari /api/me, diatur admin di
+     * Kelola Cabang) — satu QRIS per cabang, bukan lagi satu untuk semua cabang (tiap cabang punya
+     * rekening/merchant sendiri). Halaman itu sendiri live-fetch gambar QRIS terkini, jadi tak perlu
+     * di-update di sini saat admin re-upload. Slug kosong = cabang belum dikonfigurasi → tak ada baris.
+     * TRANSFER → detail rekening bank cabang.
+     */
+    private String payInfoLine(String pay) {
+        if (pay == null || pay.isEmpty()) return "";
+        if ("QRIS".equalsIgnoreCase(pay)) {
+            String slug = new com.crowja.damiupos.sync.SyncSettings(
+                    new SettingsDao(DatabaseHelper.getInstance(this))).getBranchSlug();
+            if (slug != null && !slug.trim().isEmpty()) {
+                return "Unduh gambar QRIS: https://airfrez.com/" + slug.trim() + "-qris";
+            }
+        } else if ("TRANSFER".equalsIgnoreCase(pay)) {
+            String bankDetail = new SettingsDao(DatabaseHelper.getInstance(this)).getBankTransferDetail();
+            if (bankDetail != null && !bankDetail.trim().isEmpty()) {
+                return bankDetail.trim();
+            }
+        }
+        return "";
+    }
+
+    /**
+     * 🧺 Struk TEKS gabungan checkout multi-lokasi (pesan WA) — satu bagian 📍 per lokasi lalu SATU
+     * *Total*, potongan saldo, "Bayar per lokasi: …", info bayar, catatan & Sisa Hutang sekali.
+     * Susunannya di {@link CheckoutStrukText#compose}; di sini hanya data dari buku besar/setelan.
+     */
+    private String composeCheckoutTextStruk() {
+        try {
+            Intent in = getIntent();
+            long custId = in.getLongExtra(EXTRA_CUSTOMER_ID, -1);
+            com.crowja.damiupos.db.CustomerDebtDao debtDao =
+                    new com.crowja.damiupos.db.CustomerDebtDao(DatabaseHelper.getInstance(this));
+            CheckoutStrukText.Footer f = new CheckoutStrukText.Footer();
+            double debtPaid = 0;
+            boolean terjadwal = false;
+            List<String> payInfos = new ArrayList<>();
+            List<String> seenPay = new ArrayList<>();
+            for (CheckoutStrukText.Leg l : checkoutLegs) {
+                debtPaid += l.debtPaid;
+                String raw = l.rawCatatan != null ? l.rawCatatan.toLowerCase(Locale.ROOT) : "";
+                if (raw.contains("pesanan terjadwal") && raw.contains("dibuat di web")) terjadwal = true;
+                // Petunjuk bayar (link QRIS / rekening) hanya untuk leg yang BELUM lunas — leg LUNAS
+                // tak perlu dibayar lagi (cermin filter StrukWa::rincianCheckout).
+                String pay = l.paymentMethod != null && !l.paymentConfirmed
+                        ? l.paymentMethod.toUpperCase(Locale.ROOT) : "";
+                if (!pay.isEmpty() && !seenPay.contains(pay)) {
+                    seenPay.add(pay);
+                    String info = payInfoLine(pay);
+                    if (!info.isEmpty()) payInfos.add(info);
+                }
+            }
+            List<String> origins = custId > 0 ? debtDao.originReceiptsFor(custId, 1) : new ArrayList<>();
+            if (debtPaid > 0) {
+                f.debtOriginLabel = !origins.isEmpty()
+                        ? "Pembelian Sebelumnya " + String.join(", ", origins) : "Hutang Sebelumnya";
+            }
+            f.payInfo = String.join("\n", payInfos);
+            f.terjadwal = terjadwal;
+            // Sisa hutang LIVE — termasuk hutang segar leg checkout ini (pelanggannya memang berhutang
+            // semua itu); penagihannya tetap per lokasi di pintu masing-masing.
+            if (custId > 0) {
+                f.sisaHutang = debtDao.balanceFor(custId);
+                if (f.sisaHutang > 0 && !origins.isEmpty()) f.sisaHutangOrigins = String.join(", ", origins);
+            }
+            return CheckoutStrukText.compose(checkoutLegs, checkoutSize, f);
         } catch (Throwable t) {
             return "";   // struk teks best-effort — jangan gagalkan pengiriman pesan
         }
@@ -1943,6 +2539,13 @@ public class ReceiptActivity extends AppCompatActivity {
      */
     private String campaignScheduleDate() {
         try {
+            if (isCheckoutMode()) {
+                // 🧺 Semua leg ditunda BERSAMA (resume yang sama) — nilai dari leg utama.
+                CheckoutStrukText.Leg p = checkoutLegs.get(0);
+                if (!com.crowja.damiupos.model.Transaction.DELIVERY_TERTUNDA.equals(p.deliveryStatus)) return null;
+                return p.tertundaResumeAt != null && p.tertundaResumeAt.length() >= 10
+                        ? p.tertundaResumeAt.substring(0, 10) : null;
+            }
             long trxId = getIntent().getLongExtra(EXTRA_TRANSACTION_ID, -1);
             if (trxId <= 0) return null;
             com.crowja.damiupos.model.Transaction t =
@@ -2220,6 +2823,9 @@ public class ReceiptActivity extends AppCompatActivity {
                 .customerId(getIntent().getLongExtra(EXTRA_CUSTOMER_ID, -1))
                 .transactionUuid(getIntent().getStringExtra(EXTRA_GIFT_TRX_UUID));
         long trxId = getIntent().getLongExtra(EXTRA_GIFT_TRX_ID, -1);
+        // 🧺 Struk gabungan dikirim atas nama LEG UTAMA (server memilih akun pengirim dari leg itu),
+        // bukan leg yang kebetulan dibuka dari riwayat.
+        if (trxId <= 0 && isCheckoutMode()) trxId = checkoutPrimaryId;
         if (trxId <= 0) trxId = loadedTransactionId;
         return m.transactionId(trxId);
     }
@@ -2408,14 +3014,47 @@ public class ReceiptActivity extends AppCompatActivity {
             if (methods[i].equals(t.getPaymentMethod())) { sel = i; break; }
         }
         final int[] choice = { sel };
+        // 🧺 Satu checkout multi-lokasi = SATU metode bayar untuk semua lokasinya. Ubah di satu leg →
+        // ikut diterapkan ke leg saudara yang masih di antrean (PENDING/TERTUNDA); leg yang sudah
+        // Selesai sudah ditagih dengan metodenya sendiri, tak diubah diam-diam. Hanya bisa bila SEMUA
+        // leg ada di HP ini (HP pembuat) — HP kurir yang memegang satu leg tak boleh memecah metodenya.
+        final List<Long> targetIds = new ArrayList<>();
+        targetIds.add(loadedTransactionId);
+        String title = "Ubah Metode Pembayaran";
+        if (t.isCheckoutLeg()) {
+            List<com.crowja.damiupos.model.Transaction> legs =
+                    new TransactionDao(DatabaseHelper.getInstance(this)).getByCheckoutUuid(t.getCheckoutUuid());
+            if (legs.size() < t.getCheckoutSize()) {
+                new AlertDialog.Builder(this)
+                        .setTitle("🧺 Pesanan Multi-Lokasi")
+                        .setMessage("Transaksi ini bagian dari pesanan " + t.getCheckoutSize()
+                                + " lokasi yang memakai SATU metode bayar, dan tidak semua lokasinya ada di HP ini."
+                                + "\n\nUbah metode bayarnya dari HP pembuat pesanan atau dashboard web.")
+                        .setPositiveButton("OK", null)
+                        .show();
+                return;
+            }
+            for (com.crowja.damiupos.model.Transaction leg : legs) {
+                if (leg.getId() == loadedTransactionId) continue;
+                if (com.crowja.damiupos.model.Transaction.DELIVERY_PENDING.equals(leg.getDeliveryStatus())
+                        || com.crowja.damiupos.model.Transaction.DELIVERY_TERTUNDA.equals(leg.getDeliveryStatus())) {
+                    targetIds.add(leg.getId());
+                }
+            }
+            if (targetIds.size() > 1) title = "Ubah Metode Pembayaran · " + targetIds.size() + " lokasi";
+        }
         new AlertDialog.Builder(this)
-                .setTitle("Ubah Metode Pembayaran")
+                .setTitle(title)
                 .setSingleChoiceItems(labels, sel, (d, w) -> choice[0] = w)
                 .setPositiveButton("Simpan", (d, w) -> {
-                    new TransactionDao(DatabaseHelper.getInstance(this))
-                            .updatePaymentMethod(loadedTransactionId, methods[choice[0]]);
+                    TransactionDao payDao = new TransactionDao(DatabaseHelper.getInstance(this));
+                    for (long id : targetIds) {
+                        payDao.updatePaymentMethod(id, methods[choice[0]]);
+                    }
                     com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
-                    Toast.makeText(this, "Metode pembayaran diperbarui", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, targetIds.size() > 1
+                            ? "Metode pembayaran diperbarui untuk " + targetIds.size() + " lokasi"
+                            : "Metode pembayaran diperbarui", Toast.LENGTH_SHORT).show();
                     recreate();   // muat ulang struk dengan nilai baru
                 })
                 .setNegativeButton("Batal", null)
@@ -2459,9 +3098,20 @@ public class ReceiptActivity extends AppCompatActivity {
                     Toast.LENGTH_SHORT).show();
             return;
         }
+        // 🧺 Leg checkout: yang terhapus HANYA lokasi ini — sebutkan, supaya tak dikira seluruh pesanan.
+        String legInfo = "";
+        CheckoutStrukText.Leg openedLeg = checkoutLegById(loadedTransactionId);
+        if (openedLeg != null) {
+            legInfo = "\n\n🧺 Yang dihapus hanya lokasi " + openedLeg.label()
+                    + (openedLeg.receiptNo != null && !openedLeg.receiptNo.isEmpty() ? " (" + openedLeg.receiptNo + ")" : "")
+                    + ". Lokasi lain di pesanan ini TIDAK ikut terhapus.";
+        } else if (!loneLegLabel().isEmpty()) {
+            legInfo = "\n\n🧺 Ini " + loneLegLabel()
+                    + " dari pesanan multi-lokasi. Lokasi lainnya TIDAK ikut terhapus.";
+        }
         new AlertDialog.Builder(this)
                 .setTitle("Hapus Transaksi?")
-                .setMessage("Yakin hapus transaksi ini? Tindakan tidak bisa dibatalkan.")
+                .setMessage("Yakin hapus transaksi ini? Tindakan tidak bisa dibatalkan." + legInfo)
                 .setPositiveButton("YA, HAPUS", (d, w) -> {
                     TransactionDao dao = new TransactionDao(DatabaseHelper.getInstance(this));
                     int rows = dao.delete(loadedTransactionId);
