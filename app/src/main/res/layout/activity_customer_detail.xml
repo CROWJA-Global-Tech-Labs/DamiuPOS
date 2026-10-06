@@ -236,6 +236,7 @@
 
             <!-- Galon Dipinjam: kartu kecil = galon yang masih dipinjam (belum dikembalikan). -->
             <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardSaldoGalon"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
@@ -265,6 +266,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:id="@+id/tvSaldoGalonLabel"
                         android:layout_marginStart="8dp"
                         android:text="Galon Dipinjam"
                         android:textColor="@color/white"
