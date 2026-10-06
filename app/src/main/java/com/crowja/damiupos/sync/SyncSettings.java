@@ -88,6 +88,7 @@ public class SyncSettings {
     /** 🧺 Gerbang checkout multi-lokasi dari /api/me ("checkout_multi_enabled") — kunci LOKAL (bukan
      *  app_settings tersinkron), jadi tak pernah terdorong balik ke server. */
     private static final String K_CHECKOUT_MULTI = "sync_checkout_multi_enabled";
+    private static final String K_CHECKOUT_MULTI_BLOCKER = "sync_checkout_multi_blocker";
 
     // Track this device's staff location while clocked in (default on when enrolled).
     private static final String K_LOC_ENABLED = "sync_loc_enabled";
@@ -181,6 +182,18 @@ public class SyncSettings {
      */
     public boolean isCheckoutMultiEnabled()        { return "1".equals(settings.get(K_CHECKOUT_MULTI, "0")); }
     public void setCheckoutMultiEnabled(boolean v) { settings.set(K_CHECKOUT_MULTI, v ? "1" : "0"); }
+
+    /** Alasan gerbang checkout multi-lokasi tertutup dari /api/me (checkout_multi_blocker); "" = tak ada. */
+    public String getCheckoutMultiBlocker()          { return settings.get(K_CHECKOUT_MULTI_BLOCKER, ""); }
+    public void setCheckoutMultiBlocker(String v)    { settings.set(K_CHECKOUT_MULTI_BLOCKER, v == null ? "" : v); }
+
+    /**
+     * Nilai mentah {@code r.opt("checkout_multi_blocker")} dari /api/me → teks alasan. Hanya String yang
+     * dipakai; null/absen/JSONObject.NULL → "". Murni — diuji di JVM (src/test).
+     */
+    public static String parseCheckoutMultiBlocker(Object raw) {
+        return raw instanceof String ? ((String) raw).trim() : "";
+    }
 
     /**
      * Nilai mentah {@code r.opt("checkout_multi_enabled")} dari /api/me → aktif? Kontraknya boolean;
@@ -419,6 +432,7 @@ public class SyncSettings {
         setToken("");
         setEnabled(false);
         setCheckoutMultiEnabled(false);   // vonis server lama tak berlaku lagi tanpa server
+        setCheckoutMultiBlocker("");
     }
 
     private static String trimSlash(String url) {

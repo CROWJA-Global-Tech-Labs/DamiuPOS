@@ -145,6 +145,7 @@ public final class OnlineTasks {
             // 🧺 Gerbang checkout multi-lokasi: vonis SERVER dari gerbang rollout APK (/api/me checkout_multi_enabled).
             // Sengaja TANPA r.has(): kunci absen (server lama/di-rollback) = MATI, bukan "biarkan".
             cfg.setCheckoutMultiEnabled(SyncSettings.parseCheckoutMultiEnabled(r.opt("checkout_multi_enabled")));
+            cfg.setCheckoutMultiBlocker(SyncSettings.parseCheckoutMultiBlocker(r.opt("checkout_multi_blocker")));
             // Paket PANTUN follow-up: dicek bareng /me (tiap 15 menit) tapi hanya benar-benar
             // diunduh saat versinya berubah — praktis sekali saja lalu diam. Sengaja TIDAK lewat
             // pipa sinkron: korpusnya 10.000 baris identik untuk semua cabang (lihat docblock
