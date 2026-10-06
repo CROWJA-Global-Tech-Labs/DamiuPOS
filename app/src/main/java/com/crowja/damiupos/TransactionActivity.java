@@ -1236,8 +1236,10 @@ public class TransactionActivity extends AppCompatActivity {
                 // 🧺 Gerbang checkout multi-lokasi dari /me yang SAMA (aturan = OnlineTasks.refreshConfig)
                 // → layar ini memakai vonis server terbaru, tak menunggu siklus /me 15 menit.
                 boolean coOn = SyncSettings.parseCheckoutMultiEnabled(r.opt("checkout_multi_enabled"));
-                if (coOn != cfg.isCheckoutMultiEnabled()) {
+                String coWhy = SyncSettings.parseCheckoutMultiBlocker(r.opt("checkout_multi_blocker"));
+                if (coOn != cfg.isCheckoutMultiEnabled() || !coWhy.equals(cfg.getCheckoutMultiBlocker())) {
                     cfg.setCheckoutMultiEnabled(coOn);
+                    cfg.setCheckoutMultiBlocker(coWhy);
                     runOnUiThread(this::refreshSplitEntry);
                 }
                 if (devices != null) {
@@ -4449,9 +4451,17 @@ public class TransactionActivity extends AppCompatActivity {
      * rollout dashboard sudah dinyalakan ({@link #checkoutEnabled()}).
      */
     private boolean canSplit() {
+        return splitEligible() && checkoutEnabled();
+    }
+
+    /**
+     * Order ini secara bentuk bisa dibagi (JUAL biasa, pelanggan ≥ 2 lokasi berkoordinat) — TANPA
+     * gerbang rollout. Bila layak tapi gerbang tertutup, entri tetap tampil abu-abu dan ketukannya
+     * menjelaskan alasan server (checkout_multi_blocker), supaya fiturnya tak "hilang" diam-diam.
+     */
+    private boolean splitEligible() {
         return isJualSelected() && !isJualBotolSelected() && !promosiMode && !payoutMode
                 && !splitBlockedForRole && selectedCustomerId > 0 && !isUmumCustomer()
-                && checkoutEnabled()
                 && CheckoutPart.splittableIndexes(selectedLocations).size() >= CheckoutConstants.MIN_LEGS;
     }
 
@@ -4482,7 +4492,15 @@ public class TransactionActivity extends AppCompatActivity {
     /** Pintu masuk (di bawah kartu Kirim ke) vs kartu ringkasan pembagian. */
     private void refreshSplitEntry() {
         if (tvSplitEntry != null) {
-            tvSplitEntry.setVisibility(!multiLocMode && canSplit() ? View.VISIBLE : View.GONE);
+            boolean show = !multiLocMode && splitEligible();
+            tvSplitEntry.setVisibility(show ? View.VISIBLE : View.GONE);
+            if (show && tvSplitEntry instanceof TextView) {
+                boolean on = checkoutEnabled();
+                TextView tv = (TextView) tvSplitEntry;
+                tv.setText(on ? "🧺 Bagi ke beberapa lokasi ›" : "🧺 Bagi ke beberapa lokasi — belum aktif ⓘ");
+                tv.setBackgroundResource(on ? R.drawable.bg_pill_blue : R.drawable.bg_pill_grey);
+                tv.setTextColor(androidx.core.content.ContextCompat.getColor(this, on ? R.color.primary : R.color.text_secondary));
+            }
         }
         if (cardCheckoutParts != null) {
             cardCheckoutParts.setVisibility(multiLocMode ? View.VISIBLE : View.GONE);
@@ -4596,7 +4614,29 @@ public class TransactionActivity extends AppCompatActivity {
     }
 
     /** Buka lembar pembagian: bagian yang sudah ada (mode aktif) atau bagian default tiap lokasi. */
+    /** Entri abu-abu diketuk: jelaskan kenapa pembagian lokasi belum bisa dipakai (alasan dari server). */
+    private void showSplitGateReason() {
+        SyncSettings cfg = new SyncSettings(settingsDao);
+        String why = cfg.getCheckoutMultiBlocker();
+        if (!cfg.isEnrolled()) {
+            why = "HP ini belum terhubung ke server. Pembagian lokasi butuh HP yang sudah terhubung.";
+        } else if (why.isEmpty()) {
+            why = "Server belum mengaktifkan pembagian lokasi untuk cabang ini. Coba lagi setelah sinkron.";
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("🧺 Bagi ke beberapa lokasi")
+                .setMessage(why + "\n\nSetelah semua HP kurir diperbarui, fitur ini aktif sendiri di semua HP "
+                        + "dan web. Untuk sekarang, buat order terpisah per lokasi lewat \"Ganti ›\" di kartu Kirim ke.")
+                .setPositiveButton("OK", null)
+                .show();
+        refreshAssignRosterAsync();
+    }
+
     private void openSplitSheet() {
+        if (!multiLocMode && splitEligible() && !checkoutEnabled()) {
+            showSplitGateReason();
+            return;
+        }
         if (!multiLocMode && !canSplit()) {
             Toast.makeText(this, "Pembagian lokasi butuh pelanggan dengan minimal 2 lokasi berkoordinat",
                     Toast.LENGTH_SHORT).show();

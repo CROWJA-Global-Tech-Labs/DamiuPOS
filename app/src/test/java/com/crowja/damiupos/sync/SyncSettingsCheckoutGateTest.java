@@ -1,5 +1,6 @@
 package com.crowja.damiupos.sync;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -34,6 +35,13 @@ public class SyncSettingsCheckoutGateTest {
         assertFalse(SyncSettings.parseCheckoutMultiEnabled("false"));
         assertFalse(SyncSettings.parseCheckoutMultiEnabled("yes"));
         assertFalse(SyncSettings.parseCheckoutMultiEnabled("null"));   // JSONObject.NULL.toString()
+    }
+
+    @Test public void blockerReasonOnlyFromString() {
+        assertEquals("HP kurir lama", SyncSettings.parseCheckoutMultiBlocker(" HP kurir lama "));
+        assertEquals("", SyncSettings.parseCheckoutMultiBlocker(null));
+        assertEquals("", SyncSettings.parseCheckoutMultiBlocker(Boolean.FALSE));
+        assertEquals("", SyncSettings.parseCheckoutMultiBlocker(new Object()));   // JSONObject.NULL
     }
 
     @Test public void otherTypesAreOff() {
