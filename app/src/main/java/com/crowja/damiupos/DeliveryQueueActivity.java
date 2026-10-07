@@ -799,6 +799,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          it.setVisible(this.activeTab == 0);
       }
 
+      MenuItem outside = menu.findItem(id.action_release_outside_wilayah);
+      if (outside != null) {
+         outside.setVisible(this.activeTab == 0);
+      }
+
       MenuItem toggleStrategy = menu.findItem(id.action_toggle_strategy);
       if (toggleStrategy != null) {
          toggleStrategy.setVisible(false);
@@ -819,6 +824,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          return true;
       } else if (item.getItemId() == id.action_delivery_history) {
          this.startActivity(new Intent(this, DeliveryHistoryActivity.class));
+         return true;
+      } else if (item.getItemId() == id.action_release_outside_wilayah) {
+         this.releaseOutsideWilayah();
          return true;
       } else if (item.getItemId() == id.action_pending_queue) {
          this.showTertundaQueueDialog();
@@ -933,6 +941,57 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          if (this.selectedIds.contains(t.getId())) out.add(t);
       }
       return out;
+   }
+
+   /**
+    * 🔓 Lepas semua order Antrean Saya yang tujuannya masuk wilayah perangkat LAIN (Wilayah.deviceForCoord
+    * pada koordinat tujuan, fallback koordinat pelanggan) → Pesanan Terbuka, lewat jalur Lepas massal yang
+    * sama ({@link #runBulkQueueAction}). Order tanpa koordinat, di wilayah tanpa penugasan, atau yang
+    * sedang dijalankan di rit TIDAK ikut — hanya yang pasti milik wilayah perangkat lain.
+    */
+   private void releaseOutsideWilayah() {
+      SyncSettings cfg = this.syncCfg();
+      String myUuid = cfg.getDeviceUuid();
+      String center = cfg.getBranchCenter();
+      String zones = cfg.getWilayahZones();
+      if (Wilayah.parseCenter(center) == null || Wilayah.parseZones(zones) == null) {
+         Toast.makeText(this, "Wilayah cabang belum diatur / belum tersinkron.", Toast.LENGTH_LONG).show();
+         return;
+      }
+      List<Transaction> scope = this.adapter != null && this.adapter.data != null ? this.adapter.data : new ArrayList<>();
+      java.util.Set<Long> running = new java.util.HashSet<>();
+      if (this.isRunning()) for (Transaction t : this.runStops()) running.add(t.getId());
+      java.util.Map<String, String> names = new java.util.HashMap<>();
+      try {
+         JSONArray arr = new JSONArray(cfg.getDeviceRoster());
+         for (int i = 0; i < arr.length(); ++i) {
+            JSONObject d = arr.optJSONObject(i);
+            if (d != null) names.put(d.optString("uuid", ""), d.optString("name", "Perangkat"));
+         }
+      } catch (Exception ignored) {
+      }
+      List<Transaction> picked = new ArrayList<>();
+      StringBuilder list = new StringBuilder();
+      for (Transaction t : scope) {
+         if (running.contains(t.getId()) || !"PENDING".equals(t.getDeliveryStatus())) continue;
+         double lat = t.getDeliveryDestLat(), lng = t.getDeliveryDestLng();
+         if (lat == 0 && lng == 0) { lat = t.getCustomerLat(); lng = t.getCustomerLng(); }
+         if (lat == 0 && lng == 0) continue;
+         String owner = Wilayah.deviceForCoord(center, zones, lat, lng);
+         if (owner == null || owner.equals(myUuid)) continue;
+         picked.add(t);
+         String on = names.get(owner);
+         list.append(picked.size()).append(". ").append(safe(t.getCustomerName()))
+               .append(" → wilayah ").append(on != null ? on : "perangkat lain").append("\n");
+      }
+      if (picked.isEmpty()) {
+         Toast.makeText(this, "Semua order di Antrean Saya sudah di wilayah perangkat ini.", Toast.LENGTH_LONG).show();
+         return;
+      }
+      (new AlertDialog.Builder(this)).setTitle("Lepas " + picked.size() + " order luar wilayah?")
+            .setMessage("Order berikut tujuannya di wilayah perangkat lain. Semua akan keluar dari antrian ini dan menjadi PESANAN TERBUKA — perangkat mana pun bisa mengklaimnya.\n\n" + list)
+            .setPositiveButton("Lepas Semua", (d, w) -> this.runBulkQueueAction(picked, null, null))
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
    }
 
    private void showSelectionActions(View anchor) {
