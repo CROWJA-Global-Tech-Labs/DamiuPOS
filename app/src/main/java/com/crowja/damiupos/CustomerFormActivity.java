@@ -824,6 +824,46 @@ public class CustomerFormActivity extends AppCompatActivity {
         row.llFoto.removeAllViews();
         int thumb = dpToPx(56);
         int margin = dpToPx(4);
+        // Pelanggan BARU (belum ada uuid → koleksi lokasi belum bisa diunggah): foto lokasi UTAMA
+        // memakai foto rumah lokal (currentPhotoPath) — diunggah MediaUploader setelah simpan,
+        // juga saat offline, dan memenuhi wajib foto marketing/staf. Tanpa ini form buntu.
+        boolean newPrimary = isNewPrimaryRow(row);
+        if (newPrimary && hasLocalHousePhoto()) {
+            android.widget.FrameLayout wrap = new android.widget.FrameLayout(this);
+            android.widget.LinearLayout.LayoutParams wlp =
+                    new android.widget.LinearLayout.LayoutParams(thumb, thumb);
+            wlp.setMargins(0, 0, margin, 0);
+            wrap.setLayoutParams(wlp);
+            ImageView iv = new ImageView(this);
+            iv.setLayoutParams(new android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
+            iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            iv.setBackgroundColor(0xFFECECEC);
+            Bitmap b = com.crowja.damiupos.util.BitmapUtils.decodeSampled(currentPhotoPath, 200, 200);
+            if (b != null) iv.setImageBitmap(b); else iv.setImageResource(android.R.drawable.ic_menu_gallery);
+            wrap.addView(iv);
+            TextView rm = new TextView(this);
+            rm.setText("✕");
+            rm.setTextColor(0xFFFFFFFF);
+            rm.setTextSize(11f);
+            rm.setGravity(android.view.Gravity.CENTER);
+            rm.setBackgroundResource(R.drawable.bg_circle);
+            rm.getBackground().setTint(0xFFC62828);
+            int rmSize = dpToPx(18);
+            android.widget.FrameLayout.LayoutParams rlp = new android.widget.FrameLayout.LayoutParams(rmSize, rmSize);
+            rlp.gravity = android.view.Gravity.TOP | android.view.Gravity.END;
+            rm.setLayoutParams(rlp);
+            rm.setOnClickListener(x -> {
+                try { new File(currentPhotoPath).delete(); } catch (Exception ignored) {}
+                currentPhotoPath = null;
+                lastGoodPhotoPath = null;
+                renderLocationPhotos(row);
+            });
+            wrap.addView(rm);
+            row.llFoto.addView(wrap);
+            return;   // satu foto saat tambah baru; foto lokasi lain bisa ditambah setelah disimpan
+        }
         for (int i = 0; i < row.photos.size(); i++) {
             final int idx = i;
             final String url = row.photos.get(i);
@@ -903,6 +943,10 @@ public class CustomerFormActivity extends AppCompatActivity {
     /** Tombol "+ Foto" satu baris lokasi: perlu pelanggan TERSIMPAN (uuid sudah ada) dan
      *  kuota belum penuh, lalu minta izin kamera (bila belum) dan ambil foto. */
     private void addLocationPhotoClicked(LocationRow row) {
+        if (isNewPrimaryRow(row)) {
+            takePhoto();   // foto rumah lokal → tampil di strip lokasi utama (lihat renderLocationPhotos)
+            return;
+        }
         if (editId == -1) {
             Toast.makeText(this, "Simpan pelanggan dulu, baru bisa menambah foto lokasi",
                     Toast.LENGTH_LONG).show();
@@ -1174,6 +1218,22 @@ public class CustomerFormActivity extends AppCompatActivity {
     }
 
     /** Buka workflow "Ambil Foto & Koordinat": foto rumah + koordinat lokasi utama sekaligus. */
+    /** Baris lokasi UTAMA (pertama) saat menambah pelanggan baru. */
+    private boolean isNewPrimaryRow(LocationRow row) {
+        return editId == -1 && !locationRows.isEmpty() && locationRows.get(0) == row;
+    }
+
+    private boolean hasLocalHousePhoto() {
+        if (currentPhotoPath == null || currentPhotoPath.isEmpty()) return false;
+        File f = new File(currentPhotoPath);
+        return f.exists() && f.length() > 0;
+    }
+
+    /** Segarkan strip foto lokasi utama setelah foto rumah berubah (pelanggan baru). */
+    private void refreshNewPrimaryPhotoStrip() {
+        if (editId == -1 && !locationRows.isEmpty()) renderLocationPhotos(locationRows.get(0));
+    }
+
     private void takePhotoAndCoordinate() {
         startActivityForResult(new Intent(this, PhotoCoordinateActivity.class), REQUEST_PHOTO_COORD);
     }
@@ -1214,6 +1274,7 @@ public class CustomerFormActivity extends AppCompatActivity {
             if (currentPhotoPath != null) {
                 ivFotoRumah.setImageBitmap(loadRotatedBitmap(currentPhotoPath));
                 lastGoodPhotoPath = currentPhotoPath;
+                refreshNewPrimaryPhotoStrip();
             }
         } else if (requestCode == REQUEST_CAMERA) {
             // Kamera dibatalkan: createImageFile() sudah terlanjur menimpa currentPhotoPath
@@ -1240,6 +1301,7 @@ public class CustomerFormActivity extends AppCompatActivity {
                 if (com.crowja.damiupos.util.BitmapUtils.copyUriToFile(this, data.getData(), dest)) {
                     ivFotoRumah.setImageBitmap(loadRotatedBitmap(currentPhotoPath));
                     lastGoodPhotoPath = currentPhotoPath;
+                    refreshNewPrimaryPhotoStrip();
                 } else {
                     try { dest.delete(); } catch (Exception ignored) {}
                     currentPhotoPath = lastGoodPhotoPath;
@@ -1273,6 +1335,7 @@ public class CustomerFormActivity extends AppCompatActivity {
                 primary.lng = lng;
                 updateKoordinatDisplay(primary);
             }
+            refreshNewPrimaryPhotoStrip();
             Toast.makeText(this, "Foto & koordinat lokasi utama tersimpan", Toast.LENGTH_SHORT).show();
         }
     }
