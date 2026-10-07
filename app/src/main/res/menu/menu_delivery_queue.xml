@@ -30,6 +30,13 @@
         android:title="📜 Riwayat Pengiriman"
         app:showAsAction="never" />
 
+    <!-- Lepas massal: semua order Antrean Saya yang tujuannya di wilayah perangkat LAIN → Pesanan
+         Terbuka (DeliveryQueueActivity.releaseOutsideWilayah). Gate tab 0. -->
+    <item
+        android:id="@+id/action_release_outside_wilayah"
+        android:title="🔓 Lepas Order di Luar Wilayah Saya"
+        app:showAsAction="never" />
+
     <item
         android:id="@+id/action_pending_queue"
         android:title="⏸ Antrean Tertunda"
