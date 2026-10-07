@@ -126,6 +126,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
         cardMap = findViewById(R.id.cardMap);
         webMap = findViewById(R.id.webMap);
         tvSaldoGalon = findViewById(R.id.tvSaldoGalon);
+        findViewById(R.id.cardSaldoGalon).setOnClickListener(v -> showKoreksiPinjamDialog());
         cardHutang = findViewById(R.id.cardHutang);
         tvHutangSisa = findViewById(R.id.tvHutangSisa);
         tvHutangRiwayat = findViewById(R.id.tvHutangRiwayat);
@@ -432,6 +433,50 @@ public class CustomerDetailActivity extends AppCompatActivity {
                     String note = input.getText() != null ? input.getText().toString() : "";
                     customerDao.updateOrderNote(customerId, note);
                     com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                    loadData();
+                })
+                .show();
+    }
+
+    /**
+     * ✏️ Koreksi "Galon Dipinjam" — cermin web (CustomerController::updatePinjam): owner/admin menyetel
+     * angka baru, disimpan sebagai OFFSET galon_pinjam_adjust di baris ini sehingga total tampil (lintas
+     * salinan grup) = angka baru, dan transaksi berikutnya tetap menambah/mengurangi. Bukan transaksi.
+     */
+    private void showKoreksiPinjamDialog() {
+        if (currentCustomer == null) return;
+        if (!canDeleteCustomer()) {
+            Toast.makeText(this, "Koreksi galon dipinjam hanya untuk admin/owner", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Customer own = customerDao.getById(customerId);
+        if (own == null) return;
+        final int shown = currentCustomer.getSaldoGalon();
+        final int ownAdjust = own.getGalonPinjamAdjust();
+        final android.widget.EditText input = new android.widget.EditText(this);
+        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        input.setText(String.valueOf(shown));
+        input.setSelectAllOnFocus(true);
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        input.setPadding(pad, pad / 2, pad, pad / 2);
+        new AlertDialog.Builder(this)
+                .setTitle("✏️ Koreksi Galon Dipinjam")
+                .setMessage("Setel jumlah galon yang sedang dipinjam pelanggan ini (sekarang: " + shown + ")."
+                        + "\n\nBukan transaksi: omzet & galon terjual tidak berubah. Tersinkron ke semua HP & web.")
+                .setView(input)
+                .setNegativeButton("Batal", null)
+                .setPositiveButton("Simpan", (d, w) -> {
+                    String raw = input.getText() != null ? input.getText().toString().trim() : "";
+                    int target;
+                    try { target = Integer.parseInt(raw); } catch (NumberFormatException e) { target = -1; }
+                    if (target < 0 || target > 100000) {
+                        Toast.makeText(this, "Angka tidak valid", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    if (target == shown) return;
+                    customerDao.updateGalonPinjamAdjust(customerId, ownAdjust + (target - shown));
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                    Toast.makeText(this, "Galon Dipinjam disetel ke " + target, Toast.LENGTH_SHORT).show();
                     loadData();
                 })
                 .show();
@@ -763,6 +808,9 @@ public class CustomerDetailActivity extends AppCompatActivity {
 
         // Satu angka jelas: "Galon Dipinjam" = galon yang masih dipinjam pelanggan (belum kembali).
         tvSaldoGalon.setText(String.valueOf(customer.getSaldoGalon()));
+        // Admin/owner: ketuk kartu untuk koreksi (showKoreksiPinjamDialog) — beri tanda ✏️ supaya terlihat.
+        ((TextView) findViewById(R.id.tvSaldoGalonLabel))
+                .setText(canDeleteCustomer() ? "Galon Dipinjam  ✏️ Koreksi" : "Galon Dipinjam");
 
         renderHutang();
 

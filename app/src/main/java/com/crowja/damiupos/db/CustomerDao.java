@@ -212,6 +212,15 @@ public class CustomerDao {
                 DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
     }
 
+    /** Koreksi manual "Galon Dipinjam" (offset di atas hitungan transaksi) — tersinkron seperti dari web. */
+    public void updateGalonPinjamAdjust(long customerId, int adjust) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_GALON_PINJAM_ADJUST, adjust);
+        dbHelper.syncUpdate(db, DatabaseHelper.TABLE_CUSTOMERS, v,
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(customerId)});
+    }
+
     public long insert(Customer customer) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues values = new ContentValues();
