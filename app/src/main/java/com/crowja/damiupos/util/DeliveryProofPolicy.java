@@ -13,6 +13,9 @@ package com.crowja.damiupos.util;
  *       ikut terkirim ke pelanggan bersama konfirmasi WA-nya.</li>
  *   <li>{@link Reason#RESELLER} — pesanan link reseller (flag server {@code delivery_proof_required}
  *       ATAU penanda {@code [ORDER RESELLER]}); reseller melihat fotonya di halaman pesanannya.</li>
+ *   <li>{@link Reason#DEVICE} — perangkat INI ditandai "📷 Wajib Foto Bukti Selesai" di halaman
+ *       Perangkat dashboard (/api/me {@code delivery_proof_required}); tanpa pengantar seperti
+ *       {@link Reason#BRANCH}.</li>
  *   <li>{@link Reason#BRANCH} — setelan cabang mewajibkan foto untuk SEMUA order (tanpa pengantar,
  *       kamera langsung dibuka seperti sebelumnya).</li>
  * </ol>
@@ -26,16 +29,18 @@ public final class DeliveryProofPolicy {
     private DeliveryProofPolicy() {
     }
 
-    public enum Reason { NONE, CASH_BON, RESELLER, BRANCH }
+    public enum Reason { NONE, CASH_BON, RESELLER, DEVICE, BRANCH }
 
     /**
      * @param branchRequired setelan cabang {@code delivery_proof_required} aktif
+     * @param deviceRequired perangkat ini ditandai wajib foto (halaman Perangkat → /api/me)
      * @param cashBon        catatan order memuat penanda {@code [CASH BON]}
      * @param orderRequired  order ini sendiri mewajibkan foto ({@code Transaction.requiresDeliveryProof})
      */
-    public static Reason reason(boolean branchRequired, boolean cashBon, boolean orderRequired) {
+    public static Reason reason(boolean branchRequired, boolean deviceRequired, boolean cashBon, boolean orderRequired) {
         if (cashBon) return Reason.CASH_BON;
         if (orderRequired) return Reason.RESELLER;
+        if (deviceRequired) return Reason.DEVICE;
         if (branchRequired) return Reason.BRANCH;
         return Reason.NONE;
     }

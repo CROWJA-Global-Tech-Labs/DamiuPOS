@@ -49,6 +49,12 @@
              resolveActivity() selalu null di Android 11+ (package visibility) dan
              aplikasi selalu jatuh ke fallback browser. -->
         <package android:name="com.google.android.apps.maps" />
+        <!-- Kamera sistem (foto bukti Selesai, kendala, pengeluaran, stok): tanpa ini
+             resolveActivity(ACTION_IMAGE_CAPTURE) bisa null di Android 11+ (package visibility),
+             dan HP yang WAJIB foto bukti tak bisa menyelesaikan order sama sekali. -->
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.SEND" />
             <data android:mimeType="image/*" />

@@ -141,6 +141,9 @@ public final class OnlineTasks {
             // badge + notifikasi kedatangan, dibatasi index sektor di intro_wa_zones.
             cfg.setIntroWaDevice(r.optBoolean("is_intro_wa", false));
             cfg.setDeliveryDevice(r.optBoolean("is_delivery", false));
+            // 📷 Wajib Foto Bukti Selesai khusus perangkat ini. Sengaja TANPA r.has(): kunci absen
+            // (server lama/di-rollback) = MATI, bukan "biarkan nilai lama".
+            cfg.setDeviceProofRequired(r.optBoolean("delivery_proof_required", false));
             JSONArray iwz = r.optJSONArray("intro_wa_zones");
             cfg.setIntroWaZones(iwz != null ? iwz.toString() : "");
             // 🧺 Gerbang checkout multi-lokasi: vonis SERVER dari gerbang rollout APK (/api/me checkout_multi_enabled).
@@ -346,6 +349,12 @@ public final class OnlineTasks {
                         7873);
                 break;
             }
+            case "refresh_config":
+                // Admin mengubah setelan perangkat ini di dashboard (mis. 📷 Wajib Foto Bukti
+                // Selesai) → baca ulang /api/me SEKARANG, tak menunggu throttle 15 menit.
+                refreshConfig(ctx, cfg, api);
+                cfg.setConfigCheckAt(System.currentTimeMillis());
+                break;
             case "pull_settings": {
                 // Dashboard "Tarik Pengaturan": upload this phone's shareable settings for review.
                 SyncEngine.Result r = new SyncEngine(ctx).exportSettings();

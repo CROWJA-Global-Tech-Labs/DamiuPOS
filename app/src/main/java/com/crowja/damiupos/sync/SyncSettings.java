@@ -85,6 +85,9 @@ public class SyncSettings {
     private static final String K_INTRO_WA_ZONES = "sync_intro_wa_zones";
     /** Perangkat ini "Pengiriman Terpandu" (dicentang admin di web → /api/me). */
     private static final String K_GUIDED_DELIVERY = "sync_guided_delivery";
+    /** "📷 Wajib Foto Bukti Selesai" khusus perangkat ini (toggle halaman Perangkat → /api/me
+     *  delivery_proof_required). Kunci LOKAL, di-OR dengan setelan cabang di DeliveryProofPolicy. */
+    private static final String K_DEVICE_PROOF_REQUIRED = "sync_device_proof_required";
     /** 🧺 Gerbang checkout multi-lokasi dari /api/me ("checkout_multi_enabled") — kunci LOKAL (bukan
      *  app_settings tersinkron), jadi tak pernah terdorong balik ke server. */
     private static final String K_CHECKOUT_MULTI = "sync_checkout_multi_enabled";
@@ -177,6 +180,8 @@ public class SyncSettings {
 
     public boolean isGuidedDeliveryDevice()        { return "1".equals(settings.get(K_GUIDED_DELIVERY, "0")); }
     public void setGuidedDeliveryDevice(boolean v) { settings.set(K_GUIDED_DELIVERY, v ? "1" : "0"); }
+    public boolean isDeviceProofRequired()         { return "1".equals(settings.get(K_DEVICE_PROOF_REQUIRED, "0")); }
+    public void setDeviceProofRequired(boolean v)  { settings.set(K_DEVICE_PROOF_REQUIRED, v ? "1" : "0"); }
 
     /**
      * 🧺 HP ini boleh MEMBUAT checkout multi-lokasi? Keputusan SERVER lewat /api/me — setelan dashboard
