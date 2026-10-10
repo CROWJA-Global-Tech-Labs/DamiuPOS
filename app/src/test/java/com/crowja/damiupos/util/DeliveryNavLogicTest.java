@@ -18,6 +18,14 @@ import java.util.List;
 /** Navigasi pengiriman + jendela melayang (NavigationPipActivity) — keputusan murni. */
 public class DeliveryNavLogicTest {
 
+    @Test public void pipViewCyclesDetailPhotoMap() {
+        assertEquals(DeliveryNavLogic.PIP_VIEW_PHOTO, DeliveryNavLogic.nextPipView(DeliveryNavLogic.PIP_VIEW_DETAIL));
+        assertEquals(DeliveryNavLogic.PIP_VIEW_MAP, DeliveryNavLogic.nextPipView(DeliveryNavLogic.PIP_VIEW_PHOTO));
+        assertEquals(DeliveryNavLogic.PIP_VIEW_DETAIL, DeliveryNavLogic.nextPipView(DeliveryNavLogic.PIP_VIEW_MAP));
+        assertEquals(DeliveryNavLogic.PIP_VIEW_PHOTO, DeliveryNavLogic.nextPipView(99));   // rusak = Detail → Foto
+        assertEquals(DeliveryNavLogic.PIP_VIEW_DETAIL, DeliveryNavLogic.sanitizePipView(-1));
+    }
+
     private static final StopState P = StopState.PENDING;
     private static final StopState D = StopState.DONE;
     private static final StopState G = StopState.GONE;

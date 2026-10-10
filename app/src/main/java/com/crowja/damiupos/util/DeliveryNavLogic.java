@@ -31,6 +31,33 @@ public final class DeliveryNavLogic {
 
     public static final String MAPS_PACKAGE = "com.google.android.apps.maps";
 
+    /** Tampilan jendela melayang: ringkasan teks, foto lokasi tujuan, peta tujuan. */
+    public static final int PIP_VIEW_DETAIL = 0;
+    public static final int PIP_VIEW_PHOTO = 1;
+    public static final int PIP_VIEW_MAP = 2;
+
+    /** Urutan "Ganti tampilan": Detail → Foto → Peta → Detail. Nilai tak dikenal → Foto (setelah Detail). */
+    public static int nextPipView(int current) {
+        switch (sanitizePipView(current)) {
+            case PIP_VIEW_DETAIL: return PIP_VIEW_PHOTO;
+            case PIP_VIEW_PHOTO: return PIP_VIEW_MAP;
+            default: return PIP_VIEW_DETAIL;
+        }
+    }
+
+    /** Nilai tersimpan → tampilan sah (data lama/rusak = Detail). */
+    public static int sanitizePipView(int v) {
+        return v == PIP_VIEW_PHOTO || v == PIP_VIEW_MAP ? v : PIP_VIEW_DETAIL;
+    }
+
+    public static String pipViewLabel(int v) {
+        switch (sanitizePipView(v)) {
+            case PIP_VIEW_PHOTO: return "📷 Foto lokasi";
+            case PIP_VIEW_MAP: return "🗺 Peta";
+            default: return "📋 Detail";
+        }
+    }
+
     private static final String DIR_BASE = "https://www.google.com/maps/dir/?api=1&travelmode=driving";
 
     // ---------------------------------------------------------------- koordinat & URL rute

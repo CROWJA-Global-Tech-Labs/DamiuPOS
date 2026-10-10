@@ -22,6 +22,8 @@ import android.os.Process;
 import android.provider.Settings;
 import android.util.Rational;
 import android.view.View;
+import android.webkit.WebView;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -32,14 +34,17 @@ import androidx.core.content.ContextCompat;
 import androidx.lifecycle.Lifecycle;
 
 import com.crowja.damiupos.checkout.CheckoutStrukText;
+import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.ProductDao;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.db.TransactionDao;
+import com.crowja.damiupos.model.Customer;
 import com.crowja.damiupos.model.Product;
 import com.crowja.damiupos.model.Transaction;
 import com.crowja.damiupos.model.TransactionItem;
 import com.crowja.damiupos.sync.SyncEngine;
+import com.crowja.damiupos.util.BitmapUtils;
 import com.crowja.damiupos.util.DeliveryNavLogic;
 import com.crowja.damiupos.util.DeliveryNavLogic.DoorMoney;
 import com.crowja.damiupos.util.DeliveryNavLogic.PayKind;
@@ -86,6 +91,9 @@ public class NavigationPipActivity extends AppCompatActivity {
 
     /** Aksi PiP "Buka DAMIU" — siaran ke penerima dinamis milik layar ini (tidak diekspor). */
     private static final String ACTION_OPEN_QUEUE = "com.crowja.damiupos.action.NAV_PIP_OPEN_QUEUE";
+    /** Aksi PiP "Ganti tampilan": Detail → Foto lokasi → Peta (DeliveryNavLogic.nextPipView). */
+    private static final String ACTION_SWITCH_VIEW = "com.crowja.damiupos.action.NAV_PIP_SWITCH_VIEW";
+    private static final String KEY_PIP_VIEW = "pip_view";
 
     private static final String PREFS = "nav_pip";
     private static final String KEY_HINT_SHOWN = "pip_hint_shown";
@@ -135,6 +143,15 @@ public class NavigationPipActivity extends AppCompatActivity {
     private TextView tvPipStop, tvPipName, tvPipGalon, tvPipPay;
     private TextView tvFullStop, tvFullName, tvFullLoc, tvFullGalon, tvFullProducts, tvFullPay, tvFullPayHint;
     private TextView tvFullNext, tvFullNoGeo, tvPipHint;
+    private View pipMedia;
+    private ImageView ivPipPhoto;
+    private WebView webPipMap;
+    private TextView tvPipMediaEmpty, tvPipMediaLabel, btnGantiTampilan;
+    /** Tampilan jendela melayang yang dipilih kurir (diingat antar-navigasi). */
+    private int pipView = DeliveryNavLogic.PIP_VIEW_DETAIL;
+    /** Sumber foto yang sedang tampil / kunci peta yang sedang termuat — hindari muat ulang tiap 30 dtk. */
+    private String shownPhotoSrc, mapKey;
+    private String mediaLabel = "";
 
     private final Runnable refreshTick = new Runnable() {
         @Override
@@ -158,6 +175,8 @@ public class NavigationPipActivity extends AppCompatActivity {
             String action = intent != null ? intent.getAction() : null;
             if (ACTION_OPEN_QUEUE.equals(action)) {
                 openQueueAndClose();
+            } else if (ACTION_SWITCH_VIEW.equals(action)) {
+                cycleView();
             } else if (SyncEngine.ACTION_SYNCED.equals(action)) {
                 refresh();
             }
@@ -359,6 +378,7 @@ public class NavigationPipActivity extends AppCompatActivity {
 
         IntentFilter f = new IntentFilter();
         f.addAction(ACTION_OPEN_QUEUE);
+        f.addAction(ACTION_SWITCH_VIEW);
         f.addAction(SyncEngine.ACTION_SYNCED);   // sinkron menarik perubahan (mis. Selesai dari web)
         ContextCompat.registerReceiver(this, receiver, f, ContextCompat.RECEIVER_NOT_EXPORTED);
 
@@ -451,6 +471,12 @@ public class NavigationPipActivity extends AppCompatActivity {
         } catch (Exception ignored) {
         }
         if (io != null) io.shutdownNow();
+        if (webPipMap != null) {
+            try {
+                webPipMap.destroy();
+            } catch (Exception ignored) {
+            }
+        }
         super.onDestroy();
     }
 
@@ -552,9 +578,21 @@ public class NavigationPipActivity extends AppCompatActivity {
         return b.build();
     }
 
-    /** Aksi di menu jendela melayang: "Buka DAMIU" → antrean di depan + jendela ini ditutup. */
+    /**
+     * Aksi di menu jendela melayang: "Ganti tampilan" (Detail → Foto lokasi → Peta) dan "Buka DAMIU"
+     * → antrean di depan + jendela ini ditutup. Isi jendela melayang tak bisa diketuk (sentuhan
+     * hanya memunculkan menu ini), jadi pergantian tampilan WAJIB lewat aksi.
+     */
     private List<RemoteAction> pipActions() {
         List<RemoteAction> out = new ArrayList<>();
+        try {
+            Intent sw = new Intent(ACTION_SWITCH_VIEW).setPackage(getPackageName());
+            PendingIntent spi = PendingIntent.getBroadcast(this, 7802, sw,
+                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            out.add(new RemoteAction(Icon.createWithResource(this, R.drawable.ic_pip_switch_view),
+                    "Ganti tampilan", "Ganti tampilan: detail, foto lokasi, peta", spi));
+        } catch (Exception ignored) {
+        }
         try {
             Intent i = new Intent(ACTION_OPEN_QUEUE).setPackage(getPackageName());
             PendingIntent pi = PendingIntent.getBroadcast(this, 7801, i,
@@ -666,6 +704,10 @@ public class NavigationPipActivity extends AppCompatActivity {
         String debtElsewhere = "";
         /** Pengingat tagih leg checkout ("" untuk order biasa) — sama dgn popup antrean. */
         String legHint = "";
+        /** Foto lokasi tujuan perhentian aktif: URL server ATAU path lokal (null = tak ada). */
+        String photoUrl, photoLocal;
+        /** Titik perhentian tersisa (untuk peta), termasuk yang aktif. */
+        List<double[]> stops = new ArrayList<>();
     }
 
     private void refresh() {
@@ -763,6 +805,7 @@ public class NavigationPipActivity extends AppCompatActivity {
             }
         }
         s.pendingCount = pts.size();
+        s.stops = pts;
         s.routeUrl = DeliveryNavLogic.buildDirUrl(pts, true);
 
         if (!singleMode) {
@@ -774,6 +817,7 @@ public class NavigationPipActivity extends AppCompatActivity {
         if (s.active != null) {
             s.products = productLine(db, s.active);
             loadDoorMoney(db, s.active, s);
+            resolvePhoto(db, s.active, s);
         }
         return s;
     }
@@ -791,6 +835,41 @@ public class NavigationPipActivity extends AppCompatActivity {
             s.debtElsewhere = CheckoutStrukText.oldDebtElsewhereLine(pd.door, DeliveryNavLogic.rupiah(pd.amount));
         }
         s.legHint = DeliveryQueueActivity.checkoutCollectHint(t);
+    }
+
+    /**
+     * Foto lokasi TUJUAN — cermin Preview antrean (showQueuePreview): foto lokasi yang namanya cocok
+     * dengan tujuan order menang, lalu foto rumah pelanggan. Tujuan reseller: tanpa cadangan (foto
+     * rumah afiliasi bukan tujuannya).
+     */
+    private static void resolvePhoto(DatabaseHelper db, Transaction t, Snapshot s) {
+        if (t.isResellerDestination() || t.getCustomerId() <= 0) return;
+        Customer c = new CustomerDao(db).getByIdMerged(t.getCustomerId());
+        if (c == null) return;
+        String dn = clean(t.getDeliveryDestName());
+        if (!dn.isEmpty() && c.getLocations() != null) {
+            for (Customer.Location l : c.getLocations()) {
+                if (l == null || !dn.equalsIgnoreCase(clean(l.name))) continue;
+                String p = clean(l.photo);
+                if (p.isEmpty() && l.photos != null && !l.photos.isEmpty()) p = clean(l.photos.get(0));
+                if (p.startsWith("http")) {
+                    s.photoUrl = p;
+                    return;
+                }
+                if (!p.isEmpty() && new java.io.File(p).exists()) {
+                    s.photoLocal = p;
+                    return;
+                }
+                break;
+            }
+        }
+        String lp = clean(c.getPhotoPath());
+        if (!lp.isEmpty() && new java.io.File(lp).exists()) {
+            s.photoLocal = lp;
+            return;
+        }
+        String u = clean(c.getPhotoUrl());
+        if (u.startsWith("http")) s.photoUrl = u;
     }
 
     /** "MIN ×2 · RO ×1" — slug produk (cermin kapsul kartu antrean), cadangan nama dipotong. */
@@ -855,10 +934,33 @@ public class NavigationPipActivity extends AppCompatActivity {
         findViewById(R.id.btnKembaliAntrian).setOnClickListener(v -> openQueueAndClose());
         findViewById(R.id.btnPipSettings).setOnClickListener(v -> openPipSettings());
         tvPipName.setText("Memuat…");
+        pipMedia = findViewById(R.id.pipMedia);
+        ivPipPhoto = findViewById(R.id.ivPipPhoto);
+        webPipMap = findViewById(R.id.webPipMap);
+        tvPipMediaEmpty = findViewById(R.id.tvPipMediaEmpty);
+        tvPipMediaLabel = findViewById(R.id.tvPipMediaLabel);
+        btnGantiTampilan = findViewById(R.id.btnGantiTampilan);
+        btnGantiTampilan.setOnClickListener(v -> cycleView());
+        try {
+            pipView = DeliveryNavLogic.sanitizePipView(
+                    getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_PIP_VIEW, 0));
+        } catch (Exception ignored) {
+        }
+        try {
+            android.webkit.WebSettings ws = webPipMap.getSettings();
+            ws.setJavaScriptEnabled(true);
+            ws.setDomStorageEnabled(true);
+            ws.setUserAgentString(MapTiles.userAgent());
+        } catch (Exception ignored) {
+        }
     }
 
     private void applyMode(boolean inPip) {
-        pipCompact.setVisibility(inPip ? View.VISIBLE : View.GONE);
+        boolean detail = pipView == DeliveryNavLogic.PIP_VIEW_DETAIL;
+        pipCompact.setVisibility(inPip && detail ? View.VISIBLE : View.GONE);
+        pipMedia.setVisibility(inPip && !detail ? View.VISIBLE : View.GONE);
+        btnGantiTampilan.setText("🔄 Tampilan melayang: " + DeliveryNavLogic.pipViewLabel(pipView));
+        renderMedia();
         fullRoot.setVisibility(inPip ? View.GONE : View.VISIBLE);
         boolean showHint = !inPip && (pipFailed || !isPipUsable(this));
         pipHintCard.setVisibility(showHint ? View.VISIBLE : View.GONE);
@@ -906,6 +1008,8 @@ public class NavigationPipActivity extends AppCompatActivity {
             tvFullNext.setVisibility(View.GONE);
             tvFullNoGeo.setVisibility(View.GONE);
             btnLanjut.setVisibility(View.GONE);
+            mediaLabel = head;
+            renderMedia();
             return;
         }
         btnLanjut.setVisibility(View.VISIBLE);
@@ -935,6 +1039,8 @@ public class NavigationPipActivity extends AppCompatActivity {
         tvPipGalon.setText(!s.products.isEmpty() && galonWithProducts.length() <= 24 ? galonWithProducts : galon);
         tvPipPay.setText(pay);
         tvPipPay.setTextColor(pipPayColor(shown));
+        mediaLabel = name + " · " + DeliveryNavLogic.payLine(kind, money, t.getPaymentMethodLabel());
+        renderMedia();
 
         // ---- layar penuh ----
         tvFullStop.setText(single ? "🧭 Navigasi ke pelanggan" : "Perhentian " + s.k + " dari " + s.n);
@@ -978,6 +1084,143 @@ public class NavigationPipActivity extends AppCompatActivity {
             tvFullNoGeo.setVisibility(View.VISIBLE);
         } else {
             tvFullNoGeo.setVisibility(View.GONE);
+        }
+    }
+
+    // =====================================================================================
+    // Tampilan melayang Foto lokasi / Peta
+    // =====================================================================================
+
+    /** "Ganti tampilan" (aksi PiP / tombol layar penuh): Detail → Foto lokasi → Peta, diingat. */
+    private void cycleView() {
+        pipView = DeliveryNavLogic.nextPipView(pipView);
+        try {
+            getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY_PIP_VIEW, pipView).apply();
+        } catch (Exception ignored) {
+        }
+        boolean inPip;
+        try {
+            inPip = isInPictureInPictureMode();
+        } catch (RuntimeException e) {
+            inPip = false;
+        }
+        applyMode(inPip);
+        if (!inPip) {
+            Toast.makeText(this, "Jendela melayang: " + DeliveryNavLogic.pipViewLabel(pipView), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** Isi panel Foto/Peta dari snapshot terakhir; diam bila tampilan Detail / belum termuat. */
+    private void renderMedia() {
+        if (pipMedia == null || pipView == DeliveryNavLogic.PIP_VIEW_DETAIL) return;
+        Snapshot s = last;
+        Transaction t = s != null ? s.active : null;
+        tvPipMediaLabel.setText(mediaLabel);
+        tvPipMediaLabel.setVisibility(mediaLabel.isEmpty() ? View.GONE : View.VISIBLE);
+        if (pipView == DeliveryNavLogic.PIP_VIEW_PHOTO) {
+            webPipMap.setVisibility(View.GONE);
+            String src = s == null ? null : (s.photoUrl != null ? s.photoUrl : s.photoLocal);
+            if (t == null || src == null) {
+                shownPhotoSrc = null;
+                ivPipPhoto.setImageDrawable(null);
+                ivPipPhoto.setVisibility(View.GONE);
+                tvPipMediaEmpty.setText(s == null ? "Memuat…" : t == null ? "" : "📷 Belum ada foto lokasi");
+                tvPipMediaEmpty.setVisibility(View.VISIBLE);
+                return;
+            }
+            tvPipMediaEmpty.setVisibility(View.GONE);
+            ivPipPhoto.setVisibility(View.VISIBLE);
+            if (!src.equals(shownPhotoSrc)) {
+                shownPhotoSrc = src;
+                if (src.startsWith("http")) {
+                    BitmapUtils.loadIntoView(ivPipPhoto, src, "navpip_" + Integer.toHexString(src.hashCode()));
+                } else {
+                    ivPipPhoto.setImageBitmap(BitmapUtils.decodeSampled(src, 640, 640));
+                }
+            }
+            return;
+        }
+        // ---- Peta ----
+        ivPipPhoto.setVisibility(View.GONE);
+        if (t == null || !DeliveryPlanner.hasGeo(t)) {
+            webPipMap.setVisibility(View.GONE);
+            tvPipMediaEmpty.setText(s == null ? "Memuat…" : t == null ? "" : "🗺 Titik peta belum ada");
+            tvPipMediaEmpty.setVisibility(View.VISIBLE);
+            return;
+        }
+        tvPipMediaEmpty.setVisibility(View.GONE);
+        webPipMap.setVisibility(View.VISIBLE);
+        double lat = DeliveryPlanner.lat(t), lng = DeliveryPlanner.lng(t);
+        StringBuilder stops = new StringBuilder();
+        for (double[] p : s.stops) {
+            if (p[0] == lat && p[1] == lng) continue;
+            if (stops.length() > 0) stops.append(',');
+            stops.append('[').append(p[0]).append(',').append(p[1]).append(']');
+        }
+        double[] me = lastKnownPos(lat, lng);
+        String key = lat + "," + lng + "|" + stops;
+        if (!key.equals(mapKey)) {
+            mapKey = key;
+            webPipMap.loadDataWithBaseURL("https://unpkg.com", mapHtml(lat, lng, stops.toString(), me),
+                    "text/html", "utf-8", null);
+        } else if (me != null) {
+            webPipMap.evaluateJavascript("window.setMe&&setMe(" + me[0] + "," + me[1] + ")", null);
+        }
+    }
+
+    /** Leaflet statis: tujuan (merah), perhentian lain (abu), posisi kurir (biru) — tanpa interaksi. */
+    private static String mapHtml(double lat, double lng, String stops, double[] me) {
+        return "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+                + "<meta name='viewport' content='width=device-width, initial-scale=1.0, user-scalable=no'>"
+                + "<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css' />"
+                + "<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>"
+                + "<style>html,body,#map{height:100%;margin:0;padding:0;background:#e2e8f0;}"
+                + ".leaflet-control-attribution{font-size:6px;}" + MapTiles.BRIGHT_TILE_CSS + "</style>"
+                + "</head><body><div id='map'></div><script>"
+                + "var map=L.map('map',{zoomControl:false,dragging:false,scrollWheelZoom:false,"
+                + "doubleClickZoom:false,touchZoom:false,boxZoom:false,keyboard:false});"
+                + "L.tileLayer('" + MapTiles.LEAFLET_URL + "',{maxZoom:19,attribution:'" + MapTiles.ATTRIBUTION + "'}).addTo(map);"
+                + "var dest=[" + lat + "," + lng + "];"
+                + "[" + stops + "].forEach(function(p){L.circleMarker(p,{radius:5,color:'#fff',weight:1,"
+                + "fillColor:'#64748b',fillOpacity:1}).addTo(map);});"
+                + "L.circleMarker(dest,{radius:9,color:'#fff',weight:2,fillColor:'#dc2626',fillOpacity:1}).addTo(map);"
+                + "var me=null;"
+                + "function fit(){if(me){map.fitBounds(L.latLngBounds([dest,me.getLatLng()]),{padding:[16,16],maxZoom:17});}"
+                + "else{map.setView(dest,16);}}"
+                + "function setMe(a,b){if(!me){me=L.circleMarker([a,b],{radius:7,color:'#fff',weight:2,"
+                + "fillColor:'#2563eb',fillOpacity:1}).addTo(map);}else{me.setLatLng([a,b]);}fit();}"
+                + "fit();" + (me != null ? "setMe(" + me[0] + "," + me[1] + ");" : "")
+                + "window.addEventListener('resize',function(){map.invalidateSize();fit();});"
+                + "</script></body></html>";
+    }
+
+    /**
+     * Posisi kurir terakhir yang diketahui sistem (Maps sedang bernavigasi → segar). null bila tak ada
+     * izin, terlalu basi (> 10 mnt), atau terlalu jauh (> 50 km) dari tujuan sehingga peta jadi kecil.
+     */
+    private double[] lastKnownPos(double destLat, double destLng) {
+        try {
+            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION)
+                    != PackageManager.PERMISSION_GRANTED
+                    && ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                    != PackageManager.PERMISSION_GRANTED) {
+                return null;
+            }
+            android.location.LocationManager lm =
+                    (android.location.LocationManager) getSystemService(Context.LOCATION_SERVICE);
+            if (lm == null) return null;
+            android.location.Location best = null;
+            for (String p : lm.getProviders(true)) {
+                android.location.Location l = lm.getLastKnownLocation(p);
+                if (l != null && (best == null || l.getTime() > best.getTime())) best = l;
+            }
+            if (best == null || System.currentTimeMillis() - best.getTime() > 10 * 60 * 1000L) return null;
+            float[] d = new float[1];
+            android.location.Location.distanceBetween(best.getLatitude(), best.getLongitude(), destLat, destLng, d);
+            if (d[0] > 50_000f) return null;
+            return new double[]{best.getLatitude(), best.getLongitude()};
+        } catch (Exception e) {
+            return null;
         }
     }
 
