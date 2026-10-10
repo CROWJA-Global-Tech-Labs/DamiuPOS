@@ -85,6 +85,60 @@
             app:autoSizeTextType="uniform" />
     </LinearLayout>
 
+    <!-- Tampilan melayang FOTO LOKASI / PETA (aksi PiP "Ganti tampilan" atau tombol di layar penuh).
+         Satu baris ringkas di bawah tetap menyebut nama + tagihan supaya kurir tak kehilangan
+         konteks saat melihat foto/peta. -->
+    <FrameLayout
+        android:id="@+id/pipMedia"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#0D47A1"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/ivPipPhoto"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="Foto lokasi"
+            android:scaleType="centerCrop" />
+
+        <WebView
+            android:id="@+id/webPipMap"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tvPipMediaEmpty"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:padding="8dp"
+            android:textColor="#BFDBFE"
+            android:textStyle="bold"
+            android:visibility="gone"
+            app:autoSizeMaxTextSize="22sp"
+            app:autoSizeMinTextSize="8sp"
+            app:autoSizeStepGranularity="1sp"
+            app:autoSizeTextType="uniform" />
+
+        <TextView
+            android:id="@+id/tvPipMediaLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:background="#CC0D47A1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:paddingStart="6dp"
+            android:paddingTop="2dp"
+            android:paddingEnd="6dp"
+            android:paddingBottom="2dp"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+    </FrameLayout>
+
     <LinearLayout
         android:id="@+id/fullRoot"
         android:layout_width="match_parent"
@@ -258,6 +312,15 @@
                 android:text="🧭 Lanjut Navigasi"
                 android:textSize="18sp"
                 app:backgroundTint="@color/primary" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnGantiTampilan"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="6dp"
+                android:textColor="@color/primary"
+                android:textSize="15sp" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnKembaliAntrian"
