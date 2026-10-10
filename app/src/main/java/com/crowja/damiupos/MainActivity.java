@@ -103,6 +103,12 @@ public class MainActivity extends AppCompatActivity {
     private final BroadcastReceiver syncedReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
+            // 🧭 Guided Delivery baru diaktifkan dari dashboard saat beranda terbuka → langsung kunci.
+            if (!isFinishing() && new com.crowja.damiupos.sync.SyncSettings(settingsDao).isGuidedDeliveryDevice()) {
+                startActivity(new Intent(MainActivity.this, DeliveryQueueActivity.class));
+                finish();
+                return;
+            }
             refreshDashboard();
             // Sinkron baru saja membawa pesanan untuk perangkat ini dengan pelanggan belum
             // lengkap → tampilkan popup "Lengkapi Data Pelanggan" (jika ada yang antre).

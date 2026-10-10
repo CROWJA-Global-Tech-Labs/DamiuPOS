@@ -317,6 +317,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    };
    private final BroadcastReceiver syncedReceiver = new BroadcastReceiver() {
       public void onReceive(Context context, Intent intent) {
+         if (DeliveryQueueActivity.this.applyGuidedToggle()) return;
          if (!DeliveryQueueActivity.this.selectionMode) {
             DeliveryQueueActivity.this.loadData();
          }
@@ -1362,8 +1363,25 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
    }
 
+   /**
+    * Toggle 🧭 Guided Delivery berubah dari dashboard SAAT layar ini terbuka (guidedMode cuma dibaca
+    * di onCreate). Aktif → recreate() supaya masuk mode terpandu; dimatikan → kembali ke beranda
+    * (MainActivity sudah di-finish saat mengalihkan ke sini). true = layar ini sedang ditutup.
+    */
+   private boolean applyGuidedToggle() {
+      if (this.isFinishing() || this.syncCfg().isGuidedDeliveryDevice() == this.guidedMode) return false;
+      if (this.guidedMode) {
+         this.startActivity(new Intent(this, MainActivity.class));
+         this.finish();
+      } else {
+         this.recreate();
+      }
+      return true;
+   }
+
    protected void onResume() {
       super.onResume();
+      if (this.applyGuidedToggle()) return;
       SettingsDao lateCfg = new SettingsDao(DatabaseHelper.getInstance(this));
       lateMs = (long)lateCfg.getDeliveryMaxAgeMinutes() * 60000L;
       this.revokeLateCredit = lateCfg.isRevokeCreditLateEnabled();
@@ -1376,7 +1394,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (this.guidedMode) {
          this.tick.postDelayed(this.guidedRitRefillTicker, 30000L);
          VersionUpdater.maybePrompt(this);
-         VersionUpdater.maybePromptBlocked(this);
+         // Layar ini MENGGANTIKAN beranda di mode terpandu: jalankan juga kewajiban beranda (gerbang
+         // versi, sinkron, service polling ±60 dtk) — tanpanya perintah dashboard, termasuk
+         // mematikan Guided Delivery lagi, tak pernah sampai.
+         com.crowja.damiupos.util.ForegroundDuties.onResume(this);
       }
       IntentFilter f = new IntentFilter("com.crowja.damiupos.action.SYNCED");
       if (VERSION.SDK_INT >= 33) {

@@ -144,6 +144,15 @@ public final class OnlineTasks {
             // 📷 Wajib Foto Bukti Selesai khusus perangkat ini. Sengaja TANPA r.has(): kunci absen
             // (server lama/di-rollback) = MATI, bukan "biarkan nilai lama".
             cfg.setDeviceProofRequired(r.optBoolean("delivery_proof_required", false));
+            // 🧭 Guided Delivery (toggle di halaman Perangkat). Sama: kunci absen = MATI. Kalau
+            // berubah, kabari layar yang terbuka (ACTION_SYNCED) supaya langsung masuk/keluar mode.
+            boolean guided = r.optBoolean("guided_delivery", false);
+            if (guided != cfg.isGuidedDeliveryDevice()) {
+                cfg.setGuidedDeliveryDevice(guided);
+                try {
+                    ctx.sendBroadcast(new android.content.Intent(SyncEngine.ACTION_SYNCED).setPackage(ctx.getPackageName()));
+                } catch (Throwable ignored) {}
+            }
             JSONArray iwz = r.optJSONArray("intro_wa_zones");
             cfg.setIntroWaZones(iwz != null ? iwz.toString() : "");
             // 🧺 Gerbang checkout multi-lokasi: vonis SERVER dari gerbang rollout APK (/api/me checkout_multi_enabled).
