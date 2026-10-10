@@ -5858,7 +5858,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       boolean orderRequired = (t != null && t.requiresDeliveryProof())
             || (fresh != null && fresh.requiresDeliveryProof());
       SettingsDao sd = new SettingsDao(DatabaseHelper.getInstance(this));
-      return DeliveryProofPolicy.reason(sd.isDeliveryProofRequired(), cashBon, orderRequired);
+      // Perangkat INI ditandai "📷 Wajib Foto Bukti Selesai" di dashboard (/api/me) — di atas
+      // setelan cabang yang berlaku untuk semua HP.
+      return DeliveryProofPolicy.reason(sd.isDeliveryProofRequired(), this.syncCfg().isDeviceProofRequired(),
+            cashBon, orderRequired);
    }
 
    /**

@@ -589,6 +589,25 @@ public class TransactionActivity extends AppCompatActivity {
             android.widget.PopupMenu m = new android.widget.PopupMenu(this, v);
             m.getMenu().add(0, 1, 0, "✅ Simpan & Selesaikan");
             m.setOnMenuItemClickListener(item -> {
+                // Foto bukti WAJIB (perangkat ini ditandai di dashboard, atau setelan cabang) →
+                // "Simpan & Selesaikan" melompati kamera, jadi tak boleh dipakai: simpan biasa, lalu
+                // selesaikan dari Antrian Delivery (gerbang fotonya ada di sana).
+                if (new SyncSettings(settingsDao).isDeviceProofRequired() || settingsDao.isDeliveryProofRequired()) {
+                    new AlertDialog.Builder(this)
+                            .setTitle("📷 Wajib Foto Bukti")
+                            .setMessage("Perangkat ini wajib memotret bukti pengiriman setiap menyelesaikan "
+                                    + "pesanan, jadi \"Simpan & Selesaikan\" tidak tersedia.\n\n"
+                                    + "Simpan pesanannya, lalu tandai Selesai dari Antrian Delivery — "
+                                    + "kamera terbuka untuk foto bukti.")
+                            .setPositiveButton("Simpan", (d, w) -> {
+                                tertundaRequested = false;
+                                completeAfterSave = false;
+                                trySave();
+                            })
+                            .setNegativeButton("Batal", null)
+                            .show();
+                    return true;
+                }
                 tertundaRequested = false;
                 completeAfterSave = true;
                 trySave();
