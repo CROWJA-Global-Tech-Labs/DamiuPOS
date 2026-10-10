@@ -164,6 +164,10 @@ public class SyncSettings {
     public void setWilayahZones(String v) { settings.set(K_WILAYAH_ZONES, v != null ? v : ""); }
 
     /** Perangkat ini "Petugas WA Perkenalan"? (dicentang admin di web → /api/me). */
+    /** Perangkat dicentang "Delivery" di web (/api/me is_delivery). Default MATI (server lama). */
+    public boolean isDeliveryDevice()      { return "1".equals(settings.get("sync_is_delivery_device", "0")); }
+    public void setDeliveryDevice(boolean v) { settings.set("sync_is_delivery_device", v ? "1" : "0"); }
+
     public boolean isIntroWaDevice()      { return "1".equals(settings.get(K_INTRO_WA, "0")); }
     public void setIntroWaDevice(boolean v) { settings.set(K_INTRO_WA, v ? "1" : "0"); }
 
