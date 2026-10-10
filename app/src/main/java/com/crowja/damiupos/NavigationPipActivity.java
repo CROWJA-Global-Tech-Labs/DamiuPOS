@@ -941,6 +941,7 @@ public class NavigationPipActivity extends AppCompatActivity {
         tvPipMediaLabel = findViewById(R.id.tvPipMediaLabel);
         btnGantiTampilan = findViewById(R.id.btnGantiTampilan);
         btnGantiTampilan.setOnClickListener(v -> cycleView());
+        pipMedia.setOnClickListener(v -> cycleView());   // hanya aktif di layar terbagi (applyMode)
         try {
             pipView = DeliveryNavLogic.sanitizePipView(
                     getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_PIP_VIEW, 0));
@@ -957,11 +958,16 @@ public class NavigationPipActivity extends AppCompatActivity {
 
     private void applyMode(boolean inPip) {
         boolean detail = pipView == DeliveryNavLogic.PIP_VIEW_DETAIL;
+        // Layar terbagi (split screen di samping Maps): tampilan Foto/Peta juga berlaku di sini —
+        // panel media mengisi bagiannya; ketuk panel = ganti tampilan (sampai kembali ke Detail).
+        boolean split = !inPip && isSplitScreen();
+        boolean media = !detail && (inPip || split);
         pipCompact.setVisibility(inPip && detail ? View.VISIBLE : View.GONE);
-        pipMedia.setVisibility(inPip && !detail ? View.VISIBLE : View.GONE);
-        btnGantiTampilan.setText("🔄 Tampilan melayang: " + DeliveryNavLogic.pipViewLabel(pipView));
+        pipMedia.setVisibility(media ? View.VISIBLE : View.GONE);
+        pipMedia.setClickable(split);
+        btnGantiTampilan.setText("🔄 Tampilan: " + DeliveryNavLogic.pipViewLabel(pipView));
         renderMedia();
-        fullRoot.setVisibility(inPip ? View.GONE : View.VISIBLE);
+        fullRoot.setVisibility(inPip || media ? View.GONE : View.VISIBLE);
         boolean showHint = !inPip && (pipFailed || !isPipUsable(this));
         pipHintCard.setVisibility(showHint ? View.VISIBLE : View.GONE);
         if (showHint) {
@@ -1091,6 +1097,26 @@ public class NavigationPipActivity extends AppCompatActivity {
     // Tampilan melayang Foto lokasi / Peta
     // =====================================================================================
 
+    private boolean isSplitScreen() {
+        try {
+            return isInMultiWindowMode();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    @Override
+    public void onMultiWindowModeChanged(boolean inMultiWindow, @NonNull Configuration newConfig) {
+        super.onMultiWindowModeChanged(inMultiWindow, newConfig);
+        boolean inPip;
+        try {
+            inPip = isInPictureInPictureMode();
+        } catch (RuntimeException e) {
+            inPip = false;
+        }
+        applyMode(inPip);
+    }
+
     /** "Ganti tampilan" (aksi PiP / tombol layar penuh): Detail → Foto lokasi → Peta, diingat. */
     private void cycleView() {
         pipView = DeliveryNavLogic.nextPipView(pipView);
@@ -1105,7 +1131,7 @@ public class NavigationPipActivity extends AppCompatActivity {
             inPip = false;
         }
         applyMode(inPip);
-        if (!inPip) {
+        if (!inPip && !isSplitScreen()) {
             Toast.makeText(this, "Jendela melayang: " + DeliveryNavLogic.pipViewLabel(pipView), Toast.LENGTH_SHORT).show();
         }
     }
@@ -1115,7 +1141,13 @@ public class NavigationPipActivity extends AppCompatActivity {
         if (pipMedia == null || pipView == DeliveryNavLogic.PIP_VIEW_DETAIL) return;
         Snapshot s = last;
         Transaction t = s != null ? s.active : null;
-        tvPipMediaLabel.setText(mediaLabel);
+        boolean split;
+        try {
+            split = !isInPictureInPictureMode() && isSplitScreen();
+        } catch (RuntimeException e) {
+            split = false;
+        }
+        tvPipMediaLabel.setText(split ? mediaLabel + "  ·  ketuk: ganti tampilan" : mediaLabel);
         tvPipMediaLabel.setVisibility(mediaLabel.isEmpty() ? View.GONE : View.VISIBLE);
         if (pipView == DeliveryNavLogic.PIP_VIEW_PHOTO) {
             webPipMap.setVisibility(View.GONE);
