@@ -1,0 +1,18 @@
+{
+    "name": "resume_routed",
+    "method": "POST",
+    "path": "/api/delivery/tertunda/resume",
+    "http": 200,
+    "request": {
+        "transaction_uuid": "55555555-0000-4000-8000-000000000016"
+    },
+    "body": {
+        "ok": true,
+        "message": "Order dilanjutkan ke antrian HP RAFI.",
+        "routed_device": {
+            "uuid": "55555555-0000-4000-8000-000000000003",
+            "name": "HP RAFI"
+        },
+        "open_dispatch": false
+    }
+}

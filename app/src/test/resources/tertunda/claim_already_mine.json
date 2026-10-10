@@ -1,0 +1,14 @@
+{
+    "name": "claim_already_mine",
+    "method": "POST",
+    "path": "/api/delivery/claim",
+    "http": 422,
+    "request": {
+        "transaction_uuid": "55555555-0000-4000-8000-000000000009",
+        "expected_device_uuid": "55555555-0000-4000-8000-000000000002"
+    },
+    "body": {
+        "ok": false,
+        "message": "Order ini sudah ada di antrian perangkat Anda."
+    }
+}

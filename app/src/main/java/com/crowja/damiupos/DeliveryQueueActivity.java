@@ -102,6 +102,7 @@ import com.crowja.damiupos.util.BitmapUtils;
 import com.crowja.damiupos.util.CompassArrowView;
 import com.crowja.damiupos.util.DeliveryNavLogic;
 import com.crowja.damiupos.util.DeliveryProofPolicy;
+import com.crowja.damiupos.util.TertundaRows;
 import com.crowja.damiupos.util.Ts;
 import com.crowja.damiupos.wa.WaContactEnsure;
 import com.crowja.damiupos.wa.WaShare;
@@ -2034,6 +2035,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       JSONObject co = o.optJSONObject("checkout");
       int seq = co != null ? co.optInt("seq", 0) : o.optInt("checkout_seq", 0);
       int size = co != null ? co.optInt("size", 0) : o.optInt("checkout_size", 0);
+      String b = CheckoutStrukText.legBadge(seq, size);
+      return b.isEmpty() ? "" : " · " + b;
+   }
+
+   /** Versi nilai mentah — baris server Antrean Tertunda yang sudah diurai util.TertundaRows. */
+   static String checkoutLegSuffix(int seq, int size) {
       String b = CheckoutStrukText.legBadge(seq, size);
       return b.isEmpty() ? "" : " · " + b;
    }
@@ -6550,10 +6557,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.startActivity(i);
    }
 
-   /** "⏸ Antrean Tertunda" — daftar semua order TERTUNDA (bukan cuma milik perangkat ini secara
-    *  bawaan getDeliveryQueue, tapi seluruh baris lokal berstatus TERTUNDA), tiap kartu bisa dibuka
-    *  detail/preview-nya sama seperti order biasa (showOrderDetail), dijadwalkan ulang, atau di-Resume
-    *  kembali ke antrian aktif SEKARANG (di luar jadwal lanjut otomatisnya). */
+   /** "⏸ Antrean Tertunda" — SEMUA order TERTUNDA se-cabang. Pull transaksi per-perangkat, jadi DB
+    *  lokal hanya memegang sebagian (tunda milik HP lain tak pernah tertarik ke sini — dulu layar ini
+    *  menampilkan 1 order sementara web 13): saat terhubung, daftar diambil dari server
+    *  ({@code GET /api/delivery/tertunda}, himpunan sama dengan web) lalu digabung dengan baris lokal
+    *  (aturan di util.TertundaRows); gagal → baris lokal saja + banner luring, tak pernah dikosongkan.
+    *  Tiap kartu bisa dibuka detailnya, dijadwalkan ulang, dilanjutkan sekarang, atau (perangkat
+    *  delivery) dilanjutkan &amp; diambil ke HP ini. */
    private void showTertundaQueueDialog() {
       if (this.isFinishing() || this.isDestroyed()) return;
       final Dialog dialog = new Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
@@ -6592,34 +6602,134 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       dialog.setContentView(root);
       dialog.show();
-      this.reloadTertundaQueue(list, dialog);
+      this.reloadTertundaQueue(list, title, dialog);
    }
 
-   private void reloadTertundaQueue(LinearLayout list, Dialog dialog) {
-      new Thread(() -> {
-         List<Transaction> rows = (new TransactionDao(DatabaseHelper.getInstance(this))).getTertundaQueue();
-         this.runOnUiThread(() -> {
-            if (this.isFinishing() || this.isDestroyed() || !dialog.isShowing()) return;
-            list.removeAllViews();
-            if (rows.isEmpty()) {
-               TextView empty = new TextView(this);
-               empty.setText("Tidak ada pesanan tertunda saat ini");
-               empty.setTextColor(-7035976);
-               empty.setTextSize(14f);
-               empty.setGravity(android.view.Gravity.CENTER);
-               empty.setPadding(0, this.dp(32f), 0, this.dp(32f));
-               list.addView(empty);
-               return;
-            }
+   /** Sumber daftar Antrean Tertunda yang sedang tampil (menentukan banner). */
+   private static final int TERTUNDA_SRC_LOCAL = 0;     // perangkat tak terhubung server: lokal = semuanya
+   private static final int TERTUNDA_SRC_LOADING = 1;   // baris lokal dulu, daftar server sedang dimuat
+   private static final int TERTUNDA_SRC_SERVER = 2;    // gabungan server (otoritatif) + lokal belum terdorong
+   private static final int TERTUNDA_SRC_OFFLINE = 3;   // server gagal → lokal saja
 
-            for (Transaction t : rows) {
-               list.addView(this.buildTertundaRow(t, list, dialog));
+   /** Naik tiap muat ulang Antrean Tertunda — jawaban dari muat ulang yang sudah tersusul (mis. fetch
+    *  lambat sebelum aksi) dibuang, supaya daftar lama tak menimpa yang baru. */
+   private int tertundaReloadGen = 0;
+
+   /** uuid order Antrean Tertunda yang SUDAH diubah lewat server di sesi Activity ini (aksi 2xx atau
+    *  galat basi 404/409/422). Salinan lokalnya basi sampai pull menyusul (async), jadi aksinya tak
+    *  boleh lagi lewat DAO lokal — dorongan seluruh baris ber-edited_at=sekarang menang
+    *  last-write-wins dan bisa membalikkan order yang baru dilanjutkan jadi TERTUNDA lagi
+    *  (TertundaRows.writePath). Hanya diubah di main thread. */
+   private final Set<String> tertundaServerTouched = new HashSet<>();
+   /** Bagian dari {@link #tertundaServerTouched} yang dinyatakan server SUDAH lepas dari TERTUNDA
+    *  (dilanjutkan / tak ada lagi) — disembunyikan dari daftar luring/memuat sampai daftar server
+    *  mencantumkannya lagi. Hanya diubah di main thread. */
+   private final Set<String> tertundaReleased = new HashSet<>();
+
+   private void reloadTertundaQueue(LinearLayout list, TextView title, Dialog dialog) {
+      if (this.isFinishing() || this.isDestroyed() || !dialog.isShowing()) return;   // aksi selesai setelah dialog ditutup
+      final int gen = ++this.tertundaReloadGen;
+      final SyncSettings cfg = this.syncCfg();
+      final boolean enrolled = cfg.isEnrolled();
+      // Muat ulang setelah aksi saat daftar server sudah tampil: biarkan daftar itu sampai jawaban
+      // server baru tiba (tanpa kedip 13 → 1 → 12 lewat daftar lokal yang hanya sebagian).
+      final boolean keepShown = enrolled && Integer.valueOf(TERTUNDA_SRC_SERVER).equals(list.getTag());
+      final Set<String> released = new HashSet<>(this.tertundaReleased);   // salinan untuk thread latar
+      new Thread(() -> {
+         TransactionDao tdao = new TransactionDao(DatabaseHelper.getInstance(this));
+         List<TertundaRows.Local<Transaction>> locals = new ArrayList<>();
+         for (Transaction t : tdao.getTertundaQueue()) {
+            locals.add(new TertundaRows.Local<>(t, t.getSyncUuid(), !t.isSyncPending()));
+         }
+         // Baris lokal LANGSUNG tampil — tak menunggu jaringan.
+         if (!keepShown) {
+            List<TertundaRows.Merged<Transaction>> localRows = TertundaRows.merge(null, locals, null, released);
+            this.runOnUiThread(() -> this.renderTertundaQueue(list, title, dialog, gen, localRows,
+                  enrolled ? TERTUNDA_SRC_LOADING : TERTUNDA_SRC_LOCAL));
+         }
+         if (!enrolled) return;
+
+         TertundaRows.Result res;
+         try {
+            res = TertundaRows.parse((new SyncApi(cfg)).deliveryTertunda());
+         } catch (Exception e) {
+            res = TertundaRows.unavailable();
+         }
+         final TertundaRows.Result resF = res;
+         // Salinan lokal yang belum ikut berstatus TERTUNDA (pull belum tiba) tetap dipasang lewat
+         // uuid supaya ketuk kartu membuka detail lokal lengkap. Baris server sendiri TAK PERNAH
+         // diberi _id (id di JSON = id server → jalur ber-_id akan mengenai baris lokal lain).
+         List<TertundaRows.Merged<Transaction>> merged = TertundaRows.merge(res, locals, (uuid) -> {
+            try {
+               long id = tdao.getIdBySyncUuid(uuid);
+               return id > 0L ? tdao.getById(id) : null;
+            } catch (Exception e) {
+               return null;
             }
+         }, released);
+         this.runOnUiThread(() -> {
+            // Hanya jawaban TERBARU yang boleh mengoreksi daftar "sudah dilepas" (yang lama bisa
+            // diambil sebelum aksi selesai). Order yang dicantumkan lagi = ditunda ulang di tempat lain.
+            if (gen == this.tertundaReloadGen) TertundaRows.forgetReleasedListedBy(this.tertundaReleased, resF);
+            this.renderTertundaQueue(list, title, dialog, gen, merged,
+                  resF.ok ? TERTUNDA_SRC_SERVER : TERTUNDA_SRC_OFFLINE);
          });
       }).start();
    }
 
-   private View buildTertundaRow(Transaction t, LinearLayout list, Dialog dialog) {
+   private void renderTertundaQueue(LinearLayout list, TextView title, Dialog dialog, int gen,
+         List<TertundaRows.Merged<Transaction>> rows, int source) {
+      if (this.isFinishing() || this.isDestroyed() || !dialog.isShowing() || gen != this.tertundaReloadGen) return;
+      list.removeAllViews();
+      list.setTag(source);
+      title.setText("⏸ Antrean Tertunda (" + rows.size() + ")");
+      Runnable reload = () -> this.reloadTertundaQueue(list, title, dialog);
+      if (source == TERTUNDA_SRC_LOADING) {
+         list.addView(this.tertundaBanner("⏳ Memuat pesanan tertunda se-cabang dari server…", false, null));
+      } else if (source == TERTUNDA_SRC_OFFLINE) {
+         // Daftar lokal hanya SEBAGIAN — katakan terang-terangan supaya tak dikira cuma ini yang tertunda.
+         list.addView(this.tertundaBanner("Offline — hanya pesanan di HP ini\nKetuk untuk memuat ulang.", true, reload));
+      }
+
+      if (rows.isEmpty()) {
+         TextView empty = new TextView(this);
+         empty.setText("Tidak ada pesanan tertunda saat ini");
+         empty.setTextColor(-7035976);
+         empty.setTextSize(14f);
+         empty.setGravity(android.view.Gravity.CENTER);
+         empty.setPadding(0, this.dp(32f), 0, this.dp(32f));
+         list.addView(empty);
+         return;
+      }
+
+      boolean viewer = this.currentUserIsViewer();
+      boolean offline = source == TERTUNDA_SRC_OFFLINE;
+      for (TertundaRows.Merged<Transaction> m : rows) {
+         list.addView(this.buildTertundaRow(m, viewer, offline, reload));
+      }
+   }
+
+   private TextView tertundaBanner(String text, boolean warn, Runnable onTap) {
+      TextView tv = new TextView(this);
+      tv.setText(text);
+      tv.setTextSize(13f);
+      tv.setTextColor(warn ? Color.parseColor("#E65100") : -7035976);
+      if (warn) tv.setBackgroundColor(Color.parseColor("#FFF3E0"));
+      int p = this.dp(10f);
+      tv.setPadding(p, p, p, p);
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+      lp.bottomMargin = this.dp(10f);
+      tv.setLayoutParams(lp);
+      if (onTap != null) tv.setOnClickListener((v) -> onTap.run());
+      return tv;
+   }
+
+   /** Satu kartu Antrean Tertunda. Data tampil dari server bila ada (otoritatif), else dari baris
+    *  lokal. Jalur ber-_id (detail lokal, DAO luring) HANYA lewat {@code m.local} — baris server-saja
+    *  memakai uuid. */
+   private View buildTertundaRow(TertundaRows.Merged<Transaction> m, boolean viewer, boolean offline, Runnable reload) {
+      final TertundaRows.Row s = m.server;
+      final Transaction t = m.local;
       LinearLayout card = new LinearLayout(this);
       card.setOrientation(LinearLayout.VERTICAL);
       card.setBackgroundColor(-1);
@@ -6629,21 +6739,46 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       lp.bottomMargin = this.dp(10f);
       card.setLayoutParams(lp);
 
+      final String custName = s != null ? s.name : safe(t.getCustomerName());
       TextView tvName = new TextView(this);
-      tvName.setText(safe(t.getCustomerName()));
+      tvName.setText(custName);
       tvName.setTextSize(15f);
       tvName.setTypeface(tvName.getTypeface(), android.graphics.Typeface.BOLD);
       card.addView(tvName);
 
       TextView tvMeta = new TextView(this);
-      tvMeta.setText(t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + checkoutLegSuffix(t) + receiptSuffix(t.getReceiptNo()) + orderedSuffix(t) + sourceWaSuffix(t.getSourceWa()));
+      tvMeta.setText(s != null
+            ? s.galon + " galon · Rp " + formatRupiah(s.total) + checkoutLegSuffix(s.checkoutSeq, s.checkoutSize) + receiptSuffix(s.receiptNo) + orderedSuffix(s.orderedAt) + sourceWaSuffix(s.sourceWa)
+            : t.getJumlahGalon() + " galon · Rp " + formatRupiah(t.getTotalHarga()) + checkoutLegSuffix(t) + receiptSuffix(t.getReceiptNo()) + orderedSuffix(t) + sourceWaSuffix(t.getSourceWa()));
       tvMeta.setTextSize(13f);
       tvMeta.setTextColor(-10395295);
       card.addView(tvMeta);
 
+      // 📱 Pemegang order — kartu harus bisa bilang order ini milik HP lain (dulu tak ada sama sekali).
+      // Pesanan Terbuka yang dijeda / order web tanpa rute diberi label sendiri, bukan nama HP asal.
+      StringBuilder owner = new StringBuilder();
+      if (s != null) {
+         owner.append(s.ownerLabel());
+         if (s.inProgress) owner.append(owner.length() > 0 ? " · " : "").append("🚚 Sedang diantar");
+         if (s.voidPending) owner.append(owner.length() > 0 ? " · " : "").append("🗑️ Void diajukan");
+      } else if (this.tertundaServerTouched.contains(m.uuid())) {
+         // Server sudah mengubahnya di sesi ini (daftar ini fallback luring) — salinan lokal basi.
+         owner.append("⏳ Sudah diubah lewat server — menunggu sinkron");
+      } else if (t.isSyncPending()) {
+         owner.append("⏳ Belum tersinkron ke server");
+      }
+      if (owner.length() > 0) {
+         TextView tvOwner = new TextView(this);
+         tvOwner.setText(owner.toString());
+         tvOwner.setTextSize(13f);
+         tvOwner.setTextColor(-10395295);
+         card.addView(tvOwner);
+      }
+
       TextView tvResume = new TextView(this);
-      String resumeAt = t.getDeliveryTertundaResumeAt();
-      tvResume.setText("🕒 Lanjut: " + (resumeAt == null || resumeAt.trim().isEmpty() ? "-" : formatQueued(resumeAt)));
+      // Ts.local: jadwal tarikan server berbentuk ISO-UTC — formatQueued saja menampilkannya mentah
+      // (huruf 'T', selisih 7 jam).
+      tvResume.setText("🕒 Lanjut: " + formatTertundaTime(s != null ? s.resumeAtLocal : t.getDeliveryTertundaResumeAt()));
       tvResume.setTextSize(13f);
       tvResume.setTextColor(-3790808);
       LinearLayout.LayoutParams resumeLp = new LinearLayout.LayoutParams(-2, -2);
@@ -6651,29 +6786,191 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       tvResume.setLayoutParams(resumeLp);
       card.addView(tvResume);
 
-      GridLayout actions = new GridLayout(this);
-      actions.setColumnCount(2);
-      actions.setPadding(0, this.dp(8f), 0, 0);
-      Button btnReschedule = new Button(this);
-      btnReschedule.setText("🕒 Jadwalkan Ulang");
-      btnReschedule.setAllCaps(false);
-      btnReschedule.setOnClickListener((v) -> this.showTertundaReschedulePicker(t, () -> this.reloadTertundaQueue(list, dialog)));
-      this.addGridAction(actions, btnReschedule);
-      Button btnResume = new Button(this);
-      btnResume.setText("▶ Resume");
-      btnResume.setAllCaps(false);
-      btnResume.setOnClickListener((v) -> this.confirmResumeTertunda(t, () -> this.reloadTertundaQueue(list, dialog)));
-      this.addGridAction(actions, btnResume);
-      card.addView(actions);
+      String reason = s != null ? s.tertundaReason : t.getDeliveryTertundaReason();
+      if (reason != null && !reason.trim().isEmpty() && !"null".equals(reason.trim())) {
+         TextView tvReason = new TextView(this);
+         tvReason.setText("📝 " + reason.trim());
+         tvReason.setTextSize(13f);
+         tvReason.setTextColor(-10395295);
+         card.addView(tvReason);
+      }
 
-      card.setOnClickListener((v) -> this.showOrderDetail(t));
+      if (!viewer) {
+         GridLayout actions = new GridLayout(this);
+         actions.setColumnCount(2);
+         actions.setPadding(0, this.dp(8f), 0, 0);
+         Button btnReschedule = new Button(this);
+         btnReschedule.setText("🕒 Jadwalkan Ulang");
+         btnReschedule.setAllCaps(false);
+         btnReschedule.setOnClickListener((v) -> this.showTertundaReschedulePicker(m, custName, offline, reload));
+         this.addGridAction(actions, btnReschedule);
+         Button btnResume = new Button(this);
+         btnResume.setText("▶ Lanjutkan");
+         btnResume.setAllCaps(false);
+         btnResume.setOnClickListener((v) -> this.confirmResumeTertunda(m, custName, offline, reload));
+         this.addGridAction(actions, btnResume);
+         if (this.canClaimTertunda(s)) {
+            Button btnClaim = new Button(this);
+            btnClaim.setText("📥 Lanjutkan & Ambil");
+            btnClaim.setAllCaps(false);
+            btnClaim.setOnClickListener((v) -> this.confirmResumeClaimTertunda(s, reload));
+            this.addGridAction(actions, btnClaim);
+         }
+         card.addView(actions);
+      }
+
+      card.setOnClickListener((v) -> {
+         if (t != null) {
+            this.showOrderDetail(t);
+         } else if (s != null) {
+            this.showTertundaRemoteDetail(s);
+         }
+      });
       return card;
    }
 
-   /** Jadwal ulang order yang SUDAH tertunda — murni lokal (bukan lewat /api/delivery/postpone,
-    *  yang menolak baris non-PENDING): hanya menggeser delivery_tertunda_resume_at, status tetap
-    *  TERTUNDA. Perubahan terdorong ke server via sinkron biasa (syncUpdate). */
-   private void showTertundaReschedulePicker(Transaction t, Runnable onDone) {
+   /** Jadwal tertunda bentuk apa pun (lokal tulisan HP / ISO-UTC tarikan server) → teks lokal. */
+   private static String formatTertundaTime(String any) {
+      String local = Ts.local(any);
+      return local.isEmpty() ? "-" : formatQueued(local);
+   }
+
+   /** Peran Viewer hanya melihat — aksi Antrean Tertunda disembunyikan. Tanpa login (uid&lt;=0) =
+    *  mode satu pengguna (owner) → bukan viewer. */
+   private boolean currentUserIsViewer() {
+      long uid = (new SettingsDao(DatabaseHelper.getInstance(this))).getCurrentUserId();
+      if (uid <= 0L) return false;
+      User u = (new UserDao(DatabaseHelper.getInstance(this))).getById(uid);
+      return u != null && u.isViewer();
+   }
+
+   /** Jalur tulis aksi satu kartu (TertundaRows.writePath): endpoint server ber-prasyarat status
+    *  bila terhubung &amp; baris dikenal server — dari daftar server, salinan lokal yang sudah terdorong
+    *  (selagi daftar server masih dimuat), atau order yang SUDAH diubah lewat server di sesi ini
+    *  (walau daftar yang tampil luring). Luring / baris lokal belum terdorong → DAO lokal lama. */
+   private TertundaRows.WritePath tertundaWritePath(TertundaRows.Merged<Transaction> m, boolean offline) {
+      String uuid = m.uuid();
+      return TertundaRows.writePath(this.syncCfg().isEnrolled(), offline, uuid, m.server != null, m.local != null,
+            m.local != null && m.local.isSyncPending(), this.tertundaServerTouched.contains(uuid));
+   }
+
+   /** "📥 Lanjutkan &amp; Ambil" — syaratnya di TertundaRows.canClaim. */
+   private boolean canClaimTertunda(TertundaRows.Row s) {
+      SyncSettings cfg = this.syncCfg();
+      return TertundaRows.canClaim(s, cfg.isEnrolled(), cfg.isDeliveryDevice(), cfg.getDeviceUuid());
+   }
+
+   /** Catat jawaban server atas satu order (main thread): server sudah mengubahnya → salinan lokal
+    *  basi; {@code released} = server menyatakannya sudah lepas dari TERTUNDA. */
+   private void markTertundaServerTouched(String uuid, boolean released) {
+      if (uuid == null || uuid.isEmpty()) return;
+      this.tertundaServerTouched.add(uuid);
+      if (released) this.tertundaReleased.add(uuid);
+   }
+
+   /** Setelah order keluar dari TERTUNDA lewat server: tarik keadaan baru, segarkan Antrian Saya DAN
+    *  Perangkat Lain — order yang dilanjutkan pindah ke salah satunya, dan menutup Dialog tak memicu
+    *  onResume (pola takeOverOtherDevices / doPostponeOther / runBulkClaim). */
+   private void afterTertundaServerChange() {
+      SyncScheduler.syncNow(this.getApplicationContext());
+      this.loadData();
+      this.loadOtherDevices();
+   }
+
+   /** Detail order tertunda yang TIDAK ada di HP ini — dari baris server saja (gaya Detail Order
+    *  Perangkat Lain + baris tertunda). Tombolnya hanya yang cukup dengan uuid/JSON: 🔍 Preview,
+    *  👤 Detail Pelanggan (pelanggan tersinkron se-cabang), 💬 Chat Pesanan — sengaja tanpa tombol
+    *  ber-_id (struk, alokasi, ubah/void). */
+   private void showTertundaRemoteDetail(TertundaRows.Row s) {
+      JSONObject q;
+      String text;
+      try {
+         q = new JSONObject(s.json);
+         q.remove("queued_at");   // umur antrean lama tak bermakna untuk order yang sedang ditunda
+         text = this.otherDeviceOrderDetailText(q).trim();
+      } catch (Exception e) {
+         q = null;
+         text = s.galon + " galon · Rp " + formatRupiah(s.total);
+      }
+      StringBuilder sb = new StringBuilder(text);
+      sb.append("\n\n⏸ TERTUNDA");
+      if (s.mine || s.openDispatch) sb.append(" · ").append(s.ownerLabel());
+      sb.append("\n🕒 Lanjut: ").append(formatTertundaTime(s.resumeAtLocal));
+      if (!s.dueAtLocal.isEmpty() && !s.dueAtLocal.equals(s.resumeAtLocal)) {
+         sb.append("\n⏰ Kembali ke antrean otomatis: ").append(formatTertundaTime(s.dueAtLocal));
+      }
+      if (!s.tertundaAtLocal.isEmpty()) sb.append("\n⏸ Ditunda sejak: ").append(formatTertundaTime(s.tertundaAtLocal));
+      if (!s.tertundaReason.isEmpty()) sb.append("\n📝 Alasan: ").append(s.tertundaReason);
+      if (!s.tertundaPhotoUrl.isEmpty()) sb.append("\n📷 Ada foto alasan (lihat di dashboard)");
+      if (!s.note.isEmpty()) sb.append("\n🗒️ Catatan: ").append(s.note);
+      if (!s.receiptNo.isEmpty()) sb.append("\n🧾 ").append(s.receiptNo);
+      if (!s.paymentMethod.isEmpty()) sb.append("\n💳 ").append(s.paymentMethod);
+      if (s.voidPending) sb.append("\n🗑️ Permintaan void sedang diajukan");
+
+      int padH = this.dp(20f);
+      LinearLayout body = new LinearLayout(this);
+      body.setOrientation(LinearLayout.VERTICAL);
+      body.setPadding(padH, this.dp(8f), padH, 0);
+      TextView msg = new TextView(this);
+      msg.setText(sb.toString());
+      msg.setTextSize(14f);
+      com.crowja.damiupos.util.NoteLinks.apply(msg);   // link di Catatan bisa diketuk
+      body.addView(msg);
+      ScrollView scroll = new ScrollView(this);
+      scroll.addView(body);
+      AlertDialog dialog = (new AlertDialog.Builder(this)).setTitle("Detail Order — " + s.name)
+            .setView(scroll)
+            .setPositiveButton("Tutup", (DialogInterface.OnClickListener) null)
+            .create();
+
+      GridLayout actionsGrid = new GridLayout(this);
+      actionsGrid.setColumnCount(2);
+      actionsGrid.setPadding(0, this.dp(8f), 0, 0);
+      final JSONObject qF = q;
+      if (qF != null) {
+         // Preview Perangkat Lain: koordinat dari baris ini bila peta tak memuatnya (kebanyakan
+         // order tertunda memang tak ada di peta — hanya Pesanan Terbuka yang dijeda).
+         Button btnPreview = new Button(this);
+         btnPreview.setText("🔍 Preview");
+         btnPreview.setAllCaps(false);
+         btnPreview.setOnClickListener((v) -> {
+            dialog.dismiss();
+            this.showOtherDevicePreview(qF);
+         });
+         this.addGridAction(actionsGrid, btnPreview);
+         if (!s.customerUuid.isEmpty()) {
+            Button btnCustomer = new Button(this);
+            btnCustomer.setText("👤 Detail Pelanggan");
+            btnCustomer.setAllCaps(false);
+            btnCustomer.setOnClickListener((v) -> {
+               dialog.dismiss();
+               this.openOtherDeviceCustomerDetail(qF);
+            });
+            this.addGridAction(actionsGrid, btnCustomer);
+         }
+      }
+      if (s.chatSession && !s.uuid.isEmpty()) {
+         Button btnChat = new Button(this);
+         btnChat.setText("💬 Chat Pesanan");
+         btnChat.setAllCaps(false);
+         btnChat.setOnClickListener((v) -> {
+            dialog.dismiss();
+            this.openOrderChatUuid(s.uuid, s.name);
+         });
+         this.addGridAction(actionsGrid, btnChat);
+      }
+      if (actionsGrid.getChildCount() > 0) {
+         body.addView(actionsGrid);
+      }
+      dialog.show();
+   }
+
+   /** Jadwal ulang order yang SUDAH tertunda. Jalur server → {@code POST
+    *  /api/delivery/tertunda/reschedule} (sama dengan web: tanggal transaksi ikut pindah, pelanggan
+    *  diberi tahu WA, alasan &amp; foto lama dipertahankan karena kunci reason sengaja tak dikirim).
+    *  Jalur lokal (luring / baris lokal belum terdorong) → hanya delivery_tertunda_resume_at,
+    *  terdorong lewat sinkron biasa (syncUpdate). Pilihannya di {@link #tertundaWritePath}. */
+   private void showTertundaReschedulePicker(TertundaRows.Merged<Transaction> m, String custName, boolean offline, Runnable onDone) {
       Calendar cal = Calendar.getInstance();
       cal.add(5, 1);
       cal.set(11, 8);
@@ -6690,29 +6987,309 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             }
 
             SimpleDateFormat trxDbFmtLocal = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
-            (new TransactionDao(DatabaseHelper.getInstance(this))).rescheduleTertunda(t.getId(), trxDbFmtLocal.format(cal.getTime()));
-            SyncScheduler.syncNow(this.getApplicationContext());
-            Toast.makeText(this, "Jadwal lanjut diubah.", Toast.LENGTH_SHORT).show();
-            if (onDone != null) onDone.run();
+            String resumeAt = trxDbFmtLocal.format(cal.getTime());
+            TertundaRows.WritePath path = this.tertundaWritePath(m, offline);
+            if (path == TertundaRows.WritePath.SERVER) {
+               this.doRescheduleTertundaRemote(m.uuid(), custName, resumeAt, onDone);
+            } else if (path == TertundaRows.WritePath.LOCAL) {
+               (new TransactionDao(DatabaseHelper.getInstance(this))).rescheduleTertunda(m.local.getId(), resumeAt);
+               SyncScheduler.syncNow(this.getApplicationContext());
+               Toast.makeText(this, "Jadwal lanjut diubah.", Toast.LENGTH_SHORT).show();
+               if (onDone != null) onDone.run();
+            } else {
+               Toast.makeText(this, "Perangkat belum terhubung ke server.", Toast.LENGTH_SHORT).show();
+            }
          }, cal.get(11), cal.get(12), true)).show();
       }, cal.get(1), cal.get(2), cal.get(5));
       datePicker.getDatePicker().setMinDate(System.currentTimeMillis() - 1000L);
       datePicker.show();
    }
 
-   /** "Resume" — kembalikan order TERTUNDA ini ke antrian aktif SEKARANG, tanpa menunggu jadwal
-    *  lanjut otomatisnya. Murni lokal (delivery_status → PENDING), terdorong via sinkron biasa. */
-   private void confirmResumeTertunda(Transaction t, Runnable onDone) {
-      (new AlertDialog.Builder(this)).setTitle("Resume Pesanan Ini?")
-            .setMessage("Order \"" + safe(t.getCustomerName()) + "\" akan langsung kembali ke antrian aktif sekarang.")
-            .setPositiveButton("Ya, Resume", (d, w) -> {
-               (new TransactionDao(DatabaseHelper.getInstance(this))).resumeTertunda(t.getId());
+   private void doRescheduleTertundaRemote(String trxUuid, String custName, String resumeAt, Runnable onDone) {
+      SyncSettings cfg = this.syncCfg();
+      Toast.makeText(this, "Menjadwalkan ulang…", Toast.LENGTH_SHORT).show();
+      (new Thread(() -> {
+         String okMsg = null;
+         String errMsg = null;
+         JSONObject wa = null;
+         int errCode = 0;
+
+         try {
+            JSONObject body = new JSONObject();
+            body.put("transaction_uuid", trxUuid);
+            body.put("resume_at", resumeAt);   // tanpa "reason" → server mempertahankan alasan lama
+            JSONObject r = (new SyncApi(cfg)).rescheduleTertunda(body);
+            okMsg = r.optString("message", "Jadwal lanjut diubah.");
+            wa = r.optJSONObject("wa");
+         } catch (SyncApi.SyncException se) {
+            errCode = se.code;
+            errMsg = se.serverMessage();
+            if (errMsg == null) {
+               errMsg = "Gagal menjadwalkan ulang (kode " + se.code + ").";
+            }
+         } catch (Exception e) {
+            errMsg = "Gagal menjadwalkan ulang — periksa koneksi internet.";
+         }
+
+         final String okMsgF = okMsg;
+         final String errMsgF = errMsg;
+         final JSONObject waF = wa;
+         final boolean staleF = TertundaRows.isStaleCode(errCode);
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            if (okMsgF != null) {
+               // Masih TERTUNDA (jadwal baru) — tapi salinan lokal kini basi: jangan lagi lewat DAO.
+               this.markTertundaServerTouched(trxUuid, false);
+               Toast.makeText(this, okMsgF, 1).show();
                SyncScheduler.syncNow(this.getApplicationContext());
-               this.loadData();
-               Toast.makeText(this, "Order dikembalikan ke antrian aktif.", Toast.LENGTH_SHORT).show();
+               this.afterPostponeWa(custName, trxUuid, waF, null);
                if (onDone != null) onDone.run();
-            })
-            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
+            } else {
+               Toast.makeText(this, errMsgF, 1).show();
+               if (staleF) {
+                  // Sudah tak tertunda / tak ada lagi di server (dilanjutkan di tempat lain).
+                  this.markTertundaServerTouched(trxUuid, true);
+                  this.afterTertundaServerChange();
+                  if (onDone != null) onDone.run();
+               }
+            }
+         });
+      })).start();
+   }
+
+   /** "▶ Lanjutkan" — kembalikan order TERTUNDA ke antrian aktif SEKARANG, di luar jadwal lanjut
+    *  otomatisnya. Jalur server → {@code POST /api/delivery/tertunda/resume} (efek samping sama dengan
+    *  web; tujuan dipilih server — bila perangkat pemegangnya, termasuk HP ini sendiri, belum ada staf
+    *  absen, order dibuka sebagai Pesanan Terbuka supaya tak terdampar). Jalur lokal (luring / baris
+    *  lokal belum terdorong) → delivery_status → PENDING, terdorong via sinkron biasa. */
+   private void confirmResumeTertunda(TertundaRows.Merged<Transaction> m, String custName, boolean offline, Runnable onDone) {
+      final TertundaRows.WritePath path = this.tertundaWritePath(m, offline);
+      if (path == TertundaRows.WritePath.NONE) {
+         Toast.makeText(this, "Perangkat belum terhubung ke server.", Toast.LENGTH_SHORT).show();
+         return;
+      }
+      final boolean viaServer = path == TertundaRows.WritePath.SERVER;
+      StringBuilder msg = new StringBuilder();
+      msg.append("Order \"").append(custName).append("\" akan langsung kembali ke antrian aktif sekarang.");
+      if (viaServer) {
+         // Server merutekan SEMUA baris, termasuk milik HP ini — jangan menjanjikan tujuan yang belum pasti.
+         msg.append("\n\n").append(TertundaRows.resumeDestinationHint(m.server));
+         if (this.canClaimTertunda(m.server)) {
+            msg.append("\n\nUntuk mengantarnya sendiri pakai \"📥 Lanjutkan & Ambil\".");
+         }
+      } else {
+         msg.append("\n\nLuring — perubahan dikirim ke server saat sinkron berikutnya.");
+      }
+      msg.append("\n\nKetuk \"Lanjutkan\" dua kali untuk memastikan.");
+      this.confirmTertundaTwoTap("▶ Lanjutkan Pesanan Ini?", msg.toString(), "Lanjutkan", "Melanjutkan…", (dialog, pos, neg) -> {
+         if (viaServer) {
+            final String trxUuid = m.uuid();
+            this.runTertundaResume(dialog, pos, neg, trxUuid, onDone);
+         } else {
+            (new TransactionDao(DatabaseHelper.getInstance(this))).resumeTertunda(m.local.getId());
+            SyncScheduler.syncNow(this.getApplicationContext());
+            this.loadData();
+            Toast.makeText(this, "Order dikembalikan ke antrian aktif.", Toast.LENGTH_SHORT).show();
+            dialog.dismiss();
+            if (onDone != null) onDone.run();
+         }
+      });
+   }
+
+   /** "📥 Lanjutkan &amp; Ambil" — lanjutkan SEKARANG lalu pindahkan ke antrean perangkat INI, dalam DUA
+    *  langkah: {@code POST /api/delivery/tertunda/resume} (semantik &amp; efek samping web: struk email
+    *  yang ditahan, agregat pelanggan, notifikasi, perutean bila pemegang kosong) LALU klaim biasa
+    *  {@code POST /api/delivery/claim} atas order yang kini PENDING. BUKAN claim resume=true sekali jalan
+    *  (DeliveryMapActivity.doClaim): jalur server itu melewatkan semua efek samping tadi — struk email
+    *  order itu (atau gabungan checkout bila ini leg terakhir) tak pernah terkirim — dan bila klaimnya
+    *  gagal, order tertinggal dilanjutkan TANPA perutean. */
+   private void confirmResumeClaimTertunda(TertundaRows.Row s, Runnable onDone) {
+      String owner = s.openDispatch ? "🎲 Pesanan Terbuka" : s.mine ? "HP ini"
+            : (s.deviceGroupLabel.isEmpty() ? "perangkat lain" : "\"" + s.deviceGroupLabel + "\"");
+      StringBuilder msg = new StringBuilder();
+      msg.append("Order \"").append(s.name).append("\" sedang DITUNDA (pemegang: ").append(owner)
+            .append("). Lanjutkan sekarang lalu pindahkan ke antrian perangkat ini.\n\n");
+      if (!s.items.isEmpty()) {
+         msg.append("Penjualan: ").append(s.items).append('\n');
+      }
+      msg.append("Total: Rp ").append(formatRupiah(s.total)).append("\n\n");
+      msg.append("Ketuk \"Lanjutkan & Ambil\" dua kali untuk memastikan.");
+      this.confirmTertundaTwoTap("📥 Lanjutkan & Ambil?", msg.toString(), "Lanjutkan & Ambil", "Memindahkan…",
+            (dialog, pos, neg) -> this.runTertundaResumeClaim(dialog, pos, neg, s.uuid, onDone));
+   }
+
+   /** Aksi yang dijalankan setelah konfirmasi dua ketuk; wajib menutup dialog ATAU mengaktifkan
+    *  ulang tombolnya. */
+   private interface TertundaConfirmed {
+      void run(AlertDialog dialog, Button pos, Button neg);
+   }
+
+   /** Konfirmasi dua ketuk (pola Ambil Alih / DeliveryMapActivity.confirmClaim). */
+   private void confirmTertundaTwoTap(String title, String msg, String posLabel, String busyLabel, TertundaConfirmed action) {
+      AlertDialog dialog = (new AlertDialog.Builder(this)).setIcon(17301543).setTitle(title).setCancelable(false).setMessage(msg).setPositiveButton(posLabel, (DialogInterface.OnClickListener)null).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).create();
+      dialog.setOnShowListener((d) -> {
+         Button pos = dialog.getButton(-1);
+         int[] clicks = new int[]{0};
+         pos.setOnClickListener((v) -> {
+            if (++clicks[0] < 2) {
+               pos.setText("Ketuk sekali lagi");
+            } else {
+               pos.setEnabled(false);
+               pos.setText(busyLabel);
+               dialog.setCancelable(false);
+               Button neg = dialog.getButton(-2);
+               if (neg != null) {
+                  neg.setEnabled(false);
+               }
+
+               action.run(dialog, pos, neg);
+            }
+         });
+      });
+      dialog.show();
+   }
+
+   /** Kembalikan tombol dialog konfirmasi supaya bisa dicoba lagi (galat yang layak diulang). */
+   private static void rearmTertundaConfirm(AlertDialog dialog, Button pos, Button neg, String posLabel) {
+      pos.setEnabled(true);
+      pos.setText(posLabel);
+      dialog.setCancelable(true);
+      if (neg != null) {
+         neg.setEnabled(true);
+      }
+   }
+
+   /** "▶ Lanjutkan" lewat server. 2xx / 404 / 422 → order sudah tak tertunda (dilanjutkan di sini atau
+    *  di tempat lain): tutup, catat, segarkan. Galat lain → bisa dicoba lagi. */
+   private void runTertundaResume(AlertDialog dialog, Button pos, Button neg, String trxUuid, Runnable onDone) {
+      SyncSettings cfg = this.syncCfg();
+      (new Thread(() -> {
+         String okMsg = null;
+         String errMsg = null;
+         int errCode = 0;
+
+         try {
+            JSONObject body = new JSONObject();
+            body.put("transaction_uuid", trxUuid);
+            String m = TertundaRows.parseResume((new SyncApi(cfg)).resumeTertunda(body).toString()).message;
+            okMsg = m.isEmpty() ? "Order dikembalikan ke antrian aktif." : m;
+         } catch (SyncApi.SyncException se) {
+            errCode = se.code;
+            errMsg = se.serverMessage();
+            if (errMsg == null) {
+               errMsg = "Gagal melanjutkan (kode " + se.code + ").";
+            }
+         } catch (Exception e) {
+            errMsg = "Gagal melanjutkan — periksa koneksi internet.";
+         }
+
+         final String okMsgF = okMsg;
+         final String errMsgF = errMsg;
+         final boolean staleF = TertundaRows.isStaleCode(errCode);
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            if (okMsgF != null || staleF) {
+               Toast.makeText(this, okMsgF != null ? okMsgF : errMsgF, 1).show();
+               dialog.dismiss();
+               this.markTertundaServerTouched(trxUuid, true);
+               this.afterTertundaServerChange();
+               if (onDone != null) onDone.run();
+            } else {
+               Toast.makeText(this, errMsgF, 1).show();
+               rearmTertundaConfirm(dialog, pos, neg, "Lanjutkan");
+            }
+         });
+      })).start();
+   }
+
+   /** "📥 Lanjutkan &amp; Ambil" dua langkah (lihat {@link #confirmResumeClaimTertunda}). Langkah 2 hanya
+    *  setelah langkah 1 berhasil; expected_device_uuid = tujuan yang DILAPORKAN resume
+    *  (TertundaRows.claimExpectedAfterResume — dilewati bila order sudah kembali ke antrean HP ini).
+    *  Klaim gagal → order TETAP sudah dilanjutkan (dengan perutean server); dilaporkan apa adanya,
+    *  tanpa coba-ulang (resume kedua pasti 422). */
+   private void runTertundaResumeClaim(AlertDialog dialog, Button pos, Button neg, String trxUuid, Runnable onDone) {
+      SyncSettings cfg = this.syncCfg();
+      (new Thread(() -> {
+         SyncApi api = new SyncApi(cfg);
+         TertundaRows.ResumeOutcome resumed = null;
+         String resumeErr = null;
+         int resumeCode = 0;
+         try {
+            JSONObject body = new JSONObject();
+            body.put("transaction_uuid", trxUuid);
+            resumed = TertundaRows.parseResume(api.resumeTertunda(body).toString());
+         } catch (SyncApi.SyncException se) {
+            resumeCode = se.code;
+            resumeErr = se.serverMessage();
+            if (resumeErr == null) {
+               resumeErr = "Gagal melanjutkan (kode " + se.code + ").";
+            }
+         } catch (Exception e) {
+            resumeErr = "Gagal melanjutkan — periksa koneksi internet.";
+         }
+
+         boolean claimed = false;
+         boolean alreadyHere = false;
+         String claimErr = null;
+         if (resumed != null) {
+            String expected = TertundaRows.claimExpectedAfterResume(resumed, cfg.getDeviceUuid());
+            if (expected == null) {
+               alreadyHere = true;
+            } else {
+               try {
+                  JSONObject body = new JSONObject();
+                  body.put("transaction_uuid", trxUuid);
+                  body.put("expected_device_uuid", expected);
+                  api.claimDelivery(body);
+                  claimed = true;
+               } catch (SyncApi.SyncException se) {
+                  claimErr = se.serverMessage();
+                  if (claimErr == null) {
+                     claimErr = "kode " + se.code;
+                  }
+               } catch (Exception e) {
+                  claimErr = "periksa koneksi internet";
+               }
+            }
+         }
+
+         final TertundaRows.ResumeOutcome resumedF = resumed;
+         final String resumeErrF = resumeErr;
+         final boolean resumeStaleF = TertundaRows.isStaleCode(resumeCode);
+         final boolean claimedF = claimed;
+         final boolean alreadyHereF = alreadyHere;
+         final String claimErrF = claimErr;
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            if (resumedF == null) {
+               Toast.makeText(this, resumeErrF, 1).show();
+               if (resumeStaleF) {
+                  // Sudah tak tertunda / tak ada (dilanjutkan di tempat lain) — tutup & segarkan.
+                  dialog.dismiss();
+                  this.markTertundaServerTouched(trxUuid, true);
+                  this.afterTertundaServerChange();
+                  if (onDone != null) onDone.run();
+               } else {
+                  rearmTertundaConfirm(dialog, pos, neg, "Lanjutkan & Ambil");
+               }
+               return;
+            }
+            String msg;
+            if (claimedF) {
+               msg = "Order dilanjutkan & diambil ke perangkat ini.";
+            } else if (alreadyHereF) {
+               msg = "Order dilanjutkan — sudah di antrian perangkat ini.";
+            } else {
+               msg = (resumedF.message.isEmpty() ? "Order sudah dilanjutkan." : resumedF.message)
+                     + "\nTetapi gagal diambil ke perangkat ini: " + claimErrF;
+            }
+            Toast.makeText(this, msg, 1).show();
+            dialog.dismiss();
+            this.markTertundaServerTouched(trxUuid, true);
+            this.afterTertundaServerChange();
+            if (onDone != null) onDone.run();
+         });
+      })).start();
    }
 
    private void showUbahMenu(Transaction t) {

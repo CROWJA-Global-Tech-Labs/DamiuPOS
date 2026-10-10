@@ -1,0 +1,68 @@
+[
+    {
+        "name": "list",
+        "method": "GET",
+        "path": "/api/delivery/tertunda",
+        "http": 200
+    },
+    {
+        "name": "resume_open_dispatch",
+        "method": "POST",
+        "path": "/api/delivery/tertunda/resume",
+        "http": 200
+    },
+    {
+        "name": "claim_after_resume_ok",
+        "method": "POST",
+        "path": "/api/delivery/claim",
+        "http": 200
+    },
+    {
+        "name": "resume_mine_idle",
+        "method": "POST",
+        "path": "/api/delivery/tertunda/resume",
+        "http": 200
+    },
+    {
+        "name": "resume_routed",
+        "method": "POST",
+        "path": "/api/delivery/tertunda/resume",
+        "http": 200
+    },
+    {
+        "name": "resume_routed_to_me",
+        "method": "POST",
+        "path": "/api/delivery/tertunda/resume",
+        "http": 200
+    },
+    {
+        "name": "claim_already_mine",
+        "method": "POST",
+        "path": "/api/delivery/claim",
+        "http": 422
+    },
+    {
+        "name": "resume_not_tertunda",
+        "method": "POST",
+        "path": "/api/delivery/tertunda/resume",
+        "http": 422
+    },
+    {
+        "name": "resume_not_found",
+        "method": "POST",
+        "path": "/api/delivery/tertunda/resume",
+        "http": 404
+    },
+    {
+        "name": "reschedule_ok",
+        "method": "POST",
+        "path": "/api/delivery/tertunda/reschedule",
+        "http": 200
+    },
+    {
+        "name": "reschedule_not_tertunda",
+        "method": "POST",
+        "path": "/api/delivery/tertunda/reschedule",
+        "http": 422
+    }
+]

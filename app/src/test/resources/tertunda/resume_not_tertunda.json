@@ -1,0 +1,13 @@
+{
+    "name": "resume_not_tertunda",
+    "method": "POST",
+    "path": "/api/delivery/tertunda/resume",
+    "http": 422,
+    "request": {
+        "transaction_uuid": "55555555-0000-4000-8000-000000000005"
+    },
+    "body": {
+        "ok": false,
+        "message": "Order sudah tidak tertunda."
+    }
+}

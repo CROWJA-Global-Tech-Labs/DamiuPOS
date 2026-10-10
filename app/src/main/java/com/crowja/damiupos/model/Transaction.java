@@ -99,6 +99,13 @@ public class Transaction {
     private String sourceWa;                // akun WA tempat agen menerima pesanan (pull-only)
     private String orderedAt;               // saat order ASLINYA dibuat (tak bergeser saat ditunda)
     private String deliveryTertundaResumeAt; // jadwal lanjut otomatis (Pesanan Tertunda)
+    /** Alasan ditunda, sync_uuid baris, dan "belum terdorong" (synced=0) — HANYA terisi dari
+     *  TransactionDao.getTertundaQueue (Antrean Tertunda menggabungkannya dengan daftar server per
+     *  uuid; baris lokal yang tak dikenal server hanya ditampilkan bila belum terdorong). Query lain
+     *  selalu null/false di sini. */
+    private String deliveryTertundaReason;
+    private String syncUuid;
+    private boolean syncPending;
     /** "Pesanan Terbuka" (lelang): non-null = order TANPA perangkat tujuan spesifik, staf perangkat
      *  mana pun boleh mengklaimnya. Server-authoritative (pull-only) & PERMANEN — tak pernah
      *  di-null-kan lagi setelah diklaim (lihat App\Support\Reports::resumeDueTertunda di web). Masih
@@ -313,6 +320,15 @@ public class Transaction {
 
     public String getDeliveryTertundaResumeAt() { return deliveryTertundaResumeAt; }
     public void setDeliveryTertundaResumeAt(String v) { this.deliveryTertundaResumeAt = v; }
+
+    public String getDeliveryTertundaReason() { return deliveryTertundaReason; }
+    public void setDeliveryTertundaReason(String v) { this.deliveryTertundaReason = v; }
+
+    public String getSyncUuid() { return syncUuid; }
+    public void setSyncUuid(String v) { this.syncUuid = v; }
+
+    public boolean isSyncPending() { return syncPending; }
+    public void setSyncPending(boolean v) { this.syncPending = v; }
 
     public String getDeliveryOpenDispatchAt() { return deliveryOpenDispatchAt; }
     public void setDeliveryOpenDispatchAt(String v) { this.deliveryOpenDispatchAt = v; }
