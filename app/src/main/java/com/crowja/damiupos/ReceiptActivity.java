@@ -2332,12 +2332,8 @@ public class ReceiptActivity extends AppCompatActivity {
             // Cash bon (HUTANG) yang sudah dikonfirmasi lunas dilabeli "LUNAS via X", bukan "Bayar X",
             // supaya pesan WA langsung menegaskan status pelunasan ke pelanggan.
             boolean payConfirmed = in.getBooleanExtra(EXTRA_PAYMENT_CONFIRMED, false);
-            String payLabel = null;
-            if (pay != null && !pay.isEmpty()) {
-                String payCap = pay.substring(0, 1).toUpperCase()
-                        + pay.substring(1).toLowerCase(java.util.Locale.ROOT);
-                payLabel = payConfirmed ? " (LUNAS via " + payCap + ")" : " (Bayar " + payCap + ")";
-            }
+            // Satu sumber dgn struk gabungan: HUTANG tampil "(Sisa Pembayaran)" ke pelanggan.
+            String payLabel = CheckoutStrukText.payLabel(pay, payConfirmed);
             long custIdForDebt = in.getLongExtra(EXTRA_CUSTOMER_ID, -1);
             // PELUNASAN HUTANG LAMA lewat transaksi ini ("Sekalian Lunasi Hutang" saat checkout, atau
             // bayar sebagian saat Selesai) -- uang TAMBAHAN di luar tagihan penjualan, dicetak sebagai
@@ -2353,8 +2349,8 @@ public class ReceiptActivity extends AppCompatActivity {
                 List<String> debtOrigins = custIdForDebt > 0 ? debtDao.originReceiptsFor(custIdForDebt, 1) : new ArrayList<>();
                 String debtKet = !debtOrigins.isEmpty()
                         ? "Pembelian Sebelumnya " + android.text.TextUtils.join(", ", debtOrigins)
-                        : "Hutang Sebelumnya";
-                sb.append("\nHutang (").append(debtKet).append("): Rp").append(nf.format(Math.round(debtPaidNow)));
+                        : "Sisa Pembayaran Sebelumnya";
+                sb.append("\nSisa Pembayaran (").append(debtKet).append("): Rp").append(nf.format(Math.round(debtPaidNow)));
             }
             // SALDO REFUND yang dipakai membayar order ini -> pelanggan harus melihat berapa yang
             // dipotong dan berapa sisa yang benar-benar dibayar. Bila ada potongan, label pembayaran
@@ -2395,7 +2391,7 @@ public class ReceiptActivity extends AppCompatActivity {
             if (custIdForDebt > 0) {
                 double sisaHutang = debtDao.balanceFor(custIdForDebt);
                 if (sisaHutang > 0) {
-                    sb.append("\n\n🧾 *Sisa Hutang Anda saat ini: Rp")
+                    sb.append("\n\n🧾 *Sisa Pembayaran Anda saat ini: Rp")
                             .append(nf.format(Math.round(sisaHutang))).append("*");
                     // ID transaksi terhutang asalnya — pelanggan tahu hutang ini berasal dari
                     // pembelian yang mana. {@see CustomerDebtDao#originReceiptsFor}

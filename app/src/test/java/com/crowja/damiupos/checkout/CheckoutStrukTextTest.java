@@ -106,7 +106,7 @@ public class CheckoutStrukTextTest {
         CheckoutStrukText.Footer f = new CheckoutStrukText.Footer();
         f.debtOriginLabel = "Pembelian Sebelumnya DMU-OLD";
         String text = CheckoutStrukText.compose(Arrays.asList(a, b), 2, f);
-        assertTrue(text, text.contains("\nHutang (Pembelian Sebelumnya DMU-OLD): Rp10.000"));
+        assertTrue(text, text.contains("\nSisa Pembayaran (Pembelian Sebelumnya DMU-OLD): Rp10.000"));
         // Ada potongan / pelunasan hutang → label bayar tak dilebur ke *Total* (sama dengan order tunggal).
         assertTrue(text, text.contains("\n*Total: Rp33.000*\n"));
         assertTrue(text, text.contains("\nDipotong saldo refund: -Rp5.000"));
@@ -132,7 +132,7 @@ public class CheckoutStrukTextTest {
         a.paymentConfirmed = true;
         b.paymentConfirmed = true;
         String text = CheckoutStrukText.compose(Arrays.asList(a, b), 2, null);
-        assertTrue(text, text.contains("*Total: Rp12.000* (LUNAS via Hutang)"));
+        assertTrue(text, text.contains("*Total: Rp12.000* (LUNAS)"));
         // Sudah lunas → tak ada yang ditagih di pintu mana pun.
         assertFalse(text, text.contains("Bayar per lokasi"));
     }
@@ -143,7 +143,7 @@ public class CheckoutStrukTextTest {
         CheckoutStrukText.Leg a = leg(1, "Rumah", "A", 1, 6000, 2000, "HUTANG");
         CheckoutStrukText.Leg b = leg(2, "Kedai", "B", 2, 8000, 2000, "HUTANG");
         String text = CheckoutStrukText.compose(Arrays.asList(a, b), 2, null);
-        assertTrue(text, text.contains("\n*Total: Rp28.000* (Bayar Hutang)"));
+        assertTrue(text, text.contains("\n*Total: Rp28.000* (Sisa Pembayaran)"));
         assertFalse(text, text.contains("Bayar per lokasi"));
         assertEquals("", CheckoutStrukText.perLocationLine(Arrays.asList(a, b), NF));
         assertTrue(CheckoutStrukText.doorLegs(Arrays.asList(a, b)).isEmpty());
@@ -220,7 +220,7 @@ public class CheckoutStrukTextTest {
                 + "\nUnduh gambar QRIS: https://airfrez.com/solo-qris"
                 + "\n📅 [TERJADWAL]"
                 + "\n📝 Catatan: antar pagi"
-                + "\n\n🧾 *Sisa Hutang Anda saat ini: Rp12.000*"
+                + "\n\n🧾 *Sisa Pembayaran Anda saat ini: Rp12.000*"
                 + "\n(dari transaksi DMU-X)"));
         // Catatan yang sama di semua leg dicetak SEKALI, tidak di tiap bagian lokasi.
         assertEquals(text.indexOf("antar pagi"), text.lastIndexOf("antar pagi"));
@@ -410,6 +410,8 @@ public class CheckoutStrukTextTest {
     @Test public void payLabelMatchesSingleReceipt() {
         assertEquals(" (Bayar Tunai)", CheckoutStrukText.payLabel("TUNAI", false));
         assertEquals(" (LUNAS via Transfer)", CheckoutStrukText.payLabel("TRANSFER", true));
+        assertEquals(" (Sisa Pembayaran)", CheckoutStrukText.payLabel("HUTANG", false));
+        assertEquals(" (LUNAS)", CheckoutStrukText.payLabel("HUTANG", true));
         assertEquals(null, CheckoutStrukText.payLabel("", false));
         assertEquals(null, CheckoutStrukText.payLabel(null, true));
     }

@@ -158,6 +158,9 @@ public final class CheckoutStrukText {
      */
     public static String payLabel(String pay, boolean confirmed) {
         if (pay == null || pay.isEmpty()) return null;
+        // Ke pelanggan kata "hutang" diganti "Sisa Pembayaran" (keputusan owner 2026-10-10) —
+        // cermin StrukWa::payLabel di web.
+        if ("HUTANG".equalsIgnoreCase(pay.trim())) return confirmed ? " (LUNAS)" : " (Sisa Pembayaran)";
         String payCap = pay.substring(0, 1).toUpperCase(Locale.ROOT)
                 + pay.substring(1).toLowerCase(Locale.ROOT);
         return confirmed ? " (LUNAS via " + payCap + ")" : " (Bayar " + payCap + ")";
@@ -379,8 +382,8 @@ public final class CheckoutStrukText {
         // dilebur ke *Total*, persis struk order tunggal.
         if (sumDebt > 0) {
             String ket = f.debtOriginLabel != null && !f.debtOriginLabel.isEmpty()
-                    ? f.debtOriginLabel : "Hutang Sebelumnya";
-            sb.append("\nHutang (").append(ket).append("): ").append(rp(nf, sumDebt));
+                    ? f.debtOriginLabel : "Sisa Pembayaran Sebelumnya";
+            sb.append("\nSisa Pembayaran (").append(ket).append("): ").append(rp(nf, sumDebt));
         }
         double grand = sumTotal + sumDebt;
         boolean deducted = sumRefund > 0 || sumSaldo > 0;
@@ -398,7 +401,7 @@ public final class CheckoutStrukText {
         if (f.terjadwal) sb.append("\n📅 [TERJADWAL]");
         if (!split.common.isEmpty()) sb.append("\n📝 Catatan: ").append(split.common);
         if (f.sisaHutang > 0) {
-            sb.append("\n\n🧾 *Sisa Hutang Anda saat ini: ").append(rp(nf, f.sisaHutang)).append("*");
+            sb.append("\n\n🧾 *Sisa Pembayaran Anda saat ini: ").append(rp(nf, f.sisaHutang)).append("*");
             if (f.sisaHutangOrigins != null && !f.sisaHutangOrigins.isEmpty()) {
                 sb.append("\n(dari transaksi ").append(f.sisaHutangOrigins).append(")");
             }
