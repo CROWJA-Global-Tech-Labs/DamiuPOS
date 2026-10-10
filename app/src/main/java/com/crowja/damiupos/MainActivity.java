@@ -499,6 +499,9 @@ public class MainActivity extends AppCompatActivity {
      * Staf → tombol Istirahat + Pulang (+ info shift). Admin → tanpa absensi,
      * hanya tombol Logout, + tile Karyawan.
      */
+    /** Terakhir kali beranda memaksa /api/me (marketing) — batasi 1×/menit. */
+    private long lastMeRefreshAt = 0L;
+
     private void refreshOperatorBar() {
         View card = findViewById(R.id.cardOperator);
         if (card == null) return;
@@ -548,6 +551,20 @@ public class MainActivity extends AppCompatActivity {
         if (btnDelivery != null && btnDelivery.getParent() instanceof View) {
             boolean deliveryDevice = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isDeliveryDevice();
             ((View) btnDelivery.getParent()).setVisibility(isMarketing && !deliveryDevice ? View.GONE : View.VISIBLE);
+        }
+        // Status "Delivery" baru tiba lewat /api/me, yang di HP marketing (tanpa absen/GPS) bisa
+        // tertunda lama di jadwal latar 15 menit. Segarkan /me dari beranda (maks. 1×/menit) lalu
+        // gambar ulang, supaya centang Delivery di web langsung terasa di HP.
+        if (isMarketing && System.currentTimeMillis() - lastMeRefreshAt > 60_000L
+                && new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled()) {
+            lastMeRefreshAt = System.currentTimeMillis();
+            final boolean before = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isDeliveryDevice();
+            com.crowja.damiupos.sync.OnlineTasks.forceConfigRefreshNow(getApplicationContext(), () -> {
+                boolean after = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isDeliveryDevice();
+                if (after != before) runOnUiThread(() -> {
+                    if (!isFinishing() && !isDestroyed()) refreshOperatorBar();
+                });
+            });
         }
 
         // Pencapaian Penjualan: Admin & Marketing (User.canViewSalesAchievement) — peran yang
