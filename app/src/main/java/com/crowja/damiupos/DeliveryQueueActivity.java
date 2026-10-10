@@ -2061,13 +2061,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          sb.append("\u2022 ").append(l);
       }
       final String text = sb.toString();
-      (new AlertDialog.Builder(ctx)).setTitle("\ud83d\udcdd Catatan Pengiriman").setMessage(text)
+      AlertDialog dlg = (new AlertDialog.Builder(ctx)).setTitle("\ud83d\udcdd Catatan Pengiriman").setMessage(text)
             .setPositiveButton("Tutup", (DialogInterface.OnClickListener) null)
             .setNeutralButton("Salin", (d, w) -> {
                android.content.ClipboardManager cm = (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
                if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("Catatan", text));
                Toast.makeText(ctx, "Catatan disalin", Toast.LENGTH_SHORT).show();
             }).show();
+      // Link di catatan (mis. lokasi Google Maps kiriman pelanggan) bisa langsung diketuk.
+      com.crowja.damiupos.util.NoteLinks.apply((TextView) dlg.findViewById(android.R.id.message));
    }
 
    /**
@@ -6405,6 +6407,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       TextView msg = new TextView(this);
       msg.setText(sb.toString());
       msg.setTextSize(14.0F);
+      com.crowja.damiupos.util.NoteLinks.apply(msg);   // link di Catatan bisa diketuk
       body.addView(msg);
       if (t.wasManuallyEdited()) {
          TextView tvEdited = new TextView(this);
