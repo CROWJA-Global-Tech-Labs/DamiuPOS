@@ -537,6 +537,11 @@ public class TransactionDao {
      * diurutkan menurut jadwal lanjut otomatis (yang paling dekat dulu). Sumbernya DB LOKAL, sama
      * seperti {@link #getDeliveryHistory} — kolomnya sengaja diambil sepersis mungkin supaya
      * {@code Transaction} yang dihasilkan bisa langsung dipakai untuk preview/detail biasa.
+     *
+     * <p>Pull transaksi per-perangkat, jadi ini HANYA bagian yang ditarik HP ini (tunda milik HP
+     * lain tak pernah sampai). Saat online layar menggabungkannya dengan daftar se-cabang dari
+     * server ({@code GET /api/delivery/tertunda}, lihat util.TertundaRows); ini tinggal sumber
+     * luring + pemetaan uuid → baris lokal.
      */
     public List<Transaction> getTertundaQueue() {
         List<Transaction> list = new ArrayList<>();
@@ -554,7 +559,9 @@ public class TransactionDao {
                 + "WHERE t." + DatabaseHelper.COL_DELIVERY_STATUS + " = ? "
                 + "GROUP BY COALESCE(t." + DatabaseHelper.COL_SYNC_UUID + ", t." + DatabaseHelper.COL_DELIVERY_TOKEN
                 + ", CAST(t." + DatabaseHelper.COL_TRX_ID + " AS TEXT)) "
-                + "ORDER BY " + DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT + " ASC, t."
+                // Jadwal lanjut bisa bentuk lokal (tulisan HP) ATAU ISO-UTC (tarikan server) — urut
+                // sebagai teks mentah salah (lihat Ts), jadi dinormalkan ke waktu lokal dulu.
+                + "ORDER BY " + Ts.localExpr("t." + DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT) + " ASC, t."
                 + DatabaseHelper.COL_TRX_ID + " DESC";
         try (Cursor c = db.rawQuery(sql, new String[]{Transaction.DELIVERY_TERTUNDA})) {
             while (c.moveToNext()) {
@@ -574,6 +581,12 @@ public class TransactionDao {
                 t.setOrderedAt(getStr(c, DatabaseHelper.COL_ORDERED_AT));
                 t.setSourceWa(getStr(c, DatabaseHelper.COL_SOURCE_WA));
                 t.setDeliveryTertundaResumeAt(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT));
+                t.setDeliveryTertundaReason(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_REASON));
+                t.setReceiptNo(getStr(c, DatabaseHelper.COL_RECEIPT_NO));
+                // Kunci gabung dengan daftar server (uuid) + aturan "baris lokal yang tak dikenal
+                // server hanya tampil bila belum terdorong" (TertundaRows.merge).
+                t.setSyncUuid(getStr(c, DatabaseHelper.COL_SYNC_UUID));
+                t.setSyncPending(getLong(c, DatabaseHelper.COL_SYNCED) == 0);
                 t.setDeliveryToken(getStr(c, DatabaseHelper.COL_DELIVERY_TOKEN));
                 t.setDeliveryDestName(getStr(c, DatabaseHelper.COL_DELIVERY_DEST_NAME));
                 t.setDeliveryDestLat(getDouble(c, DatabaseHelper.COL_DELIVERY_DEST_LAT));
@@ -584,7 +597,8 @@ public class TransactionDao {
                 t.setComplainedAt(getStr(c, DatabaseHelper.COL_COMPLAINED_AT));
                 t.setChatSessionAt(getStr(c, DatabaseHelper.COL_CHAT_SESSION_AT));
                 t.setDeliveryProofRequired(getLong(c, DatabaseHelper.COL_DELIVERY_PROOF_REQUIRED) != 0);
-                // 🧺 Leg checkout multi-lokasi — semua leg ditunda bersama, badge k/N di daftar ini juga.
+                // 🧺 Leg checkout multi-lokasi — badge k/N di daftar ini juga (tiap leg baris sendiri:
+                // ditunda/dilanjutkan per baris, tak ada kaskade ke leg saudara).
                 mapCheckout(t, c);
                 String itemsJson = getStr(c, DatabaseHelper.COL_ITEMS_JSON);
                 if (itemsJson != null) t.setItems(TransactionItem.listFromJson(itemsJson));

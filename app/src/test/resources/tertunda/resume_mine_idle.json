@@ -1,0 +1,15 @@
+{
+    "name": "resume_mine_idle",
+    "method": "POST",
+    "path": "/api/delivery/tertunda/resume",
+    "http": 200,
+    "request": {
+        "transaction_uuid": "55555555-0000-4000-8000-000000000007"
+    },
+    "body": {
+        "ok": true,
+        "message": "Order dilanjutkan sebagai Pesanan Terbuka — bisa diambil perangkat mana pun.",
+        "routed_device": null,
+        "open_dispatch": true
+    }
+}

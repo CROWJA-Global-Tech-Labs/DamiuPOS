@@ -1,0 +1,20 @@
+{
+    "name": "reschedule_ok",
+    "method": "POST",
+    "path": "/api/delivery/tertunda/reschedule",
+    "http": 200,
+    "request": {
+        "transaction_uuid": "55555555-0000-4000-8000-000000000018",
+        "resume_at": "2026-10-14 09:00:00"
+    },
+    "body": {
+        "ok": true,
+        "message": "Jadwal lanjut diubah ke 14 Okt 2026 09:00 — kembali ke antrian otomatis saat jadwalnya tiba.",
+        "wa": {
+            "status": "disabled",
+            "text": "Halo Void Diajukan, pesanan Anda kami jadwalkan ulang ke Rabu, 14 Okt 2026 pukul 09:00 WIB. Mohon maaf atas ketidaknyamanannya, terima kasih 🙏",
+            "phone": "081234567890",
+            "error": null
+        }
+    }
+}

@@ -1,0 +1,13 @@
+{
+    "name": "resume_not_found",
+    "method": "POST",
+    "path": "/api/delivery/tertunda/resume",
+    "http": 404,
+    "request": {
+        "transaction_uuid": "99999999-9999-4999-8999-999999999999"
+    },
+    "body": {
+        "ok": false,
+        "message": "Order tidak ditemukan di cabang ini."
+    }
+}

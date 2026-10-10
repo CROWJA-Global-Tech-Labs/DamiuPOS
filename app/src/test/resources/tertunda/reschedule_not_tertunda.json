@@ -1,0 +1,14 @@
+{
+    "name": "reschedule_not_tertunda",
+    "method": "POST",
+    "path": "/api/delivery/tertunda/reschedule",
+    "http": 422,
+    "request": {
+        "transaction_uuid": "55555555-0000-4000-8000-000000000005",
+        "resume_at": "2026-10-14 09:00:00"
+    },
+    "body": {
+        "ok": false,
+        "message": "Order sudah tidak tertunda — mungkin sudah dilanjutkan/diselesaikan."
+    }
+}

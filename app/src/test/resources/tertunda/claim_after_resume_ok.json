@@ -1,0 +1,15 @@
+{
+    "name": "claim_after_resume_ok",
+    "method": "POST",
+    "path": "/api/delivery/claim",
+    "http": 200,
+    "request": {
+        "transaction_uuid": "55555555-0000-4000-8000-000000000005",
+        "expected_device_uuid": ""
+    },
+    "body": {
+        "ok": true,
+        "message": "Order diambil alih ke perangkat ini.",
+        "customer": "55555555-0000-4000-8000-000000000004"
+    }
+}

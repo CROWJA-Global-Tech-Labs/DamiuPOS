@@ -307,6 +307,41 @@ public class SyncApi {
     }
 
     /**
+     * "⏸ Antrean Tertunda" SE-CABANG (read-only, tanpa efek samping — server tak menjalankan
+     * auto-lanjut di sini). Pull transaksi per-perangkat, jadi tunda milik HP lain tak pernah ada
+     * di DB lokal; daftar ini yang melengkapinya. Balas {@code {"tertunda":[row…],"count":N,
+     * "server_time":"Y-m-d H:i:s"}} — row = bentuk kartu {@code Reports::shapeQueueRow} + mine, type,
+     * payment_method, void_pending, resume_at_local, tertunda_at_local, due_at_local. Mengembalikan
+     * BADAN MENTAH: diurai Gson di {@link com.crowja.damiupos.util.TertundaRows} (teruji JVM).
+     * Branch-scoped by the token.
+     */
+    public String deliveryTertunda() throws Exception {
+        return getRaw(cfg.getBaseUrl() + "/api/delivery/tertunda", cfg.getToken());
+    }
+
+    /**
+     * "▶ Lanjutkan" order TERTUNDA (sama dengan tombol Lanjutkan di web). Body
+     * {@code {transaction_uuid}}. Bila perangkat tujuannya sedang kosong (tak ada staf absen),
+     * server membukanya sebagai Pesanan Terbuka / merutekannya — sama dengan auto-lanjut terjadwal.
+     * Balas {@code {"ok":true,"message":"…","routed_device":{uuid,name}|null,"open_dispatch":bool}};
+     * 404 (tak ada di cabang), 422 "Order sudah tidak tertunda.", 429 (terlalu sering).
+     */
+    public JSONObject resumeTertunda(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/tertunda/resume", body, cfg.getToken());
+    }
+
+    /**
+     * "🕒 Jadwalkan Ulang" order yang SUDAH TERTUNDA (/api/delivery/postpone khusus PENDING). Body
+     * {@code {transaction_uuid, resume_at, reason?, photo_base64?}} — resume_at wall-clock lokal
+     * "yyyy-MM-dd HH:mm:ss"; tanpa kunci reason server MEMPERTAHANKAN alasan lama, tanpa foto baru
+     * foto lama tetap. Balas {@code {"ok":true,"message":"…","wa":{status,text,phone,error}}} (bentuk
+     * wa sama dengan postponeDelivery) atau 422 (tak ada / bukan TERTUNDA / sedang diantar) / 429.
+     */
+    public JSONObject rescheduleTertunda(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/tertunda/reschedule", body, cfg.getToken());
+    }
+
+    /**
      * "Jadikan Prioritas": tandai ⚡ prioritas order yang SUDAH ada di antrian (dibuat di web ATAU di
      * HP) — satu-satunya jalan RESMI HP menyetel delivery_priority_at/reason/by pada baris yang
      * sudah tersimpan (push sinkron biasa sengaja membuang ketiga kolom itu). Body:
@@ -842,6 +877,20 @@ public class SyncApi {
         if (token != null && !token.isEmpty()) b.header("Authorization", "Bearer " + token);
         if (staffUuid != null && !staffUuid.isEmpty()) b.header("X-Staff-Uuid", staffUuid);
         return execute(b.build());
+    }
+
+    /** GET yang mengembalikan badan MENTAH (untuk pengurai Gson); non-2xx → {@link SyncException}. */
+    private String getRaw(String url, String token) throws Exception {
+        Request.Builder b = new Request.Builder()
+                .url(url)
+                .header("Accept", "application/json")
+                .get();
+        if (token != null && !token.isEmpty()) b.header("Authorization", "Bearer " + token);
+        try (Response r = client.newCall(b.build()).execute()) {
+            String s = r.body() != null ? r.body().string() : "";
+            if (!r.isSuccessful()) throw new SyncException(r.code(), s);
+            return s;
+        }
     }
 
     private JSONObject post(String url, JSONObject body, @Nullable String token) throws Exception {
