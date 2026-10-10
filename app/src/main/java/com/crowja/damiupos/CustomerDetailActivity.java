@@ -1444,47 +1444,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
         dialog.show();
     }
 
-    /**
-     * "Lihat koleksi foto" per lokasi pelanggan: grid thumbnail (unduh+cache dari URL, sama seperti
-     * foto rumah) → ketuk salah satu untuk layar penuh. Koleksi hanya diunggah lewat web (maks
-     * {@value #MAX_LOCATION_PHOTOS_HINT} foto) — HP di sini murni PENAMPIL, bukan pengunggah.
-     */
-    private static final int MAX_LOCATION_PHOTOS_HINT = 5;
-
     private int dp(int v) {
         return Math.round(v * getResources().getDisplayMetrics().density);
-    }
-
-    private void showLocationPhotoCollection(String locLabel, java.util.List<String> photoUrls) {
-        int pad = dp(12);
-        android.widget.GridLayout grid = new android.widget.GridLayout(this);
-        grid.setColumnCount(3);
-        grid.setPadding(pad, pad, pad, pad);
-
-        int thumbSize = dp(96);
-        int thumbMargin = dp(4);
-        for (String url : photoUrls) {
-            android.widget.ImageView iv = new android.widget.ImageView(this);
-            android.widget.GridLayout.LayoutParams lp = new android.widget.GridLayout.LayoutParams();
-            lp.width = thumbSize;
-            lp.height = thumbSize;
-            lp.setMargins(thumbMargin, thumbMargin, thumbMargin, thumbMargin);
-            iv.setLayoutParams(lp);
-            iv.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
-            iv.setImageResource(android.R.drawable.ic_menu_gallery);
-            iv.setBackgroundColor(0xFFECECEC);
-            grid.addView(iv);
-            loadLocationThumb(iv, url);
-        }
-
-        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
-        scroll.addView(grid);
-
-        new AlertDialog.Builder(this)
-                .setTitle("📍 " + locLabel + " — Koleksi Foto")
-                .setView(scroll)
-                .setPositiveButton("Tutup", null)
-                .show();
     }
 
     /** Unduh (cache lokal) + tampilkan satu thumbnail koleksi; ketuk → layar penuh. */
@@ -1503,6 +1464,61 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 iv.setOnClickListener(v -> showFullScreenPhoto(f.getAbsolutePath()));
             });
         }).start();
+    }
+
+    /** Sumber foto satu lokasi: koleksi lokasi (URL / path lokal), cadangan foto rumah untuk lokasi utama. */
+    private static java.util.List<String> locationPhotos(Customer.Location l, Customer primaryOwner) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (l.photos != null) {
+            for (String p : l.photos) {
+                if (p != null && !p.trim().isEmpty() && !"null".equalsIgnoreCase(p.trim())) out.add(p.trim());
+            }
+        }
+        if (out.isEmpty() && l.photo != null && !l.photo.trim().isEmpty() && !"null".equalsIgnoreCase(l.photo.trim())) {
+            out.add(l.photo.trim());
+        }
+        if (out.isEmpty() && primaryOwner != null) {
+            String lp = primaryOwner.getPhotoPath();
+            if (lp != null && !lp.isEmpty() && new File(lp).exists()) {
+                out.add(lp);
+            } else if (primaryOwner.getPhotoUrl() != null && primaryOwner.getPhotoUrl().startsWith("http")) {
+                out.add(primaryOwner.getPhotoUrl());
+            }
+        }
+        return out;
+    }
+
+    /** Isi strip thumbnail satu baris lokasi; "📷 Belum ada foto" bila kosong. */
+    private void bindLocationThumbs(android.widget.LinearLayout strip, java.util.List<String> photos) {
+        if (strip == null) return;
+        strip.removeAllViews();
+        if (photos.isEmpty()) {
+            TextView none = new TextView(this);
+            none.setText("📷 Belum ada foto");
+            none.setTextSize(11f);
+            none.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.text_secondary));
+            strip.addView(none);
+            return;
+        }
+        int size = dp(64);
+        for (String src : photos) {
+            android.widget.ImageView iv = new android.widget.ImageView(this);
+            android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(size, size);
+            lp.setMargins(0, 0, dp(6), 0);
+            iv.setLayoutParams(lp);
+            iv.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+            iv.setImageResource(android.R.drawable.ic_menu_gallery);
+            iv.setBackgroundColor(0xFFECECEC);
+            iv.setContentDescription("Foto lokasi");
+            strip.addView(iv);
+            if (src.startsWith("http")) {
+                loadLocationThumb(iv, src);
+            } else if (new File(src).exists()) {
+                android.graphics.Bitmap b = com.crowja.damiupos.util.BitmapUtils.decodeSampled(src, 300, 300);
+                if (b != null) iv.setImageBitmap(b);
+                iv.setOnClickListener(v -> showFullScreenPhoto(src));
+            }
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -1539,10 +1555,9 @@ public class CustomerDetailActivity extends AppCompatActivity {
         // Daftar per-lokasi: nama + badge ★Utama / 🚚 Wajib Ongkir + tombol Navigasi ke titik itu.
         android.widget.LinearLayout list = findViewById(R.id.locationsList);
         list.removeAllViews();
-        // Sembunyikan daftar bila cuma satu lokasi tanpa Wajib Ongkir (peta + header sudah cukup).
-        boolean anyWajib = false;
-        for (Customer.Location l : locs) if (l.wajibOngkir) anyWajib = true;
-        if (locs.size() > 1 || anyWajib) {
+        // Daftar SELALU tampil: tiap lokasi membawa pratinjau fotonya (dulu daftar disembunyikan untuk
+        // pelanggan satu lokasi tanpa Wajib Ongkir → foto lokasinya tak bisa dilihat sama sekali).
+        {
             android.view.LayoutInflater inf = getLayoutInflater();
             for (int i = 0; i < locs.size(); i++) {
                 Customer.Location l = locs.get(i);
@@ -1555,15 +1570,9 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 wajib.setVisibility(l.wajibOngkir ? View.VISIBLE : View.GONE);
                 row.findViewById(R.id.btnLocNav).setOnClickListener(v ->
                         navigateTo(customer.getName(), l.name, l.lat, l.lng));
-                // Koleksi foto lokasi (maks 5, diunggah lewat web) — hanya muncul bila ada isinya.
-                com.google.android.material.button.MaterialButton btnPhotos = row.findViewById(R.id.btnLocPhotos);
-                java.util.List<String> photos = l.photos != null ? l.photos : java.util.Collections.emptyList();
-                if (!photos.isEmpty()) {
-                    btnPhotos.setVisibility(View.VISIBLE);
-                    btnPhotos.setText(photos.size() > 1 ? "Foto (" + photos.size() + ")" : "Foto");
-                    String locLabel = l.name != null && !l.name.isEmpty() ? l.name : Customer.DEFAULT_LOCATION_NAME;
-                    btnPhotos.setOnClickListener(v -> showLocationPhotoCollection(locLabel, photos));
-                }
+                // Pratinjau foto lokasi langsung di baris (thumbnail, ketuk = layar penuh). Lokasi UTAMA
+                // tanpa foto lokasi memakai foto rumah pelanggan — sama dengan Preview antrean.
+                bindLocationThumbs(row.findViewById(R.id.llLocThumbs), locationPhotos(l, i == 0 ? customer : null));
                 list.addView(row);
             }
         }
