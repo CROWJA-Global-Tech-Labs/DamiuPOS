@@ -542,11 +542,12 @@ public class MainActivity extends AppCompatActivity {
         if (cardQuickActions != null) {
             cardQuickActions.setVisibility(View.VISIBLE);
         }
-        // Marketing tidak ikut flow delivery (antrean kiriman dikerjakan kurir/staf depot)
-        // → sembunyikan tombol Delivery beserta badge-nya (parent FrameLayout keduanya).
+        // Marketing biasanya tidak ikut flow delivery → tombol Delivery + badge disembunyikan,
+        // KECUALI perangkatnya dicentang "Delivery" di web (mis. PAKADI: marketing sekaligus kurir).
         View btnDelivery = findViewById(R.id.btnAntrianDelivery);
         if (btnDelivery != null && btnDelivery.getParent() instanceof View) {
-            ((View) btnDelivery.getParent()).setVisibility(isMarketing ? View.GONE : View.VISIBLE);
+            boolean deliveryDevice = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isDeliveryDevice();
+            ((View) btnDelivery.getParent()).setVisibility(isMarketing && !deliveryDevice ? View.GONE : View.VISIBLE);
         }
 
         // Pencapaian Penjualan: Admin & Marketing (User.canViewSalesAchievement) — peran yang

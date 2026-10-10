@@ -140,6 +140,7 @@ public final class OnlineTasks {
             // "Petugas WA Perkenalan": perangkat ini bertugas menyapa pelanggan promosi baru →
             // badge + notifikasi kedatangan, dibatasi index sektor di intro_wa_zones.
             cfg.setIntroWaDevice(r.optBoolean("is_intro_wa", false));
+            cfg.setDeliveryDevice(r.optBoolean("is_delivery", false));
             JSONArray iwz = r.optJSONArray("intro_wa_zones");
             cfg.setIntroWaZones(iwz != null ? iwz.toString() : "");
             // 🧺 Gerbang checkout multi-lokasi: vonis SERVER dari gerbang rollout APK (/api/me checkout_multi_enabled).
