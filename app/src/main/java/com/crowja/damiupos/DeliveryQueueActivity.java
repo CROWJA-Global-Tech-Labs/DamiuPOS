@@ -197,6 +197,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    // Filter "pernah dikomplain" (badge 😠) -- independen per tab, cermin searchMineQuery/searchOpenQuery.
    private boolean complaintOnlyMine = false;
    private boolean complaintOnlyOpen = false;
+   // Filter jenis order per tab: 0 = semua, 1 = Penjualan saja (JUAL), 2 = Ambil Galon saja (KEMBALI/ambil).
+   private static final int KIND_ALL = 0, KIND_JUAL = 1, KIND_AMBIL = 2;
+   private int kindMine = KIND_ALL, kindOther = KIND_ALL, kindOpen = KIND_ALL;
    private static final int SORT_OPEN_DISTANCE = 0;
    private static final int SORT_OPEN_GALON = 1;
    private static final int SORT_OPEN_AGE = 2;
@@ -441,6 +444,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
       });
       android.widget.CheckBox cbKomplainMine = this.findViewById(id.cbKomplainMine);
+      this.addKindFilter(cbKomplainMine, (k) -> {
+         this.kindMine = k;
+         this.adapter.applyFilter();
+      });
       if (cbKomplainMine != null) {
          cbKomplainMine.setOnCheckedChangeListener((b, checked) -> {
             this.complaintOnlyMine = checked;
@@ -575,6 +582,19 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
       });
       android.widget.CheckBox cbKomplainOpen = this.findViewById(id.cbKomplainOpen);
+      this.addKindFilter(cbKomplainOpen, (k) -> {
+         this.kindOpen = k;
+         this.openDispatchAdapter.applyFilterSort();
+      });
+      View searchOtherBox = this.findViewById(id.etSearchOther);
+      while (searchOtherBox != null && !(searchOtherBox instanceof com.google.android.material.textfield.TextInputLayout)
+            && searchOtherBox.getParent() instanceof View) {
+         searchOtherBox = (View) searchOtherBox.getParent();
+      }
+      this.addKindFilter(searchOtherBox, (k) -> {
+         this.kindOther = k;
+         this.otherDevicesAdapter.applyFilterSort();
+      });
       if (cbKomplainOpen != null) {
          cbKomplainOpen.setOnCheckedChangeListener((b, checked) -> {
             this.complaintOnlyOpen = checked;
@@ -2794,6 +2814,52 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private static String escJs(String s) {
       return s == null ? "" : s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", " ");
+   }
+
+   private static boolean kindMatches(int kind, boolean pickupOnly) {
+      return kind == KIND_ALL || (kind == KIND_JUAL ? !pickupOnly : pickupOnly);
+   }
+
+   /**
+    * Baris checkbox "🛒 Penjualan saja" / "↩ Ambil galon saja" (saling eksklusif) — disisipkan tepat
+    * setelah {@code anchor} (checkbox Komplain / kotak cari) di induknya. Antrean selama ini campur
+    * antara order jual dan order ambil galon (KEMBALI).
+    */
+   private void addKindFilter(View anchor, java.util.function.IntConsumer onChange) {
+      if (anchor == null || !(anchor.getParent() instanceof android.view.ViewGroup)) return;
+      android.view.ViewGroup parent = (android.view.ViewGroup) anchor.getParent();
+      LinearLayout row = new LinearLayout(this);
+      row.setOrientation(LinearLayout.HORIZONTAL);
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+      lp.setMarginStart(this.dp(12f));
+      row.setLayoutParams(lp);
+      com.google.android.material.checkbox.MaterialCheckBox jual = new com.google.android.material.checkbox.MaterialCheckBox(this);
+      com.google.android.material.checkbox.MaterialCheckBox ambil = new com.google.android.material.checkbox.MaterialCheckBox(this);
+      jual.setText("🛒 Penjualan saja");
+      ambil.setText("↩ Ambil galon saja");
+      for (com.google.android.material.checkbox.MaterialCheckBox cb : new com.google.android.material.checkbox.MaterialCheckBox[]{jual, ambil}) {
+         cb.setTextSize(11f);
+         cb.setMinWidth(0);
+         cb.setMinimumWidth(0);
+         cb.setPadding(this.dp(2f), 0, this.dp(10f), 0);
+         row.addView(cb);
+      }
+      final boolean[] busy = {false};
+      jual.setOnCheckedChangeListener((b, checked) -> {
+         if (busy[0]) return;
+         busy[0] = true;
+         if (checked) ambil.setChecked(false);
+         busy[0] = false;
+         onChange.accept(checked ? KIND_JUAL : (ambil.isChecked() ? KIND_AMBIL : KIND_ALL));
+      });
+      ambil.setOnCheckedChangeListener((b, checked) -> {
+         if (busy[0]) return;
+         busy[0] = true;
+         if (checked) jual.setChecked(false);
+         busy[0] = false;
+         onChange.accept(checked ? KIND_AMBIL : (jual.isChecked() ? KIND_JUAL : KIND_ALL));
+      });
+      parent.addView(row, parent.indexOfChild(anchor) + 1);
    }
 
    private void renderStrategy(List<Transaction> list) {
@@ -9894,8 +9960,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       void applyFilterSort() {
          this.data.clear();
          String q = DeliveryQueueActivity.this.searchOtherQuery.toLowerCase(Locale.US);
+         int kind = DeliveryQueueActivity.this.kindOther;
 
          for(JSONObject o : this.rawData) {
+            if (!kindMatches(kind, o.optBoolean("pickup_only", false))) continue;
             if (q.isEmpty()) {
                this.data.add(o);
             } else {
@@ -10151,12 +10219,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             q = DeliveryQueueActivity.this.searchMineQuery.toLowerCase(Locale.US);
          }
          boolean complaintOnly = DeliveryQueueActivity.this.complaintOnlyMine;
-         if (q.isEmpty() && !complaintOnly) {
+         int kind = DeliveryQueueActivity.this.kindMine;
+         if (q.isEmpty() && !complaintOnly && kind == KIND_ALL) {
             return base;
          }
          List<Transaction> filtered = new ArrayList<>();
          for (Transaction t : base) {
             if (complaintOnly && !t.isComplained()) continue;
+            if (!kindMatches(kind, DeliveryPlanner.isPickupOnly(t))) continue;
             String name = safe(t.getCustomerName()).toLowerCase(Locale.US);
             String phone = t.getCustomerPhone() != null ? t.getCustomerPhone().toLowerCase(Locale.US) : "";
             if (q.isEmpty() || name.contains(q) || phone.contains(q) || CustomerDao.phoneMatches(phone, q)) filtered.add(t);
@@ -10442,9 +10512,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.data.clear();
          String q = DeliveryQueueActivity.this.searchOpenQuery.toLowerCase(Locale.US);
          boolean complaintOnly = DeliveryQueueActivity.this.complaintOnlyOpen;
+         int kind = DeliveryQueueActivity.this.kindOpen;
 
          for(Transaction t : this.rawData) {
             if (complaintOnly && !t.isComplained()) continue;
+            if (!kindMatches(kind, DeliveryPlanner.isPickupOnly(t))) continue;
             if (q.isEmpty()) {
                this.data.add(t);
             } else {
