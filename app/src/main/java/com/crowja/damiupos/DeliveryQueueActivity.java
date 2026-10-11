@@ -2828,11 +2828,19 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private void addKindFilter(View anchor, java.util.function.IntConsumer onChange) {
       if (anchor == null || !(anchor.getParent() instanceof android.view.ViewGroup)) return;
       android.view.ViewGroup parent = (android.view.ViewGroup) anchor.getParent();
+      int at = parent.indexOfChild(anchor) + 1;
       LinearLayout row = new LinearLayout(this);
       row.setOrientation(LinearLayout.HORIZONTAL);
-      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-      lp.setMarginStart(this.dp(12f));
-      row.setLayoutParams(lp);
+      row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+      // Checkbox "😠 Komplain saja" ikut dipindah ke baris yang SAMA — satu baris filter, digeser
+      // ke samping bila layar sempit.
+      if (anchor instanceof android.widget.CheckBox) {
+         at = parent.indexOfChild(anchor);
+         parent.removeView(anchor);
+         anchor.setLayoutParams(new LinearLayout.LayoutParams(-2, -2));
+         anchor.setPadding(this.dp(2f), 0, this.dp(10f), 0);
+         row.addView(anchor);
+      }
       com.google.android.material.checkbox.MaterialCheckBox jual = new com.google.android.material.checkbox.MaterialCheckBox(this);
       com.google.android.material.checkbox.MaterialCheckBox ambil = new com.google.android.material.checkbox.MaterialCheckBox(this);
       jual.setText("🛒 Penjualan saja");
@@ -2859,7 +2867,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          busy[0] = false;
          onChange.accept(checked ? KIND_AMBIL : (jual.isChecked() ? KIND_JUAL : KIND_ALL));
       });
-      parent.addView(row, parent.indexOfChild(anchor) + 1);
+      android.widget.HorizontalScrollView scroll = new android.widget.HorizontalScrollView(this);
+      scroll.setHorizontalScrollBarEnabled(false);
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+      lp.setMarginStart(this.dp(12f));
+      scroll.setLayoutParams(lp);
+      scroll.addView(row);
+      parent.addView(scroll, at);
    }
 
    private void renderStrategy(List<Transaction> list) {
