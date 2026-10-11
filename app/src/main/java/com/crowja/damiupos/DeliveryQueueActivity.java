@@ -214,7 +214,6 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private int strategyPage = 0;
    private final List<JSONObject> tripPages = new ArrayList<>();
    private boolean tripsLoading = false;
-   private android.view.GestureDetector strategySwipe;
    private final LinkedHashSet<Long> runningIds = new LinkedHashSet<>();
    private double myLat = (double)0.0F;
    private double myLng = (double)0.0F;
@@ -2947,21 +2946,114 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    /** Geser kiri/kanan pada kartu strategi = pindah halaman Strategi ⇄ Trip Khusus. Klik biasa tetap jalan. */
    private void setupStrategySwipe() {
       final int minDx = this.dp(60f);
-      this.strategySwipe = new android.view.GestureDetector(this, new android.view.GestureDetector.SimpleOnGestureListener() {
-         @Override
-         public boolean onFling(android.view.MotionEvent e1, android.view.MotionEvent e2, float vx, float vy) {
-            if (e1 == null || e2 == null) return false;
-            float dx = e2.getX() - e1.getX();
-            float dy = e2.getY() - e1.getY();
-            if (Math.abs(dx) < minDx || Math.abs(dx) < Math.abs(dy) * 1.5f) return false;
-            return DeliveryQueueActivity.this.flipStrategyPage(dx < 0 ? 1 : -1);
+      final int slop = android.view.ViewConfiguration.get(this).getScaledTouchSlop();
+      // Kartu IKUT jari saat digeser (seperti kartu sungguhan) + efek NYALA: tepi searah geseran
+      // berpendar & kartu terangkat. Lepas melewati ambang → pindah halaman; kurang → kembali memantul.
+      final float[] down = new float[2];
+      final boolean[] dragging = {false};
+      View.OnTouchListener l = (v, ev) -> {
+         if (this.guidedMode || this.tripPages.isEmpty()) return false;
+         View content = this.strategyContent();
+         if (content == null) return false;
+         switch (ev.getActionMasked()) {
+            case android.view.MotionEvent.ACTION_DOWN:
+               down[0] = ev.getRawX();
+               down[1] = ev.getRawY();
+               dragging[0] = false;
+               return false;
+            case android.view.MotionEvent.ACTION_MOVE: {
+               float dx = ev.getRawX() - down[0];
+               float dy = ev.getRawY() - down[1];
+               if (!dragging[0]) {
+                  if (Math.abs(dx) < slop || Math.abs(dx) < Math.abs(dy) * 1.5f) return false;
+                  dragging[0] = true;
+                  content.animate().cancel();
+                  v.cancelLongPress();
+                  v.setPressed(false);
+                  if (v.getParent() != null) v.getParent().requestDisallowInterceptTouchEvent(true);
+               }
+               int dir = dx < 0 ? 1 : -1;
+               int next = this.strategyPage + dir;
+               boolean edge = next < 0 || next > this.tripPages.size();
+               // Ujung halaman: tarikan "karet" (lebih berat), tanda tak ada halaman lagi.
+               content.setTranslationX(dx * (edge ? 0.25f : 0.85f));
+               float w = Math.max(1f, content.getWidth());
+               float p = Math.min(1f, Math.abs(dx) / (w * 0.5f));
+               this.applySwipeGlow(content, p, dx < 0, edge);
+               return true;
+            }
+            case android.view.MotionEvent.ACTION_UP:
+            case android.view.MotionEvent.ACTION_CANCEL: {
+               if (!dragging[0]) return false;
+               dragging[0] = false;
+               float dx = ev.getRawX() - down[0];
+               this.applySwipeGlow(content, 0f, dx < 0, false);
+               boolean flipped = ev.getActionMasked() == android.view.MotionEvent.ACTION_UP
+                     && Math.abs(dx) >= minDx && this.canFlipStrategy(dx < 0 ? 1 : -1)
+                     && this.flipStrategyPage(dx < 0 ? 1 : -1);
+               if (!flipped) {
+                  content.animate().translationX(0f).alpha(1f).setDuration(260)
+                        .setInterpolator(new android.view.animation.OvershootInterpolator(1.6f)).start();
+               }
+               return true;
+            }
+            default:
+               return dragging[0];
          }
-      });
-      View.OnTouchListener l = (v, ev) -> this.strategySwipe != null && this.strategySwipe.onTouchEvent(ev);
+      };
       for (int vid : new int[]{id.cardStrategy, id.strategyHeader, id.strategyBody, id.strategyStopsList, id.tvStrategySummary}) {
          View v = this.findViewById(vid);
          if (v != null) v.setOnTouchListener(l);
       }
+   }
+
+   private boolean canFlipStrategy(int delta) {
+      int next = this.strategyPage + delta;
+      return !this.guidedMode && !this.tripPages.isEmpty() && next >= 0 && next <= this.tripPages.size();
+   }
+
+   /**
+    * Efek nyala saat kartu digeser: pendar biru dari tepi searah geseran (kuat = jauh), kartu
+    * sedikit terangkat. {@code p} 0..1; 0 = padam (pendar memudar sendiri). Di ujung halaman pendar
+    * berwarna jingga — tanda tak bisa digeser lagi.
+    */
+   private void applySwipeGlow(View content, float p, boolean towardLeft, boolean edge) {
+      MaterialCardView card = (MaterialCardView) this.findViewById(id.cardStrategy);
+      if (card == null) return;
+      if (p <= 0f) {
+         android.graphics.drawable.Drawable fg = content.getForeground();
+         if (fg != null) {
+            ValueAnimator fade = ValueAnimator.ofInt(fg.getAlpha(), 0);
+            fade.setDuration(220);
+            fade.addUpdateListener((a) -> fg.setAlpha((Integer) a.getAnimatedValue()));
+            fade.addListener(new android.animation.AnimatorListenerAdapter() {
+               @Override
+               public void onAnimationEnd(android.animation.Animator animation) {
+                  content.setForeground(null);
+               }
+            });
+            fade.start();
+         }
+         card.animate().translationZ(0f).scaleX(1f).scaleY(1f).setDuration(220).start();
+         return;
+      }
+      int glow = edge ? 0xFFF59E0B : 0xFF38BDF8;
+      android.graphics.drawable.GradientDrawable g = content.getForeground() instanceof android.graphics.drawable.GradientDrawable
+            ? (android.graphics.drawable.GradientDrawable) content.getForeground() : null;
+      if (g == null) {
+         g = new android.graphics.drawable.GradientDrawable();
+         g.setCornerRadius(this.dp(12f));
+         content.setForeground(g);
+      }
+      // Pendar dari tepi DEPAN (searah geseran) memudar ke tengah kartu.
+      g.setOrientation(towardLeft ? android.graphics.drawable.GradientDrawable.Orientation.RIGHT_LEFT
+            : android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT);
+      g.setColors(new int[]{(glow & 0x00FFFFFF) | 0x66000000, (glow & 0x00FFFFFF) | 0x14000000, 0x00000000});
+      g.setAlpha(Math.round(255 * Math.min(1f, 0.35f + p)));
+      card.setTranslationZ(this.dp(6f) * p);
+      float sc = 1f + 0.015f * p;
+      card.setScaleX(sc);
+      card.setScaleY(sc);
    }
 
    private boolean flipStrategyPage(int delta) {
