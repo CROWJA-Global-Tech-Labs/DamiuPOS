@@ -2888,10 +2888,43 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (this.guidedMode || this.tripPages.isEmpty()) return false;
       int pages = this.tripPages.size() + 1;
       int next = this.strategyPage + delta;
-      if (next < 0 || next >= pages) return false;
+      View content = this.strategyContent();
+      if (next < 0 || next >= pages) {
+         // Ujung halaman: pantulan kecil — tanda tak ada halaman lagi ke arah itu.
+         if (content != null) {
+            content.animate().cancel();
+            content.animate().translationX(-delta * this.dp(24f)).setDuration(90)
+                  .withEndAction(() -> content.animate().translationX(0f).setDuration(160)
+                        .setInterpolator(new android.view.animation.OvershootInterpolator(2f)).start())
+                  .start();
+         }
+         return true;
+      }
       this.strategyPage = next;
-      this.renderStrategy(this.adapter != null ? this.adapter.data : null);
+      if (content == null || content.getWidth() == 0) {
+         this.renderStrategy(this.adapter != null ? this.adapter.data : null);
+         return true;
+      }
+      // Geser keluar searah jari + memudar, ganti isi, lalu masuk dari sisi seberang.
+      float w = content.getWidth();
+      content.animate().cancel();
+      content.animate().translationX(-delta * w * 0.6f).alpha(0f).setDuration(140)
+            .setInterpolator(new android.view.animation.AccelerateInterpolator())
+            .withEndAction(() -> {
+               if (this.isFinishing() || this.isDestroyed()) return;
+               this.renderStrategy(this.adapter != null ? this.adapter.data : null);
+               content.setTranslationX(delta * w * 0.6f);
+               content.animate().translationX(0f).alpha(1f).setDuration(220)
+                     .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+            }).start();
       return true;
+   }
+
+   /** Isi kartu strategi (anak pertama MaterialCardView) — yang dianimasikan, bingkai kartu diam. */
+   private View strategyContent() {
+      View card = this.findViewById(id.cardStrategy);
+      return card instanceof android.view.ViewGroup && ((android.view.ViewGroup) card).getChildCount() > 0
+            ? ((android.view.ViewGroup) card).getChildAt(0) : null;
    }
 
    /** Ambil daftar Trip Khusus berjalan dari server (latar). Gagal/offline → halaman trip tak tampil. */
