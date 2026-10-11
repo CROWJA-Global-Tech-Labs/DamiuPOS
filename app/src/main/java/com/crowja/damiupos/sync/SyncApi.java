@@ -500,6 +500,24 @@ public class SyncApi {
      * perangkat LAIN di cabang digabung satu daftar (server sudah mengecualikan milik pemanggil
      * sendiri). Balasan {@code {queue:[{...bentuk sama dengan deviceQueue...}]}}.
      */
+    /**
+     * 🧭 Trip Khusus berjalan: aturan trip (menu Marketing, web) yang wilayahnya memuat antrean aktif —
+     * Antrean Saya, perangkat lain (belum diantar) & Pesanan Terbuka. GET /api/delivery/trips →
+     * {trips:[{id,name,days_label,runs_today,next_date,ongkir_label,counts{mine,other,open,galon},orders[…]}]}.
+     */
+    public JSONObject deliveryTrips() throws Exception {
+        return get(cfg.getBaseUrl() + "/api/delivery/trips", cfg.getToken());
+    }
+
+    /**
+     * ▶ Mulai Trip Khusus: server melepas Antrean Saya di luar trip ke Pesanan Terbuka lalu mengambil
+     * alih order trip dari perangkat lain & Pesanan Terbuka. → {ok,message,claimed[],released[],skipped[]}.
+     * 404 aturan tak dikenal, 422 bukan perangkat delivery / trip kosong, 429 terlalu sering.
+     */
+    public JSONObject startDeliveryTrip(long ruleId) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/trips/" + ruleId + "/start", new JSONObject(), cfg.getToken());
+    }
+
     public JSONObject devicesQueueAll() throws Exception {
         return get(cfg.getBaseUrl() + "/api/devices/queue-all", cfg.getToken());
     }
