@@ -197,6 +197,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    // Filter "pernah dikomplain" (badge 😠) -- independen per tab, cermin searchMineQuery/searchOpenQuery.
    private boolean complaintOnlyMine = false;
    private boolean complaintOnlyOpen = false;
+   private boolean complaintOnlyOther = false;
    // Filter jenis order per tab: 0 = semua, 1 = Penjualan saja (JUAL), 2 = Ambil Galon saja (KEMBALI/ambil).
    private static final int KIND_ALL = 0, KIND_JUAL = 1, KIND_AMBIL = 2;
    private int kindMine = KIND_ALL, kindOther = KIND_ALL, kindOpen = KIND_ALL;
@@ -590,7 +591,23 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             && searchOtherBox.getParent() instanceof View) {
          searchOtherBox = (View) searchOtherBox.getParent();
       }
-      this.addKindFilter(searchOtherBox, (k) -> {
+      // Tab Perangkat Lain: baris filter yang SAMA dengan tab lain — "😠 Komplain saja" dibuat di sini
+      // (tab ini tak punya checkbox di layout) lalu ikut dipindah ke baris filter oleh addKindFilter.
+      android.widget.CheckBox cbKomplainOther = null;
+      if (searchOtherBox != null && searchOtherBox.getParent() instanceof android.view.ViewGroup) {
+         android.view.ViewGroup op = (android.view.ViewGroup) searchOtherBox.getParent();
+         cbKomplainOther = new com.google.android.material.checkbox.MaterialCheckBox(this);
+         cbKomplainOther.setText("😠 Komplain saja");
+         cbKomplainOther.setTextSize(11f);
+         cbKomplainOther.setMinWidth(0);
+         cbKomplainOther.setMinimumWidth(0);
+         cbKomplainOther.setOnCheckedChangeListener((b, checked) -> {
+            this.complaintOnlyOther = checked;
+            this.otherDevicesAdapter.applyFilterSort();
+         });
+         op.addView(cbKomplainOther, op.indexOfChild(searchOtherBox) + 1);
+      }
+      this.addKindFilter(cbKomplainOther != null ? cbKomplainOther : searchOtherBox, (k) -> {
          this.kindOther = k;
          this.otherDevicesAdapter.applyFilterSort();
       });
@@ -10101,8 +10118,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          String q = DeliveryQueueActivity.this.searchOtherQuery.toLowerCase(Locale.US);
          int kind = DeliveryQueueActivity.this.kindOther;
 
+         boolean complaintOnly = DeliveryQueueActivity.this.complaintOnlyOther;
          for(JSONObject o : this.rawData) {
             if (!kindMatches(kind, o.optBoolean("pickup_only", false))) continue;
+            if (complaintOnly && !o.optBoolean("complained", false)) continue;
             if (q.isEmpty()) {
                this.data.add(o);
             } else {
