@@ -207,6 +207,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    /** Kartu Strategi Pengiriman disembunyikan SELURUHNYA lewat menu overflow — beda dari
     *  strategyCollapsed (hanya melipat isinya). Lihat SettingsDao#isDeliveryStrategyHidden. */
    private boolean strategyHidden = false;
+   /** 🧭 Kartu strategi bisa digeser: halaman 0 = Strategi Pengiriman, 1..N = Trip Khusus dari server. */
+   private int strategyPage = 0;
+   private final List<JSONObject> tripPages = new ArrayList<>();
+   private boolean tripsLoading = false;
+   private android.view.GestureDetector strategySwipe;
    private final LinkedHashSet<Long> runningIds = new LinkedHashSet<>();
    private double myLat = (double)0.0F;
    private double myLng = (double)0.0F;
@@ -321,6 +326,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          if (!DeliveryQueueActivity.this.selectionMode) {
             DeliveryQueueActivity.this.loadData();
          }
+         DeliveryQueueActivity.this.loadTrips();
 
       }
    };
@@ -598,18 +604,25 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       View strategyAll = this.findViewById(id.tvStrategyAll);
       if (strategyAll != null) {
-         strategyAll.setOnClickListener((v) -> this.showFullStrategy());
+         strategyAll.setOnClickListener((v) -> {
+            if (this.strategyPage > 0) this.showFullTripKhusus();
+            else this.showFullStrategy();
+         });
       }
 
       View btnJalankanRit = this.findViewById(id.btnJalankanRit);
       if (btnJalankanRit != null) {
-         btnJalankanRit.setOnClickListener((v) -> this.runStrategyTrip());
+         btnJalankanRit.setOnClickListener((v) -> {
+            if (this.strategyPage > 0) this.confirmStartTripKhusus();
+            else this.runStrategyTrip();
+         });
       }
 
       View btnRefreshRit = this.findViewById(id.btnRefreshRit);
       if (btnRefreshRit != null) {
          btnRefreshRit.setOnClickListener((v) -> this.refreshRit(v, null));
       }
+      this.setupStrategySwipe();
 
    }
 
@@ -1389,6 +1402,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.loadData();
       this.openPendingFocus();
       this.loadOtherDevices();
+      this.loadTrips();
       this.tick.postDelayed(this.ticker, 1000L);
       this.tick.postDelayed(this.strategyResortTicker, 60000L);
       if (this.guidedMode) {
@@ -2794,6 +2808,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             }
          }
 
+         // 🧭 Halaman Trip Khusus (geser kiri/kanan). Antrean Saya kosong tapi ada trip → langsung trip.
+         boolean tripsAvailable = !this.guidedMode && !this.tripPages.isEmpty();
+         if (this.strategyPage > this.tripPages.size()) this.strategyPage = this.tripPages.size();
+         if (planned.isEmpty() && tripsAvailable && this.strategyPage == 0) this.strategyPage = 1;
+         if (!tripsAvailable) this.strategyPage = 0;
+         if (this.strategyPage > 0) {
+            this.renderTripKhususPage(card);
+            return;
+         }
+         this.restoreStrategyChrome();
+
          if (planned.isEmpty()) {
             card.setVisibility(8);
             this.stopStrategyBlink();
@@ -2813,7 +2838,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                   this.autoStartGuidedTrip(trips.get(0));
                }
                DeliveryPlanner.Trip first = (DeliveryPlanner.Trip)trips.get(0);
-               ((TextView)this.findViewById(id.tvStrategyTitle)).setText("\ud83d\ude9a Strategi Pengiriman — Rit 1 dari " + trips.size());
+               ((TextView)this.findViewById(id.tvStrategyTitle)).setText("\ud83d\ude9a Strategi Pengiriman — Rit 1 dari " + trips.size()
+                     + (tripsAvailable ? "  · 1/" + (this.tripPages.size() + 1) + " ⇆" : ""));
                String muat = "Muat " + first.galon + " galon" + (maxLoad > 0 ? " dari " + maxLoad : "") + " · " + first.stops.size() + " pemberhentian";
                if (maxLoad <= 0) {
                   muat = muat + "\n⚠️ Muatan Max belum diatur admin — seluruh antrean dianggap satu rit.";
@@ -2834,6 +2860,290 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             }
          }
       }
+   }
+
+   // ------------------------------------------------------------------ 🧭 Trip Khusus (kartu geser)
+
+   /** Geser kiri/kanan pada kartu strategi = pindah halaman Strategi ⇄ Trip Khusus. Klik biasa tetap jalan. */
+   private void setupStrategySwipe() {
+      final int minDx = this.dp(60f);
+      this.strategySwipe = new android.view.GestureDetector(this, new android.view.GestureDetector.SimpleOnGestureListener() {
+         @Override
+         public boolean onFling(android.view.MotionEvent e1, android.view.MotionEvent e2, float vx, float vy) {
+            if (e1 == null || e2 == null) return false;
+            float dx = e2.getX() - e1.getX();
+            float dy = e2.getY() - e1.getY();
+            if (Math.abs(dx) < minDx || Math.abs(dx) < Math.abs(dy) * 1.5f) return false;
+            return DeliveryQueueActivity.this.flipStrategyPage(dx < 0 ? 1 : -1);
+         }
+      });
+      View.OnTouchListener l = (v, ev) -> this.strategySwipe != null && this.strategySwipe.onTouchEvent(ev);
+      for (int vid : new int[]{id.cardStrategy, id.strategyHeader, id.strategyBody, id.strategyStopsList, id.tvStrategySummary}) {
+         View v = this.findViewById(vid);
+         if (v != null) v.setOnTouchListener(l);
+      }
+   }
+
+   private boolean flipStrategyPage(int delta) {
+      if (this.guidedMode || this.tripPages.isEmpty()) return false;
+      int pages = this.tripPages.size() + 1;
+      int next = this.strategyPage + delta;
+      if (next < 0 || next >= pages) return false;
+      this.strategyPage = next;
+      this.renderStrategy(this.adapter != null ? this.adapter.data : null);
+      return true;
+   }
+
+   /** Ambil daftar Trip Khusus berjalan dari server (latar). Gagal/offline → halaman trip tak tampil. */
+   private void loadTrips() {
+      SyncSettings cfg = this.syncCfg();
+      if (this.guidedMode || !cfg.isEnrolled() || this.tripsLoading) return;
+      this.tripsLoading = true;
+      new Thread(() -> {
+         List<JSONObject> out = null;
+         try {
+            JSONArray arr = new SyncApi(cfg).deliveryTrips().optJSONArray("trips");
+            out = new ArrayList<>();
+            if (arr != null) {
+               for (int i = 0; i < arr.length(); i++) {
+                  JSONObject t = arr.optJSONObject(i);
+                  JSONArray orders = t != null ? t.optJSONArray("orders") : null;
+                  if (orders != null && orders.length() > 0) out.add(t);
+               }
+            }
+         } catch (Exception ignored) {
+            // server lama (404) / offline — kartu tetap Strategi Pengiriman saja
+         }
+         final List<JSONObject> res = out;
+         this.runOnUiThread(() -> {
+            this.tripsLoading = false;
+            if (this.isFinishing() || this.isDestroyed() || res == null) return;
+            long cur = this.strategyPage > 0 && this.strategyPage <= this.tripPages.size()
+                  ? this.tripPages.get(this.strategyPage - 1).optLong("id") : -1L;
+            this.tripPages.clear();
+            this.tripPages.addAll(res);
+            // Tetap di trip yang sama bila masih ada; trip hilang → kembali ke Strategi.
+            if (cur > 0) {
+               int idx = 0;
+               for (int i = 0; i < res.size(); i++) if (res.get(i).optLong("id") == cur) idx = i + 1;
+               this.strategyPage = idx;
+            }
+            this.renderStrategy(this.adapter != null ? this.adapter.data : null);
+         });
+      }).start();
+   }
+
+   /** Kembalikan elemen kartu yang diubah halaman trip (dipanggil saat halaman 0 dirender). */
+   private void restoreStrategyChrome() {
+      View refresh = this.findViewById(id.btnRefreshRit);
+      if (refresh != null) refresh.setVisibility(View.VISIBLE);
+      TextView all = (TextView) this.findViewById(id.tvStrategyAll);
+      if (all != null) all.setText("Ketuk untuk lihat seluruh rit →");
+   }
+
+   private JSONObject currentTripPage() {
+      int i = this.strategyPage - 1;
+      return i >= 0 && i < this.tripPages.size() ? this.tripPages.get(i) : null;
+   }
+
+   private static String tripSourceLabel(JSONObject o) {
+      String src = o.optString("source", "");
+      if ("mine".equals(src)) return "Saya";
+      if ("open".equals(src)) return "Terbuka";
+      String dev = strJson(o, "device_label");
+      return dev != null && !dev.isEmpty() ? dev : "HP lain";
+   }
+
+   private static int tripSourceColor(JSONObject o) {
+      String src = o.optString("source", "");
+      if ("mine".equals(src)) return 0xFF15803D;
+      if ("open".equals(src)) return 0xFFB45309;
+      return 0xFF475569;
+   }
+
+   private void renderTripKhususPage(MaterialCardView card) {
+      JSONObject t = this.currentTripPage();
+      if (t == null) {
+         this.strategyPage = 0;
+         this.renderStrategy(this.adapter != null ? this.adapter.data : null);
+         return;
+      }
+      int pages = this.tripPages.size() + 1;
+      ((TextView) this.findViewById(id.tvStrategyTitle)).setText("🧭 Trip Khusus — " + safe(t.optString("name", "Trip"))
+            + "  · " + (this.strategyPage + 1) + "/" + pages + " ⇆");
+      JSONObject c = t.optJSONObject("counts");
+      int mine = c != null ? c.optInt("mine") : 0, other = c != null ? c.optInt("other") : 0, open = c != null ? c.optInt("open") : 0;
+      String when = t.optBoolean("runs_today") ? "✅ Jadwal hari ini"
+            : (strJson(t, "next_date") != null && !strJson(t, "next_date").isEmpty() ? "📅 Jadwal berikutnya " + strJson(t, "next_date") : "");
+      String days = strJson(t, "days_label");
+      StringBuilder sum = new StringBuilder();
+      if (days != null && !days.isEmpty()) sum.append("Hari antar: ").append(days);
+      if (!when.isEmpty()) sum.append(sum.length() > 0 ? " · " : "").append(when);
+      sum.append("\n").append(c != null ? c.optInt("galon") : 0).append(" galon · Saya ").append(mine)
+            .append(" · HP lain ").append(other).append(" · Terbuka ").append(open);
+      sum.append("\n▶ = lepas Antrean Saya di luar trip ke Pesanan Terbuka, lalu ambil alih semua order trip ini.");
+      ((TextView) this.findViewById(id.tvStrategySummary)).setText(sum.toString());
+      View badges = this.findViewById(id.strategyItemBadgesScroll);
+      if (badges != null) badges.setVisibility(View.GONE);
+      View refresh = this.findViewById(id.btnRefreshRit);
+      if (refresh != null) refresh.setVisibility(View.GONE);
+      TextView all = (TextView) this.findViewById(id.tvStrategyAll);
+      if (all != null) all.setText("Ketuk untuk lihat seluruh order trip →");
+      this.bindTripOrders(t.optJSONArray("orders"), 4);
+      card.setVisibility(this.strategyHidden ? View.GONE : View.VISIBLE);
+      this.applyStrategyCollapsed();
+      if (this.strategyHidden) this.stopStrategyBlink();
+      else this.startStrategyBlink(card);
+   }
+
+   private void bindTripOrders(JSONArray orders, int max) {
+      LinearLayout list = (LinearLayout) this.findViewById(id.strategyStopsList);
+      TextView more = (TextView) this.findViewById(id.tvStrategyStops);
+      if (list == null) return;
+      list.removeAllViews();
+      int total = orders != null ? orders.length() : 0;
+      int n = 0;
+      int textColor = ContextCompat.getColor(this, R.color.text_primary);
+      for (int i = 0; i < total; i++) {
+         if (max > 0 && n >= max) break;
+         JSONObject o = orders.optJSONObject(i);
+         if (o == null) continue;
+         list.addView(this.tripOrderRow(o, n + 1, textColor));
+         n++;
+      }
+      if (more != null) {
+         int rest = total - n;
+         more.setText(rest > 0 ? "+" + rest + " order lagi…" : "");
+         more.setVisibility(rest > 0 ? View.VISIBLE : View.GONE);
+      }
+   }
+
+   private View tripOrderRow(JSONObject o, int no, int textColor) {
+      LinearLayout row = new LinearLayout(this);
+      row.setOrientation(LinearLayout.HORIZONTAL);
+      row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+      row.setPadding(0, this.dp(2f), 0, this.dp(2f));
+      TextView name = new TextView(this);
+      name.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+      name.setText(no + ". " + (o.optBoolean("is_priority") ? "⚡ " : "") + safe(strJson(o, "name")));
+      name.setTextColor(textColor);
+      name.setTextSize(13f);
+      name.setMaxLines(1);
+      name.setEllipsize(TruncateAt.END);
+      row.addView(name);
+      row.addView(this.makeDetailBadge(tripSourceLabel(o), tripSourceColor(o)));
+      row.addView(this.makeDetailBadge(o.optInt("galon") + " gal", 0xFF0369A1));
+      return row;
+   }
+
+   /** Daftar lengkap order satu trip (dialog). */
+   private void showFullTripKhusus() {
+      JSONObject t = this.currentTripPage();
+      if (t == null) return;
+      JSONArray orders = t.optJSONArray("orders");
+      LinearLayout box = new LinearLayout(this);
+      box.setOrientation(LinearLayout.VERTICAL);
+      int pad = this.dp(20f);
+      box.setPadding(pad, this.dp(8f), pad, 0);
+      int textColor = ContextCompat.getColor(this, R.color.text_primary);
+      for (int i = 0; orders != null && i < orders.length(); i++) {
+         JSONObject o = orders.optJSONObject(i);
+         if (o != null) box.addView(this.tripOrderRow(o, i + 1, textColor));
+      }
+      ScrollView sv = new ScrollView(this);
+      sv.addView(box);
+      (new AlertDialog.Builder(this)).setTitle("🧭 " + safe(t.optString("name", "Trip")) + " (" + (orders != null ? orders.length() : 0) + " order)")
+            .setView(sv).setPositiveButton("Tutup", (DialogInterface.OnClickListener) null)
+            .setNeutralButton("▶ Mulai Trip", (d, w) -> this.confirmStartTripKhusus()).show();
+   }
+
+   /** ▶ pada halaman trip: konfirmasi dua ketuk → server melepas & mengambil alih sekaligus. */
+   private void confirmStartTripKhusus() {
+      JSONObject t = this.currentTripPage();
+      if (t == null) return;
+      SyncSettings cfg = this.syncCfg();
+      if (!cfg.isEnrolled()) {
+         Toast.makeText(this, "Perangkat belum terhubung ke server.", Toast.LENGTH_LONG).show();
+         return;
+      }
+      if (!cfg.isDeliveryDevice()) {
+         Toast.makeText(this, "Hanya perangkat delivery yang bisa menjalankan trip.", Toast.LENGTH_LONG).show();
+         return;
+      }
+      JSONArray orders = t.optJSONArray("orders");
+      java.util.Set<String> inTrip = new java.util.HashSet<>();
+      int take = 0;
+      for (int i = 0; orders != null && i < orders.length(); i++) {
+         JSONObject o = orders.optJSONObject(i);
+         if (o == null) continue;
+         inTrip.add(o.optString("uuid"));
+         if (!"mine".equals(o.optString("source"))) take++;
+      }
+      int release = 0;
+      if (this.adapter != null && this.adapter.data != null) {
+         for (Transaction q : this.adapter.data) {
+            if (q == null || q.isOpenDispatch() || this.runningIds.contains(q.getId())) continue;
+            String u = this.dao.getSyncUuidById(q.getId());
+            if (u == null || !inTrip.contains(u)) release++;
+         }
+      }
+      String name = safe(t.optString("name", "Trip"));
+      String msg = "• Ambil alih " + take + " order (perangkat lain & Pesanan Terbuka) ke Antrean Saya."
+            + "\n• Lepas sekitar " + release + " order Antrean Saya di luar trip menjadi Pesanan Terbuka (yang sedang diantar tidak dilepas)."
+            + "\n\nKetuk \"Mulai\" dua kali untuk memastikan.";
+      AlertDialog dialog = (new AlertDialog.Builder(this)).setTitle("Mulai Trip " + name + "?").setMessage(msg)
+            .setPositiveButton("Mulai", (DialogInterface.OnClickListener) null)
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
+      dialog.setOnShowListener((di) -> {
+         Button pos = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+         Button neg = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
+         final boolean[] armed = {false};
+         pos.setOnClickListener((v) -> {
+            if (!armed[0]) {
+               armed[0] = true;
+               pos.setText("Ketuk sekali lagi");
+               return;
+            }
+            pos.setEnabled(false);
+            neg.setEnabled(false);
+            pos.setText("Memproses…");
+            this.runStartTripKhusus(dialog, t.optLong("id"));
+         });
+      });
+      dialog.show();
+   }
+
+   private void runStartTripKhusus(AlertDialog dialog, long ruleId) {
+      SyncSettings cfg = this.syncCfg();
+      new Thread(() -> {
+         String msg;
+         boolean ok = false;
+         try {
+            JSONObject r = new SyncApi(cfg).startDeliveryTrip(ruleId);
+            ok = true;
+            msg = r.optString("message", "Trip dimulai.");
+         } catch (SyncApi.SyncException se) {
+            String m = se.serverMessage();
+            msg = m != null && !m.isEmpty() ? m : "Gagal memulai trip (kode " + se.code + ").";
+         } catch (Exception e) {
+            msg = "Gagal memulai trip — periksa koneksi internet.";
+         }
+         final String fMsg = msg;
+         final boolean fOk = ok;
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            try { dialog.dismiss(); } catch (Exception ignored) {}
+            Toast.makeText(this, fMsg, Toast.LENGTH_LONG).show();
+            if (fOk) {
+               // Order trip masuk lewat tarikan sinkron; kartu kembali ke Strategi (rit dari antrean baru).
+               this.strategyPage = 0;
+               com.crowja.damiupos.sync.SyncScheduler.syncNow(this.getApplicationContext());
+            }
+            this.loadData();
+            this.loadOtherDevices();
+            this.loadTrips();
+         });
+      }).start();
    }
 
    /**
