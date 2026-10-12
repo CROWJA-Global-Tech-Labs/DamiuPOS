@@ -150,10 +150,28 @@ public class Customer {
     public String getPhotoUrl() { return photoUrl; }
     public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
 
-    /** Punya foto rumah? true bila ada file lokal ATAU sudah terunggah ke server (photo_url). */
+    /**
+     * Punya foto? Foto rumah (file lokal / photo_url) ATAU foto lokasi mana pun (locations[].photo /
+     * photos). Sejak foto diambil per lokasi, foto baru masuk ke koleksi lokasi — dulu hanya foto
+     * rumah yang dihitung, sehingga pelanggan berfoto tetap kena "Belum ada FOTO rumah" & ✗ FOTO.
+     * Cermin server {@code Customer::hasAnyPhoto}.
+     */
     public boolean hasPhoto() {
-        return (photoPath != null && !photoPath.isEmpty())
-                || (photoUrl != null && !photoUrl.isEmpty());
+        if (realPhoto(photoPath) || realPhoto(photoUrl)) return true;
+        if (locations != null) {
+            for (Location l : locations) {
+                if (l == null) continue;
+                if (realPhoto(l.photo)) return true;
+                if (l.photos != null) {
+                    for (String p : l.photos) if (realPhoto(p)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean realPhoto(String v) {
+        return v != null && !v.trim().isEmpty() && !"null".equalsIgnoreCase(v.trim());
     }
 
     /** Punya koordinat lokasi yang sudah ditandai? */
