@@ -58,6 +58,8 @@ public class CustomerFormActivity extends AppCompatActivity {
     private static final int REQUEST_PICK_GALLERY = 105;
     /** Kamera untuk foto KOLEKSI per-lokasi (beda dari REQUEST_CAMERA = foto rumah tunggal). */
     private static final int REQUEST_CAMERA_LOCATION = 107;
+    /** Galeri untuk foto KOLEKSI per-lokasi (pelanggan tersimpan) — hasilnya diunggah seperti foto kamera. */
+    private static final int REQUEST_PICK_GALLERY_LOCATION = 118;
     private static final int REQUEST_PERMISSION_CAMERA_LOCATION = 108;
 
     /** Prefill mode buat-baru (caller: bubble "+ Trx" saat pelanggan chat WA belum terdaftar). */
@@ -944,7 +946,8 @@ public class CustomerFormActivity extends AppCompatActivity {
      *  kuota belum penuh, lalu minta izin kamera (bila belum) dan ambil foto. */
     private void addLocationPhotoClicked(LocationRow row) {
         if (isNewPrimaryRow(row)) {
-            takePhoto();   // foto rumah lokal → tampil di strip lokasi utama (lihat renderLocationPhotos)
+            // foto rumah lokal → tampil di strip lokasi utama (lihat renderLocationPhotos)
+            chooseLocationPhotoSource(this::takePhoto, this::pickFromGallery);
             return;
         }
         if (editId == -1) {
@@ -957,14 +960,36 @@ public class CustomerFormActivity extends AppCompatActivity {
                     Toast.LENGTH_SHORT).show();
             return;
         }
-        pendingPhotoRow = row;
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-                != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this,
-                    new String[]{Manifest.permission.CAMERA}, REQUEST_PERMISSION_CAMERA_LOCATION);
-            return;
-        }
-        takeLocationPhoto(row);
+        chooseLocationPhotoSource(() -> {
+            pendingPhotoRow = row;
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                    != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this,
+                        new String[]{Manifest.permission.CAMERA}, REQUEST_PERMISSION_CAMERA_LOCATION);
+                return;
+            }
+            takeLocationPhoto(row);
+        }, () -> {
+            pendingPhotoRow = row;
+            Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+            i.setType("image/*");
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            try {
+                startActivityForResult(Intent.createChooser(i, "Pilih foto lokasi"), REQUEST_PICK_GALLERY_LOCATION);
+            } catch (Exception e) {
+                Toast.makeText(this, "Tidak ada aplikasi galeri", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    /** "+ Foto": pilih sumber — kamera (lensa belakang, wide) atau galeri. */
+    private void chooseLocationPhotoSource(Runnable camera, Runnable gallery) {
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Tambah Foto Lokasi")
+                .setItems(new CharSequence[]{"📷 Ambil dari Kamera", "🖼 Pilih dari Galeri"},
+                        (d, which) -> (which == 0 ? camera : gallery).run())
+                .setNegativeButton("Batal", null)
+                .show();
     }
 
     private void takeLocationPhoto(LocationRow row) {
@@ -1294,6 +1319,24 @@ public class CustomerFormActivity extends AppCompatActivity {
                 try { new File(pendingLocationPhotoPath).delete(); } catch (Exception ignored) {}
             }
             pendingLocationPhotoPath = null;
+        } else if (requestCode == REQUEST_PICK_GALLERY_LOCATION) {
+            LocationRow row = pendingPhotoRow;
+            pendingPhotoRow = null;
+            if (resultCode == RESULT_OK && data != null && data.getData() != null && row != null) {
+                try {
+                    File dest = createLocationImageFile();   // sets pendingLocationPhotoPath
+                    String path = pendingLocationPhotoPath;
+                    pendingLocationPhotoPath = null;
+                    if (com.crowja.damiupos.util.BitmapUtils.copyUriToFile(this, data.getData(), dest)) {
+                        uploadLocationPhoto(row, path);
+                    } else {
+                        try { dest.delete(); } catch (Exception ignored) {}
+                        Toast.makeText(this, "Gagal memuat foto dari galeri", Toast.LENGTH_SHORT).show();
+                    }
+                } catch (IOException e) {
+                    Toast.makeText(this, "Gagal menyimpan foto", Toast.LENGTH_SHORT).show();
+                }
+            }
         } else if (requestCode == REQUEST_PICK_GALLERY && resultCode == RESULT_OK && data != null
                 && data.getData() != null) {
             try {
