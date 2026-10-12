@@ -95,6 +95,8 @@ public class NavigationPipActivity extends AppCompatActivity {
     private static final String ACTION_SWITCH_VIEW = "com.crowja.damiupos.action.NAV_PIP_SWITCH_VIEW";
     // Kunci baru: bawaan kini FOTO lokasi + badge (pilihan "Detail" lama tak ikut terbawa).
     private static final String KEY_PIP_VIEW = "pip_view_v2";
+    /** HP ini membuka peluncuran berdampingan sebagai pop-up, bukan layar terbagi → pakai PiP. */
+    private static final String KEY_NO_SPLIT = "no_split_screen";
 
     private static final String PREFS = "nav_pip";
     private static final String KEY_HINT_SHOWN = "pip_hint_shown";
@@ -224,7 +226,12 @@ public class NavigationPipActivity extends AppCompatActivity {
         // Bawaan sekarang LAYAR TERBAGI: panel DAMIU diluncurkan BERDAMPINGAN (di bawah antrean),
         // lalu panel itu membuka Maps ke sisi seberang (atas, menggantikan antrean) — Maps di atas,
         // ringkasan DAMIU di bawah. Tak butuh izin PiP; PiP tinggal cadangan bila HP menolak.
-        i.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT);
+        boolean noSplit = false;
+        try {
+            noSplit = from.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_NO_SPLIT, false);
+        } catch (Exception ignored) {
+        }
+        if (!noSplit) i.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT);
         try {
             from.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             return true;
@@ -544,6 +551,14 @@ public class NavigationPipActivity extends AppCompatActivity {
             return;
         }
         pendingLaunch = false;
+        if (!inPip && !isSplitScreen() && isInMultiWindowModeSafe()) {
+            // HP ini membuka panel sebagai jendela POP-UP, bukan layar terbagi → ingat, lain kali
+            // langsung jalur jendela melayang lama (tanpa peluncuran berdampingan).
+            try {
+                getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_NO_SPLIT, true).apply();
+            } catch (Exception ignored) {
+            }
+        }
         if (!inPip && isSplitScreen()) {
             // LAYAR TERBAGI (bawaan): panel ini di bawah; Maps dibuka ke sisi SEBERANG (atas).
             applyMode(false);
@@ -1180,9 +1195,45 @@ public class NavigationPipActivity extends AppCompatActivity {
         return tv;
     }
 
+    /**
+     * Layar terbagi SUNGGUHAN (bukan jendela pop-up/freeform). Samsung membuka peluncuran
+     * "berdampingan" dari layar penuh sebagai JENDELA POP-UP melayang — isInMultiWindowMode juga
+     * true di sana, dan dulu Maps lalu diluncurkan "berdampingan" dari pop-up itu dan tak pernah
+     * terbuka. Layar terbagi = jendela selebar layar (potret) atau setinggi layar (lanskap).
+     */
     private boolean isSplitScreen() {
         try {
+            if (!isInMultiWindowMode()) return false;
+        } catch (RuntimeException e) {
+            return false;
+        }
+        return !isFreeformWindow();
+    }
+
+    private boolean isInMultiWindowModeSafe() {
+        try {
             return isInMultiWindowMode();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private boolean isFreeformWindow() {
+        try {
+            android.graphics.Rect win;
+            android.graphics.Rect max;
+            if (Build.VERSION.SDK_INT >= 30) {
+                win = getWindowManager().getCurrentWindowMetrics().getBounds();
+                max = getWindowManager().getMaximumWindowMetrics().getBounds();
+            } else {
+                android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
+                getWindowManager().getDefaultDisplay().getRealMetrics(dm);
+                max = new android.graphics.Rect(0, 0, dm.widthPixels, dm.heightPixels);
+                android.view.View root = getWindow().getDecorView();
+                win = new android.graphics.Rect(0, 0, root.getWidth(), root.getHeight());
+                if (win.width() == 0) return false;
+            }
+            return win.width() < max.width() * 0.95f && win.height() < max.height() * 0.95f;
         } catch (RuntimeException e) {
             return false;
         }
