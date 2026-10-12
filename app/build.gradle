@@ -20,8 +20,8 @@ android {
         // di API 26+.
         minSdk 26
         targetSdk 34
-        versionCode 174
-        versionName "1.4.155"
+        versionCode 175
+        versionName "1.4.156"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         // AdMob Application ID (test ID — ganti saat rilis)
