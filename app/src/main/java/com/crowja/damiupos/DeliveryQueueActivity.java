@@ -2965,9 +2965,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                ((TextView)this.findViewById(id.tvStrategySummary)).setText(muat);
                this.bindStrategyItemBadges(first);
                this.bindStrategyStops(first, 4);
-               card.setVisibility(this.strategyHidden ? 8 : 0);
+               // Rit sedang berjalan → kartu strategi tak relevan (applyRunMode menyembunyikannya;
+               // jangan dimunculkan lagi oleh render ulang dari sinkron / Trip Khusus).
+               boolean hideCard = this.strategyHidden || this.isRunning();
+               card.setVisibility(hideCard ? 8 : 0);
                this.applyStrategyCollapsed();
-               if (this.strategyHidden) {
+               if (hideCard) {
                   this.stopStrategyBlink();
                } else {
                   this.startStrategyBlink(card);
@@ -3231,9 +3234,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       TextView all = (TextView) this.findViewById(id.tvStrategyAll);
       if (all != null) all.setText("Ketuk untuk lihat seluruh order trip →");
       this.bindTripOrders(t.optJSONArray("orders"), 4);
-      card.setVisibility(this.strategyHidden ? View.GONE : View.VISIBLE);
+      boolean hideCard = this.strategyHidden || this.isRunning();
+      card.setVisibility(hideCard ? View.GONE : View.VISIBLE);
       this.applyStrategyCollapsed();
-      if (this.strategyHidden) this.stopStrategyBlink();
+      if (hideCard) this.stopStrategyBlink();
       else this.startStrategyBlink(card);
    }
 
