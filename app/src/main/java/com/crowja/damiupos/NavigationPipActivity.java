@@ -1416,10 +1416,19 @@ public class NavigationPipActivity extends AppCompatActivity {
             stops.append('[').append(p[0]).append(',').append(p[1]).append(']');
         }
         double[] me = lastKnownPos(lat, lng);
-        String key = lat + "," + lng + "|" + stops;
+        boolean splitPane;
+        try {
+            splitPane = !isInPictureInPictureMode() && isSplitScreen();
+        } catch (RuntimeException e) {
+            splitPane = false;
+        }
+        // Tinggi badge di bawah peta (px CSS = dp): pin tujuan tak boleh tertutup baris badge.
+        int bottomPad = splitPane ? 150 : 34;
+        String banner = photoShowingMap ? "📷 Belum ada foto lokasi — menampilkan peta" : "";
+        String key = lat + "," + lng + "|" + stops + "|" + bottomPad + "|" + banner;
         if (!key.equals(mapKey)) {
             mapKey = key;
-            webPipMap.loadDataWithBaseURL("https://unpkg.com", mapHtml(lat, lng, stops.toString(), me),
+            webPipMap.loadDataWithBaseURL("https://unpkg.com", mapHtml(lat, lng, stops.toString(), me, bottomPad, banner),
                     "text/html", "utf-8", null);
         } else if (me != null) {
             webPipMap.evaluateJavascript("window.setMe&&setMe(" + me[0] + "," + me[1] + ")", null);
@@ -1427,26 +1436,37 @@ public class NavigationPipActivity extends AppCompatActivity {
     }
 
     /** Leaflet statis: tujuan (merah), perhentian lain (abu), posisi kurir (biru) — tanpa interaksi. */
-    private static String mapHtml(double lat, double lng, String stops, double[] me) {
+    private static String mapHtml(double lat, double lng, String stops, double[] me, int bottomPad, String banner) {
         return "<!DOCTYPE html><html><head><meta charset='utf-8'>"
                 + "<meta name='viewport' content='width=device-width, initial-scale=1.0, user-scalable=no'>"
                 + "<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css' />"
                 + "<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>"
                 + "<style>html,body,#map{height:100%;margin:0;padding:0;background:#e2e8f0;}"
-                + ".leaflet-control-attribution{font-size:6px;}" + MapTiles.BRIGHT_TILE_CSS + "</style>"
-                + "</head><body><div id='map'></div><script>"
+                + ".leaflet-control-attribution{font-size:6px;}" + MapTiles.BRIGHT_TILE_CSS
+                + ".pin{font-size:40px;line-height:40px;filter:drop-shadow(0 2px 2px rgba(0,0,0,.45));}"
+                + ".me{width:18px;height:18px;border-radius:50%;background:#2563eb;border:3px solid #fff;"
+                + "box-shadow:0 0 0 6px rgba(37,99,235,.25);}"
+                + "#banner{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:999;"
+                + "background:rgba(15,23,42,.8);color:#fff;font:600 13px sans-serif;padding:5px 10px;"
+                + "border-radius:14px;white-space:nowrap;}</style>"
+                + "</head><body><div id='map'></div>"
+                + (banner == null || banner.isEmpty() ? "" : "<div id='banner'>" + banner + "</div>")
+                + "<script>"
                 + "var map=L.map('map',{zoomControl:false,dragging:false,scrollWheelZoom:false,"
                 + "doubleClickZoom:false,touchZoom:false,boxZoom:false,keyboard:false});"
                 + "L.tileLayer('" + MapTiles.LEAFLET_URL + "',{maxZoom:19,attribution:'" + MapTiles.ATTRIBUTION + "'}).addTo(map);"
                 + "var dest=[" + lat + "," + lng + "];"
                 + "[" + stops + "].forEach(function(p){L.circleMarker(p,{radius:5,color:'#fff',weight:1,"
                 + "fillColor:'#64748b',fillOpacity:1}).addTo(map);});"
-                + "L.circleMarker(dest,{radius:9,color:'#fff',weight:2,fillColor:'#dc2626',fillOpacity:1}).addTo(map);"
-                + "var me=null;"
-                + "function fit(){if(me){map.fitBounds(L.latLngBounds([dest,me.getLatLng()]),{padding:[16,16],maxZoom:17});}"
-                + "else{map.setView(dest,16);}}"
-                + "function setMe(a,b){if(!me){me=L.circleMarker([a,b],{radius:7,color:'#fff',weight:2,"
-                + "fillColor:'#2563eb',fillOpacity:1}).addTo(map);}else{me.setLatLng([a,b]);}fit();}"
+                // PIN tujuan (📍 besar, ujungnya tepat di titik) + titik biru posisi kurir.
+                + "L.marker(dest,{zIndexOffset:1000,icon:L.divIcon({className:'',html:'<div class=\"pin\">📍</div>',"
+                + "iconSize:[40,40],iconAnchor:[20,38]})}).addTo(map);"
+                + "var me=null;var PB=" + bottomPad + ";"
+                + "function fit(){if(me){map.fitBounds(L.latLngBounds([dest,me.getLatLng()]),"
+                + "{paddingTopLeft:[28,56],paddingBottomRight:[28,PB+16],maxZoom:17});}"
+                + "else{map.setView(dest,16,{animate:false});map.panBy([0,Math.round(PB/2)],{animate:false});}}"
+                + "function setMe(a,b){if(!me){me=L.marker([a,b],{icon:L.divIcon({className:'',html:'<div class=\"me\"></div>',"
+                + "iconSize:[24,24],iconAnchor:[12,12]})}).addTo(map);}else{me.setLatLng([a,b]);}fit();}"
                 + "fit();" + (me != null ? "setMe(" + me[0] + "," + me[1] + ");" : "")
                 + "window.addEventListener('resize',function(){map.invalidateSize();fit();});"
                 + "</script></body></html>";
