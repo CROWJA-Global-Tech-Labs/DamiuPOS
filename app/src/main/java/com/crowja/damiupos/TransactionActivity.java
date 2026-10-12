@@ -1815,7 +1815,7 @@ public class TransactionActivity extends AppCompatActivity {
         anim.setDuration(600);
         anim.setRepeatMode(android.animation.ValueAnimator.REVERSE);
         anim.setRepeatCount(android.animation.ValueAnimator.INFINITE);
-        anim.addUpdateListener(a -> card.setStrokeColor((int) a.getAnimatedValue()));
+        anim.addUpdateListener(com.crowja.damiupos.util.LowPowerBlink.stepped(4, a -> card.setStrokeColor((int) a.getAnimatedValue())));
         anim.start();
         // Animator disimpan sbg tag (kunci = id child tetap yang dipunyai kartu ini) supaya bisa
         // dibatalkan saat pelanggan ganti (productEntries dibangun ulang, tapi baris lama bisa saja
