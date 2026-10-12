@@ -177,6 +177,9 @@ public class CustomerMapActivity extends AppCompatActivity {
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
+        // 🔍 Cari & tunjukkan satu pelanggan di peta (zoom + buka popup-nya).
+        menu.add(0, 5, 0, "🔍 Cari Pelanggan").setIcon(android.R.drawable.ic_menu_search)
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
         menu.add(0, 1, 0, "Pilih Pelanggan").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
         menu.add(0, 4, 1, "Pelanggan Sekitar Saya").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
         menu.add(0, 2, 2, "Hanya Pelanggan Saya").setCheckable(true)
@@ -199,6 +202,10 @@ public class CustomerMapActivity extends AppCompatActivity {
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         int id = item.getItemId();
+        if (id == 5) {
+            showLocateCustomerDialog();
+            return true;
+        }
         if (id == 1) {
             showSelectCustomersDialog();
             return true;
@@ -263,6 +270,71 @@ public class CustomerMapActivity extends AppCompatActivity {
     }
 
     /** Dialog multi-pilih pelanggan (dengan pencarian) → peta hanya menampilkan yang dicentang. */
+    /**
+     * 🔍 Cari Pelanggan: ketik nama / nomor → ketuk → peta zoom ke pin pelanggan itu dan membuka
+     * popup-nya (Detail / Navigasi). Pelanggan yang sedang tersaring (Pilih Pelanggan / sekitar saya /
+     * legenda) dimunculkan lagi supaya pinnya pasti terlihat.
+     */
+    private void showLocateCustomerDialog() {
+        int pad = (int) (12 * getResources().getDisplayMetrics().density);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        final EditText search = new EditText(this);
+        search.setHint("Cari nama / nomor…");
+        search.setSingleLine(true);
+        search.setPadding(pad, pad, pad, pad);
+        box.addView(search);
+        final java.util.List<Customer> shown = new java.util.ArrayList<>(mapCustomers);
+        final android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<String>(this,
+                android.R.layout.simple_list_item_2, android.R.id.text1, new java.util.ArrayList<>()) {
+            @Override
+            public View getView(int pos, View convert, ViewGroup parent) {
+                View v = super.getView(pos, convert, parent);
+                Customer cu = shown.get(pos);
+                ((TextView) v.findViewById(android.R.id.text1)).setText(cu.getName());
+                String ph = cu.getPhone() != null ? cu.getPhone() : "";
+                String addr = cu.getAddress() != null ? cu.getAddress() : "";
+                ((TextView) v.findViewById(android.R.id.text2)).setText(ph.isEmpty() ? addr : ph + (addr.isEmpty() ? "" : " · " + addr));
+                return v;
+            }
+        };
+        final Runnable refill = () -> {
+            adapter.clear();
+            for (Customer cu : shown) adapter.add(cu.getName());
+            adapter.notifyDataSetChanged();
+        };
+        refill.run();
+        final ListView list = new ListView(this);
+        list.setAdapter(adapter);
+        box.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                (int) (360 * getResources().getDisplayMetrics().density)));
+        search.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void afterTextChanged(android.text.Editable e) {
+                String q = e.toString().trim().toLowerCase(java.util.Locale.ROOT);
+                shown.clear();
+                for (Customer cu : mapCustomers) {
+                    String n = cu.getName() != null ? cu.getName().toLowerCase(java.util.Locale.ROOT) : "";
+                    String ph = cu.getPhone() != null ? cu.getPhone() : "";
+                    if (q.isEmpty() || n.contains(q) || ph.contains(q) || CustomerDao.phoneMatches(ph, q)) shown.add(cu);
+                }
+                refill.run();
+            }
+        });
+        final AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle("🔍 Cari Pelanggan di Peta")
+                .setView(box)
+                .setNegativeButton("Tutup", null)
+                .create();
+        list.setOnItemClickListener((parent, view, pos, idd) -> {
+            Customer cu = shown.get(pos);
+            dlg.dismiss();
+            evalJs("locate(" + cu.getId() + ");");
+        });
+        dlg.show();
+    }
+
     private void showSelectCustomersDialog() {
         final SelectAdapter adapter = new SelectAdapter();
 
@@ -724,6 +796,15 @@ public class CustomerMapActivity extends AppCompatActivity {
                 "function navById(cid){for(var i=0;i<pts.length;i++){if(pts[i].cid===cid){\n" +
                 "  nav(pts[i].lat,pts[i].lng,pts[i].name);return;}}}\n" +
                 "function det(cid){if(window.Android&&Android.openDetail){Android.openDetail(cid);}}\n" +
+                // 🔍 locate: zoom ke pin pelanggan (lokasi pertama; banyak lokasi → semua masuk layar) + buka popup.
+                "function locate(cid){\n" +
+                "  var ms=markers.filter(function(m){return m._p.cid===cid;});\n" +
+                "  if(!ms.length)return;\n" +
+                "  if(!ms.every(function(m){return visible(m._p);})){showAll();}\n" +
+                "  var m=ms[0];\n" +
+                "  if(ms.length>1){map.fitBounds(L.latLngBounds(ms.map(function(x){return x.getLatLng();})),{padding:[40,40],maxZoom:17});}\n" +
+                "  cluster.zoomToShowLayer(m,function(){if(ms.length<2){map.setView(m.getLatLng(),Math.max(map.getZoom(),17));}m.openPopup();});\n" +
+                "}\n" +
                 "function renderLegend(){\n" +
                 "  var el=document.getElementById('legend');el.innerHTML='';\n" +
                 "  legend.forEach(function(g){\n" +
