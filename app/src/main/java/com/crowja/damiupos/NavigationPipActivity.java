@@ -96,7 +96,7 @@ public class NavigationPipActivity extends AppCompatActivity {
     // Kunci baru: bawaan kini FOTO lokasi + badge (pilihan "Detail" lama tak ikut terbawa).
     private static final String KEY_PIP_VIEW = "pip_view_v2";
     /** HP ini membuka peluncuran berdampingan sebagai pop-up, bukan layar terbagi → pakai PiP. */
-    private static final String KEY_NO_SPLIT = "no_split_screen";
+    private static final String KEY_NO_SPLIT = "no_split_screen";   // (tak dipakai lagi)
 
     private static final String PREFS = "nav_pip";
     private static final String KEY_HINT_SHOWN = "pip_hint_shown";
@@ -158,6 +158,8 @@ public class NavigationPipActivity extends AppCompatActivity {
     /** Baris badge (produk ×jumlah + total) di bawah foto/peta — tampilan bawaan layar terbagi. */
     private android.widget.LinearLayout llMediaChips;
     private String mediaName = "", mediaProducts = "", mediaTotal = "";
+    /** Maps baru saja diluncurkan berdampingan; onPause dalam jendela ini = HP menolak layar terbagi. */
+    private long splitAttemptAt = 0L;
 
     private final Runnable refreshTick = new Runnable() {
         @Override
@@ -223,15 +225,8 @@ public class NavigationPipActivity extends AppCompatActivity {
 
     private static boolean launch(Activity from, Intent i) {
         if (retargetPinned(i)) return true;
-        // Bawaan sekarang LAYAR TERBAGI: panel DAMIU diluncurkan BERDAMPINGAN (di bawah antrean),
-        // lalu panel itu membuka Maps ke sisi seberang (atas, menggantikan antrean) — Maps di atas,
-        // ringkasan DAMIU di bawah. Tak butuh izin PiP; PiP tinggal cadangan bila HP menolak.
-        boolean noSplit = false;
-        try {
-            noSplit = from.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_NO_SPLIT, false);
-        } catch (Exception ignored) {
-        }
-        if (!noSplit) i.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT);
+        // Panel dibuka LAYAR PENUH di task-nya sendiri (menutup antrean), lalu panel itu membuka Maps
+        // BERDAMPINGAN → layar terbagi berisi Maps + panel ringkas ini saja (antrean tak ikut).
         try {
             from.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             return true;
@@ -551,16 +546,12 @@ public class NavigationPipActivity extends AppCompatActivity {
             return;
         }
         pendingLaunch = false;
-        if (!inPip && !isSplitScreen() && isInMultiWindowModeSafe()) {
-            // HP ini membuka panel sebagai jendela POP-UP, bukan layar terbagi → ingat, lain kali
-            // langsung jalur jendela melayang lama (tanpa peluncuran berdampingan).
-            try {
-                getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_NO_SPLIT, true).apply();
-            } catch (Exception ignored) {
-            }
-        }
-        if (!inPip && isSplitScreen()) {
-            // LAYAR TERBAGI (bawaan): panel ini di bawah; Maps dibuka ke sisi SEBERANG (atas).
+        if (!inPip) {
+            // LAYAR TERBAGI (bawaan): Maps diluncurkan BERDAMPINGAN dengan panel ini. Panel TIDAK masuk
+            // PiP — isinya (foto/peta + badge) tampil di bagian layarnya sendiri. HP yang menolak
+            // layar terbagi (Maps menutup penuh) → onPause → cadangan jendela melayang (PiP).
+            splitAttemptAt = System.currentTimeMillis();
+            updateParams(false);   // jangan auto-PiP saat Maps muncul — kita yang memutuskan di onPause
             applyMode(false);
             if (!openMaps(true, true)) {
                 leaving = true;
@@ -1210,6 +1201,28 @@ public class NavigationPipActivity extends AppCompatActivity {
         return !isFreeformWindow();
     }
 
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // Layar terbagi terbentuk → panel ini TETAP resumed (multi-resume), onPause tak terpanggil.
+        // onPause tepat setelah meluncurkan Maps = Maps menutup layar penuh → cadangan PiP.
+        if (!leaving && splitAttemptAt > 0 && System.currentTimeMillis() - splitAttemptAt < 4000L) {
+            splitAttemptAt = 0L;
+            if (!isSplitScreen() && !isInPictureInPictureMode()) {
+                boolean ok = enterPip();
+                pipFailed = !ok;
+                if (ok) applyMode(true);
+                else showPipHintOnce(this);
+            }
+        }
+    }
+
+    @Override
+    public void onMultiWindowModeChanged(boolean inMultiWindow) {
+        super.onMultiWindowModeChanged(inMultiWindow);
+        if (inMultiWindow) splitAttemptAt = 0L;
+    }
+
     private boolean isInMultiWindowModeSafe() {
         try {
             return isInMultiWindowMode();
@@ -1284,9 +1297,14 @@ public class NavigationPipActivity extends AppCompatActivity {
         tvPipMediaLabel.setText(split ? mediaLabel + "  ·  ketuk: ganti tampilan" : mediaLabel);
         tvPipMediaLabel.setVisibility(mediaLabel.isEmpty() || split ? View.GONE : View.VISIBLE);
         bindMediaChips(split);
-        if (pipView == DeliveryNavLogic.PIP_VIEW_PHOTO) {
+        String photoSrc = s == null ? null : (s.photoUrl != null ? s.photoUrl : s.photoLocal);
+        // Tampilan FOTO tapi lokasi ini belum punya foto → tampilkan PETA tujuan (lebih berguna
+        // daripada tulisan "Belum ada foto").
+        boolean photoFallsBackToMap = pipView == DeliveryNavLogic.PIP_VIEW_PHOTO && t != null
+                && photoSrc == null && DeliveryPlanner.hasGeo(t);
+        if (pipView == DeliveryNavLogic.PIP_VIEW_PHOTO && !photoFallsBackToMap) {
             webPipMap.setVisibility(View.GONE);
-            String src = s == null ? null : (s.photoUrl != null ? s.photoUrl : s.photoLocal);
+            String src = photoSrc;
             if (t == null || src == null) {
                 shownPhotoSrc = null;
                 ivPipPhoto.setImageDrawable(null);
