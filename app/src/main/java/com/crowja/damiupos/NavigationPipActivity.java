@@ -93,7 +93,8 @@ public class NavigationPipActivity extends AppCompatActivity {
     private static final String ACTION_OPEN_QUEUE = "com.crowja.damiupos.action.NAV_PIP_OPEN_QUEUE";
     /** Aksi PiP "Ganti tampilan": Detail → Foto lokasi → Peta (DeliveryNavLogic.nextPipView). */
     private static final String ACTION_SWITCH_VIEW = "com.crowja.damiupos.action.NAV_PIP_SWITCH_VIEW";
-    private static final String KEY_PIP_VIEW = "pip_view";
+    // Kunci baru: bawaan kini FOTO lokasi + badge (pilihan "Detail" lama tak ikut terbawa).
+    private static final String KEY_PIP_VIEW = "pip_view_v2";
 
     private static final String PREFS = "nav_pip";
     private static final String KEY_HINT_SHOWN = "pip_hint_shown";
@@ -152,6 +153,9 @@ public class NavigationPipActivity extends AppCompatActivity {
     /** Sumber foto yang sedang tampil / kunci peta yang sedang termuat — hindari muat ulang tiap 30 dtk. */
     private String shownPhotoSrc, mapKey;
     private String mediaLabel = "";
+    /** Baris badge (produk ×jumlah + total) di bawah foto/peta — tampilan bawaan layar terbagi. */
+    private android.widget.LinearLayout llMediaChips;
+    private String mediaName = "", mediaProducts = "", mediaTotal = "";
 
     private final Runnable refreshTick = new Runnable() {
         @Override
@@ -217,7 +221,10 @@ public class NavigationPipActivity extends AppCompatActivity {
 
     private static boolean launch(Activity from, Intent i) {
         if (retargetPinned(i)) return true;
-        if (!isPipUsable(from)) return false;
+        // Bawaan sekarang LAYAR TERBAGI: panel DAMIU diluncurkan BERDAMPINGAN (di bawah antrean),
+        // lalu panel itu membuka Maps ke sisi seberang (atas, menggantikan antrean) — Maps di atas,
+        // ringkasan DAMIU di bawah. Tak butuh izin PiP; PiP tinggal cadangan bila HP menolak.
+        i.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT);
         try {
             from.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             return true;
@@ -537,10 +544,15 @@ public class NavigationPipActivity extends AppCompatActivity {
             return;
         }
         pendingLaunch = false;
-        if (!inPip) {
-            inPip = enterPip();
-            pipFailed = !inPip;
-            applyMode(inPip);
+        if (!inPip && isSplitScreen()) {
+            // LAYAR TERBAGI (bawaan): panel ini di bawah; Maps dibuka ke sisi SEBERANG (atas).
+            applyMode(false);
+            if (!openMaps(true, true)) {
+                leaving = true;
+                disableAutoEnter();
+                finishAndRemoveTask();
+            }
+            return;
         }
         if (!openMaps(true)) {
             // Tak ada aplikasi peta → jendela melayang tanpa navigasi tak ada gunanya.
@@ -623,6 +635,10 @@ public class NavigationPipActivity extends AppCompatActivity {
      *                         mungkin belum termuat). false = "Lanjut Navigasi": perhentian tersisa.
      */
     private boolean openMaps(boolean fromLaunchExtras) {
+        return openMaps(fromLaunchExtras, false);
+    }
+
+    private boolean openMaps(boolean fromLaunchExtras, boolean adjacent) {
         Snapshot s = last;
         Intent i;
         if (single) {
@@ -642,16 +658,18 @@ public class NavigationPipActivity extends AppCompatActivity {
             if (url == null) return false;
             i = routeIntent(this, url, true);
         }
+        if (adjacent && Build.VERSION.SDK_INT >= 24) i.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT);
         return startMaps(this, i);
     }
 
     /** "🧭 Lanjut Navigasi" (layar penuh): melayang lagi + Maps untuk perhentian tersisa. */
     private void continueNavigation() {
-        // Selalu dicoba lagi: pengguna mungkin baru mengaktifkan PiP lewat kartu petunjuk.
-        boolean inPip = isInPictureInPictureMode() || enterPip();
+        boolean split = !isInPictureInPictureMode() && isSplitScreen();
+        boolean inPip = split || isInPictureInPictureMode() || enterPip();
         pipFailed = !inPip;
-        applyMode(inPip);
-        if (openMaps(false)) {
+        applyMode(!split && inPip);
+        // Layar terbagi: Maps ke sisi seberang (atas); selain itu perilaku PiP lama.
+        if (openMaps(false, split)) {
             if (pipFailed) showPipHintOnce(this);
             if (!single && last != null && last.pendingCount > DeliveryNavLogic.MAX_MAPS_STOPS) {
                 Toast.makeText(this, "Dibatasi 10 tujuan (batas Google Maps)", Toast.LENGTH_SHORT).show();
@@ -944,7 +962,7 @@ public class NavigationPipActivity extends AppCompatActivity {
         pipMedia.setOnClickListener(v -> cycleView());   // hanya aktif di layar terbagi (applyMode)
         try {
             pipView = DeliveryNavLogic.sanitizePipView(
-                    getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_PIP_VIEW, 0));
+                    getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_PIP_VIEW, DeliveryNavLogic.PIP_VIEW_PHOTO));
         } catch (Exception ignored) {
         }
         try {
@@ -1015,6 +1033,9 @@ public class NavigationPipActivity extends AppCompatActivity {
             tvFullNoGeo.setVisibility(View.GONE);
             btnLanjut.setVisibility(View.GONE);
             mediaLabel = head;
+            mediaName = head;
+            mediaProducts = "";
+            mediaTotal = "";
             renderMedia();
             return;
         }
@@ -1046,6 +1067,9 @@ public class NavigationPipActivity extends AppCompatActivity {
         tvPipPay.setText(pay);
         tvPipPay.setTextColor(pipPayColor(shown));
         mediaLabel = name + " · " + DeliveryNavLogic.payLine(kind, money, t.getPaymentMethodLabel());
+        mediaName = name;
+        mediaProducts = s.products != null && !s.products.isEmpty() ? s.products : galon.replace("💧 ", "");
+        mediaTotal = DeliveryNavLogic.payLine(kind, money, t.getPaymentMethodLabel());
         renderMedia();
 
         // ---- layar penuh ----
@@ -1096,6 +1120,65 @@ public class NavigationPipActivity extends AppCompatActivity {
     // =====================================================================================
     // Tampilan melayang Foto lokasi / Peta
     // =====================================================================================
+
+    /**
+     * Layar terbagi: baris badge di bawah foto/peta — nama, kapsul produk ("MIN ×2", "BIO ×1") dan
+     * TOTAL tagihan — supaya panel ±¼ layar tetap menjawab "antar apa & tagih berapa".
+     */
+    private void bindMediaChips(boolean show) {
+        if (pipMedia == null) return;
+        if (llMediaChips == null) {
+            llMediaChips = new android.widget.LinearLayout(this);
+            llMediaChips.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+            llMediaChips.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            llMediaChips.setBackgroundColor(0xCC0D47A1);
+            int pad = Math.round(6 * getResources().getDisplayMetrics().density);
+            llMediaChips.setPadding(pad, pad, pad, pad);
+            android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(-1, -2,
+                    android.view.Gravity.BOTTOM);
+            ((android.widget.FrameLayout) pipMedia).addView(llMediaChips, lp);
+        }
+        if (!show || mediaName.isEmpty()) {
+            llMediaChips.setVisibility(View.GONE);
+            return;
+        }
+        llMediaChips.setVisibility(View.VISIBLE);
+        llMediaChips.removeAllViews();
+        TextView name = new TextView(this);
+        name.setText("👤 " + mediaName);
+        name.setTextColor(0xFFFFFFFF);
+        name.setTextSize(14f);
+        name.setTypeface(name.getTypeface(), android.graphics.Typeface.BOLD);
+        name.setMaxLines(1);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        name.setLayoutParams(new android.widget.LinearLayout.LayoutParams(0, -2, 1f));
+        llMediaChips.addView(name);
+        if (!mediaProducts.isEmpty()) {
+            for (String part : mediaProducts.split(" · ")) {
+                if (!part.trim().isEmpty()) llMediaChips.addView(mediaChip(part.trim(), 0xFF1565C0));
+            }
+        }
+        if (!mediaTotal.isEmpty()) llMediaChips.addView(mediaChip(mediaTotal, 0xFF0369A1));
+    }
+
+    private TextView mediaChip(String text, int bg) {
+        TextView tv = new TextView(this);
+        float d = getResources().getDisplayMetrics().density;
+        tv.setText(text);
+        tv.setTextColor(0xFFFFFFFF);
+        tv.setTextSize(13f);
+        tv.setTypeface(tv.getTypeface(), android.graphics.Typeface.BOLD);
+        tv.setMaxLines(1);
+        tv.setPadding(Math.round(8 * d), Math.round(3 * d), Math.round(8 * d), Math.round(3 * d));
+        android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
+        g.setColor(bg);
+        g.setCornerRadius(12 * d);
+        tv.setBackground(g);
+        android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(-2, -2);
+        lp.setMarginStart(Math.round(6 * d));
+        tv.setLayoutParams(lp);
+        return tv;
+    }
 
     private boolean isSplitScreen() {
         try {
@@ -1148,7 +1231,8 @@ public class NavigationPipActivity extends AppCompatActivity {
             split = false;
         }
         tvPipMediaLabel.setText(split ? mediaLabel + "  ·  ketuk: ganti tampilan" : mediaLabel);
-        tvPipMediaLabel.setVisibility(mediaLabel.isEmpty() ? View.GONE : View.VISIBLE);
+        tvPipMediaLabel.setVisibility(mediaLabel.isEmpty() || split ? View.GONE : View.VISIBLE);
+        bindMediaChips(split);
         if (pipView == DeliveryNavLogic.PIP_VIEW_PHOTO) {
             webPipMap.setVisibility(View.GONE);
             String src = s == null ? null : (s.photoUrl != null ? s.photoUrl : s.photoLocal);
