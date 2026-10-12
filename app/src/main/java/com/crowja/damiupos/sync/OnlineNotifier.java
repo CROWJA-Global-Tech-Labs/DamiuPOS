@@ -61,10 +61,14 @@ public final class OnlineNotifier {
             return;
         }
         cfg.setUpdate(o.optString("apk_url"), o.optString("apk_sha256"), o.optString("version_name"));
-        if (VersionUpdater.updateNeeded(ctx, cfg)
-                && System.currentTimeMillis() >= cfg.getSnoozeUntil()) {
-            postNotif(ctx, "Pembaruan Wajib",
-                    "Versi baru aplikasi wajib dipasang. Ketuk untuk memperbarui.", 7842);
+        if (VersionUpdater.updateNeeded(ctx, cfg)) {
+            if (System.currentTimeMillis() >= cfg.getSnoozeUntil()) {
+                postNotif(ctx, "Pembaruan Wajib",
+                        "Versi baru aplikasi wajib dipasang. Ketuk untuk memperbarui.", 7842);
+            }
+        } else {
+            // Sudah terbaru → bersihkan notifikasi Pembaruan Wajib lama yang masih menempel.
+            try { NotificationManagerCompat.from(ctx).cancel(7842); } catch (Throwable ignored) {}
         }
     }
 
