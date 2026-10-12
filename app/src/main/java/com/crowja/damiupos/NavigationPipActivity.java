@@ -160,6 +160,8 @@ public class NavigationPipActivity extends AppCompatActivity {
     private String mediaName = "", mediaProducts = "", mediaTotal = "";
     /** Maps baru saja diluncurkan berdampingan; onPause dalam jendela ini = HP menolak layar terbagi. */
     private long splitAttemptAt = 0L;
+    /** Tampilan FOTO sedang menampilkan peta karena lokasi belum punya foto. */
+    private boolean photoShowingMap = false;
 
     private final Runnable refreshTick = new Runnable() {
         @Override
@@ -685,6 +687,10 @@ public class NavigationPipActivity extends AppCompatActivity {
 
     /** "📋 Kembali ke Antrian" / aksi PiP "Buka DAMIU": antrean ke depan, jendela ini ditutup. */
     private void openQueueAndClose() {
+        if (isSplitScreen()) {
+            exitSplitToQueue();
+            return;
+        }
         leaving = true;
         disableAutoEnter();
         Intent q = new Intent(this, DeliveryQueueActivity.class)
@@ -965,7 +971,29 @@ public class NavigationPipActivity extends AppCompatActivity {
         tvPipMediaLabel = findViewById(R.id.tvPipMediaLabel);
         btnGantiTampilan = findViewById(R.id.btnGantiTampilan);
         btnGantiTampilan.setOnClickListener(v -> cycleView());
-        pipMedia.setOnClickListener(v -> cycleView());   // hanya aktif di layar terbagi (applyMode)
+        pipMedia.setOnClickListener(v -> cycleView());
+        // Peta di panel tak interaktif; ketukan di atasnya = ganti tampilan (WebView memakan sentuhan,
+        // jadi klik panel di bawahnya tak pernah terpanggil — penyebab "ketuk tak ganti tampilan").
+        final float[] tapDown = new float[3];
+        webPipMap.setOnTouchListener((v, ev) -> {
+            switch (ev.getActionMasked()) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    tapDown[0] = ev.getX();
+                    tapDown[1] = ev.getY();
+                    tapDown[2] = ev.getEventTime();
+                    break;
+                case android.view.MotionEvent.ACTION_UP: {
+                    float slop = android.view.ViewConfiguration.get(this).getScaledTouchSlop();
+                    boolean tap = Math.abs(ev.getX() - tapDown[0]) < slop && Math.abs(ev.getY() - tapDown[1]) < slop
+                            && ev.getEventTime() - tapDown[2] < 500;
+                    if (tap && pipMedia.isClickable()) cycleView();
+                    break;
+                }
+                default:
+                    break;
+            }
+            return true;
+        });   // hanya aktif di layar terbagi (applyMode)
         try {
             pipView = DeliveryNavLogic.sanitizePipView(
                     getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_PIP_VIEW, DeliveryNavLogic.PIP_VIEW_PHOTO));
@@ -1135,8 +1163,7 @@ public class NavigationPipActivity extends AppCompatActivity {
         if (pipMedia == null) return;
         if (llMediaChips == null) {
             llMediaChips = new android.widget.LinearLayout(this);
-            llMediaChips.setOrientation(android.widget.LinearLayout.HORIZONTAL);
-            llMediaChips.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            llMediaChips.setOrientation(android.widget.LinearLayout.VERTICAL);
             llMediaChips.setBackgroundColor(0xCC0D47A1);
             int pad = Math.round(6 * getResources().getDisplayMetrics().density);
             llMediaChips.setPadding(pad, pad, pad, pad);
@@ -1150,21 +1177,61 @@ public class NavigationPipActivity extends AppCompatActivity {
         }
         llMediaChips.setVisibility(View.VISIBLE);
         llMediaChips.removeAllViews();
+        float d = getResources().getDisplayMetrics().density;
+        // Baris 1: nama pelanggan + tombol keluar dari layar terbagi.
+        android.widget.LinearLayout top = new android.widget.LinearLayout(this);
+        top.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        top.setGravity(android.view.Gravity.CENTER_VERTICAL);
         TextView name = new TextView(this);
         name.setText("👤 " + mediaName);
         name.setTextColor(0xFFFFFFFF);
-        name.setTextSize(14f);
+        name.setTextSize(18f);
         name.setTypeface(name.getTypeface(), android.graphics.Typeface.BOLD);
         name.setMaxLines(1);
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         name.setLayoutParams(new android.widget.LinearLayout.LayoutParams(0, -2, 1f));
-        llMediaChips.addView(name);
+        top.addView(name);
+        TextView exit = mediaChip("✕ Keluar Split", 0xFFFFFFFF);
+        exit.setTextColor(0xFFB91C1C);
+        exit.setTextSize(15f);
+        exit.setClickable(true);
+        exit.setOnClickListener(v -> exitSplitToQueue());
+        top.addView(exit);
+        llMediaChips.addView(top);
+        // Baris 2: badge produk ×jumlah + TOTAL — BESAR, terbaca sekilas dari motor.
+        android.widget.LinearLayout chips = new android.widget.LinearLayout(this);
+        chips.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        chips.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        chips.setPadding(0, Math.round(6 * d), 0, 0);
         if (!mediaProducts.isEmpty()) {
             for (String part : mediaProducts.split(" · ")) {
-                if (!part.trim().isEmpty()) llMediaChips.addView(mediaChip(part.trim(), 0xFF1565C0));
+                if (!part.trim().isEmpty()) chips.addView(mediaChip(part.trim(), 0xFF1565C0));
             }
         }
-        if (!mediaTotal.isEmpty()) llMediaChips.addView(mediaChip(mediaTotal, 0xFF0369A1));
+        if (!mediaTotal.isEmpty()) chips.addView(mediaChip("💰 " + mediaTotal, 0xFF15803D));
+        android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
+        hs.addView(chips);
+        llMediaChips.addView(hs);
+    }
+
+    /**
+     * "✕ Keluar Split" / "📋 Kembali ke Antrian": tutup task panel ini DULU (layar terbagi bubar, Maps
+     * tetap jalan dan suaranya terus memandu), BARU antrean DAMIU dibuka layar penuh. Urutan
+     * sebaliknya membuat antrean ikut masuk ke panel layar terbagi.
+     */
+    private void exitSplitToQueue() {
+        leaving = true;
+        disableAutoEnter();
+        final Context app = getApplicationContext();
+        finishAndRemoveTask();
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try {
+                app.startActivity(new Intent(app, DeliveryQueueActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+            } catch (Exception ignored) {
+            }
+        }, 350L);
     }
 
     private TextView mediaChip(String text, int bg) {
@@ -1172,13 +1239,13 @@ public class NavigationPipActivity extends AppCompatActivity {
         float d = getResources().getDisplayMetrics().density;
         tv.setText(text);
         tv.setTextColor(0xFFFFFFFF);
-        tv.setTextSize(13f);
+        tv.setTextSize(20f);
         tv.setTypeface(tv.getTypeface(), android.graphics.Typeface.BOLD);
         tv.setMaxLines(1);
-        tv.setPadding(Math.round(8 * d), Math.round(3 * d), Math.round(8 * d), Math.round(3 * d));
+        tv.setPadding(Math.round(12 * d), Math.round(5 * d), Math.round(12 * d), Math.round(5 * d));
         android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
         g.setColor(bg);
-        g.setCornerRadius(12 * d);
+        g.setCornerRadius(16 * d);
         tv.setBackground(g);
         android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(-2, -2);
         lp.setMarginStart(Math.round(6 * d));
@@ -1266,7 +1333,12 @@ public class NavigationPipActivity extends AppCompatActivity {
 
     /** "Ganti tampilan" (aksi PiP / tombol layar penuh): Detail → Foto lokasi → Peta, diingat. */
     private void cycleView() {
-        pipView = DeliveryNavLogic.nextPipView(pipView);
+        int next = DeliveryNavLogic.nextPipView(pipView);
+        // Foto kosong sudah ditampilkan sebagai PETA → "Peta" berikutnya akan terlihat sama; lompati.
+        if (pipView == DeliveryNavLogic.PIP_VIEW_PHOTO && photoShowingMap && next == DeliveryNavLogic.PIP_VIEW_MAP) {
+            next = DeliveryNavLogic.nextPipView(next);
+        }
+        pipView = next;
         try {
             getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY_PIP_VIEW, pipView).apply();
         } catch (Exception ignored) {
@@ -1302,6 +1374,7 @@ public class NavigationPipActivity extends AppCompatActivity {
         // daripada tulisan "Belum ada foto").
         boolean photoFallsBackToMap = pipView == DeliveryNavLogic.PIP_VIEW_PHOTO && t != null
                 && photoSrc == null && DeliveryPlanner.hasGeo(t);
+        photoShowingMap = photoFallsBackToMap;
         if (pipView == DeliveryNavLogic.PIP_VIEW_PHOTO && !photoFallsBackToMap) {
             webPipMap.setVisibility(View.GONE);
             String src = photoSrc;
