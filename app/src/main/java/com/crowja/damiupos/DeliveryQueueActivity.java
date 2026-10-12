@@ -1406,8 +1406,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          anim.setDuration(250L);
          anim.setRepeatMode(ValueAnimator.REVERSE);
          anim.setRepeatCount(ValueAnimator.INFINITE);
-         anim.addUpdateListener((a) -> borderFinal.setAlpha((Integer) a.getAnimatedValue()));
-         anim.start();
+         anim.addUpdateListener(com.crowja.damiupos.util.LowPowerBlink.stepped(3, (a) -> borderFinal.setAlpha((Integer) a.getAnimatedValue())));
+         com.crowja.damiupos.util.LowPowerBlink.track(anim).start();
          this.guidedMapBorderAnim = anim;
       }
    }
@@ -1435,6 +1435,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       lateMs = (long)lateCfg.getDeliveryMaxAgeMinutes() * 60000L;
       this.revokeLateCredit = lateCfg.isRevokeCreditLateEnabled();
       DestAreaCache.addListener(this.destAreaRefresh);
+      com.crowja.damiupos.util.LowPowerBlink.resumeAll();
       this.loadData();
       this.openPendingFocus();
       this.loadOtherDevices();
@@ -1461,6 +1462,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    protected void onPause() {
       super.onPause();
       DestAreaCache.removeListener(this.destAreaRefresh);
+      // Layar tak tampil → hentikan semua kedip (dulu terus berjalan di latar = HP panas).
+      com.crowja.damiupos.util.LowPowerBlink.pauseAll();
       this.tick.removeCallbacks(this.ticker);
       this.tick.removeCallbacks(this.strategyResortTicker);
       this.tick.removeCallbacks(this.guidedRitRefillTicker);
@@ -3540,8 +3543,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          anim.setDuration(700L);
          anim.setRepeatMode(2);
          anim.setRepeatCount(-1);
-         anim.addUpdateListener((a) -> card.setStrokeColor((Integer)a.getAnimatedValue()));
-         anim.start();
+         anim.addUpdateListener(com.crowja.damiupos.util.LowPowerBlink.stepped(4, (a) -> card.setStrokeColor((Integer)a.getAnimatedValue())));
+         com.crowja.damiupos.util.LowPowerBlink.track(anim).start();
          this.strategyBlink = anim;
       }
    }
@@ -10604,8 +10607,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             anim.setDuration(600L);
             anim.setRepeatMode(2);
             anim.setRepeatCount(-1);
-            anim.addUpdateListener((a) -> h.card.setStrokeColor((Integer)a.getAnimatedValue()));
-            anim.start();
+            anim.addUpdateListener(com.crowja.damiupos.util.LowPowerBlink.stepped(4, (a) -> h.card.setStrokeColor((Integer)a.getAnimatedValue())));
+            com.crowja.damiupos.util.LowPowerBlink.track(anim).start();
             h.blinkAnim = anim;
             h.blinkColor = colorHi;
          }
@@ -10840,8 +10843,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             anim.setDuration(700L);
             anim.setRepeatMode(2);
             anim.setRepeatCount(-1);
-            anim.addUpdateListener((a) -> h.card.setStrokeColor((Integer)a.getAnimatedValue()));
-            anim.start();
+            anim.addUpdateListener(com.crowja.damiupos.util.LowPowerBlink.stepped(4, (a) -> h.card.setStrokeColor((Integer)a.getAnimatedValue())));
+            com.crowja.damiupos.util.LowPowerBlink.track(anim).start();
             h.priorityBlink = anim;
             h.blinkColor = colorHi;
          }
