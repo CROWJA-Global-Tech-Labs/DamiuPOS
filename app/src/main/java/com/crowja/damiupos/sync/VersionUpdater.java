@@ -76,7 +76,32 @@ public final class VersionUpdater {
         String serverSha = cfg.getUpdateSha();
         if (serverSha == null || serverSha.isEmpty()) return false;
         String mine = myApkSha(ctx, cfg);
-        return mine != null && !serverSha.equalsIgnoreCase(mine);
+        if (mine == null || serverSha.equalsIgnoreCase(mine)) return false;
+        // Hash beda TAPI APK terpasang sama/lebih baru dari yang diterbitkan (mis. build uji/debug
+        // versi yang sama di HP COBA, atau HP sudah memasang rilis lebih baru dari jalur lain) →
+        // jangan paksa "turun"/pasang ulang: dulu ini membuat prompt & notifikasi Pembaruan Wajib
+        // berulang tanpa akhir karena hash tak akan pernah cocok.
+        return !installedIsSameOrNewer(com.crowja.damiupos.BuildConfig.VERSION_CODE, cfg.getUpdateName());
+    }
+
+    /**
+     * versionCode terbit dibaca dari label rilis "1.4.150 (169) · 12 Oct 2026 15:25" (angka dalam
+     * kurung). Label tanpa kode (unggahan dashboard lama) → false = tetap ikut aturan hash.
+     */
+    static boolean installedIsSameOrNewer(int installedCode, String publishedName) {
+        int pub = publishedVersionCode(publishedName);
+        return pub > 0 && installedCode >= pub;
+    }
+
+    static int publishedVersionCode(String name) {
+        if (name == null) return -1;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\((\\d{1,6})\\)").matcher(name);
+        if (!m.find()) return -1;
+        try {
+            return Integer.parseInt(m.group(1));
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     /** Pre-download the published APK so "Update Sekarang" installs instantly. Call OFF the main thread. */
