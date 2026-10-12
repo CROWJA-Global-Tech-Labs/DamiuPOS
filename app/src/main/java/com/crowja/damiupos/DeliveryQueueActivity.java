@@ -1804,6 +1804,22 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return area;
    }
 
+   /**
+    * Wilayah TITIK TUJUAN untuk label "Kirim Ke: … (wilayah)". admin_area pelanggan hanya milik
+    * lokasi UTAMA — dulu dipakai untuk semua tujuan, sehingga order ke "Cabang Gagaksipat" tertulis
+    * "(Klodran)". Tujuan di lokasi utama (≤ 100 m) → admin_area; lokasi lain → DestAreaCache; belum
+    * diketahui → "" (tanpa wilayah lebih baik daripada wilayah yang salah).
+    */
+   static String destAreaFor(Customer c, double lat, double lng) {
+      if (c == null) return "";
+      String area = cleanLabel(c.getAdminArea());
+      boolean primaryGeo = c.getLatitude() != 0.0 || c.getLongitude() != 0.0;
+      if (lat == 0.0 && lng == 0.0) return area;
+      if (primaryGeo && haversineKm(c.getLatitude(), c.getLongitude(), lat, lng) <= 0.1) return area;
+      String cached = DestAreaCache.lookup(lat, lng);
+      return cached != null ? cleanLabel(cached) : "";
+   }
+
    static String areaLabel(Customer c, Transaction t) {
       return areaLabel(c, t.getDeliveryDestLat(), t.getDeliveryDestLng(), t.getDeliveryDestName());
    }
@@ -2634,7 +2650,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       String custUuid = q.optString("customer_uuid", "");
       Customer c = !custUuid.isEmpty() && !custUuid.equals("null") ? this.customerDao.getBySyncUuid(custUuid) : null;
       String destLocName = strJson(q, "dest_name");
-      String adminArea = c != null ? c.getAdminArea() : "";
+      String adminArea = hasDest ? destAreaFor(c, destLat, destLng) : (c != null ? cleanLabel(c.getAdminArea()) : "");
       String areaSuffix = !adminArea.isEmpty() ? " (" + adminArea + ")" : "";
       String custAddress = c != null && c.getAddress() != null ? c.getAddress().trim() : "";
       // Tujuan RESELLER: label khusus & TANPA foto rumah afiliasi sebagai cadangan — cermin
@@ -8844,7 +8860,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
       Customer c = this.customerDao.getByIdMerged(t.getCustomerId());
       Customer.Location destLoc = this.resolveOrderLocation(t);
-      String adminArea = c != null ? c.getAdminArea() : "";
+      String adminArea = destAreaFor(c, lat, lng);
       String areaSuffix = !adminArea.isEmpty() ? " (" + adminArea + ")" : "";
 
       PreviewData d = new PreviewData();
