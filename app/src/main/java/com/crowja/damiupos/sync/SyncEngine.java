@@ -449,6 +449,9 @@ public class SyncEngine {
             res.ok = true;
         } catch (Exception e) {
             res.error = e.getMessage();
+        } catch (Throwable t) {
+            // Error (mis. OutOfMemoryError / NoSuchMethodError) — jangan matikan proses; laporkan.
+            res.error = "Kesalahan internal: " + t;
         }
         return res;
     }
@@ -624,6 +627,10 @@ public class SyncEngine {
             if (se.code == 401) handleRevoked();   // token deleted by dashboard "Cabut Akses"
         } catch (Exception e) {
             res.error = e.getMessage();
+        } catch (Throwable t) {
+            // Error saat menarik data cabang (mis. kehabisan memori di HP baru) dulu membunuh proses
+            // — terlihat sebagai crash saat scan QR provisioning. Kini dilaporkan sebagai gagal.
+            res.error = "Kesalahan internal: " + t;
         }
         return res;
     }

@@ -28,6 +28,9 @@ public class DamiuApplication extends Application {
     public void onCreate() {
         super.onCreate();
         instance = this;
+        // Pencatat crash PALING AWAL (sebelum SDK lain) + kirim laporan crash sebelumnya ke server.
+        com.crowja.damiupos.util.CrashReporter.install(this);
+        com.crowja.damiupos.util.CrashReporter.sendPending(this);
 
         // Bypass Pro mengikuti BuildConfig.BYPASS_PRO (set di app/build.gradle).
         // Tidak perlu setBypassPro() di sini lagi.
