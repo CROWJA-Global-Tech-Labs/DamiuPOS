@@ -392,12 +392,24 @@ public class WizardActivity extends AppCompatActivity {
         final String deviceName = (android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).trim();
         final SyncEngine engine = new SyncEngine(this);
         new Thread(() -> {
-            SyncEngine.Result r = engine.enroll(baseUrl, credential, deviceName);
-            // Pull-only: jangan otomatis push data lokal HP ini ke server saat baru diprovisioning
-            // (lihat doc SyncEngine.pullOnly) — cukup tarik data cabang supaya wizard bisa lanjut.
-            if (r.ok) engine.pullOnly();
-            runOnUiThread(() -> {
+            SyncEngine.Result r;
+            try {
+                r = engine.enroll(baseUrl, credential, deviceName);
+                // Pull-only: jangan otomatis push data lokal HP ini ke server saat baru diprovisioning
+                // (lihat doc SyncEngine.pullOnly) — cukup tarik data cabang supaya wizard bisa lanjut.
+                // Tarikan pertama boleh gagal: pendaftaran sudah sah, sinkron berkala melanjutkannya.
                 if (r.ok) {
+                    try { engine.pullOnly(); } catch (Throwable ignored) {}
+                }
+            } catch (Throwable t) {
+                r = new SyncEngine.Result();
+                r.error = "Kesalahan internal: " + t;
+            }
+            final SyncEngine.Result fr = r;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                SyncEngine.Result r2 = fr;
+                if (r2.ok) {
                     SyncScheduler.schedulePeriodic(getApplicationContext());
                     if (tvProvisionStatus != null)
                         tvProvisionStatus.setText("Terhubung ke cabang "
@@ -405,10 +417,10 @@ public class WizardActivity extends AppCompatActivity {
                     showProvisionSuccess(engine.settings().getBranchName());
                 } else {
                     if (tvProvisionStatus != null)
-                        tvProvisionStatus.setText("Gagal: " + r.error);
+                        tvProvisionStatus.setText("Gagal: " + r2.error);
                     new AlertDialog.Builder(this)
                             .setTitle("Gagal Hubungkan")
-                            .setMessage("Tidak bisa mendaftar ke dashboard:\n\n" + r.error
+                            .setMessage("Tidak bisa mendaftar ke dashboard:\n\n" + r2.error
                                     + "\n\nPastikan kode masih berlaku (15 menit) dan ada koneksi internet.")
                             .setPositiveButton("OK", null)
                             .show();
