@@ -245,7 +245,30 @@ public class SyncApi {
      * Balas {@code {"ok":true,"message":"…"}} atau 422/409. Branch-scoped by the token.
      */
     public JSONObject claimDelivery(JSONObject body) throws Exception {
-        return post(cfg.getBaseUrl() + "/api/delivery/claim", body, cfg.getToken());
+        return postRegionGated("/api/delivery/claim", body);
+    }
+
+    /**
+     * POST yang tahu popup "di luar wilayah": mengiklankan {@code region_confirm_supported}; bila server membalas 409
+     * {@code needs_region_confirm}, tampilkan konfirmasi ({@link RegionConfirm}) lalu ulangi dengan
+     * {@code confirm_out_of_region=true}. Batal → {@link SyncException} 499 berpesan "Dibatalkan" (bukan 409, jadi
+     * pemanggil tak menganggapnya "order sudah berpindah").
+     */
+    private JSONObject postRegionGated(String path, JSONObject body) throws Exception {
+        body.put("region_confirm_supported", true);
+        try {
+            return post(cfg.getBaseUrl() + path, body, cfg.getToken());
+        } catch (SyncException e) {
+            if (e.code != 409) throw e;
+            JSONObject j;
+            try { j = new JSONObject(e.body); } catch (Exception ignored) { throw e; }
+            if (!j.optBoolean("needs_region_confirm")) throw e;
+            if (!RegionConfirm.ask(j.optString("message", ""))) {
+                throw new SyncException(499, "{\"message\":\"Dibatalkan — order tidak dipindahkan.\"}");
+            }
+            body.put("confirm_out_of_region", true);
+            return post(cfg.getBaseUrl() + path, body, cfg.getToken());
+        }
     }
 
     /**
@@ -255,7 +278,7 @@ public class SyncApi {
      * duluan). Balas {@code {"ok":true,"message":"…"}} atau 422/409. Branch-scoped by the token.
      */
     public JSONObject routeDelivery(JSONObject body) throws Exception {
-        return post(cfg.getBaseUrl() + "/api/delivery/route", body, cfg.getToken());
+        return postRegionGated("/api/delivery/route", body);
     }
 
     /**

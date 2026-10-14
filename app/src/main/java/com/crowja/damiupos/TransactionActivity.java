@@ -1232,6 +1232,46 @@ public class TransactionActivity extends AppCompatActivity {
     }
 
     /** uuid perangkat yang sedang dipilih di picker, atau null (= "Perangkat ini"). */
+    // ---- Konfirmasi "di luar wilayah" saat order dikirim ke perangkat LAIN yang tak menerima wilayahnya ----
+    private boolean regionConfirmed = false;
+
+    /**
+     * Pesan konfirmasi bila perangkat tujuan $target TIDAK menerima wilayah titik ini (wilayah sendiri + "Wilayah
+     * tambahan" dari roster /me → accepts_wilayah_of); null bila tak perlu tanya (diri sendiri, Pesanan Terbuka,
+     * wilayah tak diketahui, atau roster lama tanpa data itu).
+     */
+    private String regionMismatchMessage(String target, double lat, double lng) {
+        if (target == null || target.trim().isEmpty() || OPEN_DISPATCH_TARGET.equals(target)) return null;
+        SyncSettings cfg = new SyncSettings(settingsDao);
+        if (target.equals(cfg.getDeviceUuid())) return null;
+        String owner = (selectedAssignOverride != null && !selectedAssignOverride.trim().isEmpty())
+                ? selectedAssignOverride.trim()
+                : Wilayah.deviceForCoord(cfg.getBranchCenter(), cfg.getWilayahZones(), lat, lng);
+        if (owner == null || owner.isEmpty() || owner.equals(target)) return null;
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray(cfg.getDeviceRoster());
+            for (int i = 0; i < arr.length(); i++) {
+                org.json.JSONObject o = arr.optJSONObject(i);
+                if (o == null || !target.equals(o.optString("uuid"))) continue;
+                org.json.JSONArray acc = o.optJSONArray("accepts_wilayah_of");
+                if (acc == null) return null;   // roster lama → tak bisa menilai
+                for (int k = 0; k < acc.length(); k++) if (owner.equals(acc.optString(k))) return null;
+                String name = o.optString("name", "perangkat tujuan");
+                return "Order ini di luar wilayah " + name + ". Tetap kirim ke " + name + "?";
+            }
+        } catch (Exception ignored) { }
+        return null;
+    }
+
+    private void confirmRegionThen(String message, Runnable proceed) {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("📍 Di luar wilayah")
+                .setMessage(message)
+                .setPositiveButton("Ya, kirim", (d, w) -> { regionConfirmed = true; proceed.run(); })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
     private String selectedAssignUuid() {
         if (spinnerAssignDevice == null) return null;
         int pos = spinnerAssignDevice.getSelectedItemPosition();
@@ -3197,6 +3237,13 @@ public class TransactionActivity extends AppCompatActivity {
             return;
         }
 
+        // Kirim ke perangkat lain di luar wilayahnya → konfirmasi dulu (sekali; Ya memanggil save() lagi).
+        if (isJualSelected() && !regionConfirmed) {
+            String regionMsg = regionMismatchMessage(selectedAssignUuid(), selectedDestLat, selectedDestLng);
+            if (regionMsg != null) { confirmRegionThen(regionMsg, this::save); return; }
+        }
+        regionConfirmed = false;
+
         boolean isJual = isJualSelected();
         int totalJumlah = 0;
         double subtotal = 0;
@@ -4826,6 +4873,14 @@ public class TransactionActivity extends AppCompatActivity {
                     Toast.LENGTH_LONG).show();
             return;
         }
+        if (!regionConfirmed) {
+            for (CheckoutPart p : legs) {
+                String regionMsg = regionMismatchMessage(p.assignedDeviceUuid,
+                        p.loc != null ? p.loc.lat : 0, p.loc != null ? p.loc.lng : 0);
+                if (regionMsg != null) { confirmRegionThen(regionMsg, this::saveCheckout); return; }
+            }
+        }
+        regionConfirmed = false;
         final boolean beli = isBeliSelected();
         final double hargaBotol = beli ? parseDoubleOr(etHargaBotol, 0) : 0;
         if (beli && hargaBotol <= 0) {
