@@ -1051,6 +1051,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       PopupMenu menu = new PopupMenu(this, anchor);
       menu.getMenu().add(0, 1, 0, "\ud83d\udd13 Lepas " + picked.size() + " order (jadi Pesanan Terbuka)");
       menu.getMenu().add(0, 2, 1, "\ud83d\udcf2 Alihkan " + picked.size() + " order ke perangkat lain");
+      menu.getMenu().add(0, 3, 2, "\ud83e\udded Alihkan " + picked.size() + " order sesuai wilayahnya");
       menu.setOnMenuItemClickListener((item) -> {
          if (item.getItemId() == 1) {
             (new AlertDialog.Builder(this)).setTitle("Lepas " + picked.size() + " order?")
@@ -1061,6 +1062,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
          if (item.getItemId() == 2) {
             this.pickBulkRouteTarget(picked);
+            return true;
+         }
+         if (item.getItemId() == 3) {
+            // Server memilih tujuan per order = perangkat pemilik wilayahnya ("__wilayah__"); order di
+            // wilayah sendiri / tanpa koordinat ditolak per order & dilaporkan.
+            (new AlertDialog.Builder(this)).setTitle("Alihkan " + picked.size() + " order sesuai wilayah?")
+                  .setMessage("Tiap order dikirim ke perangkat pemilik wilayahnya. Order yang memang di wilayah perangkat ini atau belum punya koordinat tetap di sini.\n\n" + this.numberedNames(picked))
+                  .setPositiveButton("Alihkan", (d, w) -> this.runBulkQueueAction(picked, "__wilayah__", "wilayah masing-masing"))
+                  .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
             return true;
          }
          return false;
