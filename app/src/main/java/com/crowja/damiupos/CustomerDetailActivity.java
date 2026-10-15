@@ -1567,19 +1567,14 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 TextView wajib = row.findViewById(R.id.tvLocWajib);
                 nm.setText(l.name != null && !l.name.isEmpty() ? l.name : Customer.DEFAULT_LOCATION_NAME);
                 utama.setVisibility(i == 0 && locs.size() > 1 ? View.VISIBLE : View.GONE);
-                // Badge ongkir tiap lokasi: tarif per galon / Wajib Ongkir (tarif belum diisi) / Gratis Ongkir.
+                // Badge ongkir tiap lokasi: tarif per galon / Wajib Ongkir (tarif belum diisi) / Gratis Ongkir -- dari TARIF lokasi
+                // (Customer.Location.ongkirBadgeText), bukan hanya flag lama yang tak lagi dikirim server.
                 wajib.setVisibility(View.VISIBLE);
-                if (l.wajibOngkir && l.ongkir != null && l.ongkir > 0) {
-                    wajib.setText("🚚 Ongkir Rp " + java.text.NumberFormat.getInstance(new java.util.Locale("id", "ID"))
-                            .format(Math.round(l.ongkir)) + "/galon");
-                    wajib.setBackgroundResource(R.drawable.bg_badge_wajib);
-                    wajib.setTextColor(0xFFB45309);
-                } else if (l.wajibOngkir) {
-                    wajib.setText("🚚 Wajib Ongkir");
+                wajib.setText(l.ongkirBadgeText());
+                if (l.chargesOngkir()) {
                     wajib.setBackgroundResource(R.drawable.bg_badge_wajib);
                     wajib.setTextColor(0xFFB45309);
                 } else {
-                    wajib.setText("✅ Gratis Ongkir");
                     wajib.setBackgroundResource(R.drawable.bg_badge_utama);
                     wajib.setTextColor(0xFF2E7D32);
                 }
@@ -1607,7 +1602,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
         StringBuilder pts = new StringBuilder();
         for (Customer.Location l : locs) {
             String label = (l.name != null && !l.name.isEmpty() ? l.name : Customer.DEFAULT_LOCATION_NAME)
-                    + (l.wajibOngkir ? " 🚚 Wajib Ongkir" : "");
+                    + (l.chargesOngkir() ? " " + l.ongkirBadgeText() : "");
             markers.append("L.marker([").append(l.lat).append(',').append(l.lng)
                     .append("]).addTo(map).bindPopup('").append(jsEscape(label)).append("');");
             if (pts.length() > 0) pts.append(',');

@@ -2539,7 +2539,7 @@ public class TransactionActivity extends AppCompatActivity {
 
     /** Tarif ongkir lokasi (Rp/galon) dari server; 0 bila tak ada. */
     private static double rateOf(Customer.Location l) {
-        return l != null && l.ongkir != null && !l.ongkir.isNaN() && l.ongkir > 0 ? l.ongkir : 0;
+        return l != null ? l.rate() : 0;
     }
 
     /** Lokasi tujuan wajib ongkir / bertarif → Ongkos Kirim = Per Galon dengan nominal tarif
