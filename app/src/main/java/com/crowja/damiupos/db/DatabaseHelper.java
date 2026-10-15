@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 102;
+    private static final int DATABASE_VERSION = 103;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -384,6 +384,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_DELIVERY_PRIORITY_REASON = "delivery_priority_reason";
 
     public static final String COL_DELIVERY_PRIORITY_BY = "delivery_priority_by";
+    /** ⚡ LEVEL prioritas order ("PRIORITAS ×N" di web; +1 tiap ⚡ dipicu ulang). Server-authoritative,
+     *  pull-only — kunci urut antrean SAMA dengan web (Reports::deliveryList). */
+    public static final String COL_DELIVERY_PRIORITY_LEVEL = "delivery_priority_level";
 
     // Table settings
     public static final String TABLE_SETTINGS = "settings";
@@ -672,6 +675,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_DELIVERY_PRIORITY_AT + " TEXT, " +
                     COL_DELIVERY_PRIORITY_REASON + " TEXT, " +
                     COL_DELIVERY_PRIORITY_BY + " TEXT, " +
+                    COL_DELIVERY_PRIORITY_LEVEL + " INTEGER DEFAULT 0, " +
                     COL_DELIVERY_OPEN_DISPATCH_AT + " TEXT, " +
                     COL_LAST_MANUAL_EDIT_AT + " TEXT, " +
                     COL_VOID_REQUEST_PENDING_AT + " TEXT, " +
@@ -1790,6 +1794,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             // reseller yang sudah ada di HP tetap tergerbang lewat penanda [ORDER RESELLER] di catatan
             // sampai pull berikutnya membawa flag-nya.
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_PROOF_REQUIRED + " INTEGER DEFAULT 0");
+        }
+        if (oldVersion < 103) {
+            // ⚡ Level prioritas ("×N") — urutan antrean HP wajib sama dengan web. Nilai baris lama
+            // terisi lewat tarik-ulang sekali di SyncEngine.pull (kunci v103).
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_PRIORITY_LEVEL + " INTEGER DEFAULT 0");
         }
         if (oldVersion < 102) {
             // 🧺 Checkout multi-lokasi (lihat COL_CHECKOUT_UUID). Aditif & NULL = order biasa, jadi

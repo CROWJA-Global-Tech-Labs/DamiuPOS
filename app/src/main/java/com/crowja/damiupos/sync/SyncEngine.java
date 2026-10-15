@@ -200,7 +200,7 @@ public class SyncEngine {
                     // ⚡ Prioritas pengiriman (+ alasan + penanda) — server-authoritative: server
                     // menolak nilai ini dari push HP, jadi praktis pull-only walau ikut dataCols.
                     DatabaseHelper.COL_DELIVERY_PRIORITY_AT, DatabaseHelper.COL_DELIVERY_PRIORITY_REASON,
-                    DatabaseHelper.COL_DELIVERY_PRIORITY_BY,
+                    DatabaseHelper.COL_DELIVERY_PRIORITY_BY, DatabaseHelper.COL_DELIVERY_PRIORITY_LEVEL,
                     // "Pesanan Terbuka" (lelang) — server-authoritative (distempel storePending/
                     // resumeDueTertunda di web), pull-only walau ikut dataCols sama seperti prioritas.
                     DatabaseHelper.COL_DELIVERY_OPEN_DISPATCH_AT,
@@ -1211,6 +1211,7 @@ public class SyncEngine {
     /** Penanda tarik-ulang sekali untuk DB v102 (checkout multi-lokasi) — lihat {@link #pull}.
      *  Kunci setelan lokal (bukan SHAREABLE_KEYS), tak pernah ter-push. */
     private static final String K_REPULL_CHECKOUT_V102 = "sync_repull_checkout_v102";
+    private static final String K_REPULL_PRIORITY_LEVEL_V103 = "sync_repull_priority_level_v103";
 
     private int pull() throws Exception {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
@@ -1258,6 +1259,15 @@ public class SyncEngine {
             String debtBack = SyncSettings.trxLookbackCursor(cfg.getCursor("customer_debts"));
             if (debtBack != null) cfg.setCursor("customer_debts", debtBack);
             settingsDao.set(K_REPULL_CHECKOUT_V102, "1");
+        }
+
+        // DB v103 (⚡ level prioritas), SEKALI: APK lama membuang kolom itu dari pull, jadi order yang
+        // sudah ditarik tetap level 0. Mundurkan kursor transaksi 7 hari supaya antrean mendapat
+        // levelnya — tanpa itu urutan HP tetap beda dengan web sampai order disentuh lagi.
+        if (!"1".equals(settingsDao.get(K_REPULL_PRIORITY_LEVEL_V103, "0"))) {
+            String back = SyncSettings.trxLookbackCursor(cfg.getCursor("transactions"), 7 * 24);
+            if (back != null) cfg.setCursor("transactions", back);
+            settingsDao.set(K_REPULL_PRIORITY_LEVEL_V103, "1");
         }
 
         int applied = 0;

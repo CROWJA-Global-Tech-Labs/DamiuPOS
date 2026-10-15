@@ -187,6 +187,11 @@ public class Transaction {
     public int getDeliverySeq() { return deliverySeq; }
     public void setDeliverySeq(int v) { this.deliverySeq = v; }
 
+    /** ⚡ Level prioritas ("PRIORITAS ×N" di web). 0 = tanpa level. */
+    private int priorityLevel;
+    public int getPriorityLevel() { return priorityLevel; }
+    public void setPriorityLevel(int v) { this.priorityLevel = v; }
+
     public String getOrderPriorityAt() { return orderPriorityAt; }
     public void setOrderPriorityAt(String v) { this.orderPriorityAt = v; }
 

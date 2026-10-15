@@ -137,6 +137,14 @@ public final class DeliveryPlanner {
             while (i < s.size()) {
                 int j = i;
                 while (j + 1 < s.size() && runKey(s.get(j + 1)) == runKey(s.get(i))) j++;
+                if (runKey(s.get(i)) == 0) {
+                    // Kelompok prioritas TIDAK diurutkan ulang menurut jarak: urutannya = urutan
+                    // antrean web (⭐ → level ×N → FIFO), sudah disusun sortStops.
+                    out.addAll(s.subList(i, j + 1));
+                    cur = lastGeo(out, cur[0], cur[1]);
+                    i = j + 1;
+                    continue;
+                }
                 List<Transaction> manual = new ArrayList<>();
                 List<Transaction> auto = new ArrayList<>();
                 for (Transaction t : s.subList(i, j + 1)) (t.getDeliverySeq() > 0 ? manual : auto).add(t);
@@ -152,7 +160,7 @@ public final class DeliveryPlanner {
     }
 
     /** Kelompok pemberhentian: 0 = ⚡/⭐ prioritas, 1 = biasa, 2 = AMBIL GALON SAJA. */
-    private static int runKey(Transaction t) {
+    static int runKey(Transaction t) {
         return isPickupOnly(t) ? 2 : (isPriority(t) ? 0 : 1);
     }
 
@@ -170,7 +178,10 @@ public final class DeliveryPlanner {
 
         // Rantai dilanjutkan dari pemberhentian TERAKHIR grup sebelumnya (kurir sudah di sana),
         // bukan diulang dari cabang — kalau diulang, rutenya zig-zag.
-        List<Transaction> prioOrdered = orderGroup(prio, dLat, dLng, mode);
+        // Kelompok prioritas = urutan antrean WEB apa adanya (⭐ dulu, lalu level ⚡ ×N terbesar,
+        // lalu FIFO) — bukan jarak, bukan urutan manual/Refresh RIT. Owner 2026-10-15: kurir harus
+        // mengantar "PRIORITAS ×7" sebelum "×1", persis urutan yang terlihat di web.
+        List<Transaction> prioOrdered = webPriorityOrder(prio);
         double[] seed = lastGeo(prioOrdered, dLat, dLng);
         List<Transaction> restOrdered = orderGroup(rest, seed[0], seed[1], mode);
         seed = lastGeo(restOrdered, seed[0], seed[1]);
@@ -180,6 +191,23 @@ public final class DeliveryPlanner {
         out.addAll(restOrdered);
         out.addAll(orderGroup(pickups, seed[0], seed[1], mode));
         return out;
+    }
+
+    /** ⭐ pelanggan prioritas › level ⚡ terbesar › FIFO (delivery_queued_at) — cermin Reports::deliveryList. */
+    static List<Transaction> webPriorityOrder(List<Transaction> group) {
+        List<Transaction> out = new ArrayList<>(group);
+        Collections.sort(out, (a, b) -> {
+            if (a.isCustomerPriority() != b.isCustomerPriority()) return a.isCustomerPriority() ? -1 : 1;
+            if (a.getPriorityLevel() != b.getPriorityLevel()) return Integer.compare(b.getPriorityLevel(), a.getPriorityLevel());
+            if (a.isOrderPriority() != b.isOrderPriority()) return a.isOrderPriority() ? -1 : 1;
+            return Long.compare(queuedMillis(a), queuedMillis(b));
+        });
+        return out;
+    }
+
+    private static long queuedMillis(Transaction t) {
+        long ms = com.crowja.damiupos.util.Ts.millis(t.getDeliveryQueuedAt());
+        return ms == Long.MAX_VALUE ? Long.MIN_VALUE : ms;   // tanpa stempel = paling depan (NULL-first, cermin SQL)
     }
 
     /** Koordinat pemberhentian terakhir yang punya lokasi; else titik sebelumnya (fallback). */
@@ -242,7 +270,7 @@ public final class DeliveryPlanner {
     // ---- helper: dipakai juga oleh kartu strategi di DeliveryQueueActivity ----
 
     public static boolean isPriority(Transaction t) {
-        return t.isOrderPriority() || t.isCustomerPriority();
+        return t.isOrderPriority() || t.isCustomerPriority() || t.getPriorityLevel() > 0;
     }
 
     public static boolean isPickupOnly(Transaction t) {

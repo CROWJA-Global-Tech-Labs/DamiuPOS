@@ -355,6 +355,11 @@ public class SyncSettings {
      *  UTC, tanpa konversi zona), dalam bentuk lama tanpa "|uuid" (tie-safe). Null bila kursor kosong
      *  atau tak bisa diurai → biarkan kursor apa adanya. Murni — diuji di JVM (src/test). */
     public static String trxLookbackCursor(String cursor) {
+        return trxLookbackCursor(cursor, 72);
+    }
+
+    /** Sama dengan {@link #trxLookbackCursor(String)} tapi mundur {@code hours} jam. */
+    public static String trxLookbackCursor(String cursor, int hours) {
         if (cursor == null || cursor.isEmpty()) return null;
         try {
             String ts = cursor.split("\\|", 2)[0];
@@ -363,7 +368,7 @@ public class SyncSettings {
             f.setLenient(false);
             java.util.Date d = f.parse(ts.substring(0, 19));
             if (d == null) return null;
-            return f.format(new java.util.Date(d.getTime() - 72L * 3600_000L)) + ".000000";
+            return f.format(new java.util.Date(d.getTime() - hours * 3600_000L)) + ".000000";
         } catch (Exception e) {
             return null;
         }

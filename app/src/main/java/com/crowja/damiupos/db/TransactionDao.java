@@ -646,9 +646,6 @@ public class TransactionDao {
     public List<Transaction> getDeliveryQueue() {
         List<Transaction> list = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
-        // Batas umur antrean cabang (menit). Disisipkan sebagai literal karena ia bagian dari
-        // ekspresi datetime(), bukan nilai yang bisa di-bind sebagai argumen.
-        int lateMinutes = new SettingsDao(dbHelper).getDeliveryMaxAgeMinutes();
         String sql = "SELECT t.*, c." + DatabaseHelper.COL_NAME + " AS cust_name, "
                 + "c." + DatabaseHelper.COL_PHONE + " AS cust_phone, "
                 + "c." + DatabaseHelper.COL_ADDRESS + " AS cust_addr, "
@@ -668,13 +665,7 @@ public class TransactionDao {
                 + ") THEN 1 ELSE 0 END) AS cust_priority, "
                 // ⚡ Prioritas PENGIRIMAN ini saja (ditandai operator web) — turunan untuk ORDER BY.
                 + "(CASE WHEN t." + DatabaseHelper.COL_DELIVERY_PRIORITY_AT + " IS NOT NULL AND t."
-                + DatabaseHelper.COL_DELIVERY_PRIORITY_AT + " <> '' THEN 1 ELSE 0 END) AS ord_priority, "
-                // TERLAMBAT: sudah lebih tua dari batas umur cabang. Turunan MURNI dari
-                // delivery_queued_at -- lihat DeliveryQueueActivity.isLate untuk alasan kenapa umur
-                // tak pernah ditulis ke kolom prioritas.
-                + "(CASE WHEN t." + DatabaseHelper.COL_DELIVERY_QUEUED_AT + " IS NOT NULL AND "
-                + Ts.localExpr("t." + DatabaseHelper.COL_DELIVERY_QUEUED_AT)
-                + " < datetime('now','localtime','-" + lateMinutes + " minutes') THEN 1 ELSE 0 END) AS ord_late "
+                + DatabaseHelper.COL_DELIVERY_PRIORITY_AT + " <> '' THEN 1 ELSE 0 END) AS ord_priority "
                 + "FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t "
                 + "LEFT JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c ON c."
                 + DatabaseHelper.COL_ID + " = t." + DatabaseHelper.COL_CUSTOMER_ID + " "
@@ -695,19 +686,19 @@ public class TransactionDao {
                 + ", CAST(t2." + DatabaseHelper.COL_TRX_ID + " AS TEXT)) = COALESCE(t."
                 + DatabaseHelper.COL_SYNC_UUID + ", t." + DatabaseHelper.COL_DELIVERY_TOKEN
                 + ", CAST(t." + DatabaseHelper.COL_TRX_ID + " AS TEXT))) "
-                // Urutan antrian, dari kunci terkuat (cermin Reports::deliveryList di web):
-                //  1) order "AMBIL GALON SAJA" (transaksi KEMBALI dijemput kurir) SELALU paling bawah —
-                //     tak ada barang yang diantar, jadi ia tak boleh menyerobot pelanggan yang menunggu
-                //     air; ini mengalahkan KEDUA jenis prioritas;
-                //  2) TERLAMBAT (lebih tua dari batas umur cabang) -- SLA yang sudah jebol
-                //     mengalahkan preferensi; bila keduanya terlambat kunci di bawah ini yang
-                //     memutuskan, jadi pelanggan prioritas tak dirugikan;
-                //  3) ⭐ pelanggan prioritas — sengaja DI ATAS ⚡ (keputusan owner 2026-07-27);
-                //  4) ⚡ prioritas pengiriman yang ditandai operator di web;
-                //  5) di dalam tiap grup, urutan antrian (FIFO) dijaga.
+                // Urutan antrian = PERSIS Reports::deliveryList di web (owner 2026-10-15: "yang benar
+                // urutan web"), dari kunci terkuat:
+                //  1) order "AMBIL GALON SAJA" (transaksi KEMBALI dijemput kurir) SELALU paling bawah;
+                //  2) ⭐ pelanggan prioritas — sengaja DI ATAS ⚡ (keputusan owner 2026-07-27);
+                //  3) ⚡ LEVEL prioritas order ("PRIORITAS ×N"), terbesar dulu (ord_priority hanya
+                //     cadangan selama level baris lama belum tertarik dari server);
+                //  4) di dalam tiap grup, FIFO (delivery_queued_at). Tanpa jarak GPS & tanpa kunci
+                //     "terlambat" — web tak memakainya, jadi HP pun tidak.
                 + "ORDER BY (CASE WHEN t." + DatabaseHelper.COL_TYPE + "='" + Transaction.TYPE_KEMBALI
-                + "' THEN 1 ELSE 0 END) ASC, ord_late DESC, cust_priority DESC, ord_priority DESC, t."
-                + DatabaseHelper.COL_DELIVERY_QUEUED_AT + " ASC";
+                + "' THEN 1 ELSE 0 END) ASC, cust_priority DESC, COALESCE(t."
+                + DatabaseHelper.COL_DELIVERY_PRIORITY_LEVEL + ",0) DESC, ord_priority DESC, "
+                + Ts.localExpr("t." + DatabaseHelper.COL_DELIVERY_QUEUED_AT) + " ASC, t."
+                + DatabaseHelper.COL_TRX_ID + " ASC";
         try (Cursor c = db.rawQuery(sql, new String[]{Transaction.DELIVERY_PENDING})) {
             while (c.moveToNext()) {
                 Transaction t = new Transaction();
@@ -767,6 +758,7 @@ public class TransactionDao {
                 // Urutan manual dari Strategi Pengiriman (disusun di web) — dipakai DeliveryPlanner.
                 t.setDeliverySeq((int) getLong(c, DatabaseHelper.COL_DELIVERY_SEQ));
                 t.setOrderPriorityAt(getStr(c, DatabaseHelper.COL_DELIVERY_PRIORITY_AT));
+                t.setPriorityLevel((int) getLong(c, DatabaseHelper.COL_DELIVERY_PRIORITY_LEVEL));
                 t.setOrderPriorityReason(getStr(c, DatabaseHelper.COL_DELIVERY_PRIORITY_REASON));
                 t.setOrderPriorityBy(getStr(c, DatabaseHelper.COL_DELIVERY_PRIORITY_BY));
                 // Data pelanggan tujuan belum lengkap (foto ATAU koordinat) → kartu antrian ditandai ❗
