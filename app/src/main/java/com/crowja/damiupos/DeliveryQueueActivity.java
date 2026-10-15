@@ -3277,7 +3277,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       name.setEllipsize(TruncateAt.END);
       row.addView(name);
       row.addView(this.makeDetailBadge(tripSourceLabel(o), tripSourceColor(o)));
-      row.addView(this.makeDetailBadge(o.optInt("galon") + " gal", 0xFF0369A1));
+      // Badge produk ×jumlah (seperti kartu Strategi); tanpa rincian item → total galon.
+      LinkedHashMap<String, int[]> chips = this.mergedCsvChips(o.optString("items", ""));
+      if (chips.isEmpty()) {
+         row.addView(this.makeDetailBadge(o.optInt("galon") + " gal", 0xFF0369A1));
+      }
+      for (Map.Entry<String, int[]> e : chips.entrySet()) {
+         row.addView(this.makeDetailBadge(csvChipText(e), e.getValue()[1]));
+      }
       return row;
    }
 
