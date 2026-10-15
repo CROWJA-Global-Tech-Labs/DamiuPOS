@@ -1693,14 +1693,21 @@ public class SyncEngine {
                 try {
                     Cursor oc = db.query(s.table,
                             new String[]{DatabaseHelper.COL_DELIVERY_DEVICE_UUID,
-                                    DatabaseHelper.COL_DELIVERY_STATUS, DatabaseHelper.COL_CUSTOMER_ID},
+                                    DatabaseHelper.COL_DELIVERY_STATUS, DatabaseHelper.COL_CUSTOMER_ID,
+                                    DatabaseHelper.COL_DELIVERY_OPEN_DISPATCH_AT},
                             DatabaseHelper.COL_SYNC_UUID + "=?", new String[]{uuid}, null, null, null);
                     if (oc.moveToFirst()) {
                         String oldDev = oc.getString(0);
                         String oldStatus = oc.getString(1);
                         long oldCustId = oc.getLong(2);
                         String myUuid = cfg.getDeviceUuid();
-                        boolean wasMine = oldDev == null || oldDev.trim().isEmpty() || oldDev.equals(myUuid);
+                        String oldOpenAt = oc.getString(3);
+                        boolean unrouted = oldDev == null || oldDev.trim().isEmpty();
+                        // "Pesanan Terbuka" yang belum diklaim BUKAN antrean HP ini (setiap HP menariknya):
+                        // diklaim/diselesaikan rekan lain bukan "order saya dipindah" — tanpa ini SEMUA HP
+                        // cabang dapat notifikasi ⚠ palsu tiap kali satu pesanan terbuka diambil.
+                        boolean wasOpen = unrouted && oldOpenAt != null && !oldOpenAt.trim().isEmpty();
+                        boolean wasMine = !wasOpen && (unrouted || oldDev.equals(myUuid));
                         if (wasMine && com.crowja.damiupos.model.Transaction.DELIVERY_PENDING.equals(oldStatus)) {
                             String newDev = v.getAsString(DatabaseHelper.COL_DELIVERY_DEVICE_UUID);
                             String newStatus = v.getAsString(DatabaseHelper.COL_DELIVERY_STATUS);
