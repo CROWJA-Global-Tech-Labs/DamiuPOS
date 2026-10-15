@@ -440,7 +440,13 @@ public class TransactionDao {
                         + " AND (" + DatabaseHelper.COL_DELIVERY_DEVICE_UUID + " IS NULL OR "
                         + DatabaseHelper.COL_DELIVERY_DEVICE_UUID + " = COALESCE((SELECT "
                         + DatabaseHelper.COL_SETTING_VALUE + " FROM " + DatabaseHelper.TABLE_SETTINGS
-                        + " WHERE " + DatabaseHelper.COL_SETTING_KEY + "='sync_device_uuid'), ''))",
+                        + " WHERE " + DatabaseHelper.COL_SETTING_KEY + "='sync_device_uuid'), ''))"
+                        // TANPA "Pesanan Terbuka" (open_dispatch terisi & belum diklaim = rute masih
+                        // kosong) — itu bukan tanggungan HP ini (tab-nya sendiri), cermin
+                        // isOpenDispatch di getDeliveryQueue. Dulu ikut terhitung: kurir yang sudah
+                        // "Lepas" ordernya tetap diblokir Pulang & badge menu menunjukkan antrean hantu.
+                        + " AND (" + DatabaseHelper.COL_DELIVERY_DEVICE_UUID + " IS NOT NULL OR COALESCE("
+                        + DatabaseHelper.COL_DELIVERY_OPEN_DISPATCH_AT + ", '') = '')",
                 new String[]{Transaction.DELIVERY_PENDING})) {
             return c.moveToFirst() ? c.getInt(0) : 0;
         }
