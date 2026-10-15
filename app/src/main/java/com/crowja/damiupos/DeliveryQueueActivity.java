@@ -1555,7 +1555,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (loc != null) {
                this.myLat = loc.getLatitude();
                this.myLng = loc.getLongitude();
-               this.applyFilteredLists(sortByDistance(base, this.myLat, this.myLng));
+               // Urutan TETAP urutan web (DAO); GPS hanya mengisi label jarak di kartu.
+               this.applyFilteredLists(base);
             }
          });
       }
@@ -5333,30 +5334,6 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private static boolean isPickupOnly(Transaction t) {
       return "KEMBALI".equals(t.getType());
-   }
-
-   private static List<Transaction> sortByDistance(List<Transaction> base, double olat, double olng) {
-      List<Transaction> out = new ArrayList(base);
-      Collections.sort(out, (a, b) -> {
-         if (isPickupOnly(a) != isPickupOnly(b)) {
-            return isPickupOnly(a) ? 1 : -1;
-         } else if (isLate(a) != isLate(b)) {
-            // SLA yang sudah jebol mengalahkan preferensi: pesanan TERLAMBAT naik di atas pelanggan
-            // prioritas. Bila keduanya terlambat, kunci berikutnya (prioritas lalu FIFO) yang
-            // memutuskan, jadi pelanggan bintang tak dirugikan. Kunci yang SAMA disisipkan di posisi
-            // yang SAMA pada ORDER BY SQL (TransactionDao.getDeliveryQueue) -- kalau hanya salah satu
-            // diubah, urutan kartu melompat begitu fix GPS pertama datang.
-            return isLate(a) ? -1 : 1;
-         } else if (a.isCustomerPriority() != b.isCustomerPriority()) {
-            return a.isCustomerPriority() ? -1 : 1;
-         } else if (a.isOrderPriority() != b.isOrderPriority()) {
-            return a.isOrderPriority() ? -1 : 1;
-         } else {
-            int byCost = Double.compare(DeliveryPlanner.costKm(distOrInf(a, olat, olng), a), DeliveryPlanner.costKm(distOrInf(b, olat, olng), b));
-            return byCost != 0 ? byCost : Double.compare(DeliveryPlanner.waitedHours(b), DeliveryPlanner.waitedHours(a));
-         }
-      });
-      return out;
    }
 
    private static double distOrInf(Transaction t, double olat, double olng) {
