@@ -46,6 +46,29 @@ public class Customer {
             this.lng = lng;
             this.wajibOngkir = wajibOngkir;
         }
+
+        /** Tarif ongkir lokasi (Rp/galon) dari server; 0 bila tak ada / 0 / NaN. Server: tarif SATU-SATUNYA sumber,
+         *  "tarif 0/null berarti gratis" (flag wajib_ongkir dihapus server 24/09/2026). */
+        public double rate() {
+            return ongkir != null && !ongkir.isNaN() && ongkir > 0 ? ongkir : 0;
+        }
+
+        /** Lokasi ini kena ongkir: bertarif (&gt; 0), atau flag lama wajib_ongkir tanpa tarif -- aturan yang sama dengan
+         *  Transaksi Baru (wajibOngkir || tarif &gt; 0). Dulu badge Detail Pelanggan hanya membaca flag, sehingga lokasi
+         *  bertarif dari server (tanpa flag) tampil "Gratis Ongkir" (15/10/2026, Subakri: tarif Rp1.000). */
+        public boolean chargesOngkir() {
+            return wajibOngkir || rate() > 0;
+        }
+
+        /** Teks badge ongkir lokasi: "🚚 Ongkir Rp 1.000/galon" / "🚚 Wajib Ongkir" (flag lama, tarif belum diisi) /
+         *  "✅ Gratis Ongkir". */
+        public String ongkirBadgeText() {
+            double r = rate();
+            if (r > 0) {
+                return "🚚 Ongkir Rp " + java.text.NumberFormat.getInstance(new java.util.Locale("id", "ID")).format(Math.round(r)) + "/galon";
+            }
+            return wajibOngkir ? "🚚 Wajib Ongkir" : "✅ Gratis Ongkir";
+        }
     }
 
     private long id;
@@ -649,12 +672,12 @@ public class Customer {
         return (locations != null && !locations.isEmpty()) ? locations.get(0) : null;
     }
 
-    /** Punya SETIDAKNYA SATU lokasi bertanda wajib ongkir? (wajibOngkir hidup per-lokasi; flag
-     *  skalar hanya dipakai untuk baris legacy yang belum punya daftar lokasi sama sekali). */
+    /** Punya SETIDAKNYA SATU lokasi yang kena ongkir (bertarif, atau flag lama)? Flag skalar hanya dipakai untuk baris
+     *  legacy yang belum punya daftar lokasi sama sekali. */
     public boolean hasWajibOngkirLocation() {
         if (locations != null && !locations.isEmpty()) {
             for (Location l : locations) {
-                if (l != null && l.wajibOngkir) return true;
+                if (l != null && l.chargesOngkir()) return true;
             }
             return false;
         }

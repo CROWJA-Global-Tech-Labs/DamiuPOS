@@ -103,7 +103,7 @@ public final class CheckoutPart {
 
     /** Tarif ongkir lokasi (Rp/galon) dari server; 0 bila tak ada — sama dengan rateOf di Transaksi Baru. */
     public static double locationRate(Customer.Location l) {
-        return l != null && l.ongkir != null && !l.ongkir.isNaN() && l.ongkir > 0 ? l.ongkir : 0;
+        return l != null ? l.rate() : 0;
     }
 
     /**
