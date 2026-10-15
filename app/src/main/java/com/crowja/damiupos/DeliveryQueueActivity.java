@@ -3055,6 +3055,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          View v = this.findViewById(vid);
          if (v != null) v.setOnTouchListener(l);
       }
+      // Baris badge (HorizontalScrollView) menelan ACTION_DOWN, jadi geseran di atasnya tak pernah sampai
+      // ke kartu. Geser halaman dari baris ini juga — KECUALI barisnya sendiri masih bisa digulir ke arah
+      // jari (badge terlalu banyak): gulir badge dulu, baru di ujungnya kartu ikut berpindah halaman.
+      View badgeScroll = this.findViewById(id.strategyItemBadgesScroll);
+      if (badgeScroll != null) badgeScroll.setOnTouchListener((v, ev) -> {
+         if (ev.getActionMasked() == android.view.MotionEvent.ACTION_MOVE && !dragging[0]) {
+            float dx = ev.getRawX() - down[0];
+            if (dx != 0f && v.canScrollHorizontally(dx < 0 ? 1 : -1)) return false;
+         }
+         return l.onTouch(v, ev);
+      });
    }
 
    private boolean canFlipStrategy(int delta) {
@@ -3123,6 +3134,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          return true;
       }
       this.strategyPage = next;
+      // Baris badge dipakai bersama semua halaman: halaman baru selalu mulai dari badge pertama.
+      View badgeScroll = this.findViewById(id.strategyItemBadgesScroll);
+      if (badgeScroll != null) badgeScroll.scrollTo(0, 0);
       if (content == null || content.getWidth() == 0) {
          this.renderStrategy(this.adapter != null ? this.adapter.data : null);
          return true;
@@ -3192,6 +3206,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private void restoreStrategyChrome() {
       View refresh = this.findViewById(id.btnRefreshRit);
       if (refresh != null) refresh.setVisibility(View.VISIBLE);
+      View sumView = this.findViewById(id.tvStrategySummary);
+      if (sumView != null) sumView.setVisibility(View.VISIBLE);   // halaman trip bisa menyembunyikannya
       TextView all = (TextView) this.findViewById(id.tvStrategyAll);
       if (all != null) all.setText("Ketuk untuk lihat seluruh rit →");
    }
@@ -3226,20 +3242,18 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       int pages = this.tripPages.size() + 1;
       ((TextView) this.findViewById(id.tvStrategyTitle)).setText("🧭 Trip Khusus — " + safe(t.optString("name", "Trip"))
             + "  · " + (this.strategyPage + 1) + "/" + pages + " ⇆");
-      JSONObject c = t.optJSONObject("counts");
-      int mine = c != null ? c.optInt("mine") : 0, other = c != null ? c.optInt("other") : 0, open = c != null ? c.optInt("open") : 0;
       String when = t.optBoolean("runs_today") ? "✅ Jadwal hari ini"
             : (strJson(t, "next_date") != null && !strJson(t, "next_date").isEmpty() ? "📅 Jadwal berikutnya " + strJson(t, "next_date") : "");
       String days = strJson(t, "days_label");
       StringBuilder sum = new StringBuilder();
       if (days != null && !days.isEmpty()) sum.append("Hari antar: ").append(days);
       if (!when.isEmpty()) sum.append(sum.length() > 0 ? " · " : "").append(when);
-      sum.append("\n").append(c != null ? c.optInt("galon") : 0).append(" galon · Saya ").append(mine)
-            .append(" · HP lain ").append(other).append(" · Terbuka ").append(open);
-      sum.append("\n▶ = lepas Antrean Saya di luar trip ke Pesanan Terbuka, lalu ambil alih semua order trip ini.");
-      ((TextView) this.findViewById(id.tvStrategySummary)).setText(sum.toString());
-      View badges = this.findViewById(id.strategyItemBadgesScroll);
-      if (badges != null) badges.setVisibility(View.GONE);
+      TextView tvSum = (TextView) this.findViewById(id.tvStrategySummary);
+      tvSum.setText(sum.toString());
+      tvSum.setVisibility(sum.length() > 0 ? View.VISIBLE : View.GONE);
+      // Ganti baris hitungan "N galon · Saya · HP lain · Terbuka" + keterangan ▶ dengan TOTAL produk
+      // yang harus dimuat untuk trip ini ("MIN ×13  BIO ×2") — baris badge yang sama dgn halaman Strategi.
+      this.bindTripTotalBadges(t.optJSONArray("orders"));
       View refresh = this.findViewById(id.btnRefreshRit);
       if (refresh != null) refresh.setVisibility(View.GONE);
       TextView all = (TextView) this.findViewById(id.tvStrategyAll);
@@ -3250,6 +3264,79 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.applyStrategyCollapsed();
       if (hideCard) this.stopStrategyBlink();
       else this.startStrategyBlink(card);
+   }
+
+   /**
+    * Total produk satu Trip Khusus, digabung per slug ("MIN ×13  BIO ×2"). Sumber utama
+    * {@code item_slugs} server (kanonik ProductCanon, sudah menggabung baris promo); APK baru di server
+    * lama jatuh ke teks {@code items}. Order tanpa rincian produk (hanya "N galon") dijumlah ke satu
+    * badge abu "Galon ×N" supaya total tetap utuh; AMBIL GALON SAJA dilewati (tak dimuat berangkat).
+    */
+   private LinkedHashMap<String, int[]> tripTotalItems(JSONArray orders) {
+      LinkedHashMap<String, int[]> total = new LinkedHashMap<>();
+      int unknownGalon = 0;
+      for (int i = 0; orders != null && i < orders.length(); i++) {
+         JSONObject o = orders.optJSONObject(i);
+         if (o == null || o.optBoolean("pickup_only")) continue;
+         boolean counted = false;
+         JSONArray slugs = o.optJSONArray("item_slugs");
+         for (int k = 0; slugs != null && k < slugs.length(); k++) {
+            JSONObject it = slugs.optJSONObject(k);
+            String slug = it != null ? strJson(it, "slug") : null;
+            int qty = it != null ? (int) Math.round(it.optDouble("qty", 0)) : 0;
+            if (slug == null || slug.trim().isEmpty() || qty <= 0) continue;
+            addTripChip(total, slug.trim(), qty, this.slugColor(slug.trim(), strJson(it, "color")));
+            counted = true;
+         }
+         if (!counted) {
+            for (Map.Entry<String, int[]> e : this.mergedCsvChips(o.optString("items", "")).entrySet()) {
+               if (e.getValue()[0] <= 0) continue;   // label tanpa angka ("1 galon") = produk tak diketahui
+               addTripChip(total, e.getKey(), e.getValue()[0], e.getValue()[1]);   // ber-angka → kunci = label murni
+               counted = true;
+            }
+         }
+         if (!counted) unknownGalon += Math.max(0, o.optInt("galon"));
+      }
+      if (unknownGalon > 0) addTripChip(total, "Galon", unknownGalon, 0xFF64748B);
+      return total;
+   }
+
+   private static void addTripChip(LinkedHashMap<String, int[]> total, String label, int qty, int color) {
+      int[] v = total.get(label);
+      if (v == null) total.put(label, new int[]{qty, color});
+      else v[0] += qty;
+   }
+
+   /** Warna kapsul slug: warna server bila sah, else warna produk lokal ber-slug sama, else palet. */
+   private int slugColor(String slug, @Nullable String hex) {
+      if (hex != null && !hex.trim().isEmpty()) {
+         try {
+            return Color.parseColor(hex.trim());
+         } catch (IllegalArgumentException ignored) {
+         }
+      }
+      for (Product p : this.productByName.values()) {
+         if (p != null && slug.equalsIgnoreCase(p.getSlug() != null ? p.getSlug().trim() : "")
+               && p.getColor() != null && !p.getColor().trim().isEmpty()) {
+            try {
+               return Color.parseColor(p.getColor().trim());
+            } catch (IllegalArgumentException ignored) {
+            }
+         }
+      }
+      return TransactionAdapter.paletteColor(slug);
+   }
+
+   private void bindTripTotalBadges(JSONArray orders) {
+      View scroll = this.findViewById(id.strategyItemBadgesScroll);
+      LinearLayout row = (LinearLayout) this.findViewById(id.strategyItemBadges);
+      if (scroll == null || row == null) return;
+      LinkedHashMap<String, int[]> items = this.tripTotalItems(orders);
+      row.removeAllViews();
+      for (Map.Entry<String, int[]> e : items.entrySet()) {
+         row.addView(this.makeDetailBadge(e.getKey() + " ×" + e.getValue()[0], e.getValue()[1]));
+      }
+      scroll.setVisibility(items.isEmpty() ? View.GONE : View.VISIBLE);
    }
 
    private void bindTripOrders(JSONArray orders, int max) {
