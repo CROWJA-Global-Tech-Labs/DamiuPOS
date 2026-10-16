@@ -223,6 +223,30 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- Admin (multi user + perangkat tersinkron): buka SELURUH dashboard web di dalam
+                 aplikasi — semua fitur web bisa dikerjakan dari HP. Disembunyikan untuk peran lain. -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnDashboardWeb"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginBottom="12dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:text="Dashboard Web — semua fitur web di HP"
+                android:textAllCaps="false"
+                android:textColor="@color/white"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                app:backgroundTint="#00695C"
+                app:cornerRadius="14dp"
+                app:elevation="2dp"
+                app:icon="@android:drawable/ic_menu_compass"
+                app:iconGravity="textStart"
+                app:iconPadding="10dp"
+                app:iconSize="22dp"
+                app:iconTint="@color/white" />
+
             <!-- Summary Cards Row 1 -->
             <LinearLayout
                 android:layout_width="match_parent"
