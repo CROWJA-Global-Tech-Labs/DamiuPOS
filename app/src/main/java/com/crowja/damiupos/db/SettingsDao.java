@@ -1087,8 +1087,40 @@ public class SettingsDao {
     public void setCurrentUser(long id, String name) {
         set(KEY_CURRENT_USER_ID, String.valueOf(id));
         set(KEY_CURRENT_USER_NAME, name != null ? name : "");
+        clearAdminWebSession();   // ganti user / logout = PIN Dashboard Web diminta lagi
     }
     public void clearCurrentUser() { setCurrentUser(0, ""); }
+
+    // ---- "Dashboard Web" (Admin): PIN cukup sekali per sesi login HP ----------------------------
+    // Setelah PIN admin cocok sekali, identitas admin + SHA-256 PIN-nya disimpan untuk user yang
+    // sedang login, supaya membuka Dashboard Web berikutnya (dan handoff ulang saat sesi web habis)
+    // tak minta PIN lagi. Dihapus di setCurrentUser (login/logout/ganti user) dan bila server
+    // menolak (PIN diubah dari web). Hash SHA-256 yang sama sudah tersimpan di tabel users (pin/pin_hash).
+    private static final String KEY_ADMIN_WEB_UID   = "admin_web_uid";
+    private static final String KEY_ADMIN_WEB_STAFF = "admin_web_staff_uuid";
+    private static final String KEY_ADMIN_WEB_PIN   = "admin_web_pin_sha";
+
+    public void rememberAdminWebSession(long uid, String staffUuid, String pinSha256) {
+        set(KEY_ADMIN_WEB_UID, String.valueOf(uid));
+        set(KEY_ADMIN_WEB_STAFF, staffUuid != null ? staffUuid : "");
+        set(KEY_ADMIN_WEB_PIN, pinSha256 != null ? pinSha256 : "");
+    }
+
+    /** {staffUuid, pinSha256} bila PIN sudah pernah cocok untuk user {@code uid} di sesi ini; null bila belum. */
+    @androidx.annotation.Nullable
+    public String[] getAdminWebSession(long uid) {
+        if (uid <= 0 || !String.valueOf(uid).equals(get(KEY_ADMIN_WEB_UID, ""))) return null;
+        String staff = get(KEY_ADMIN_WEB_STAFF, "");
+        String pin = get(KEY_ADMIN_WEB_PIN, "");
+        if (staff.isEmpty() || pin.isEmpty()) return null;
+        return new String[]{staff, pin};
+    }
+
+    public void clearAdminWebSession() {
+        set(KEY_ADMIN_WEB_UID, "");
+        set(KEY_ADMIN_WEB_STAFF, "");
+        set(KEY_ADMIN_WEB_PIN, "");
+    }
 
     /** User yang sedang istirahat (shift terbuka) → boleh "Lanjut Kerja" tanpa PIN/selfie. 0 = tidak ada. */
     public long getBreakUserId() {

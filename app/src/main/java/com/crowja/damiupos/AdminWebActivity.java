@@ -56,7 +56,9 @@ import org.json.JSONObject;
  * pakai ke server ({@code POST /api/dashboard/handoff}, token perangkat + X-Staff-Uuid + SHA-256
  * PIN; server mencocokkan PIN dengan pin_hash bila web pernah mengaturnya) → WebView membuka link
  * itu dan mendapat sesi dashboard atas nama akun otomatis milik staf ini (terkunci ke cabang
- * perangkat). Bila sesi habis (dashboard melempar ke /login), PIN diminta lagi dan sesi dibuat ulang.
+ * perangkat). PIN cukup SEKALI per sesi login HP (SettingsDao.rememberAdminWebSession): pembukaan
+ * berikutnya dan handoff ulang saat sesi web habis (/login) memakai hash yang sama tanpa bertanya;
+ * logout/ganti user atau penolakan 403 dari server menghapusnya.
  *
  * <p>Yang diurus supaya halaman web bekerja seperti di browser: unggah file/foto (input file),
  * izin lokasi (peta pelanggan), unduhan (PDF struk/slip/laporan, XLSX), link eksternal
@@ -89,6 +91,10 @@ public class AdminWebActivity extends AppCompatActivity {
 
     /** Satu permintaan handoff pada satu waktu; dipakai juga untuk mencegah loop /login → PIN → /login. */
     private boolean handoffBusy = false;
+
+    /** SHA-256 PIN yang sudah cocok di sesi login ini (dari SettingsDao) — handoff ulang tanpa tanya PIN. */
+    @Nullable
+    private String trustedPinSha;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -129,7 +135,15 @@ public class AdminWebActivity extends AppCompatActivity {
         if (baseHost == null) baseHost = "";
 
         setupWebView();
-        askPin("Masukkan PIN Admin untuk membuka Dashboard Web.");
+        // PIN cukup sekali per sesi login HP: bila sudah pernah cocok untuk user ini, langsung handoff.
+        String[] saved = settingsDao.getAdminWebSession(uid);
+        if (saved != null) {
+            staffUuid = saved[0];
+            trustedPinSha = saved[1];
+            requestHandoff(trustedPinSha);
+        } else {
+            askPin("Masukkan PIN Admin untuk membuka Dashboard Web.");
+        }
     }
 
     // ---------------------------------------------------------------- handoff (PIN → link masuk)
@@ -168,8 +182,10 @@ public class AdminWebActivity extends AppCompatActivity {
                         return;
                     }
                     staffUuid = su;
+                    trustedPinSha = User.sha256Hex(pin);
+                    settingsDao.rememberAdminWebSession(uid, staffUuid, trustedPinSha);
                     dialog.dismiss();
-                    requestHandoff(User.sha256Hex(pin));
+                    requestHandoff(trustedPinSha);
                 }));
         dialog.show();
     }
@@ -188,6 +204,11 @@ public class AdminWebActivity extends AppCompatActivity {
             } catch (SyncApi.SyncException e) {
                 String m = e.serverMessage();
                 err = m != null ? m : "Gagal menghubungi server (" + e.code + ").";
+                if (e.code == 403) {
+                    // PIN diubah dari web / peran dicabut: PIN tersimpan tak berlaku lagi.
+                    settingsDao.clearAdminWebSession();
+                    trustedPinSha = null;
+                }
             } catch (Exception e) {
                 err = "Tidak bisa menghubungi server. Periksa koneksi internet.";
             }
@@ -373,7 +394,11 @@ public class AdminWebActivity extends AppCompatActivity {
                 String path = u.getPath() != null ? u.getPath() : "";
                 if ("/login".equals(path) || "/login/".equals(path)) {
                     if (!handoffBusy) {
-                        askPin("Sesi dashboard berakhir. Masukkan PIN Admin untuk masuk lagi.");
+                        if (trustedPinSha != null) {
+                            requestHandoff(trustedPinSha);   // sesi web habis: masuk lagi tanpa tanya PIN
+                        } else {
+                            askPin("Sesi dashboard berakhir. Masukkan PIN Admin untuk masuk lagi.");
+                        }
                     }
                     return true;
                 }
