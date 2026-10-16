@@ -122,13 +122,6 @@ public class AdminWebActivity extends AppCompatActivity {
             finish();
             return;
         }
-        String su = userDao.getSyncUuidById(uid);
-        staffUuid = su != null ? su : "";
-        if (staffUuid.isEmpty()) {
-            Toast.makeText(this, "Akun admin ini belum tersinkron dari server. Tunggu sinkronisasi lalu coba lagi.", Toast.LENGTH_LONG).show();
-            finish();
-            return;
-        }
         try {
             baseHost = Uri.parse(cfg.getBaseUrl()).getHost();
         } catch (Exception ignored) {
@@ -152,7 +145,7 @@ public class AdminWebActivity extends AppCompatActivity {
 
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Dashboard Web")
-                .setMessage(message)
+                .setMessage(message + "\n\nPIN login salah satu akun Admin di HP ini (sama seperti membuka Pengaturan).")
                 .setView(wrap)
                 .setCancelable(false)
                 .setPositiveButton("Masuk", null)
@@ -161,14 +154,22 @@ public class AdminWebActivity extends AppCompatActivity {
         dialog.setOnShowListener(dlg ->
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                     String pin = input.getText().toString().trim();
-                    // PIN milik admin yang SEDANG login (bukan sembarang admin): server mencocokkan
-                    // hash-nya dengan pin_hash staf ini.
-                    if (userDao.authenticate(uid, pin) != null) {
-                        dialog.dismiss();
-                        requestHandoff(User.sha256Hex(pin));
-                    } else {
-                        input.setError("PIN admin salah");
+                    // PIN admin mana pun yang aktif di HP ini (aturan gerbang Pengaturan) — identitas
+                    // yang dikirim ke server adalah admin yang PIN-nya cocok, bukan sekadar user yang
+                    // sedang login (lihat UserDao.findActiveAdminByPin: HP bisa punya "Admin" hantu).
+                    User admin = userDao.findActiveAdminByPin(pin, uid);
+                    if (admin == null) {
+                        input.setError("PIN tidak cocok dengan admin mana pun di HP ini");
+                        return;
                     }
+                    String su = userDao.getSyncUuidById(admin.getId());
+                    if (su == null || su.isEmpty()) {
+                        input.setError("Akun \"" + admin.getName() + "\" belum tersinkron dari server — tunggu sinkronisasi lalu coba lagi");
+                        return;
+                    }
+                    staffUuid = su;
+                    dialog.dismiss();
+                    requestHandoff(User.sha256Hex(pin));
                 }));
         dialog.show();
     }

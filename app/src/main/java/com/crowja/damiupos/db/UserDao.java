@@ -374,6 +374,36 @@ public class UserDao {
      * {@code pin_hash} (kolom {@code pin} bisa kosong). Perbandingan mentah lama membuat PIN yang
      * BENAR pun selalu ditolak sehingga Pengaturan tak bisa dibuka sama sekali.
      */
+    /**
+     * Admin aktif yang PIN-nya cocok dengan {@code pin} — gerbang "Dashboard Web" (aturan PIN yang SAMA
+     * dengan {@link #isAdminPin}, tapi mengembalikan ORANG-nya karena identitasnya dikirim ke server).
+     *
+     * <p>Kenapa bukan hanya user yang sedang login: HP bisa memegang beberapa baris "Admin" — mis. admin
+     * default buatan lokal yang tak pernah diterima server (hantu, tanpa sync_uuid yang dikenal) DAN
+     * salinan "Admin" hasil pull yang PIN-nya diatur dari web. Owner login dengan yang mana pun, lalu
+     * mengetik PIN yang ia tahu dari dashboard; mencocokkan ke SEMUA admin aktif menemukan baris yang
+     * benar, dan server hanya mengenal yang punya sync_uuid. Prioritas: user yang sedang login bila
+     * cocok, lalu admin lain yang cocok DAN tersinkron, lalu admin cocok mana pun (biar pesan galat
+     * berikutnya "belum tersinkron", bukan "PIN salah").
+     */
+    @androidx.annotation.Nullable
+    public User findActiveAdminByPin(String pin, long preferredUserId) {
+        if (pin == null || pin.isEmpty()) return null;
+        User synced = null, any = null;
+        for (User u : getActive()) {
+            if (!u.isAdmin() || !matchesPin(u, pin)) continue;
+            if (u.getId() == preferredUserId) return u;
+            String su = getSyncUuidById(u.getId());
+            if (su != null && !su.isEmpty()) {
+                if (synced == null) synced = u;
+            } else if (any == null) {
+                any = u;
+            }
+        }
+
+        return synced != null ? synced : any;
+    }
+
     public boolean isAdminPin(String pin) {
         if (pin == null || pin.isEmpty()) return false;
         for (User u : getActive()) {
