@@ -889,6 +889,23 @@ public class SyncApi {
     }
 
     /** Status FREZ WA Bridge server ({@code ok}+{@code configured}) — dipakai sebagai syarat auto-kirim WA. */
+    /**
+     * "Dashboard Web" (Admin): minta link masuk sekali pakai ke dashboard web penuh.
+     * {@code POST /api/dashboard/handoff} — token perangkat + header {@code X-Staff-Uuid} (admin
+     * yang login) + {@code pin_sha256} (PIN yang baru diketik, server mencocokkan dengan pin_hash
+     * bila web pernah mengaturnya). Balasan {@code {ok, url, expires_in}}; url berumur ±2 menit dan
+     * hanya bisa dibuka sekali. 403 (peran bukan admin / PIN salah / staf belum tersinkron) →
+     * {@link SyncException#serverMessage()}. Panggil DI LUAR main thread.
+     *
+     * @param to path tujuan di dashboard (mis. "/customers"); kosong = beranda.
+     */
+    public JSONObject dashboardHandoff(String staffUuid, String pinSha256, @Nullable String to) throws Exception {
+        JSONObject body = new JSONObject();
+        body.put("pin_sha256", pinSha256);
+        if (to != null && !to.isEmpty()) body.put("to", to);
+        return post(cfg.getBaseUrl() + "/api/dashboard/handoff", body, cfg.getToken(), staffUuid);
+    }
+
     public JSONObject waBridgeStatus() throws Exception {
         return get(cfg.getBaseUrl() + "/api/wa-bridge/status", cfg.getToken());
     }

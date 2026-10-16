@@ -331,6 +331,11 @@ public class MainActivity extends AppCompatActivity {
         if (btnClockOut != null) btnClockOut.setOnClickListener(v -> warnIncompleteDeliveryThenConfirmPulang());
         // Admin: logout biasa (tanpa absensi/laporan).
         if (btnAdminLogout != null) btnAdminLogout.setOnClickListener(v -> doAdminLogout());
+        // Admin: seluruh dashboard web di dalam aplikasi (AdminWebActivity).
+        View btnDashboardWeb = findViewById(R.id.btnDashboardWeb);
+        if (btnDashboardWeb != null) {
+            btnDashboardWeb.setOnClickListener(v -> startActivity(new Intent(this, AdminWebActivity.class)));
+        }
 
         // Channel pengingat jam kerja + izin notifikasi (Android 13+), sinkron berkala tetap
         // terpasang, dan cek versi baru saat dibuka — satu paket dengan layar Pengisian.
@@ -642,6 +647,13 @@ public class MainActivity extends AppCompatActivity {
         View btnReseller = findViewById(R.id.btnReseller);
         if (btnReseller != null) {
             btnReseller.setVisibility(!show || adminOnly ? View.VISIBLE : View.GONE);
+        }
+        // Dashboard Web: hanya Admin yang login DAN perangkat sudah tersinkron (sesi web dibuat
+        // server lewat token perangkat). Mode single-user tak punya "orang" untuk dipertanggungjawabkan.
+        View btnDashboardWeb = findViewById(R.id.btnDashboardWeb);
+        if (btnDashboardWeb != null) {
+            boolean enrolled = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled();
+            btnDashboardWeb.setVisibility(adminOnly && enrolled ? View.VISIBLE : View.GONE);
         }
 
         if (!show) return;
