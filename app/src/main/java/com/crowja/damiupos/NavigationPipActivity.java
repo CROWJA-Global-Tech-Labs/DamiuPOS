@@ -163,6 +163,8 @@ public class NavigationPipActivity extends AppCompatActivity {
     private String mediaLabel = "";
     /** Baris badge (produk ×jumlah + total) di bawah foto/peta — tampilan bawaan layar terbagi. */
     private android.widget.LinearLayout llMediaChips;
+    /** Tombol bulat melayang di atas foto/peta (layar terbagi): ✕ keluar split & ⇆ ganti tampilan. */
+    private TextView fabExitSplit, fabCycleView;
     private String mediaName = "", mediaProducts = "", mediaTotal = "";
     /** Maps baru saja diluncurkan berdampingan; onPause dalam jendela ini = HP menolak layar terbagi. */
     private long splitAttemptAt = 0L;
@@ -987,29 +989,9 @@ public class NavigationPipActivity extends AppCompatActivity {
         tvPipMediaLabel = findViewById(R.id.tvPipMediaLabel);
         btnGantiTampilan = findViewById(R.id.btnGantiTampilan);
         btnGantiTampilan.setOnClickListener(v -> cycleView());
-        pipMedia.setOnClickListener(v -> cycleView());
-        // Peta di panel tak interaktif; ketukan di atasnya = ganti tampilan (WebView memakan sentuhan,
-        // jadi klik panel di bawahnya tak pernah terpanggil — penyebab "ketuk tak ganti tampilan").
-        final float[] tapDown = new float[3];
-        webPipMap.setOnTouchListener((v, ev) -> {
-            switch (ev.getActionMasked()) {
-                case android.view.MotionEvent.ACTION_DOWN:
-                    tapDown[0] = ev.getX();
-                    tapDown[1] = ev.getY();
-                    tapDown[2] = ev.getEventTime();
-                    break;
-                case android.view.MotionEvent.ACTION_UP: {
-                    float slop = android.view.ViewConfiguration.get(this).getScaledTouchSlop();
-                    boolean tap = Math.abs(ev.getX() - tapDown[0]) < slop && Math.abs(ev.getY() - tapDown[1]) < slop
-                            && ev.getEventTime() - tapDown[2] < 500;
-                    if (tap && pipMedia.isClickable()) cycleView();
-                    break;
-                }
-                default:
-                    break;
-            }
-            return true;
-        });   // hanya aktif di layar terbagi (applyMode)
+        // Ganti tampilan kini HANYA lewat tombol panah melayang (owner 2026-10-18): ketukan & cubitan
+        // di foto/peta dipakai untuk zoom/geser dengan jari.
+        setupPhotoZoom();
         try {
             pipView = DeliveryNavLogic.sanitizePipView(
                     getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_PIP_VIEW, DeliveryNavLogic.PIP_VIEW_PHOTO));
@@ -1181,6 +1163,112 @@ public class NavigationPipActivity extends AppCompatActivity {
      * Layar terbagi: baris badge di bawah foto/peta — nama, kapsul produk ("MIN ×2", "BIO ×1") dan
      * TOTAL tagihan — supaya panel ±¼ layar tetap menjawab "antar apa & tagih berapa".
      */
+    /** Dua tombol bulat melayang (pojok kanan atas foto/peta): ✕ keluar split, ⇆ ganti tampilan. */
+    private void bindFloatingButtons(boolean show) {
+        if (fabExitSplit == null) {
+            fabExitSplit = floatingRound("✕", 0xFFB91C1C);
+            fabExitSplit.setContentDescription("Keluar dari layar terbagi");
+            fabExitSplit.setOnClickListener(v -> exitSplitToQueue());
+            fabCycleView = floatingRound("⇆", 0xFF0D47A1);
+            fabCycleView.setContentDescription("Ganti tampilan foto / peta / detail");
+            fabCycleView.setOnClickListener(v -> cycleView());
+            float d = getResources().getDisplayMetrics().density;
+            int size = Math.round(48 * d), m = Math.round(10 * d);
+            android.widget.FrameLayout.LayoutParams a = new android.widget.FrameLayout.LayoutParams(size, size,
+                    android.view.Gravity.TOP | android.view.Gravity.END);
+            a.setMargins(m, m, m, m);
+            android.widget.FrameLayout.LayoutParams b = new android.widget.FrameLayout.LayoutParams(size, size,
+                    android.view.Gravity.TOP | android.view.Gravity.END);
+            b.setMargins(m, m + size + m, m, m);
+            ((android.widget.FrameLayout) pipMedia).addView(fabExitSplit, a);
+            ((android.widget.FrameLayout) pipMedia).addView(fabCycleView, b);
+        }
+        int vis = show ? View.VISIBLE : View.GONE;
+        fabExitSplit.setVisibility(vis);
+        fabCycleView.setVisibility(vis);
+        if (show) {
+            fabExitSplit.bringToFront();
+            fabCycleView.bringToFront();
+        }
+    }
+
+    private TextView floatingRound(String glyph, int fg) {
+        TextView tv = new TextView(this);
+        tv.setText(glyph);
+        tv.setTextSize(22f);
+        tv.setTypeface(tv.getTypeface(), android.graphics.Typeface.BOLD);
+        tv.setTextColor(fg);
+        tv.setGravity(android.view.Gravity.CENTER);
+        tv.setClickable(true);
+        android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
+        g.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        g.setColor(0xF2FFFFFF);
+        g.setStroke(Math.round(getResources().getDisplayMetrics().density), 0x33000000);
+        tv.setBackground(g);
+        tv.setElevation(6 * getResources().getDisplayMetrics().density);
+        return tv;
+    }
+
+    /**
+     * Foto lokasi bisa dicubit (zoom 1–5×) & digeser saat diperbesar; ketuk dua kali = kembali normal.
+     * Memakai skala/geser View (bingkai FrameLayout memotongnya), tanpa pustaka tambahan.
+     */
+    private void setupPhotoZoom() {
+        final android.view.ScaleGestureDetector sg = new android.view.ScaleGestureDetector(this,
+                new android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                    @Override
+                    public boolean onScale(android.view.ScaleGestureDetector det) {
+                        float sc = Math.max(1f, Math.min(5f, ivPipPhoto.getScaleX() * det.getScaleFactor()));
+                        ivPipPhoto.setScaleX(sc);
+                        ivPipPhoto.setScaleY(sc);
+                        clampPhotoPan();
+                        return true;
+                    }
+                });
+        final android.view.GestureDetector gd = new android.view.GestureDetector(this,
+                new android.view.GestureDetector.SimpleOnGestureListener() {
+                    @Override
+                    public boolean onDown(android.view.MotionEvent e) {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean onScroll(android.view.MotionEvent e1, android.view.MotionEvent e2, float dx, float dy) {
+                        if (ivPipPhoto.getScaleX() <= 1f) return false;
+                        ivPipPhoto.setTranslationX(ivPipPhoto.getTranslationX() - dx);
+                        ivPipPhoto.setTranslationY(ivPipPhoto.getTranslationY() - dy);
+                        clampPhotoPan();
+                        return true;
+                    }
+
+                    @Override
+                    public boolean onDoubleTap(android.view.MotionEvent e) {
+                        resetPhotoZoom();
+                        return true;
+                    }
+                });
+        ivPipPhoto.setOnTouchListener((v, ev) -> {
+            sg.onTouchEvent(ev);
+            gd.onTouchEvent(ev);
+            return true;
+        });
+    }
+
+    private void clampPhotoPan() {
+        float sc = ivPipPhoto.getScaleX();
+        float maxX = ivPipPhoto.getWidth() * (sc - 1f) / 2f, maxY = ivPipPhoto.getHeight() * (sc - 1f) / 2f;
+        ivPipPhoto.setTranslationX(Math.max(-maxX, Math.min(maxX, ivPipPhoto.getTranslationX())));
+        ivPipPhoto.setTranslationY(Math.max(-maxY, Math.min(maxY, ivPipPhoto.getTranslationY())));
+    }
+
+    private void resetPhotoZoom() {
+        if (ivPipPhoto == null) return;
+        ivPipPhoto.setScaleX(1f);
+        ivPipPhoto.setScaleY(1f);
+        ivPipPhoto.setTranslationX(0f);
+        ivPipPhoto.setTranslationY(0f);
+    }
+
     private void bindMediaChips(boolean show) {
         if (pipMedia == null) return;
         if (llMediaChips == null) {
@@ -1193,6 +1281,7 @@ public class NavigationPipActivity extends AppCompatActivity {
                     android.view.Gravity.BOTTOM);
             ((android.widget.FrameLayout) pipMedia).addView(llMediaChips, lp);
         }
+        bindFloatingButtons(show);
         if (!show || mediaName.isEmpty()) {
             llMediaChips.setVisibility(View.GONE);
             return;
@@ -1227,12 +1316,6 @@ public class NavigationPipActivity extends AppCompatActivity {
                 top.addView(skip);
             }
         }
-        TextView exit = mediaChip("✕ Keluar Split", 0xFFFFFFFF);
-        exit.setTextColor(0xFFB91C1C);
-        exit.setTextSize(15f);
-        exit.setClickable(true);
-        exit.setOnClickListener(v -> exitSplitToQueue());
-        top.addView(exit);
         llMediaChips.addView(top);
         // Baris 2: badge produk ×jumlah + TOTAL — BESAR, terbaca sekilas dari motor.
         android.widget.LinearLayout chips = new android.widget.LinearLayout(this);
@@ -1420,6 +1503,7 @@ public class NavigationPipActivity extends AppCompatActivity {
 
     /** "Ganti tampilan" (aksi PiP / tombol layar penuh): Detail → Foto lokasi → Peta, diingat. */
     private void cycleView() {
+        resetPhotoZoom();
         int next = DeliveryNavLogic.nextPipView(pipView);
         // Foto kosong sudah ditampilkan sebagai PETA → "Peta" berikutnya akan terlihat sama; lompati.
         if (pipView == DeliveryNavLogic.PIP_VIEW_PHOTO && photoShowingMap && next == DeliveryNavLogic.PIP_VIEW_MAP) {
@@ -1539,8 +1623,8 @@ public class NavigationPipActivity extends AppCompatActivity {
                 + "</head><body><div id='map'></div>"
                 + (banner == null || banner.isEmpty() ? "" : "<div id='banner'>" + banner + "</div>")
                 + "<script>"
-                + "var map=L.map('map',{zoomControl:false,dragging:false,scrollWheelZoom:false,"
-                + "doubleClickZoom:false,touchZoom:false,boxZoom:false,keyboard:false});"
+                + "var map=L.map('map',{zoomControl:false,dragging:true,scrollWheelZoom:false,"
+                + "doubleClickZoom:true,touchZoom:true,boxZoom:false,keyboard:false});"
                 + "L.tileLayer('" + MapTiles.LEAFLET_URL + "',{maxZoom:19,attribution:'" + MapTiles.ATTRIBUTION + "'}).addTo(map);"
                 + "var dest=[" + lat + "," + lng + "];"
                 + "[" + stops + "].forEach(function(p){L.circleMarker(p,{radius:5,color:'#fff',weight:1,"
@@ -1553,9 +1637,11 @@ public class NavigationPipActivity extends AppCompatActivity {
                 + "{paddingTopLeft:[28,56],paddingBottomRight:[28,PB+16],maxZoom:17});}"
                 + "else{map.setView(dest,16,{animate:false});map.panBy([0,Math.round(PB/2)],{animate:false});}}"
                 + "function setMe(a,b){if(!me){me=L.marker([a,b],{icon:L.divIcon({className:'',html:'<div class=\"me\"></div>',"
-                + "iconSize:[24,24],iconAnchor:[12,12]})}).addTo(map);}else{me.setLatLng([a,b]);}fit();}"
+                + "iconSize:[24,24],iconAnchor:[12,12]})}).addTo(map);}else{me.setLatLng([a,b]);}if(!userZoom)fit();}"
                 + "fit();" + (me != null ? "setMe(" + me[0] + "," + me[1] + ");" : "")
-                + "window.addEventListener('resize',function(){map.invalidateSize();fit();});"
+                // Kurir mencubit/menggeser peta → berhenti menyetel ulang tampilan otomatis (zoom jari bertahan).
+                + "var userZoom=false;document.getElementById('map').addEventListener('touchstart',function(){userZoom=true;},{passive:true});"
+                + "window.addEventListener('resize',function(){map.invalidateSize();if(!userZoom)fit();});"
                 + "</script></body></html>";
     }
 
