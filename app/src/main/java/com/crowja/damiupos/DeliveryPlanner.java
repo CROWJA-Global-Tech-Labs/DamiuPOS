@@ -193,13 +193,20 @@ public final class DeliveryPlanner {
         return out;
     }
 
-    /** ⭐ pelanggan prioritas › level ⚡ terbesar › FIFO (delivery_queued_at) — cermin Reports::deliveryList. */
+    /**
+     * ⭐ pelanggan prioritas › level ⚡ terbesar (cermin Reports::deliveryList) › di dalam satu tingkat:
+     * urutan rute (delivery_seq dari "Urutkan Rute Terpendek"/navigasi) › FIFO. Owner 2026-10-18: titik
+     * perjalanan wajib rute terpendek; antar level tetap mutlak. CERMIN DeliveryPlan::webPriorityOrder.
+     */
     static List<Transaction> webPriorityOrder(List<Transaction> group) {
         List<Transaction> out = new ArrayList<>(group);
         Collections.sort(out, (a, b) -> {
             if (a.isCustomerPriority() != b.isCustomerPriority()) return a.isCustomerPriority() ? -1 : 1;
             if (a.getPriorityLevel() != b.getPriorityLevel()) return Integer.compare(b.getPriorityLevel(), a.getPriorityLevel());
-            if (a.isOrderPriority() != b.isOrderPriority()) return a.isOrderPriority() ? -1 : 1;
+            // (bendera ⚡ tanpa level TIDAK jadi kunci: web & tingkat rute server hanya memakai ⭐ + level)
+            boolean sa = a.getDeliverySeq() > 0, sb = b.getDeliverySeq() > 0;
+            if (sa != sb) return sa ? -1 : 1;
+            if (sa && a.getDeliverySeq() != b.getDeliverySeq()) return Integer.compare(a.getDeliverySeq(), b.getDeliverySeq());
             return Long.compare(queuedMillis(a), queuedMillis(b));
         });
         return out;

@@ -118,6 +118,12 @@ public class NavigationPipActivity extends AppCompatActivity {
      */
     private static WeakReference<NavigationPipActivity> sLive;
 
+    /** Panel navigasi masih hidup (melayang / layar terbagi) — antrean memakainya untuk navigasi per titik. */
+    static boolean isLive() {
+        NavigationPipActivity a = sLive != null ? sLive.get() : null;
+        return a != null && !a.isFinishing() && !a.isDestroyed();
+    }
+
     // ---- keadaan (thread UI) ----
     /** Id lokal order rit menurut URUTAN rit; order yang masuk rit belakangan ditambahkan di ekor. */
     private final List<Long> ids = new ArrayList<>();
@@ -679,9 +685,6 @@ public class NavigationPipActivity extends AppCompatActivity {
         // Layar terbagi: Maps ke sisi seberang (atas); selain itu perilaku PiP lama.
         if (openMaps(false, split)) {
             if (pipFailed) showPipHintOnce(this);
-            if (!single && last != null && last.pendingCount > DeliveryNavLogic.MAX_MAPS_STOPS) {
-                Toast.makeText(this, "Dibatasi 10 tujuan (batas Google Maps)", Toast.LENGTH_SHORT).show();
-            }
         }
     }
 
@@ -836,7 +839,16 @@ public class NavigationPipActivity extends AppCompatActivity {
         }
         s.pendingCount = pts.size();
         s.stops = pts;
-        s.routeUrl = DeliveryNavLogic.buildDirUrl(pts, true);
+        // Navigasi PER TITIK (owner 2026-10-18): Maps hanya diberi perhentian AKTIF. Setelah ditandai
+        // Selesai, antrean menyusun ulang sisa rute (terpendek + prioritas web terbaru) lalu meluncurkan
+        // navigasi ke titik berikutnya — bukan satu rute 10 tujuan yang urutannya beku.
+        if (!singleMode && s.active != null && DeliveryPlanner.hasGeo(s.active)) {
+            List<double[]> one = new ArrayList<>();
+            one.add(new double[]{DeliveryPlanner.lat(s.active), DeliveryPlanner.lng(s.active)});
+            s.routeUrl = DeliveryNavLogic.buildDirUrl(one, true);
+        } else {
+            s.routeUrl = DeliveryNavLogic.buildDirUrl(pts, true);
+        }
 
         if (!singleMode) {
             for (Long id : running) {
@@ -961,6 +973,10 @@ public class NavigationPipActivity extends AppCompatActivity {
         tvFullNoGeo = findViewById(R.id.tvFullNoGeo);
         tvPipHint = findViewById(R.id.tvPipHint);
         btnLanjut.setOnClickListener(v -> continueNavigation());
+        View btnSelesaiTitik = findViewById(R.id.btnSelesaiTitik);
+        if (btnSelesaiTitik != null) btnSelesaiTitik.setOnClickListener(v -> completeActiveStop());
+        View btnLewatiTitik = findViewById(R.id.btnLewatiTitik);
+        if (btnLewatiTitik != null) btnLewatiTitik.setOnClickListener(v -> skipActiveStop());
         findViewById(R.id.btnKembaliAntrian).setOnClickListener(v -> openQueueAndClose());
         findViewById(R.id.btnPipSettings).setOnClickListener(v -> openPipSettings());
         tvPipName.setText("Memuat…");
@@ -1066,6 +1082,8 @@ public class NavigationPipActivity extends AppCompatActivity {
             tvFullNext.setVisibility(View.GONE);
             tvFullNoGeo.setVisibility(View.GONE);
             btnLanjut.setVisibility(View.GONE);
+            View rowWizardGone = findViewById(R.id.rowWizard);
+            if (rowWizardGone != null) rowWizardGone.setVisibility(View.GONE);
             mediaLabel = head;
             mediaName = head;
             mediaProducts = "";
@@ -1074,6 +1092,10 @@ public class NavigationPipActivity extends AppCompatActivity {
             return;
         }
         btnLanjut.setVisibility(View.VISIBLE);
+        View rowWizard = findViewById(R.id.rowWizard);
+        if (rowWizard != null) rowWizard.setVisibility(View.VISIBLE);
+        View btnLewati = findViewById(R.id.btnLewatiTitik);
+        if (btnLewati != null) btnLewati.setVisibility(!single && s.pendingCount > 1 ? View.VISIBLE : View.GONE);
 
         String name = t.getCustomerName() != null && !t.getCustomerName().trim().isEmpty()
                 ? t.getCustomerName().trim() : "Pelanggan";
@@ -1191,6 +1213,20 @@ public class NavigationPipActivity extends AppCompatActivity {
         name.setEllipsize(android.text.TextUtils.TruncateAt.END);
         name.setLayoutParams(new android.widget.LinearLayout.LayoutParams(0, -2, 1f));
         top.addView(name);
+        if (last != null && last.active != null) {
+            TextView done = mediaChip("✅ Selesai", 0xFF15803D);
+            done.setTextSize(15f);
+            done.setClickable(true);
+            done.setOnClickListener(v -> completeActiveStop());
+            top.addView(done);
+            if (!single && last.pendingCount > 1) {
+                TextView skip = mediaChip("⏭", 0xFF475569);
+                skip.setTextSize(15f);
+                skip.setClickable(true);
+                skip.setOnClickListener(v -> skipActiveStop());
+                top.addView(skip);
+            }
+        }
         TextView exit = mediaChip("✕ Keluar Split", 0xFFFFFFFF);
         exit.setTextColor(0xFFB91C1C);
         exit.setTextSize(15f);
@@ -1213,6 +1249,57 @@ public class NavigationPipActivity extends AppCompatActivity {
         hs.setHorizontalScrollBarEnabled(false);
         hs.addView(chips);
         llMediaChips.addView(hs);
+    }
+
+    /**
+     * "✅ Selesai" perhentian aktif: antrean dibuka (layar penuh) dan langsung menjalankan alur
+     * penyelesaian yang SAMA dengan tombol ✓ di kartu (dialog bayar/foto/struk). Sesudahnya antrean
+     * menyusun ulang sisa rute dan meluncurkan navigasi ke titik berikutnya.
+     */
+    private void completeActiveStop() {
+        Transaction a = last != null ? last.active : null;
+        if (a == null) {
+            Toast.makeText(this, "Tidak ada perhentian aktif", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final long id = a.getId();
+        leaving = true;
+        disableAutoEnter();
+        final Context app = getApplicationContext();
+        finishAndRemoveTask();
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try {
+                app.startActivity(new Intent(app, DeliveryQueueActivity.class)
+                        .putExtra(DeliveryQueueActivity.EXTRA_COMPLETE_TRX_ID, id)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+            } catch (Exception ignored) {
+            }
+        }, 350L);
+    }
+
+    /** "⏭ Lewati": perhentian aktif dipindah ke paling belakang, navigasi langsung ke titik berikutnya. */
+    private void skipActiveStop() {
+        Transaction a = last != null ? last.active : null;
+        Transaction nx = last != null ? last.next : null;   // perhentian tertunda sesudah yang aktif
+        if (a == null || single) return;
+        if (nx == null || !DeliveryPlanner.hasGeo(nx)) {
+            Toast.makeText(this, "Tidak ada perhentian lain", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Long id = a.getId();
+        if (!ids.remove(id)) return;
+        ids.add(id);
+        DeliveryQueueActivity.rememberWizardSkip(getApplicationContext(), id);
+        refresh();   // async — panel menyusul; Maps langsung diarahkan ke titik berikutnya
+        Toast.makeText(this, "⏭ Ke: " + (nx.getCustomerName() != null ? nx.getCustomerName() : "berikutnya"),
+                Toast.LENGTH_SHORT).show();
+        List<double[]> one = new ArrayList<>();
+        one.add(new double[]{DeliveryPlanner.lat(nx), DeliveryPlanner.lng(nx)});
+        String url = DeliveryNavLogic.buildDirUrl(one, true);
+        if (url == null) return;
+        Intent i = routeIntent(this, url, true);
+        if (isSplitScreen() && Build.VERSION.SDK_INT >= 24) i.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT);
+        startMaps(this, i);
     }
 
     /**

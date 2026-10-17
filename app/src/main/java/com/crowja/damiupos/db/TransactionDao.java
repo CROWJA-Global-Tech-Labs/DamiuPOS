@@ -458,6 +458,19 @@ public class TransactionDao {
         }
     }
 
+    /**
+     * Salin urutan rute hasil server (POST /delivery/optimize, kolom server-authoritative delivery_seq)
+     * ke salinan lokal SEKARANG — tanpa menunggu pull — supaya navigasi per titik langsung memakai
+     * urutan baru. Update biasa (bukan syncUpdate): tak ditandai kotor; server pun menolak push kolom ini.
+     */
+    public void cacheDeliverySeq(String syncUuid, int seq) {
+        if (syncUuid == null || syncUuid.isEmpty()) return;
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_DELIVERY_SEQ, seq);
+        dbHelper.getWritableDatabase().update(DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_SYNC_UUID + "=?", new String[]{syncUuid});
+    }
+
     public int countDeliveryQueue() {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         try (Cursor c = db.rawQuery(
