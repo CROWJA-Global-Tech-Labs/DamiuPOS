@@ -1307,9 +1307,99 @@ public class CustomerDetailActivity extends AppCompatActivity {
         android.widget.LinearLayout outer = new android.widget.LinearLayout(this);
         outer.setOrientation(android.widget.LinearLayout.VERTICAL);
         outer.addView(row);
+        // Ketuk = Detail Transaksi (isi sama dgn popup Detail Order di Antrean Delivery).
+        android.util.TypedValue tv = new android.util.TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, tv, true);
+        row.setBackgroundResource(tv.resourceId);
+        row.setClickable(true);
+        row.setOnClickListener(v -> showHistoryDetail(t));
         outer.addView(divider, new android.widget.LinearLayout.LayoutParams(
                 android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 1));
         return outer;
+    }
+
+    /** Popup Detail Transaksi dari baris histori (data server — transaksi HP lain pun lengkap). */
+    private void showHistoryDetail(org.json.JSONObject t) {
+        java.text.SimpleDateFormat full = new java.text.SimpleDateFormat("dd/MM/yyyy HH:mm:ss", new java.util.Locale("id", "ID"));
+        boolean kembali = "KEMBALI".equals(str(t, "type"));
+        StringBuilder sb = new StringBuilder();
+        String receipt = str(t, "receipt_no");
+        if (!receipt.isEmpty()) sb.append("🧾 ").append(receipt).append('\n');
+        String wa = str(t, "source_wa");
+        if (!wa.isEmpty()) sb.append("💬 Diterima via ").append(wa).append('\n');
+        String dest = str(t, "dest");
+        if (!dest.isEmpty()) sb.append("📍 Kirim ke: ").append(dest).append('\n');
+        if (sb.length() > 0) sb.append('\n');
+        if (kembali) {
+            sb.append("↩ Galon kembali: ").append(t.optInt("galon", 0)).append(" galon\n");
+        } else {
+            sb.append("Pesanan:\n");
+            org.json.JSONArray lines = t.optJSONArray("lines");
+            if (lines != null && lines.length() > 0) {
+                for (int i = 0; i < lines.length(); i++) {
+                    org.json.JSONObject l = lines.optJSONObject(i);
+                    if (l == null) continue;
+                    double q = l.optDouble("qty", 0), price = l.optDouble("price", 0);
+                    String qs = q == Math.floor(q) ? String.valueOf((long) q) : String.valueOf(q);
+                    sb.append("• ").append(str(l, "name")).append("  ").append(qs).append(" galon");
+                    if (price > 0) sb.append(" × ").append(rupiah(price)).append(" = ").append(rupiah(price * q));
+                    sb.append('\n');
+                }
+            } else {
+                String items = str(t, "items");
+                sb.append("• ").append(items.isEmpty() ? t.optInt("galon", 0) + " galon" : items).append('\n');
+            }
+            sb.append('\n');
+            double ongkir = t.optDouble("ongkir", 0);
+            if (ongkir > 0) sb.append("Ongkir: ").append(rupiah(ongkir)).append('\n');
+            sb.append("Total: ").append(rupiah(t.optDouble("total", 0))).append('\n');
+            String pay = payLabel(str(t, "payment_method"));
+            if (!pay.isEmpty()) sb.append("Pembayaran: ").append(pay).append('\n');
+        }
+        sb.append('\n');
+        long ms = com.crowja.damiupos.util.Ts.millis(str(t, "tanggal"));
+        if (ms != Long.MAX_VALUE) sb.append("Tanggal: ").append(full.format(new java.util.Date(ms))).append('\n');
+        long q = com.crowja.damiupos.util.Ts.millis(str(t, "queued_at"));
+        if (q != Long.MAX_VALUE && !str(t, "queued_at").isEmpty()) sb.append("Masuk antrian: ").append(full.format(new java.util.Date(q))).append('\n');
+        String st = str(t, "delivery_status");
+        if (!st.isEmpty()) sb.append("Status: ").append(statusLabel(st)).append('\n');
+        if ("TERTUNDA".equals(st)) {
+            String reason = str(t, "tertunda_reason");
+            long r = com.crowja.damiupos.util.Ts.millis(str(t, "tertunda_resume_at"));
+            if (!reason.isEmpty()) sb.append("Alasan ditunda: ").append(reason).append('\n');
+            if (r != Long.MAX_VALUE && !str(t, "tertunda_resume_at").isEmpty()) sb.append("Dilanjutkan: ").append(full.format(new java.util.Date(r))).append('\n');
+        }
+        long done = com.crowja.damiupos.util.Ts.millis(str(t, "done_at"));
+        if (done != Long.MAX_VALUE && !str(t, "done_at").isEmpty()) {
+            sb.append("✅ Selesai: ").append(full.format(new java.util.Date(done)));
+            if (!str(t, "completed_by").isEmpty()) sb.append(" oleh ").append(str(t, "completed_by"));
+            sb.append('\n');
+        }
+        String staff = str(t, "staff"), device = str(t, "device");
+        String who = staff.isEmpty() ? device : (device.isEmpty() ? staff : staff + " (" + device + ")");
+        if (!who.isEmpty()) sb.append("Oleh: ").append(who).append('\n');
+        String note = str(t, "catatan");
+        if (!note.isEmpty()) sb.append('\n').append("📝 ").append(note);
+
+        TextView body = new TextView(this);
+        body.setText(sb.toString().trim());
+        body.setTextSize(15);
+        body.setTextIsSelectable(true);
+        body.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.text_primary));
+        body.setPadding(dp(22), dp(8), dp(22), 0);
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(body);
+        final long localId = transactionDao.getIdBySyncUuid(str(t, "uuid"));
+        androidx.appcompat.app.AlertDialog.Builder b = new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle(kembali ? "Detail Galon Kembali" : "Detail Transaksi")
+                .setView(sv)
+                .setPositiveButton("Tutup", null);
+        // Struk hanya untuk transaksi yang ADA di HP ini (transaksi HP lain tak tersimpan lokal).
+        if (localId > 0 && !kembali) {
+            b.setNeutralButton("Buka Struk", (d, w) -> startActivity(new android.content.Intent(this, ReceiptActivity.class)
+                    .putExtra("transaction_id", localId)));
+        }
+        b.show();
     }
 
     private static String statusLabel(String s) {
