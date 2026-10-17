@@ -427,6 +427,37 @@ public class TransactionDao {
         }
     }
 
+    /**
+     * Kenapa order rit berjalan {@code id} tak lagi ada di antrean HP ini — dari salinan lokal hasil
+     * pull. {@code {nama, alasan}}; alasan null = tak bisa dipastikan (baris lokal masih PENDING milik
+     * HP ini, mis. hanya tersaring sementara).
+     */
+    public String[] runGoneReason(long id) {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        try (Cursor c = db.rawQuery("SELECT t." + DatabaseHelper.COL_DELIVERY_STATUS + ", t."
+                + DatabaseHelper.COL_DELIVERY_TERTUNDA_REASON + ", t." + DatabaseHelper.COL_COMPLETED_BY_NAME
+                + ", t." + DatabaseHelper.COL_DELIVERY_DEVICE_UUID + ", t." + DatabaseHelper.COL_DELIVERY_OPEN_DISPATCH_AT
+                + ", c." + DatabaseHelper.COL_NAME + " FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t LEFT JOIN "
+                + DatabaseHelper.TABLE_CUSTOMERS + " c ON c." + DatabaseHelper.COL_ID + " = t." + DatabaseHelper.COL_CUSTOMER_ID
+                + " WHERE t." + DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(id)})) {
+            if (!c.moveToFirst()) return new String[]{"Order", "sudah DIBATALKAN / dihapus"};
+            String status = c.getString(0), reason = c.getString(1), by = c.getString(2);
+            String dev = c.getString(3), open = c.getString(4), name = c.getString(5);
+            name = name != null && !name.trim().isEmpty() ? name.trim() : "Order";
+            if (Transaction.DELIVERY_TERTUNDA.equals(status)) {
+                return new String[]{name, "DIJADWALKAN ULANG" + (reason != null && !reason.trim().isEmpty() ? " (" + reason.trim() + ")" : "")};
+            }
+            if (Transaction.DELIVERY_DONE.equals(status)) {
+                return new String[]{name, "sudah DISELESAIKAN" + (by != null && !by.trim().isEmpty() ? " oleh " + by.trim() : " pihak lain")};
+            }
+            if (!Transaction.DELIVERY_PENDING.equals(status)) return new String[]{name, "tidak lagi di antrean"};
+            if (dev == null || dev.trim().isEmpty()) {
+                return new String[]{name, open != null && !open.trim().isEmpty() ? "DILEPAS jadi Pesanan Terbuka" : null};
+            }
+            return new String[]{name, "DIPINDAH ke perangkat lain"};
+        }
+    }
+
     public int countDeliveryQueue() {
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         try (Cursor c = db.rawQuery(

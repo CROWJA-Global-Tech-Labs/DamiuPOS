@@ -391,6 +391,8 @@ public class SyncEngine {
     // sync() untuk notifikasi ⚠.
     private final java.util.List<String> pulledRoutedAway = new java.util.ArrayList<>();
     private final java.util.List<String[]> pulledCompletedElsewhere = new java.util.ArrayList<>();   // {nama, completedByName}
+    /** Order antrean HP ini yang baru DIJADWALKAN ULANG (Tertunda) pihak lain: {nama, alasan, sedangDiantar?"1":"0"}. */
+    private final java.util.List<String[]> pulledRescheduled = new java.util.ArrayList<>();
 
     // PELANGGAN PERKENALAN baru (pelanggan promosi marketing — gratis/berbayar — yang belum dikirim
     // WA Perkenalan) yang BARU masuk lewat pull, sudah tersaring wilayah tugas perangkat ini. Hanya
@@ -498,6 +500,7 @@ public class SyncEngine {
             pulledIncompleteQueueCustomers.clear();
             pulledRoutedAway.clear();
             pulledCompletedElsewhere.clear();
+            pulledRescheduled.clear();
             pulledPromoIntroArrivals.clear();
             try {
                 res.pulled = pull();
@@ -588,6 +591,20 @@ public class SyncEngine {
                             "Order \"" + name + "\" sudah diselesaikan"
                                     + (by != null && !by.trim().isEmpty() ? " oleh " + by.trim() : " oleh perangkat/pihak lain")
                                     + " — tak perlu diantar lagi.", 7940 + (i % 10));
+                } catch (Throwable ignored) {}
+            }
+            // Order antrean HP ini DIJADWALKAN ULANG pihak lain (web/agen/HP lain). Yang SEDANG DIANTAR
+            // diberi judul keras: kurir bisa saja di jalan (layar Maps) dan tak melihat antreannya.
+            for (int i = 0; !pengisian && i < pulledRescheduled.size(); i++) {
+                String[] e = pulledRescheduled.get(i);
+                boolean running = "1".equals(e[2]);
+                try {
+                    OnlineNotifier.postNotif(appCtx,
+                            running ? "⛔ JANGAN DIANTAR — Order Dijadwalkan Ulang" : "⏸ Order Dijadwalkan Ulang",
+                            "Order \"" + e[0] + "\" dijadwalkan ulang"
+                                    + (e[1] != null && !e[1].trim().isEmpty() ? " (" + e[1].trim() + ")" : "")
+                                    + (running ? " — sudah dikeluarkan dari rit Anda." : " — keluar dari antrean Anda."),
+                            7950 + (i % 10));
                 } catch (Throwable ignored) {}
             }
             // PELANGGAN PERKENALAN baru untuk PERANGKAT PETUGAS WA Perkenalan (sudah tersaring
@@ -1723,6 +1740,11 @@ public class SyncEngine {
                             } else if (com.crowja.damiupos.model.Transaction.DELIVERY_DONE.equals(newStatus)) {
                                 pulledCompletedElsewhere.add(new String[]{custName,
                                         v.getAsString(DatabaseHelper.COL_COMPLETED_BY_NAME)});
+                            } else if (com.crowja.damiupos.model.Transaction.DELIVERY_TERTUNDA.equals(newStatus)) {
+                                boolean running = false;
+                                try { running = settingsDao.getDeliveryRunningTrxIds().contains(localId); } catch (Throwable ignored) {}
+                                pulledRescheduled.add(new String[]{custName,
+                                        v.getAsString(DatabaseHelper.COL_DELIVERY_TERTUNDA_REASON), running ? "1" : "0"});
                             }
                         }
                     }

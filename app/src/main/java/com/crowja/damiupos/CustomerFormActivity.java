@@ -1804,9 +1804,39 @@ public class CustomerFormActivity extends AppCompatActivity {
                         Toast.LENGTH_SHORT).show();
                 finish();
             } else {
-                Toast.makeText(this, "Permission ditolak", Toast.LENGTH_SHORT).show();
+                explainDeniedPermission(permissions.length > 0 ? permissions[0] : null);
             }
         }
+    }
+
+    /**
+     * Izin kamera/lokasi ditolak. Bila sudah "Jangan tanya lagi" (dialog sistem tak muncul lagi —
+     * sebelumnya hanya toast "Permission ditolak" tanpa jalan keluar), arahkan ke Pengaturan aplikasi.
+     */
+    private void explainDeniedPermission(@androidx.annotation.Nullable String permission) {
+        boolean camera = android.Manifest.permission.CAMERA.equals(permission);
+        String what = camera ? "Kamera" : "Lokasi";
+        boolean permanent = permission != null && !ActivityCompat.shouldShowRequestPermissionRationale(this, permission);
+        if (!permanent) {
+            Toast.makeText(this, "Izin " + what + " ditolak", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Izin " + what + " Dimatikan")
+                .setMessage("Izin " + what + " untuk DAMIU POS sudah ditolak permanen, jadi HP tidak akan "
+                        + "menanyakannya lagi.\n\nBuka Pengaturan → Izin → " + what + " → pilih \"Izinkan\", "
+                        + "lalu kembali ke sini."
+                        + (camera ? "\n\nAtau pakai foto dari Galeri." : ""))
+                .setPositiveButton("Buka Pengaturan", (d, w) -> {
+                    try {
+                        startActivity(new android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                android.net.Uri.fromParts("package", getPackageName(), null)));
+                    } catch (Exception e) {
+                        Toast.makeText(this, "Buka Pengaturan → Aplikasi → DAMIU POS → Izin", Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton("Tutup", null)
+                .show();
     }
 
     /** Dialog pilih reseller rujukan pelanggan (opsional). Simpan sync_uuid reseller terpilih. */
