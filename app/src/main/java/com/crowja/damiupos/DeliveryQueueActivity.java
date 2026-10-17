@@ -1452,6 +1452,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.loadTrips();
       this.tick.postDelayed(this.ticker, 1000L);
       this.tick.postDelayed(this.strategyResortTicker, 60000L);
+      this.tick.postDelayed(this.runWatchdog, 20000L);
       if (this.guidedMode) {
          this.tick.postDelayed(this.guidedRitRefillTicker, 30000L);
          VersionUpdater.maybePrompt(this);
@@ -1477,6 +1478,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.tick.removeCallbacks(this.ticker);
       this.tick.removeCallbacks(this.strategyResortTicker);
       this.tick.removeCallbacks(this.guidedRitRefillTicker);
+      this.tick.removeCallbacks(this.runWatchdog);
 
       try {
          this.unregisterReceiver(this.syncedReceiver);
@@ -2373,11 +2375,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private static String queuedAgoOtherDevices(String queuedAt) {
       if (queuedAt != null && queuedAt.length() >= 19) {
          try {
-            Date d = SDF_PARSE.parse(queuedAt.substring(0, 19));
-            if (d == null) {
+            long ms = com.crowja.damiupos.util.Ts.millis(queuedAt);   // tahan ISO-UTC & waktu lokal
+            if (ms == Long.MAX_VALUE) {
                return "";
             } else {
-               long m = Math.max(0L, System.currentTimeMillis() - d.getTime()) / 60000L;
+               long m = Math.max(0L, System.currentTimeMillis() - ms) / 60000L;
                long h = m / 60L;
                return h > 0L ? "⏱ " + h + " jam " + m % 60L + " mnt lalu" : "⏱ " + m + " mnt lalu";
             }
@@ -3683,13 +3685,19 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
 
          if (!gone.isEmpty()) {
+            // Dulu dibuang DIAM-DIAM: kurir tetap mengantar order yang di tengah jalan dijadwalkan
+            // ulang / dibatalkan / dipindah pihak lain (kasus Heni 2026-10-17). Sekarang alarm + alasan.
+            StringBuilder why = new StringBuilder();
             for(Long id : gone) {
+               String[] r = this.dao.runGoneReason(id);
+               if (r[1] != null) why.append("• ").append(r[0]).append(" — ").append(r[1]).append('\n');
                this.dao.stopDelivery(id);
             }
 
             this.runningIds.removeAll(gone);
             this.persistRunning();
             SyncScheduler.syncNow(this.getApplicationContext());
+            if (why.length() > 0) this.showRunCancelledAlarm(why.toString());
          }
       }
 
@@ -4109,7 +4117,143 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.doStartRuns(Collections.singletonList(t));
    }
 
+   /**
+    * Penjaga rit berjalan: tiap 60 dtk (layar tampil) tanya server status order rit. Yang tak boleh
+    * diantar lagi (dijadwalkan ulang / batal / dipindah / selesai pihak lain) dikeluarkan dari rit +
+    * alarm — tanpa menunggu pull sinkron berikutnya.
+    */
+   private final Runnable runWatchdog = new Runnable() {
+      public void run() {
+         DeliveryQueueActivity.this.checkRunningOrders();
+         DeliveryQueueActivity.this.tick.postDelayed(this, 60000L);
+      }
+   };
+
+   private void checkRunningOrders() {
+      if (!this.isRunning()) return;
+      SyncSettings cfg = this.syncCfg();
+      if (!cfg.isEnrolled()) return;
+      final Map<String, Long> byUuid = new LinkedHashMap<>();
+      for (Long id : new ArrayList<>(this.runningIds)) {
+         String u = this.dao.getSyncUuidById(id);
+         if (u != null && !u.isEmpty()) byUuid.put(u, id);
+      }
+      if (byUuid.isEmpty()) return;
+      (new Thread(() -> {
+         JSONObject orders;
+         try {
+            orders = (new SyncApi(cfg)).checkDelivery(new JSONArray(byUuid.keySet())).optJSONObject("orders");
+         } catch (Throwable e) {
+            return;   // tanpa sinyal: coba lagi putaran berikutnya
+         }
+         if (orders == null) return;
+         final JSONObject fo = orders;
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            StringBuilder why = new StringBuilder();
+            boolean changed = false;
+            for (Map.Entry<String, Long> e : byUuid.entrySet()) {
+               JSONObject v = fo.optJSONObject(e.getKey());
+               if (v == null || v.optBoolean("deliverable", true) || !this.runningIds.contains(e.getValue())) continue;
+               Transaction t = this.findInList(e.getValue());
+               why.append("• ").append(t != null ? safe(t.getCustomerName()) : "Order").append(" — ").append(v.optString("message")).append('\n');
+               this.dao.stopDelivery(e.getValue());
+               this.runningIds.remove(e.getValue());
+               changed = true;
+            }
+            if (!changed) return;
+            this.persistRunning();
+            SyncScheduler.syncNow(this.getApplicationContext());
+            this.loadData();
+            this.showRunCancelledAlarm(why.toString());
+         });
+      })).start();
+   }
+
+   private Transaction findInList(long id) {
+      if (this.adapter != null && this.adapter.data != null) {
+         for (Transaction t : this.adapter.data) if (t != null && t.getId() == id) return t;
+      }
+      return null;
+   }
+
+   /** Alarm + popup: order dikeluarkan dari rit berjalan karena berubah di pihak lain. */
+   private void showRunCancelledAlarm(String lines) {
+      if (this.isFinishing() || this.isDestroyed()) return;
+      IncompleteCustomerDialog.playAlarm(this);
+      (new AlertDialog.Builder(this)).setCancelable(false).setIcon(17301543)
+            .setTitle("⛔ JANGAN DIANTAR — Order Dikeluarkan dari Rit")
+            .setMessage(lines + "\nOrder di atas sudah dikeluarkan dari rit Anda. Jangan diantar; lanjutkan pemberhentian lain.")
+            .setPositiveButton("Mengerti", (DialogInterface.OnClickListener) null).show();
+   }
+
+   /**
+    * ▶ Jalankan: tanyakan dulu ke server apakah tiap order MASIH boleh diantar (pull bisa telat —
+    * order bisa saja baru dijadwalkan ulang / dibatalkan / dipindah). Yang tak boleh dikeluarkan +
+    * alarm; sisanya jalan. Tanpa sinyal / server gagal → jalan seperti biasa (tak menghalangi kerja).
+    */
    private void doStartRuns(List<Transaction> list) {
+      if (list == null || list.isEmpty()) return;
+      SyncSettings cfg = this.syncCfg();
+      final Map<String, Transaction> byUuid = new LinkedHashMap<>();
+      for (Transaction t : list) {
+         String u = t != null ? this.dao.getSyncUuidById(t.getId()) : null;
+         if (u != null && !u.isEmpty()) byUuid.put(u, t);
+      }
+      if (!cfg.isEnrolled() || byUuid.isEmpty()) {
+         this.doStartRunsNow(list);
+         return;
+      }
+      android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
+      wait.setMessage("Memeriksa status order…");
+      wait.setCancelable(false);
+      wait.show();
+      (new Thread(() -> {
+         JSONObject orders = null;
+         try {
+            orders = (new SyncApi(cfg)).checkDelivery(new JSONArray(byUuid.keySet())).optJSONObject("orders");
+         } catch (Throwable ignored) {
+         }
+         final JSONObject fo = orders;
+         this.runOnUiThread(() -> {
+            try { wait.dismiss(); } catch (Exception ignored) {}
+            if (this.isFinishing() || this.isDestroyed()) return;
+            if (fo == null) {
+               this.doStartRunsNow(list);
+               return;
+            }
+            List<Transaction> ok = new ArrayList<>();
+            StringBuilder bad = new StringBuilder();
+            for (Transaction t : list) {
+               String u = t != null ? this.dao.getSyncUuidById(t.getId()) : null;
+               JSONObject v = u != null ? fo.optJSONObject(u) : null;
+               if (v == null || v.optBoolean("deliverable", true)) {
+                  if (t != null) ok.add(t);
+               } else {
+                  bad.append("• ").append(safe(t.getCustomerName())).append(" — ").append(v.optString("message")).append('\n');
+               }
+            }
+            if (bad.length() == 0) {
+               this.doStartRunsNow(list);
+               return;
+            }
+            SyncScheduler.syncNow(this.getApplicationContext());   // tarik status terbarunya ke HP
+            IncompleteCustomerDialog.playAlarm(this);
+            AlertDialog.Builder b = (new AlertDialog.Builder(this)).setCancelable(false).setIcon(17301543)
+                  .setTitle("⛔ Order Ini TIDAK Boleh Diantar")
+                  .setMessage(bad + (ok.isEmpty() ? "" : "\nSisanya " + ok.size() + " order masih boleh dijalankan."));
+            if (ok.isEmpty()) {
+               b.setPositiveButton("Mengerti", (DialogInterface.OnClickListener) null);
+            } else {
+               b.setPositiveButton("Jalankan " + ok.size() + " order", (d, w) -> this.doStartRunsNow(ok))
+                     .setNegativeButton("Batal", (DialogInterface.OnClickListener) null);
+            }
+            b.show();
+         });
+      })).start();
+   }
+
+   private void doStartRunsNow(List<Transaction> list) {
       if (list != null && !list.isEmpty()) {
          for(Transaction t : list) {
             if (t != null) {
@@ -8690,12 +8834,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private static String formatQueued(String queuedAt) {
       if (queuedAt != null && queuedAt.length() >= 19) {
-         try {
-            Date d = SDF_PARSE.parse(queuedAt.substring(0, 19));
-            return d == null ? queuedAt.substring(0, 19) : (new SimpleDateFormat("dd/MM/yyyy HH:mm:ss", new Locale("id", "ID"))).format(d);
-         } catch (Exception var2) {
-            return queuedAt.substring(0, 19);
-         }
+         // Ts.millis, bukan SDF_PARSE: stempel asal-server berbentuk ISO-UTC ("2026-10-17T07:05:37Z",
+         // mis. last_manual_edit_at) — dulu gagal diurai lalu tampil mentah dengan jam UTC.
+         long ms = com.crowja.damiupos.util.Ts.millis(queuedAt);
+         return ms == Long.MAX_VALUE ? queuedAt.substring(0, 19)
+               : (new SimpleDateFormat("dd/MM/yyyy HH:mm:ss", new Locale("id", "ID"))).format(new Date(ms));
       } else {
          return "-";
       }

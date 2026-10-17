@@ -395,6 +395,10 @@ public class SyncSettings {
     public String getUpdateName() { return settings.get(K_UPD_NAME, ""); }
     public long getSnoozeUntil()  { try { return Long.parseLong(settings.get(K_UPD_SNOOZE, "0")); } catch (Exception e) { return 0L; } }
     public void setSnoozeUntil(long ms) { settings.set(K_UPD_SNOOZE, String.valueOf(ms)); }
+    /** Sejak kapan HP ini tertinggal dari APK wajib (0 = tidak tertinggal) — batas "Tunda 1 jam". */
+    private static final String K_UPD_BEHIND_SINCE = "upd_behind_since";
+    public long getUpdateBehindSince() { try { return Long.parseLong(settings.get(K_UPD_BEHIND_SINCE, "0")); } catch (Exception e) { return 0L; } }
+    public void setUpdateBehindSince(long ms) { settings.set(K_UPD_BEHIND_SINCE, String.valueOf(ms)); }
     public String getCachedMyApkSha()   { return settings.get(K_UPD_MYSHA, ""); }
     public long getCachedMyApkShaAt()   { try { return Long.parseLong(settings.get(K_UPD_MYSHA_AT, "0")); } catch (Exception e) { return 0L; } }
     public void setCachedMyApkSha(String sha, long lastUpdateTime) {

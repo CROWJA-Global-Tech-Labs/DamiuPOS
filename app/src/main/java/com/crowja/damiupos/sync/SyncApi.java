@@ -4,6 +4,7 @@ import androidx.annotation.Nullable;
 
 import com.crowja.damiupos.util.PhoneConflictPolicy;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
@@ -290,6 +291,14 @@ public class SyncApi {
      */
     public JSONObject openDispatch(JSONObject body) throws Exception {
         return post(cfg.getBaseUrl() + "/api/delivery/open", body, cfg.getToken());
+    }
+
+    /**
+     * "Masih boleh diantar?": status LANGSUNG order rit dari server ({@code {uuids:[…]}}) sebelum
+     * ▶ Jalankan & berkala selama rit berjalan. Balas {@code {orders:{uuid:{deliverable,reason,message}}}}.
+     */
+    public JSONObject checkDelivery(JSONArray uuids) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/check", new JSONObject().put("uuids", uuids), cfg.getToken());
     }
 
     /**

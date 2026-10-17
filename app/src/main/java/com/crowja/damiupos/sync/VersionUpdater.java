@@ -38,6 +38,9 @@ public final class VersionUpdater {
 
     /** 1-hour snooze for "Tunda 1 jam". */
     public static final long SNOOZE_MS = 60 * 60 * 1000L;
+    /** Tertinggal lebih lama dari ini → "Tunda 1 jam" hilang (HP ADHI tertahan di 1.4.159 tiga hari
+     *  karena terus ditunda, sehingga perbaikan Pulang/antrean tak pernah sampai). */
+    public static final long MAX_BEHIND_MS = 12 * 60 * 60 * 1000L;
 
     /** Dialog Pembaruan Wajib / Versi Dinonaktifkan yang sedang tampil, kalau ada — dijaga
      *  supaya {@link #maybePrompt} dan {@link #maybePromptBlocked} tidak menumpuk dialog kedua
@@ -121,22 +124,33 @@ public final class VersionUpdater {
         if (activeDialog != null && activeDialog.isShowing()) return;   // sudah ada dialog tampil
         Context app = activity.getApplicationContext();
         SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(app)));
-        if (!updateNeeded(app, cfg)) return;
-        if (System.currentTimeMillis() < cfg.getSnoozeUntil()) return;
+        if (!updateNeeded(app, cfg)) {
+            if (cfg.getUpdateBehindSince() != 0) cfg.setUpdateBehindSince(0);
+            return;
+        }
+        long now = System.currentTimeMillis();
+        long since = cfg.getUpdateBehindSince();
+        if (since <= 0 || since > now) {
+            since = now;
+            cfg.setUpdateBehindSince(now);
+        }
+        boolean canSnooze = now - since < MAX_BEHIND_MS;
+        if (canSnooze && now < cfg.getSnoozeUntil()) return;
 
         File apk = apkFile(app);
         String have = sha256(apk);
         boolean ready = apk.exists() && have != null && have.equalsIgnoreCase(cfg.getUpdateSha());
         String msg = "Versi baru aplikasi wajib dipasang untuk melanjutkan."
-                + (ready ? "\nSudah terunduh & siap dipasang." : "");
+                + (ready ? "\nSudah terunduh & siap dipasang." : "")
+                + (canSnooze ? "" : "\n\nHP ini sudah tertinggal lebih dari 12 jam — tidak bisa ditunda lagi.");
 
-        activeDialog = new AlertDialog.Builder(activity)
+        AlertDialog.Builder b = new AlertDialog.Builder(activity)
                 .setTitle("Pembaruan Wajib")
                 .setMessage(msg)
                 .setCancelable(false)
-                .setPositiveButton("Update Sekarang", (d, w) -> updateNow(activity))
-                .setNegativeButton("Tunda 1 jam", (d, w) -> snooze(app))
-                .show();
+                .setPositiveButton("Update Sekarang", (d, w) -> updateNow(activity));
+        if (canSnooze) b.setNegativeButton("Tunda 1 jam", (d, w) -> snooze(app));
+        activeDialog = b.show();
     }
 
     /** Aksi "Update Sekarang" yang bisa dipakai dialog mana pun: pasang APK yang sudah
