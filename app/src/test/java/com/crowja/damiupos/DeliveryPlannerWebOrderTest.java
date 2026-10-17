@@ -39,7 +39,7 @@ public class DeliveryPlannerWebOrderTest {
         return out;
     }
 
-    @Test public void priorityGroupFollowsWebOrderNotDistanceOrSeq() {
+    @Test public void levelsFollowWebAndSameLevelFollowsRoute() {
         List<Transaction> q = Arrays.asList(
                 order("Mami", 1, 1, "2026-10-15 09:01:29", 0.8, 1),
                 order("Ibu Darti", 3, 2, "2026-10-15 08:00:06", 1.5, 1),
@@ -49,7 +49,8 @@ public class DeliveryPlannerWebOrderTest {
 
         List<DeliveryPlanner.Trip> trips = DeliveryPlanner.plan(q, 5, DEPOT_LAT, DEPOT_LNG, DeliveryPlanner.MODE_NEAREST);
 
-        assertEquals(Arrays.asList("Es teh Nusantara", "Es teh puri", "Ibu Darti", "Mami"), names(trips.get(0).stops));
+        // ×7 › ×3 › ×1; dua order ×3 mengikuti urutan rute (seq 2 lalu 3), bukan jam pesan.
+        assertEquals(Arrays.asList("Es teh Nusantara", "Ibu Darti", "Es teh puri", "Mami"), names(trips.get(0).stops));
         assertEquals(Arrays.asList("Mas Mansyur"), names(trips.get(1).stops));
     }
 

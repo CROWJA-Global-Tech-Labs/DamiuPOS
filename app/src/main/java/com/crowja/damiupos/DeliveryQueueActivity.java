@@ -141,6 +141,19 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     *  https://order.airfrez.com/tracking/{token} (dipakai ulang staff dari komplain/chat WA).
     *  Berlaku untuk order berjalan & tertunda. */
    public static final String EXTRA_FOCUS_TRX_ID = "focus_trx_id";
+   /** Dari panel navigasi "✅ Selesai": jalankan alur penyelesaian order ini, lalu lanjut ke titik berikutnya. */
+   public static final String EXTRA_COMPLETE_TRX_ID = "complete_trx_id";
+   /** Navigasi PER TITIK (wizard) sedang dipakai: tiap Selesai → susun ulang sisa rute → navigasi titik berikutnya. */
+   private boolean wizardActive = false;
+   private boolean wizardAdvancePending = false;
+   private long pendingCompleteTrxId = -1L;
+   /** Order yang Selesai-nya dipicu panel navigasi — penyelesaiannya melanjutkan ke titik berikutnya. */
+   private long wizardCompleteId = -1L;
+   private static final String KEY_WIZARD_SKIPS = "wizard_skip_ids";
+   /** "▶ Jalankan & Navigasi" rit berikutnya: begitu rit mulai, langsung navigasi per titik (berlaku 2 mnt). */
+   private long navAfterStartAt = 0L;
+   private boolean awaitingNextRit = false;
+   private android.app.ProgressDialog wizardWait;
    private static final SimpleDateFormat SDF_PARSE;
    private long pendingFocusTrxId = -1L;
    private TransactionDao dao;
@@ -330,6 +343,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             DeliveryQueueActivity.this.loadData();
          }
          DeliveryQueueActivity.this.loadTrips();
+         if (DeliveryQueueActivity.this.awaitingNextRit) DeliveryQueueActivity.this.offerNextRit();
 
       }
    };
@@ -385,11 +399,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       // Hanya pada peluncuran pertama: rotasi/rekreasi tak boleh membuka ulang popup pesanan.
       if (savedInstanceState == null && this.getIntent() != null) {
          this.pendingFocusTrxId = this.getIntent().getLongExtra(EXTRA_FOCUS_TRX_ID, -1L);
+         this.pendingCompleteTrxId = this.getIntent().getLongExtra(EXTRA_COMPLETE_TRX_ID, -1L);
       }
       if (savedInstanceState != null) {
          this.pendingProofTrxId = savedInstanceState.getLong("proof_trx_id", -1L);
          this.pendingProofRevoke = savedInstanceState.getBoolean("proof_revoke", false);
          this.pendingProofPath = savedInstanceState.getString("proof_path");
+         this.wizardActive = savedInstanceState.getBoolean("wizard_active", false);
+         this.wizardCompleteId = savedInstanceState.getLong("wizard_complete_id", -1L);
       }
 
       Toolbar toolbar = (Toolbar)this.findViewById(id.toolbar);
@@ -480,7 +497,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       })).attachToRecyclerView(this.rv);
       View fabNavigasiRit = this.findViewById(id.fabNavigasiRit);
       if (fabNavigasiRit != null) {
-         fabNavigasiRit.setOnClickListener((v) -> this.navigasiRitAktif());
+         fabNavigasiRit.setOnClickListener((v) -> this.startWizardNav());
       }
 
       this.barRute = this.findViewById(id.barRute);
@@ -1448,6 +1465,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       com.crowja.damiupos.util.LowPowerBlink.resumeAll();
       this.loadData();
       this.openPendingFocus();
+      this.openPendingComplete();
       this.loadOtherDevices();
       this.loadTrips();
       this.tick.postDelayed(this.ticker, 1000L);
@@ -1546,6 +1564,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       out.putLong("proof_trx_id", this.pendingProofTrxId);
       out.putBoolean("proof_revoke", this.pendingProofRevoke);
       out.putString("proof_path", this.pendingProofPath);
+      out.putBoolean("wizard_active", this.wizardActive);
+      out.putLong("wizard_complete_id", this.wizardCompleteId);
    }
 
    private void loadData() {
@@ -4243,10 +4263,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                   .setTitle("⛔ Order Ini TIDAK Boleh Diantar")
                   .setMessage(bad + (ok.isEmpty() ? "" : "\nSisanya " + ok.size() + " order masih boleh dijalankan."));
             if (ok.isEmpty()) {
-               b.setPositiveButton("Mengerti", (DialogInterface.OnClickListener) null);
+               b.setPositiveButton("Mengerti", (d, w) -> this.navAfterStartAt = 0L);
             } else {
                b.setPositiveButton("Jalankan " + ok.size() + " order", (d, w) -> this.doStartRunsNow(ok))
-                     .setNegativeButton("Batal", (DialogInterface.OnClickListener) null);
+                     .setNegativeButton("Batal", (d, w) -> this.navAfterStartAt = 0L);
             }
             b.show();
          });
@@ -4272,7 +4292,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.requireSelfOrderStrukThen(list);
          // ▶ Jalankan rit = langsung susun rute terpendek (terdekat dulu) dari posisi HP — sama dengan
          // menekan "Urutkan Rute Terpendek". Jeda singkat supaya stempel jalan ikut tersinkron dulu.
-         if (list.size() > 1) {
+         if (System.currentTimeMillis() - this.navAfterStartAt < 60000L) {
+            // "▶ Jalankan & Navigasi" (rit berikutnya di navigasi per titik): susun rute terpendek lalu
+            // navigasi titik pertama — DITUNGGU sampai layar bebas, supaya dialog wajib (mis. "Kirim
+            // Struk WA" pesanan mandiri) tak tertimbun Maps.
+            this.navAfterStartAt = 0L;
+            this.wizardActive = true;
+            this.wizardAdvancePending = true;
+            this.tryWizardAdvance();
+         } else if (list.size() > 1) {
             this.rv.postDelayed(() -> {
                if (!this.isFinishing() && !this.isDestroyed()) this.autoRerouteAfterAdd();
             }, 2000L);
@@ -4451,6 +4479,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private void stopRun() {
+      this.wizardActive = false;
+      this.wizardCompleteId = -1L;
       for(Long id : this.runningIds) {
          this.dao.stopDelivery(id);
       }
@@ -6774,6 +6804,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (id > 0L) {
          this.pendingFocusTrxId = id;   // dibuka di onResume berikutnya, setelah loadData
       }
+      long done = intent != null ? intent.getLongExtra(EXTRA_COMPLETE_TRX_ID, -1L) : -1L;
+      if (done > 0L) this.pendingCompleteTrxId = done;
    }
 
    /**
@@ -6896,6 +6928,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       Toast.makeText(this, "Order selesai • " + formatDuration(ms), 0).show();
       if (notifyUnpaid) {
          this.sendCashBonNoticeWa(t, proofPath);
+      }
+      boolean fromPanel = t.getId() == this.wizardCompleteId;
+      if (fromPanel) this.wizardCompleteId = -1L;
+      forgetWizardSkip(this, t.getId());
+      if (!this.guidedMode && this.wizardActive && (fromPanel || NavigationPipActivity.isLive())) {
+         // Navigasi per titik: lanjut ke titik berikutnya begitu layar ini kembali bebas (dialog/WA
+         // penyelesaian yang mungkin masih menyusul ditunggu lewat fokus jendela).
+         this.wizardAdvancePending = true;
+         this.tryWizardAdvance();
       }
 
    }
@@ -7064,6 +7105,258 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private static boolean hasGeo(Transaction t) {
       return effectiveLat(t) != (double)0.0F || effectiveLng(t) != (double)0.0F;
+   }
+
+   // ------------------------------------------------------------------ 🧭 Navigasi PER TITIK (wizard)
+
+   /**
+    * 🧭 Navigasi rit = PER TITIK (owner 2026-10-18). Sisa perhentian rit disusun ulang dulu di server
+    * (rute jalan terpendek dari GPS HP, tingkat prioritas web ⭐ › level ×N tetap mutlak — data prioritas
+    * TERBARU server, jadi kenaikan prioritas dari web langsung berlaku), lalu Maps diarahkan ke SATU
+    * titik: yang pertama. Panel navigasi punya ✅ Selesai / ⏭ Lewati; tiap Selesai mengulang langkah ini.
+    * Tanpa sinyal → navigasi titik pertama urutan yang ada sekarang.
+    */
+   private void startWizardNav() {
+      if (!this.isRunning()) {
+         Toast.makeText(this, "Belum ada rit yang berjalan", Toast.LENGTH_SHORT).show();
+         return;
+      }
+      this.wizardActive = true;
+      List<Transaction> geo = this.runningGeoStops();
+      if (geo.isEmpty()) {
+         Toast.makeText(this, "Order yang sedang diantar belum punya titik koordinat", Toast.LENGTH_LONG).show();
+         return;
+      }
+      SyncSettings cfg = this.syncCfg();
+      List<String> uuids = new ArrayList<>();
+      for (Transaction t : geo) {
+         String u = this.dao.getSyncUuidById(t.getId());
+         if (u != null && !u.isEmpty()) uuids.add(u);
+      }
+      if (geo.size() < 2 || !cfg.isEnrolled() || uuids.size() < 2) {
+         this.navigateWizard(null);
+         return;
+      }
+      this.showWizardWait("Menghitung rute terpendek dari posisi Anda…");
+      this.currentFixForRit((loc) -> (new Thread(() -> {
+         JSONArray order = null;
+         try {
+            JSONObject body = new JSONObject();
+            if (loc != null) {
+               body.put("lat", loc.getLatitude());
+               body.put("lng", loc.getLongitude());
+            }
+            body.put("uuids", new JSONArray(uuids));
+            order = (new SyncApi(cfg)).optimizeRoute(body).optJSONArray("order");
+         } catch (Throwable ignored) {
+         }
+         final JSONArray fo = order;
+         this.runOnUiThread(() -> {
+            this.dismissWizardWait();
+            if (this.isFinishing() || this.isDestroyed()) return;
+            List<String> serverOrder = null;
+            if (fo != null) {
+               serverOrder = new ArrayList<>();
+               for (int i = 0; i < fo.length(); i++) {
+                  this.dao.cacheDeliverySeq(fo.optString(i), i + 1);
+                  serverOrder.add(fo.optString(i));
+               }
+               this.loadData();   // kartu & Strategi ikut urutan rute baru
+            }
+            this.navigateWizard(serverOrder);
+         });
+      })).start());
+   }
+
+   /**
+    * Maps ke titik PERTAMA sisa rit; panel navigasi memantau semua titik rit. Urutan = urutan SERVER
+    * (data prioritas server terkini) bila ada, else urutan rit lokal; titik yang di-"⏭ Lewati" di
+    * belakang.
+    */
+   private void navigateWizard(@Nullable List<String> serverOrder) {
+      List<Transaction> geo = this.runningGeoStops();
+      if (geo.isEmpty()) {
+         this.wizardAdvance();
+         return;
+      }
+      if (serverOrder != null && !serverOrder.isEmpty()) {
+         final Map<Long, Integer> rank = new HashMap<>();
+         for (Transaction t : geo) {
+            int r = serverOrder.indexOf(this.dao.getSyncUuidById(t.getId()));
+            rank.put(t.getId(), r < 0 ? Integer.MAX_VALUE : r);
+         }
+         Collections.sort(geo, (a, b) -> Integer.compare(rank.get(a.getId()), rank.get(b.getId())));
+      }
+      final java.util.Set<Long> skipped = wizardSkips(this);
+      if (!skipped.isEmpty()) {
+         List<Transaction> head = new ArrayList<>(), tail = new ArrayList<>();
+         for (Transaction t : geo) (skipped.contains(t.getId()) ? tail : head).add(t);
+         geo = head;
+         geo.addAll(tail);
+      }
+      long[] ritIds = new long[geo.size()];
+      for (int i = 0; i < geo.size(); ++i) ritIds[i] = geo.get(i).getId();
+      List<Transaction> first = new ArrayList<>();
+      first.add(geo.get(0));
+      this.openMapsRoute(first, ritIds);
+      Toast.makeText(this, "🧭 Titik 1/" + geo.size() + ": " + safe(geo.get(0).getCustomerName()), Toast.LENGTH_LONG).show();
+   }
+
+   /** Order dari panel navigasi "✅ Selesai": jalankan alur penyelesaian yang SAMA dengan tombol ✓ kartu. */
+   private void openPendingComplete() {
+      long id = this.pendingCompleteTrxId;
+      if (id <= 0L) return;
+      this.pendingCompleteTrxId = -1L;
+      boolean inRit = this.runningIds.contains(id);
+      if (inRit && !this.guidedMode) {
+         this.wizardActive = true;
+         this.wizardCompleteId = id;
+      }
+      Transaction t = this.findQueueTrx(id);
+      if (t != null) {
+         this.maybeWarnIncompleteThenComplete(t);
+      } else if (inRit && !this.guidedMode) {
+         Toast.makeText(this, "Order itu sudah tidak ada di antrean — lanjut ke titik berikutnya.", Toast.LENGTH_LONG).show();
+         this.wizardAdvancePending = true;
+         this.tryWizardAdvance();
+      } else {
+         Toast.makeText(this, "Order itu sudah tidak ada di antrean.", Toast.LENGTH_LONG).show();
+      }
+   }
+
+   @Override
+   public void onWindowFocusChanged(boolean hasFocus) {
+      super.onWindowFocusChanged(hasFocus);
+      if (hasFocus) this.tryWizardAdvance();
+   }
+
+   /** Lanjut hanya saat layar ini benar-benar bebas (tak ada dialog penyelesaian / WA yang menyusul). */
+   private void tryWizardAdvance() {
+      if (!this.wizardAdvancePending) return;
+      this.tick.postDelayed(() -> {
+         if (!this.wizardAdvancePending || this.isFinishing() || this.isDestroyed() || !this.hasWindowFocus()) return;
+         this.wizardAdvancePending = false;
+         this.wizardAdvance();
+      }, 900L);
+   }
+
+   private void wizardAdvance() {
+      if (!this.isRunning() || this.runStops().isEmpty()) {
+         this.ritFinishedWizard();
+         return;
+      }
+      if (this.runningGeoStops().isEmpty()) {
+         Toast.makeText(this, "Sisa perhentian rit belum punya titik peta — antar manual dari daftar.", Toast.LENGTH_LONG).show();
+         return;
+      }
+      this.startWizardNav();
+   }
+
+   /**
+    * Rit habis: tarik data TERBARU dulu (prioritas yang dinaikkan di web selama rit berjalan — mis.
+    * pelanggan D komplain lalu jadi teratas), baru tawarkan rit berikutnya yang disusun ulang.
+    */
+   private void ritFinishedWizard() {
+      clearWizardSkips(this);
+      if (this.guidedMode) return;   // mode terpandu punya alur rit otomatis sendiri
+      this.awaitingNextRit = true;
+      this.showWizardWait("✅ Rit selesai — memuat prioritas terbaru…");
+      SyncScheduler.syncNow(this.getApplicationContext());
+      this.tick.postDelayed(() -> {
+         if (this.awaitingNextRit) this.offerNextRit();
+      }, 15000L);
+   }
+
+   private void offerNextRit() {
+      if (!this.awaitingNextRit || this.isFinishing() || this.isDestroyed()) return;
+      this.awaitingNextRit = false;
+      this.dismissWizardWait();
+      this.loadData();
+      if (this.isRunning()) return;
+      // strategyTrips bisa basi (renderStrategy tak mengosongkannya saat antrean habis) → hanya order
+      // yang SUNGGUH masih di Antrian Saya; tanpa ini rit terakhir menawarkan order yang baru diantar.
+      java.util.Set<Long> alive = new java.util.HashSet<>();
+      if (this.adapter != null && this.adapter.data != null) {
+         for (Transaction t : this.adapter.data) if (t != null) alive.add(t.getId());
+      }
+      List<Transaction> stops = new ArrayList<>();
+      if (this.strategyTrips != null && !this.strategyTrips.isEmpty()) {
+         for (Transaction t : ((DeliveryPlanner.Trip) this.strategyTrips.get(0)).stops) {
+            if (t != null && !t.isOpenDispatch() && alive.contains(t.getId())) stops.add(t);
+         }
+      }
+      if (stops.isEmpty()) {
+         this.wizardActive = false;
+         (new AlertDialog.Builder(this)).setTitle("🎉 Rit Selesai")
+               .setMessage("Semua perhentian rit sudah diantar dan tak ada antrean lain untuk rit berikutnya.")
+               .setPositiveButton("OK", (DialogInterface.OnClickListener) null).show();
+         return;
+      }
+      (new AlertDialog.Builder(this)).setCancelable(false).setTitle("✅ Rit Selesai — Rit Berikutnya (" + stops.size() + " order)")
+            .setView(this.stopsDialogView(null, stops, "Disusun ulang dengan prioritas TERBARU dari web. Muat galonnya, lalu jalankan — navigasi langsung ke titik pertama."))
+            .setPositiveButton("▶ Jalankan & Navigasi", (d, w) -> {
+               this.navAfterStartAt = System.currentTimeMillis();
+               this.doStartRuns(stops);
+            })
+            .setNegativeButton("Nanti", (d, w) -> {
+               this.wizardActive = false;
+               this.navAfterStartAt = 0L;
+            })
+            .show();
+   }
+
+   /** "⏭ Lewati" di panel navigasi: diingat supaya penyusunan ulang berikutnya menaruhnya di belakang. */
+   static void rememberWizardSkip(Context ctx, long id) {
+      java.util.Set<Long> s = wizardSkips(ctx);
+      s.add(id);
+      saveWizardSkips(ctx, s);
+   }
+
+   static void forgetWizardSkip(Context ctx, long id) {
+      java.util.Set<Long> s = wizardSkips(ctx);
+      if (s.remove(id)) saveWizardSkips(ctx, s);
+   }
+
+   static void clearWizardSkips(Context ctx) {
+      saveWizardSkips(ctx, new java.util.LinkedHashSet<>());
+   }
+
+   static java.util.Set<Long> wizardSkips(Context ctx) {
+      java.util.Set<Long> out = new java.util.LinkedHashSet<>();
+      try {
+         String raw = new SettingsDao(DatabaseHelper.getInstance(ctx)).get(KEY_WIZARD_SKIPS, "");
+         for (String p : raw.split(",")) if (!p.trim().isEmpty()) out.add(Long.parseLong(p.trim()));
+      } catch (Exception ignored) {
+      }
+      return out;
+   }
+
+   private static void saveWizardSkips(Context ctx, java.util.Set<Long> ids) {
+      StringBuilder sb = new StringBuilder();
+      for (Long id : ids) sb.append(sb.length() > 0 ? "," : "").append(id);
+      try {
+         new SettingsDao(DatabaseHelper.getInstance(ctx)).set(KEY_WIZARD_SKIPS, sb.toString());
+      } catch (Exception ignored) {
+      }
+   }
+
+   private void showWizardWait(String msg) {
+      this.dismissWizardWait();
+      try {
+         this.wizardWait = new android.app.ProgressDialog(this);
+         this.wizardWait.setMessage(msg);
+         this.wizardWait.setCancelable(true);
+         this.wizardWait.show();
+      } catch (Exception ignored) {
+      }
+   }
+
+   private void dismissWizardWait() {
+      try {
+         if (this.wizardWait != null && this.wizardWait.isShowing()) this.wizardWait.dismiss();
+      } catch (Exception ignored) {
+      }
+      this.wizardWait = null;
    }
 
    /**

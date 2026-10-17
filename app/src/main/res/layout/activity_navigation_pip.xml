@@ -313,6 +313,36 @@
                 android:textSize="18sp"
                 app:backgroundTint="@color/primary" />
 
+            <!-- Navigasi PER TITIK (wizard): selesaikan perhentian ini (dialog penyelesaian antrean),
+                 lalu navigasi otomatis pindah ke titik berikutnya; atau lewati dulu ke titik berikutnya. -->
+            <LinearLayout
+                android:id="@+id/rowWizard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnSelesaiTitik"
+                    android:layout_width="0dp"
+                    android:layout_height="64dp"
+                    android:layout_weight="2"
+                    android:text="✅ Selesai di Sini"
+                    android:textSize="17sp"
+                    app:backgroundTint="#15803D" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnLewatiTitik"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="64dp"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:text="⏭ Lewati"
+                    android:textColor="@color/primary"
+                    android:textSize="15sp" />
+            </LinearLayout>
+
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnGantiTampilan"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
