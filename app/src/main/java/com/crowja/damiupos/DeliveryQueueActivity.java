@@ -3431,6 +3431,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    /** ▶ pada halaman trip: konfirmasi dua ketuk → server melepas & mengambil alih sekaligus. */
    private void confirmStartTripKhusus() {
+      JSONObject t0 = this.currentTripPage();
+      if (t0 == null) return;
+      this.askRunKinds("▶ Mulai Trip " + safe(t0.optString("name", "Trip")), (sales, pickup) -> this.confirmStartTripKhusus(sales, pickup));
+   }
+
+   private void confirmStartTripKhusus(boolean includeSales, boolean includePickup) {
       JSONObject t = this.currentTripPage();
       if (t == null) return;
       SyncSettings cfg = this.syncCfg();
@@ -3449,7 +3455,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          JSONObject o = orders.optJSONObject(i);
          if (o == null) continue;
          inTrip.add(o.optString("uuid"));
-         if (!"mine".equals(o.optString("source"))) take++;
+         boolean kindOk = o.optBoolean("pickup_only") ? includePickup : includeSales;
+         if (kindOk && !"mine".equals(o.optString("source"))) take++;
       }
       int release = 0;
       if (this.adapter != null && this.adapter.data != null) {
@@ -3479,19 +3486,19 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             pos.setEnabled(false);
             neg.setEnabled(false);
             pos.setText("Memproses…");
-            this.runStartTripKhusus(dialog, t.optLong("id"));
+            this.runStartTripKhusus(dialog, t.optLong("id"), includeSales, includePickup);
          });
       });
       dialog.show();
    }
 
-   private void runStartTripKhusus(AlertDialog dialog, long ruleId) {
+   private void runStartTripKhusus(AlertDialog dialog, long ruleId, boolean includeSales, boolean includePickup) {
       SyncSettings cfg = this.syncCfg();
       new Thread(() -> {
          String msg;
          boolean ok = false;
          try {
-            JSONObject r = new SyncApi(cfg).startDeliveryTrip(ruleId);
+            JSONObject r = new SyncApi(cfg).startDeliveryTrip(ruleId, includeSales, includePickup);
             ok = true;
             msg = r.optString("message", "Trip dimulai.");
          } catch (SyncApi.SyncException se) {
@@ -4108,7 +4115,45 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return sb.toString();
    }
 
+   /** Dialog ▶: jenis order yang dieksekusi — Penjualan (default dicentang) / Ambil Galon Saja (default tidak). */
+   private interface KindChoice { void chosen(boolean sales, boolean pickup); }
+
+   private void askRunKinds(String title, KindChoice then) {
+      int pad = this.dp(20f);
+      LinearLayout box = new LinearLayout(this);
+      box.setOrientation(LinearLayout.VERTICAL);
+      box.setPadding(pad, this.dp(8f), pad, 0);
+      android.widget.CheckBox cbSales = new android.widget.CheckBox(this);
+      cbSales.setText("🛒 Penjualan");
+      cbSales.setChecked(true);
+      android.widget.CheckBox cbPickup = new android.widget.CheckBox(this);
+      cbPickup.setText("↩ Ambil Galon Saja");
+      cbPickup.setChecked(false);
+      box.addView(cbSales);
+      box.addView(cbPickup);
+      AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle(title).setMessage("Jenis order yang dijalankan:").setView(box)
+            .setPositiveButton("Lanjut", (DialogInterface.OnClickListener) null)
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
+      dlg.setOnShowListener(di -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+         if (!cbSales.isChecked() && !cbPickup.isChecked()) {
+            Toast.makeText(this, "Pilih minimal satu jenis.", 0).show();
+            return;
+         }
+         dlg.dismiss();
+         then.chosen(cbSales.isChecked(), cbPickup.isChecked());
+      }));
+      dlg.show();
+   }
+
    private void runStrategyTrip() {
+      if (this.strategyTrips != null && !this.strategyTrips.isEmpty()) {
+         this.askRunKinds("▶ Jalankan Rit 1", (sales, pickup) -> this.runStrategyTrip(sales, pickup));
+      } else {
+         Toast.makeText(this, "Strategi belum tersedia.", 0).show();
+      }
+   }
+
+   private void runStrategyTrip(boolean includeSales, boolean includePickup) {
       if (this.strategyTrips != null && !this.strategyTrips.isEmpty()) {
          List<Transaction> stops = new ArrayList();
          int skippedOpen = 0;
@@ -4117,14 +4162,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (t != null) {
                if (t.isOpenDispatch()) {
                   ++skippedOpen;
-               } else {
+               } else if (DeliveryPlanner.isPickupOnly(t) ? includePickup : includeSales) {
                   stops.add(t);
                }
             }
          }
 
          if (stops.isEmpty()) {
-            Toast.makeText(this, skippedOpen > 0 ? "Rit ini isinya Pesanan Terbuka — klaim dulu satu per satu." : "Rit ini kosong.", 1).show();
+            Toast.makeText(this, skippedOpen > 0 ? "Rit ini isinya Pesanan Terbuka — klaim dulu satu per satu." : "Tak ada order jenis terpilih di rit ini.", 1).show();
          } else {
             (new AlertDialog.Builder(this)).setTitle("Jalankan Rit 1 (" + stops.size() + " order)?").setView(this.stopsDialogView(null, stops, "Semua ditandai SEDANG DIANTAR sebagai satu rit. Antar satu per satu, tandai ✓ Selesai pada tiap kartu." + (skippedOpen > 0 ? "\n\n" + skippedOpen + " Pesanan Terbuka dilewati (klaim dulu satu per satu)." : ""))).setPositiveButton("Jalankan", (d, w) -> this.doStartRuns(stops)).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).show();
          }
