@@ -546,8 +546,9 @@ public class SyncApi {
      * alih order trip dari perangkat lain & Pesanan Terbuka. → {ok,message,claimed[],released[],skipped[]}.
      * 404 aturan tak dikenal, 422 bukan perangkat delivery / trip kosong, 429 terlalu sering.
      */
-    public JSONObject startDeliveryTrip(long ruleId) throws Exception {
-        return post(cfg.getBaseUrl() + "/api/delivery/trips/" + ruleId + "/start", new JSONObject(), cfg.getToken());
+    public JSONObject startDeliveryTrip(long ruleId, boolean includeSales, boolean includePickup) throws Exception {
+        JSONObject body = new JSONObject().put("include_sales", includeSales).put("include_pickup", includePickup);
+        return post(cfg.getBaseUrl() + "/api/delivery/trips/" + ruleId + "/start", body, cfg.getToken());
     }
 
     public JSONObject devicesQueueAll() throws Exception {
