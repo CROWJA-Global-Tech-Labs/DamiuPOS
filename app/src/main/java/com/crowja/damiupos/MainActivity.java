@@ -242,6 +242,10 @@ public class MainActivity extends AppCompatActivity {
         if (btnPromoCust != null) btnPromoCust.setOnClickListener(v ->
                 startActivity(new Intent(this, PromoCustomersActivity.class)));
 
+        // 💵 Setoran: staf mencatat setoran tunainya (tanggal default hari ini + nominal).
+        View btnSetoran = findViewById(R.id.btnSetoran);
+        if (btnSetoran != null) btnSetoran.setOnClickListener(v -> DepositDialog.show(this));
+
         // Rekor Pengiriman: hari & bulan terbaik tiap perangkat (dihitung server).
         View btnDeliveryRecord = findViewById(R.id.btnDeliveryRecord);
         if (btnDeliveryRecord != null) btnDeliveryRecord.setOnClickListener(v ->

@@ -590,6 +590,21 @@ public class SyncApi {
      *
      * @param staffUuid karyawan yang capaiannya ditanyakan (staf yang sedang login di perangkat ini)
      */
+    /** 💵 Setoran perangkat ini: {@code {expected_amount, last_date, recent:[{date,amount,expected_amount,by}]}}
+     *  — expected = TUNAI seharusnya s/d akhir {@code date} ("yyyy-MM-dd"). */
+    public JSONObject deposits(String date) throws Exception {
+        okhttp3.HttpUrl built = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/deposits").newBuilder()
+                .addQueryParameter("date", date).build();
+        return get(built.toString(), cfg.getToken());
+    }
+
+    /** 💵 Catat setoran (aturan sama dgn web: tanggal setelah setoran terakhir). 422 = ditolak + message. */
+    public JSONObject recordDeposit(String date, long amount, String staffUuid) throws Exception {
+        JSONObject body = new JSONObject().put("date", date).put("amount", amount);
+        if (staffUuid != null && !staffUuid.isEmpty()) body.put("staff_uuid", staffUuid);
+        return post(cfg.getBaseUrl() + "/api/deposits", body, cfg.getToken(), staffUuid);
+    }
+
     public JSONObject salesTarget(String staffUuid) throws Exception {
         okhttp3.HttpUrl built = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/sales/target")
                 .newBuilder()
