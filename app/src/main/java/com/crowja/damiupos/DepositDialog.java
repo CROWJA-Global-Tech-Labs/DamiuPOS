@@ -67,25 +67,15 @@ public final class DepositDialog {
         amount.setTextSize(20f);
         box.addView(amount);
 
-        final TextView info = new TextView(a);
-        info.setPadding(0, Math.round(10 * d), 0, 0);
-        info.setTextSize(13f);
-        info.setText("Memuat nominal seharusnya…");
-        box.addView(info);
-
-        final Runnable[] reload = new Runnable[1];
-        reload[0] = () -> loadInfo(a, cfg, API.format(day.getTime()), info);
         btnDate.setOnClickListener(v -> {
             DatePickerDialog dp = new DatePickerDialog(a, (view, y, m, dd) -> {
                 day.set(y, m, dd);
                 btnDate.setText("📅 " + SHOW.format(day.getTime()));
-                reload[0].run();
             }, day.get(Calendar.YEAR), day.get(Calendar.MONTH), day.get(Calendar.DAY_OF_MONTH));
             dp.getDatePicker().setMaxDate(System.currentTimeMillis());   // tak boleh tanggal mendatang (aturan server)
             dp.show();
         });
-        reload[0].run();
-
+        // Nominal "seharusnya" & riwayat sengaja TIDAK ditampilkan ke staf — selisihnya hanya di web.
         AlertDialog dlg = new AlertDialog.Builder(a)
                 .setTitle("💵 Catat Setoran")
                 .setView(box)
@@ -121,33 +111,6 @@ public final class DepositDialog {
         t.setTypeface(t.getTypeface(), Typeface.BOLD);
         t.setPadding(0, Math.round(8 * a.getResources().getDisplayMetrics().density), 0, 0);
         return t;
-    }
-
-    private static void loadInfo(Activity a, SyncSettings cfg, String date, TextView info) {
-        info.setText("Memuat nominal seharusnya…");
-        new Thread(() -> {
-            String text;
-            try {
-                JSONObject r = new SyncApi(cfg).deposits(date);
-                StringBuilder sb = new StringBuilder();
-                sb.append("Tunai seharusnya s/d tanggal ini: Rp ").append(rp(Math.round(r.optDouble("expected_amount", 0))));
-                JSONArray recent = r.optJSONArray("recent");
-                if (recent != null && recent.length() > 0) {
-                    sb.append("\n\nSetoran terakhir:");
-                    for (int i = 0; i < recent.length() && i < 3; i++) {
-                        JSONObject o = recent.optJSONObject(i);
-                        if (o == null) continue;
-                        sb.append("\n• ").append(o.optString("date")).append(" — Rp ")
-                                .append(rp(Math.round(o.optDouble("amount", 0)))).append(" (").append(o.optString("by")).append(")");
-                    }
-                }
-                text = sb.toString();
-            } catch (Exception e) {
-                text = "Nominal seharusnya tak bisa dimuat — periksa koneksi.";
-            }
-            final String t = text;
-            a.runOnUiThread(() -> info.setText(t));
-        }).start();
     }
 
     private static void submit(Activity a, SyncSettings cfg, String date, long amount, AlertDialog dlg) {
