@@ -3931,37 +3931,6 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return !this.runningIds.isEmpty();
    }
 
-   private void requireSelfOrderStrukThen(List<Transaction> taken) {
-      if (taken != null) {
-         Transaction target = null;
-         LinkedHashSet<Long> sent = (new SettingsDao(DatabaseHelper.getInstance(this))).getSelfOrderStrukSentIds();
-
-         for(Transaction t : taken) {
-            if (t != null && t.isSelfOrder() && !sent.contains(t.getId())) {
-               target = t;
-               break;
-            }
-         }
-
-         if (target != null) {
-            AlertDialog dlg = (new AlertDialog.Builder(this)).setIcon(17301545).setCancelable(false).setTitle("\ud83d\udce4 WAJIB: Kirim Struk WA").setMessage("\"" + safe(target.getCustomerName()) + "\" memesan SENDIRI lewat Order Online, jadi pesanannya kita prioritaskan.\n\nKirim struk WhatsApp ke pelanggan sekarang supaya ia tahu pesanannya sedang diantar.").setPositiveButton("BUKA WHATSAPP", (DialogInterface.OnClickListener)null).setNeutralButton("SUDAH SAYA KIRIM", (DialogInterface.OnClickListener)null).create();
-            final Transaction targetF = target;
-            dlg.setOnShowListener((d) -> {
-               dlg.getButton(-1).setOnClickListener((v) -> this.startActivity((new Intent(this, ReceiptActivity.class)).putExtra("transaction_id", targetF.getId()).putExtra("defer_customer_send", true)));
-               dlg.getButton(-3).setOnClickListener((v) -> {
-                  SettingsDao sd = new SettingsDao(DatabaseHelper.getInstance(this));
-                  LinkedHashSet<Long> ids = sd.getSelfOrderStrukSentIds();
-                  ids.add(targetF.getId());
-                  sd.setSelfOrderStrukSentIds(ids);
-                  dlg.dismiss();
-                  this.requireSelfOrderStrukThen(taken);
-               });
-            });
-            dlg.show();
-         }
-      }
-   }
-
    private void persistRunning() {
       (new SettingsDao(DatabaseHelper.getInstance(this))).setDeliveryRunningTrxIds(this.runningIds);
    }
@@ -4334,7 +4303,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.rv.scrollToPosition(0);
          SyncScheduler.syncNow(this.getApplicationContext());
          Toast.makeText(this, list.size() == 1 ? "Mengantar: " + safe(((Transaction)list.get(0)).getCustomerName()) : "Mengantar " + list.size() + " order sekaligus", 0).show();
-         this.requireSelfOrderStrukThen(list);
+         // Order mandiri: struk WA dikirim server lewat Bridge (WaAutoSend) — tak ada lagi langkah wajib kirim struk di HP.
          // ▶ Jalankan rit = langsung susun rute terpendek (terdekat dulu) dari posisi HP — sama dengan
          // menekan "Urutkan Rute Terpendek". Jeda singkat supaya stempel jalan ikut tersinkron dulu.
          if (System.currentTimeMillis() - this.navAfterStartAt < 60000L) {
