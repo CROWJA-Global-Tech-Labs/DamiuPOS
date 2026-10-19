@@ -169,11 +169,11 @@ public class PengisianActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Penjaga sendiri: hanya Pengisian & Admin. Activity wajib menjaga dirinya — deep link &
-        // notifikasi mendarat di sini tanpa lewat MainActivity.
+        // Penjaga sendiri: wajib ada pengguna yang login (layar ini terbuka untuk SEMUA peran; Viewer hanya melihat).
+        // Activity wajib menjaga dirinya — deep link & notifikasi mendarat di sini tanpa lewat MainActivity.
         me = UserDao.currentUser(this);
         if (me == null || !me.canOpenPengisianScreen()) {
-            Toast.makeText(this, "Layar ini khusus karyawan Pengisian", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Masuk dulu untuk membuka Pengisian Live", Toast.LENGTH_LONG).show();
             finish();
             return;
         }
@@ -225,6 +225,11 @@ public class PengisianActivity extends AppCompatActivity {
         findViewById(R.id.btnCount).setOnClickListener(v -> showCountDialog());
         findViewById(R.id.btnHistory).setOnClickListener(v -> showHistoryDialog());
         findViewById(R.id.btnPulang).setOnClickListener(v -> confirmPulang());
+        // Layar ini terbuka untuk semua peran: Hitung stok hanya untuk yang boleh mencatat (bukan Viewer); Istirahat &
+        // Pulang adalah jalur absensi karyawan Pengisian — peran lain absen di beranda masing-masing.
+        findViewById(R.id.btnCount).setVisibility(me.canRecordPengisian() ? View.VISIBLE : View.GONE);
+        findViewById(R.id.btnBreak).setVisibility(me.usesPengisianHome() ? View.VISIBLE : View.GONE);
+        findViewById(R.id.btnPulang).setVisibility(me.usesPengisianHome() ? View.VISIBLE : View.GONE);
         // Istirahat = jalur absensi yang SAMA dengan staf lain (catatan BREAK ke server; tanpa BREAK
         // hitungan jam kerja memotong 1 jam otomatis).
         findViewById(R.id.btnBreak).setOnClickListener(v ->
@@ -563,6 +568,11 @@ public class PengisianActivity extends AppCompatActivity {
         v.findViewById(R.id.btnPlus5).setOnClickListener(x -> logFill(p, 5));
         v.findViewById(R.id.btnPlus10).setOnClickListener(x -> logFill(p, 10));
         v.findViewById(R.id.btnOther).setOnClickListener(x -> showOtherQtyDialog(p));
+        if (me != null && !me.canRecordPengisian()) {   // Viewer: hanya melihat rencana
+            for (int id : new int[]{R.id.btnPlus1, R.id.btnPlus5, R.id.btnPlus10, R.id.btnOther}) {
+                v.findViewById(id).setVisibility(View.GONE);
+            }
+        }
         applyDensity(v, p, fit);
         return v;
     }

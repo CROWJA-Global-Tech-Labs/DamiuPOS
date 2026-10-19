@@ -131,7 +131,6 @@ public class FillContractFixtureTest {
         VERDICT.put("err_staff_uuid_missing", block);
         VERDICT.put("err_staff_not_found", block);
         VERDICT.put("err_staff_inactive", block);
-        VERDICT.put("err_forbidden_role", block);
         VERDICT.put("err_forbidden_role_write", block);
         VERDICT.put("err_rate_limited", retry);
         VERDICT.put("err_rate_limited_write", retry);
