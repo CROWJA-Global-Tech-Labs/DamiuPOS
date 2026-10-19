@@ -69,7 +69,7 @@ public class SyncEngine {
                     DatabaseHelper.COL_FOLLOWUP_EXCLUDED_AT,
                     DatabaseHelper.COL_FOLLOWUP_EXCLUDE_REASON, DatabaseHelper.COL_LAST_FOLLOWUP_AT,
                     DatabaseHelper.COL_FOLLOWUP_MANUAL_AT, DatabaseHelper.COL_FOLLOWUP_NOTE,
-                    DatabaseHelper.COL_PRODUCT_PRICES, DatabaseHelper.COL_LOCATIONS,
+                    DatabaseHelper.COL_PRODUCT_PRICES, DatabaseHelper.COL_AFFILIATE_PRICES, DatabaseHelper.COL_LOCATIONS,
                     DatabaseHelper.COL_PHONES, DatabaseHelper.COL_CUST_ASSIGN_DEVICE,
                     DatabaseHelper.COL_HANDED_OVER_AT, DatabaseHelper.COL_HANDED_OVER_BY,
                     DatabaseHelper.COL_CUST_CREATED_BY,
@@ -1229,6 +1229,7 @@ public class SyncEngine {
      *  Kunci setelan lokal (bukan SHAREABLE_KEYS), tak pernah ter-push. */
     private static final String K_REPULL_CHECKOUT_V102 = "sync_repull_checkout_v102";
     private static final String K_REPULL_PRIORITY_LEVEL_V103 = "sync_repull_priority_level_v103";
+    private static final String K_REPULL_AFFILIATE_PRICES_V104 = "sync_repull_affiliate_prices_v104";
 
     private int pull() throws Exception {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
@@ -1285,6 +1286,13 @@ public class SyncEngine {
             String back = SyncSettings.trxLookbackCursor(cfg.getCursor("transactions"), 7 * 24);
             if (back != null) cfg.setCursor("transactions", back);
             settingsDao.set(K_REPULL_PRIORITY_LEVEL_V103, "1");
+        }
+
+        // DB v104 (harga dasar khusus reseller), SEKALI: tarik ulang pelanggan dari epoch supaya baris
+        // reseller yang sudah ada di HP mendapat kolom affiliate_prices-nya.
+        if (!"1".equals(settingsDao.get(K_REPULL_AFFILIATE_PRICES_V104, "0"))) {
+            cfg.setCursor("customers", "1970-01-01 00:00:00.000000");
+            settingsDao.set(K_REPULL_AFFILIATE_PRICES_V104, "1");
         }
 
         int applied = 0;

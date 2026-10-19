@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 103;
+    private static final int DATABASE_VERSION = 104;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -132,6 +132,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     // Harga khusus per produk untuk pelanggan ini: JSON { product_uuid: harga }.
     // NULL/kosong = ikut harga produk standar. Disinkron apa adanya (string JSON).
     public static final String COL_PRODUCT_PRICES = "product_prices";
+    /** Pada baris RESELLER: harga dasar khusus {product_uuid: harga} untuk pelanggan BARU yang tertaut
+     *  ke reseller itu (diatur di web, pull-only) — form pendaftaran HP mengisinya otomatis. */
+    public static final String COL_AFFILIATE_PRICES = "affiliate_prices";
     /** Multi-lokasi pelanggan: JSON array terurut [{name,lat,lng,wajib_ongkir}] —
      *  entri PERTAMA = lokasi utama. Kosong/"[]" = hanya koordinat legacy (latitude/longitude).
      *  Mirror kompatibilitas: locations[0] disalin ke latitude/longitude/wajib_ongkir saat save.
@@ -578,6 +581,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_FOLLOWUP_MANUAL_AT + " TEXT, " +
                     COL_FOLLOWUP_NOTE + " TEXT, " +
                     COL_PRODUCT_PRICES + " TEXT, " +
+                    COL_AFFILIATE_PRICES + " TEXT, " +
                     COL_LOCATIONS + " TEXT, " +
                     COL_HANDED_OVER_AT + " TEXT, " +
                     COL_HANDED_OVER_BY + " TEXT, " +
@@ -1794,6 +1798,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             // reseller yang sudah ada di HP tetap tergerbang lewat penanda [ORDER RESELLER] di catatan
             // sampai pull berikutnya membawa flag-nya.
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_PROOF_REQUIRED + " INTEGER DEFAULT 0");
+        }
+        if (oldVersion < 104) {
+            // Harga dasar khusus reseller (lihat COL_AFFILIATE_PRICES); baris lama terisi lewat tarik-ulang
+            // pelanggan sekali di SyncEngine.pull (kunci v104).
+            tryExec(db, "ALTER TABLE " + TABLE_CUSTOMERS + " ADD COLUMN " + COL_AFFILIATE_PRICES + " TEXT");
         }
         if (oldVersion < 103) {
             // ⚡ Level prioritas ("×N") — urutan antrean HP wajib sama dengan web. Nilai baris lama

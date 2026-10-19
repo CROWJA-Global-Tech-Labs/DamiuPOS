@@ -616,6 +616,11 @@ public class Customer {
     public void setAssignedDeviceUuid(String v) { this.assignedDeviceUuid = v; }
 
     /** Harga khusus per produk { product_uuid: harga } (null/kosong = ikut harga produk standar). */
+    /** Harga dasar khusus reseller untuk pelanggan baru terafiliasi (hanya terisi pada baris reseller). */
+    private java.util.Map<String, Double> affiliatePrices;
+    public java.util.Map<String, Double> getAffiliatePrices() { return affiliatePrices; }
+    public void setAffiliatePrices(java.util.Map<String, Double> v) { this.affiliatePrices = v; }
+
     public java.util.Map<String, Double> getProductPrices() { return productPrices; }
     public void setProductPrices(java.util.Map<String, Double> v) { this.productPrices = v; }
 
