@@ -289,6 +289,17 @@ public class SyncApi {
      * sedang dijalankan, atau sudah terbuka. Balas {@code {"ok":true,"message":"…"}} atau 422.
      * Branch-scoped by the token.
      */
+    /** "Ambil Alih Sesuai Wilayah": {@code {wilayah:[{index,label,device_uuid,device_name,mine,other,open,galon}]}}. */
+    public JSONObject deliveryWilayah() throws Exception {
+        return get(cfg.getBaseUrl() + "/api/delivery/wilayah", cfg.getToken());
+    }
+
+    /** Ambil alih semua order (perangkat lain & Pesanan Terbuka) di wilayah terpilih ke antrean ini. */
+    public JSONObject takeWilayah(org.json.JSONArray zones, boolean includeSales, boolean includePickup) throws Exception {
+        JSONObject body = new JSONObject().put("zones", zones).put("include_sales", includeSales).put("include_pickup", includePickup);
+        return post(cfg.getBaseUrl() + "/api/delivery/wilayah/take", body, cfg.getToken());
+    }
+
     public JSONObject openDispatch(JSONObject body) throws Exception {
         return post(cfg.getBaseUrl() + "/api/delivery/open", body, cfg.getToken());
     }

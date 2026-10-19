@@ -872,6 +872,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          outside.setVisible(this.activeTab == 0);
       }
 
+      MenuItem takeWil = menu.findItem(id.action_take_wilayah);
+      if (takeWil != null) {
+         takeWil.setVisible(this.activeTab == 0);
+      }
+
       MenuItem toggleStrategy = menu.findItem(id.action_toggle_strategy);
       if (toggleStrategy != null) {
          toggleStrategy.setVisible(false);
@@ -896,6 +901,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       } else if (item.getItemId() == id.action_release_outside_wilayah) {
          this.releaseOutsideWilayah();
          return true;
+      } else if (item.getItemId() == id.action_take_wilayah) {
+         this.showTakeWilayahDialog();
+         return true;
       } else if (item.getItemId() == id.action_pending_queue) {
          this.showTertundaQueueDialog();
          return true;
@@ -905,6 +913,146 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       } else {
          return super.onOptionsItemSelected(item);
       }
+   }
+
+   /**
+    * 📥 Ambil Alih Sesuai Wilayah: daftar wilayah cabang (NAMA + perangkat penugasan + jumlah order di
+    * perangkat lain / Pesanan Terbuka); kurir mencentang satu atau BANYAK wilayah lalu semua ordernya
+    * diambil alih ke Antrean Saya (server: DeliveryWilayahTake). Penjualan default dicentang, Ambil
+    * Galon Saja tidak — sama dengan dialog ▶.
+    */
+   private void showTakeWilayahDialog() {
+      SyncSettings cfg = this.syncCfg();
+      if (!cfg.isEnrolled()) {
+         Toast.makeText(this, "Perangkat belum terhubung ke server.", Toast.LENGTH_LONG).show();
+         return;
+      }
+      if (!cfg.isDeliveryDevice()) {
+         Toast.makeText(this, "Hanya perangkat delivery yang bisa mengambil alih order.", Toast.LENGTH_LONG).show();
+         return;
+      }
+      android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
+      wait.setMessage("Memuat wilayah…");
+      wait.setCancelable(false);
+      wait.show();
+      (new Thread(() -> {
+         JSONArray zones = null;
+         String err = null;
+         try {
+            zones = (new SyncApi(cfg)).deliveryWilayah().optJSONArray("wilayah");
+         } catch (SyncApi.SyncException se) {
+            err = se.serverMessage();
+         } catch (Exception e) {
+            err = "Gagal memuat wilayah — periksa koneksi internet.";
+         }
+         final JSONArray fz = zones;
+         final String fe = err;
+         this.runOnUiThread(() -> {
+            try { wait.dismiss(); } catch (Exception ignored) {}
+            if (this.isFinishing() || this.isDestroyed()) return;
+            if (fz == null || fz.length() == 0) {
+               Toast.makeText(this, fe != null && !fe.isEmpty() ? fe : "Wilayah cabang belum diatur di dashboard.", Toast.LENGTH_LONG).show();
+               return;
+            }
+            this.renderTakeWilayahDialog(fz);
+         });
+      })).start();
+   }
+
+   private void renderTakeWilayahDialog(JSONArray zones) {
+      int pad = this.dp(20f);
+      LinearLayout box = new LinearLayout(this);
+      box.setOrientation(LinearLayout.VERTICAL);
+      box.setPadding(pad, this.dp(8f), pad, 0);
+      TextView hint = new TextView(this);
+      hint.setText("Centang satu atau beberapa wilayah. Order wilayah itu di perangkat lain & Pesanan Terbuka diambil alih ke Antrean Saya.");
+      hint.setTextSize(12f);
+      box.addView(hint);
+      final List<android.widget.CheckBox> boxes = new ArrayList<>();
+      final List<Integer> indexes = new ArrayList<>();
+      for (int i = 0; i < zones.length(); i++) {
+         JSONObject z = zones.optJSONObject(i);
+         if (z == null) continue;
+         int other = z.optInt("other"), open = z.optInt("open"), mine = z.optInt("mine");
+         String dev = strJson(z, "device_name");
+         StringBuilder sb = new StringBuilder();
+         sb.append("🧭 ").append(safe(z.optString("label"))).append(NL_BREAK);
+         sb.append("📱 ").append(dev != null && !dev.isEmpty() ? dev : "tanpa penugasan perangkat").append(" · ");
+         sb.append(other + open).append(" bisa diambil (").append(other).append(" HP lain, ").append(open).append(" terbuka");
+         sb.append(", ").append(z.optInt("galon")).append(" gal) · ").append(mine).append(" sudah milik saya");
+         android.widget.CheckBox cb = new android.widget.CheckBox(this);
+         cb.setText(sb.toString());
+         cb.setEnabled(other + open > 0);
+         box.addView(cb);
+         boxes.add(cb);
+         indexes.add(z.optInt("index", i));
+      }
+      TextView kindLbl = new TextView(this);
+      kindLbl.setText("Jenis order:");
+      kindLbl.setPadding(0, this.dp(10f), 0, 0);
+      box.addView(kindLbl);
+      final android.widget.CheckBox cbSales = new android.widget.CheckBox(this);
+      cbSales.setText("🛒 Penjualan");
+      cbSales.setChecked(true);
+      final android.widget.CheckBox cbPickup = new android.widget.CheckBox(this);
+      cbPickup.setText("↩ Ambil Galon Saja");
+      box.addView(cbSales);
+      box.addView(cbPickup);
+      ScrollView sv = new ScrollView(this);
+      sv.addView(box);
+      AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle("📥 Ambil Alih Sesuai Wilayah").setView(sv)
+            .setPositiveButton("Ambil Alih", (DialogInterface.OnClickListener) null)
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
+      dlg.setOnShowListener(di -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+         JSONArray picked = new JSONArray();
+         for (int i = 0; i < boxes.size(); i++) if (boxes.get(i).isChecked()) picked.put(indexes.get(i));
+         if (picked.length() == 0) {
+            Toast.makeText(this, "Pilih minimal satu wilayah.", Toast.LENGTH_SHORT).show();
+            return;
+         }
+         if (!cbSales.isChecked() && !cbPickup.isChecked()) {
+            Toast.makeText(this, "Pilih minimal satu jenis.", Toast.LENGTH_SHORT).show();
+            return;
+         }
+         dlg.dismiss();
+         this.runTakeWilayah(picked, cbSales.isChecked(), cbPickup.isChecked());
+      }));
+      dlg.show();
+   }
+
+   private static final String NL_BREAK = "\n";
+
+   private void runTakeWilayah(JSONArray picked, boolean sales, boolean pickup) {
+      SyncSettings cfg = this.syncCfg();
+      android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
+      wait.setMessage("Mengambil alih order wilayah…");
+      wait.setCancelable(false);
+      wait.show();
+      (new Thread(() -> {
+         String msg;
+         boolean ok = false;
+         try {
+            JSONObject r = (new SyncApi(cfg)).takeWilayah(picked, sales, pickup);
+            ok = true;
+            msg = r.optString("message", "Order diambil alih.");
+         } catch (SyncApi.SyncException se) {
+            String m = se.serverMessage();
+            msg = m != null && !m.isEmpty() ? m : "Gagal mengambil alih (kode " + se.code + ").";
+         } catch (Exception e) {
+            msg = "Gagal mengambil alih — periksa koneksi internet.";
+         }
+         final String fm = msg;
+         final boolean fok = ok;
+         this.runOnUiThread(() -> {
+            try { wait.dismiss(); } catch (Exception ignored) {}
+            if (this.isFinishing() || this.isDestroyed()) return;
+            Toast.makeText(this, fm, Toast.LENGTH_LONG).show();
+            if (fok) com.crowja.damiupos.sync.SyncScheduler.syncNow(this.getApplicationContext());
+            this.loadData();
+            this.loadOtherDevices();
+            this.loadTrips();
+         });
+      })).start();
    }
 
    private void openObstacleReport() {
