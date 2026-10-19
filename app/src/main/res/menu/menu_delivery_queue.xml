@@ -37,6 +37,13 @@
         android:title="🔓 Lepas Order di Luar Wilayah Saya"
         app:showAsAction="never" />
 
+    <!-- Ambil alih massal per WILAYAH (satu/banyak wilayah; nama + perangkat penugasan) —
+         DeliveryQueueActivity.showTakeWilayahDialog. Gate tab 0. -->
+    <item
+        android:id="@+id/action_take_wilayah"
+        android:title="📥 Ambil Alih Sesuai Wilayah"
+        app:showAsAction="never" />
+
     <item
         android:id="@+id/action_pending_queue"
         android:title="⏸ Antrean Tertunda"
