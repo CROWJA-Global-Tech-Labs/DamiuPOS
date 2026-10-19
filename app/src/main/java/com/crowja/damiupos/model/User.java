@@ -98,7 +98,11 @@ public class User {
 
     /** Boleh membuka layar panduan pengisian: Pengisian &amp; Admin (server memeriksa aturan yang
      *  sama dari tabel staff lewat header X-Staff-Uuid — FillPlanController). */
-    public boolean canOpenPengisianScreen() { return isPengisian() || isAdmin(); }
+    public boolean canOpenPengisianScreen() { return true; }
+
+    /** Boleh MENCATAT di layar Pengisian Live (Isi / Hitung / batal catatan sendiri): semua peran kecuali Viewer
+     *  (hanya lihat). Server menegakkan aturan yang sama (FillPlanController::deny, kode forbidden_role). */
+    public boolean canRecordPengisian() { return !isViewer(); }
 
     /** Transaksi penjualan: Admin, Staf, SPV, Marketing. Viewer tidak. */
     public boolean canCreateTransaction() { return isAdmin() || isStaf() || isSpv() || isMarketing(); }

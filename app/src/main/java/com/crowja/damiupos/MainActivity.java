@@ -246,6 +246,11 @@ public class MainActivity extends AppCompatActivity {
         View btnSetoran = findViewById(R.id.btnSetoran);
         if (btnSetoran != null) btnSetoran.setOnClickListener(v -> DepositDialog.show(this));
 
+        // Pengisian Live: layar rencana isi galon — terbuka untuk semua peran (Viewer hanya melihat).
+        View btnPengisianLive = findViewById(R.id.btnPengisianLive);
+        if (btnPengisianLive != null) btnPengisianLive.setOnClickListener(v ->
+                startActivity(new Intent(this, PengisianActivity.class)));
+
         // Rekor Pengiriman: hari & bulan terbaik tiap perangkat (dihitung server).
         View btnDeliveryRecord = findViewById(R.id.btnDeliveryRecord);
         if (btnDeliveryRecord != null) btnDeliveryRecord.setOnClickListener(v ->
@@ -603,6 +608,10 @@ public class MainActivity extends AppCompatActivity {
         if (boxDeliveryRecord != null) {
             boxDeliveryRecord.setVisibility(show && canSeeDeliveryRecord ? View.VISIBLE : View.GONE);
         }
+
+        // Pengisian Live: semua peran yang login (User.canOpenPengisianScreen). Sel grid — dirapikan packQuickMenuGrid.
+        View boxPengisianLive = findViewById(R.id.boxPengisianLive);
+        if (boxPengisianLive != null) boxPengisianLive.setVisibility(show ? View.VISIBLE : View.GONE);
 
         // Chat WhatsApp: Admin/Marketing/SPV (User.canUseWaChat). Sel grid — dirapikan packQuickMenuGrid.
         View boxWaChat = findViewById(R.id.boxWaChat);

@@ -72,10 +72,15 @@ public class UserRolePengisianTest {
     @Test public void pengisianScreenAccessAndHomeLock() {
         assertTrue(as(User.ROLE_PENGISIAN).canOpenPengisianScreen());
         assertTrue(as(User.ROLE_ADMIN).canOpenPengisianScreen());
-        assertFalse(as(User.ROLE_STAF).canOpenPengisianScreen());
-        assertFalse(as(User.ROLE_MARKETING).canOpenPengisianScreen());
-        assertFalse(as(User.ROLE_VIEWER).canOpenPengisianScreen());
-        assertFalse(as("tak-dikenal").canOpenPengisianScreen());
+        // Pengisian Live terbuka untuk SEMUA peran; hanya Viewer yang tak boleh mencatat.
+        assertTrue(as(User.ROLE_STAF).canOpenPengisianScreen());
+        assertTrue(as(User.ROLE_MARKETING).canOpenPengisianScreen());
+        assertTrue(as(User.ROLE_SPV).canOpenPengisianScreen());
+        assertTrue(as(User.ROLE_VIEWER).canOpenPengisianScreen());
+        assertTrue(as("tak-dikenal").canOpenPengisianScreen());
+        assertTrue(as(User.ROLE_STAF).canRecordPengisian());
+        assertTrue(as(User.ROLE_PENGISIAN).canRecordPengisian());
+        assertFalse(as(User.ROLE_VIEWER).canRecordPengisian());
 
         // hanya Pengisian yang DIKUNCI ke layar itu; admin boleh membukanya tapi tak dialihkan
         assertTrue(as(User.ROLE_PENGISIAN).usesPengisianHome());

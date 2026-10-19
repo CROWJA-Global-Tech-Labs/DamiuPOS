@@ -186,12 +186,11 @@
         "code": "staff_inactive"
     },
     {
-        "name": "err_forbidden_role",
-        "category": "error",
+        "name": "plan_viewer_read",
+        "category": "plan",
         "method": "GET",
         "path": "/api/fill/plan",
-        "http": 403,
-        "code": "forbidden_role"
+        "http": 200
     },
     {
         "name": "err_forbidden_role_write",

@@ -883,6 +883,39 @@
                         android:stateListAnimator="@null" />
                 </FrameLayout>
 
+                <!-- Pengisian Live — rencana isi galon per produk (angka sama dengan panel web). Semua peran
+                     (Viewer hanya melihat). -->
+                <FrameLayout
+                    android:id="@+id/boxPengisianLive"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPengisianLive"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="💧 Pengisian Live"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#0277BD"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
+                </FrameLayout>
+
                 <!-- Chat WhatsApp — inbox semua akun WA cabang via Bridge; badge = total pesan baru.
                      Admin / Marketing / SPV (User.canUseWaChat). -->
                 <FrameLayout
