@@ -3067,6 +3067,8 @@ public class TransactionActivity extends AppCompatActivity {
     }
 
     private void trySave() {
+        // Pelanggan masih punya pesanan MENUNGGU di antrean HP ini → tanya "sekalian Selesai?" dulu.
+        if (!pendingOrderGate(this::trySave)) return;
         // Ongkir tak cocok dgn status pelanggan → popup; simpan diteruskan dari dalam popup.
         if (!ongkirGate(this::trySave)) return;
         // Order ganda: periksa ULANG ke server tepat sebelum menyimpan; simpan diteruskan dari
@@ -3113,6 +3115,57 @@ public class TransactionActivity extends AppCompatActivity {
      *
      * @return true bila boleh lanjut simpan sekarang; false bila ditahan (dilanjutkan dari popup)
      */
+    /** Sudah ditanya sekali untuk simpan ini (Ya/Simpan Saja) — jangan tanya ulang saat trySave dipanggil lagi. */
+    private boolean pendingOrderAcked = false;
+
+    /**
+     * Kasus "Wedangan Emon" (2026-10-19): RAFI mengantar lalu hanya mencatat "Tukar botol galon" tanpa
+     * menekan Selesai pada pesanannya; pesanan tetap menunggu, dialihkan ke ADHI yang mengantar LAGI.
+     * Saat staf menyimpan transaksi untuk pelanggan yang masih punya pesanan menunggu di antrean HP ini,
+     * tanyakan: tandai pesanan itu Selesai sekalian? ("Simpan Saja" = memang order lain.)
+     *
+     * @return true bila boleh lanjut simpan; false bila ditahan (dilanjutkan dari dialog)
+     */
+    private boolean pendingOrderGate(Runnable again) {
+        if (pendingOrderAcked) return true;
+        if (selectedCustomerId <= 0 || isUmumCustomer() || promosiMode) return true;
+        final java.util.List<Transaction> pend = new ArrayList<>();
+        try {
+            for (Transaction q : transactionDao.getDeliveryQueue()) {
+                if (q != null && q.getCustomerId() == selectedCustomerId && !q.isOpenDispatch()) pend.add(q);
+            }
+        } catch (Exception e) {
+            return true;   // jangan pernah menghalangi simpan karena pemeriksaan gagal
+        }
+        if (pend.isEmpty()) return true;
+
+        StringBuilder sb = new StringBuilder("\"").append(selectedCustomerName).append("\" masih punya pesanan MENUNGGU di Antrian Delivery HP ini:").append("\n").append("\n");
+        for (Transaction q : pend) {
+            sb.append("• ").append(q.getJumlahGalon()).append(" galon").append(q.getDeliveryQueuedAt() != null ? " · masuk " + com.crowja.damiupos.util.Ts.hm(q.getDeliveryQueuedAt()) : "").append("\n");
+        }
+        sb.append("\n").append("Kalau pesanan itu SUDAH kamu antar sekarang, tandai Selesai sekalian supaya kurir lain tidak mengantarnya lagi dan uangnya tercatat di kamu.");
+        boolean proofRequired = new SyncSettings(settingsDao).isDeviceProofRequired() || settingsDao.isDeliveryProofRequired();
+        AlertDialog.Builder b = new AlertDialog.Builder(this).setCancelable(false)
+                .setIcon(android.R.drawable.ic_dialog_alert)
+                .setTitle("⚠️ Pesanan Pelanggan Ini Masih Menunggu")
+                .setMessage(sb.toString())
+                .setNegativeButton("Batal", null)
+                .setNeutralButton("Order lain, simpan saja", (d, w) -> { pendingOrderAcked = true; again.run(); });
+        if (proofRequired) {
+            // Perangkat wajib foto bukti → Selesai hanya dari Antrian Delivery (gerbang fotonya di sana).
+            b.setPositiveButton("Buka Antrian Delivery", (d, w) -> startActivity(new Intent(this, DeliveryQueueActivity.class)));
+        } else {
+            b.setPositiveButton("✅ Tandai Selesai & Simpan", (d, w) -> {
+                for (Transaction q : pend) transactionDao.markDelivered(q.getId());
+                com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                pendingOrderAcked = true;
+                again.run();
+            });
+        }
+        b.show();
+        return false;
+    }
+
     private boolean duplicateOrderSaveGate(Runnable onProceed) {
         if (saveDupAcknowledged) return true;
         if (selectedCustomerId <= 0 || isUmumCustomer() || !isJualSelected()) return true;
