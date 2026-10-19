@@ -2202,6 +2202,10 @@ public class CustomerDao {
         if (idxPrices >= 0 && !cursor.isNull(idxPrices)) {
             c.setProductPrices(parseProductPrices(cursor.getString(idxPrices)));
         }
+        int idxAffPrices = cursor.getColumnIndex(DatabaseHelper.COL_AFFILIATE_PRICES);
+        if (idxAffPrices >= 0 && !cursor.isNull(idxAffPrices)) {
+            c.setAffiliatePrices(parseProductPrices(cursor.getString(idxAffPrices)));
+        }
         int idxKomisi = cursor.getColumnIndex("komisi_galon");
         if (idxKomisi >= 0) c.setKomisiGalon(cursor.getInt(idxKomisi));
         int idxNote = cursor.getColumnIndex(DatabaseHelper.COL_FOLLOWUP_NOTE);

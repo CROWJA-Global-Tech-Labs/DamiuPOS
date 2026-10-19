@@ -81,6 +81,9 @@ public class CustomerFormActivity extends AppCompatActivity {
     private final java.util.List<android.widget.EditText> extraPhoneRows = new java.util.ArrayList<>();
     private android.widget.LinearLayout llHargaProduk;
     private final java.util.List<PriceRow> priceRows = new ArrayList<>();
+    /** Baris harga yang DIKETIK pengguna sendiri — tak ditimpa harga dasar reseller. */
+    private final java.util.Set<TextInputEditText> userEditedPrices = new java.util.HashSet<>();
+    private boolean applyingResellerPrices = false;
     private ImageView ivFotoRumah;
 
     /** Satu baris harga per produk pada form (kunci = product uuid). */
@@ -1882,6 +1885,38 @@ public class CustomerFormActivity extends AppCompatActivity {
         }
         btnLinkedReseller.setText(name != null ? "Reseller: " + name : "Tidak ditautkan — ketuk untuk pilih reseller");
         updateSkipPhotoCoordVisibility();
+        applyResellerDefaultPrices(name);
+    }
+
+    /**
+     * Pelanggan BARU yang tertaut ke reseller: kolom "Harga Air / Galon per Produk" terisi harga dasar
+     * khusus reseller itu (diatur di web → Reseller → Harga Dasar Pelanggan Baru). Produk tanpa harga
+     * khusus kembali ke harga standar; kolom yang sudah DIKETIK pengguna tak ditimpa. Hanya pendaftaran
+     * baru — pelanggan yang diedit memakai harga tersimpannya.
+     */
+    private void applyResellerDefaultPrices(String resellerName) {
+        if (editId != -1 || priceRows.isEmpty()) return;
+        java.util.Map<String, Double> map = null;
+        if (linkedResellerUuid != null && !linkedResellerUuid.isEmpty()) {
+            long rid = customerDao.getIdBySyncUuid(linkedResellerUuid);
+            Customer r = rid > 0 ? customerDao.getById(rid) : null;
+            if (r != null) map = r.getAffiliatePrices();
+        }
+        boolean any = false;
+        applyingResellerPrices = true;
+        try {
+            for (PriceRow row : priceRows) {
+                if (userEditedPrices.contains(row.et)) continue;
+                Double v = map != null ? map.get(row.uuid) : null;
+                row.et.setText(fmtPrice(v != null ? v : row.def));
+                if (v != null) any = true;
+            }
+        } finally {
+            applyingResellerPrices = false;
+        }
+        if (any) {
+            Toast.makeText(this, "Harga dasar mengikuti reseller" + (resellerName != null ? " " + resellerName : ""), Toast.LENGTH_SHORT).show();
+        }
     }
 
     /** Tampilkan opsi "Lewati wajib foto & koordinat" saat pelanggan ini dijadikan reseller ATAU
@@ -2372,6 +2407,7 @@ public class CustomerFormActivity extends AppCompatActivity {
                 @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
                 @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
                 @Override public void afterTextChanged(android.text.Editable s) {
+                    if (!applyingResellerPrices) userEditedPrices.add(et);
                     refreshAllLocationPriceHints();
                 }
             });
