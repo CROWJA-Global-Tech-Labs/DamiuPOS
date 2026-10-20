@@ -248,8 +248,7 @@ public class MainActivity extends AppCompatActivity {
 
         // Pengisian Live: layar rencana isi galon — terbuka untuk semua peran (Viewer hanya melihat).
         View btnPengisianLive = findViewById(R.id.btnPengisianLive);
-        if (btnPengisianLive != null) btnPengisianLive.setOnClickListener(v ->
-                startActivity(new Intent(this, PengisianActivity.class)));
+        if (btnPengisianLive != null) btnPengisianLive.setOnClickListener(v -> openPengisianLive());
 
         // Rekor Pengiriman: hari & bulan terbaik tiap perangkat (dihitung server).
         View btnDeliveryRecord = findViewById(R.id.btnDeliveryRecord);
@@ -440,6 +439,107 @@ public class MainActivity extends AppCompatActivity {
                     new String[]{android.Manifest.permission.ACCESS_BACKGROUND_LOCATION}, REQ_BG_LOCATION);
         }
     }
+
+    /**
+     * Beralih ke Pengisian Live sementara Antrean Saya belum kosong: (1) ingatkan menekan Selesai pada
+     * antrean yang SUDAH diantar → "OK, SUDAH SEMUA"; (2) konfirmasi sisa antrean dialihkan ke perangkat
+     * lain → "YA, ALIHKAN": tiap order dikirim ke pemilik wilayahnya (server, "__wilayah__"), yang tak
+     * berwilayah / wilayahnya sendiri dilepas jadi Pesanan Terbuka. Baru setelah itu layar Pengisian dibuka.
+     */
+    private void openPengisianLive() {
+        int pending = 0;
+        try { pending = transactionDao.countDeliveryQueue(); } catch (Exception ignored) {}
+        if (pending <= 0) {
+            startActivity(new Intent(this, PengisianActivity.class));
+            return;
+        }
+        final int n = pending;
+        new AlertDialog.Builder(this)
+                .setCancelable(false)
+                .setIcon(android.R.drawable.ic_dialog_alert)
+                .setTitle("Masih Ada " + n + " Antrean Belum Selesai")
+                .setMessage("Sebelum beralih ke Pengisian, pastikan semua antrean yang SUDAH kamu antar sudah ditekan "
+                        + "✓ Selesai di Antrian Delivery." + NL_ + NL_ + "Sudah semua?")
+                .setPositiveButton("OK, SUDAH SEMUA", (d, w) -> confirmHandOverQueueThenPengisian())
+                .setNeutralButton("Buka Antrian Delivery", (d, w) -> startActivity(new Intent(this, DeliveryQueueActivity.class)))
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    private void confirmHandOverQueueThenPengisian() {
+        final java.util.List<com.crowja.damiupos.model.Transaction> rest = new java.util.ArrayList<>();
+        try {
+            for (com.crowja.damiupos.model.Transaction t : transactionDao.getDeliveryQueue()) {
+                if (t != null && !t.isOpenDispatch()) rest.add(t);
+            }
+        } catch (Exception ignored) {}
+        if (rest.isEmpty()) {
+            startActivity(new Intent(this, PengisianActivity.class));
+            return;
+        }
+        StringBuilder sb = new StringBuilder(rest.size() + " antrean yang belum Selesai akan DIALIHKAN ke perangkat lain:" + NL_ + NL_);
+        for (int i = 0; i < rest.size() && i < 8; i++) {
+            sb.append("• ").append(rest.get(i).getCustomerName() != null ? rest.get(i).getCustomerName() : "Pelanggan")
+                    .append(" (").append(rest.get(i).getJumlahGalon()).append(" gal)").append(NL_);
+        }
+        if (rest.size() > 8) sb.append("• +").append(rest.size() - 8).append(" lainnya").append(NL_);
+        sb.append(NL_).append("Dialihkan seketika sesuai prioritas perangkat penugasan: Aturan Perangkat → pemilik wilayah yang sedang bertugas → perangkat bertugas dengan antrean paling ringan. Bila tak ada yang bertugas, jadi Pesanan Terbuka.");
+        new AlertDialog.Builder(this)
+                .setCancelable(false)
+                .setTitle("Alihkan Antrean?")
+                .setMessage(sb.toString())
+                .setPositiveButton("YA, ALIHKAN", (d, w) -> handOverQueueThenPengisian(rest))
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    private void handOverQueueThenPengisian(java.util.List<com.crowja.damiupos.model.Transaction> rest) {
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+        if (!cfg.isEnrolled()) {
+            Toast.makeText(this, "Perangkat belum terhubung ke server — antrean tidak bisa dialihkan.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
+        wait.setMessage("Mengalihkan " + rest.size() + " antrean…");
+        wait.setCancelable(false);
+        wait.show();
+        new Thread(() -> {
+            String err = null;
+            org.json.JSONObject r = null;
+            try {
+                r = new com.crowja.damiupos.sync.SyncApi(cfg).handoverAll();
+            } catch (com.crowja.damiupos.sync.SyncApi.SyncException se) {
+                String m = se.serverMessage();
+                err = m != null && !m.isEmpty() ? m : "Gagal mengalihkan (kode " + se.code + ").";
+            } catch (Exception e) {
+                err = "Gagal mengalihkan — periksa koneksi internet.";
+            }
+            final org.json.JSONObject fr = r;
+            final String fe = err;
+            runOnUiThread(() -> {
+                try { wait.dismiss(); } catch (Exception ignored) {}
+                if (isFinishing() || isDestroyed()) return;
+                if (fe != null) {
+                    new AlertDialog.Builder(this).setTitle("⚠️ Antrean Belum Dialihkan").setMessage(fe)
+                            .setPositiveButton("OK", null).show();
+                    return;
+                }
+                com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                StringBuilder msg = new StringBuilder(fr.optString("message", "Antrean dialihkan.")).append(NL_);
+                org.json.JSONArray it = fr.optJSONArray("items");
+                for (int i = 0; it != null && i < it.length() && i < 12; i++) {
+                    org.json.JSONObject o = it.optJSONObject(i);
+                    if (o != null) msg.append(NL_).append("• ").append(o.optString("name")).append(" → ").append(o.optString("to"));
+                }
+                new AlertDialog.Builder(this).setTitle("✅ Antrean Dialihkan").setMessage(msg.toString())
+                        .setCancelable(false)
+                        .setPositiveButton("Buka Pengisian", (d, w) -> startActivity(new Intent(this, PengisianActivity.class)))
+                        .show();
+            });
+        }).start();
+    }
+
+    private static final String NL_ = "\n";
 
     /** Konfirmasi sebelum Pulang (clock out) — gate selfie + pencatatan OUT. */
     /**
