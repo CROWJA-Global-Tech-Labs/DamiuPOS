@@ -483,7 +483,7 @@ public class MainActivity extends AppCompatActivity {
                     .append(" (").append(rest.get(i).getJumlahGalon()).append(" gal)").append(NL_);
         }
         if (rest.size() > 8) sb.append("• +").append(rest.size() - 8).append(" lainnya").append(NL_);
-        sb.append(NL_).append("Dialihkan seketika sesuai prioritas perangkat penugasan: Aturan Perangkat → pemilik wilayah yang sedang bertugas → perangkat bertugas dengan antrean paling ringan. Bila tak ada yang bertugas, jadi Pesanan Terbuka.");
+        sb.append(NL_).append("Dialihkan seketika sesuai prioritas perangkat penugasan: Aturan Perangkat → pemilik wilayah (area primer) yang sedang bertugas → perangkat bertugas yang memegang wilayah itu sebagai area sekunder → perangkat bertugas dengan antrean paling ringan. Bila tak ada yang bertugas, jadi Pesanan Terbuka.");
         new AlertDialog.Builder(this)
                 .setCancelable(false)
                 .setTitle("Alihkan Antrean?")
