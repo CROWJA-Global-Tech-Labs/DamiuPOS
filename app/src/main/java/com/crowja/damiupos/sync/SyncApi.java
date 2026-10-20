@@ -290,6 +290,11 @@ public class SyncApi {
      * Branch-scoped by the token.
      */
     /** "Ambil Alih Sesuai Wilayah": {@code {wilayah:[{index,label,device_uuid,device_name,mine,other,open,galon}]}}. */
+    /** "📥 Ambil Antrean": {@code {mode: mine|custom, zones, max_km, lat, lng, max_galon, include_sales, include_pickup}}. */
+    public JSONObject takeQueue(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/take", body, cfg.getToken());
+    }
+
     public JSONObject deliveryWilayah() throws Exception {
         return get(cfg.getBaseUrl() + "/api/delivery/wilayah", cfg.getToken());
     }

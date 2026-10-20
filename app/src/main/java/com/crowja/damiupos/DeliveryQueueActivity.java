@@ -950,11 +950,173 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.runOnUiThread(() -> {
             try { wait.dismiss(); } catch (Exception ignored) {}
             if (this.isFinishing() || this.isDestroyed()) return;
-            if (fz == null || fz.length() == 0) {
-               Toast.makeText(this, fe != null && !fe.isEmpty() ? fe : "Wilayah cabang belum diatur di dashboard.", Toast.LENGTH_LONG).show();
+            if (fz == null) {
+               Toast.makeText(this, fe != null && !fe.isEmpty() ? fe : "Gagal memuat wilayah.", Toast.LENGTH_LONG).show();
                return;
             }
-            this.renderTakeWilayahDialog(fz);
+            this.renderTakeQueueDialog(fz);
+         });
+      })).start();
+   }
+
+   /**
+    * 📥 Ambil Antrean — dua opsi: (1) SESUAI WILAYAH SAYA (area primer + sekunder) + "ambil berapa galon";
+    * (2) CUSTOM: jarak perjalanan darat dari posisi HP (default 2 km) dan/atau wilayah perangkat terpilih
+    * (dipaksa walau bukan wilayah saya, boleh banyak) + "ambil berapa galon". Server: DeliveryTakeQueue.
+    */
+   private void renderTakeQueueDialog(JSONArray zones) {
+      int pad = this.dp(20f);
+      LinearLayout box = new LinearLayout(this);
+      box.setOrientation(LinearLayout.VERTICAL);
+      box.setPadding(pad, this.dp(8f), pad, 0);
+      final android.widget.RadioButton rbMine = new android.widget.RadioButton(this);
+      rbMine.setText("🧭 Sesuai wilayah saya (area utama + tambahan)");
+      rbMine.setId(View.generateViewId());
+      final android.widget.RadioButton rbCustom = new android.widget.RadioButton(this);
+      rbCustom.setText("⚙️ Custom (jarak / wilayah perangkat)");
+      rbCustom.setId(View.generateViewId());
+      android.widget.RadioGroup rg = new android.widget.RadioGroup(this);
+      rg.addView(rbMine);
+      rg.addView(rbCustom);
+      box.addView(rg);
+
+      final LinearLayout custom = new LinearLayout(this);
+      custom.setOrientation(LinearLayout.VERTICAL);
+      custom.setPadding(this.dp(16f), 0, 0, 0);
+      TextView lblKm = new TextView(this);
+      lblKm.setText("Jarak perjalanan darat dari posisi saya (km, kosongkan = tanpa batas):");
+      custom.addView(lblKm);
+      final EditText etKm = new EditText(this);
+      etKm.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+      etKm.setText("2");
+      custom.addView(etKm);
+      final List<android.widget.CheckBox> zoneBoxes = new ArrayList<>();
+      final List<Integer> zoneIdx = new ArrayList<>();
+      if (zones.length() > 0) {
+         TextView lblZ = new TextView(this);
+         lblZ.setText("Wilayah perangkat (dipaksa ambil walau bukan wilayah saya):");
+         lblZ.setPadding(0, this.dp(8f), 0, 0);
+         custom.addView(lblZ);
+      }
+      for (int i = 0; i < zones.length(); i++) {
+         JSONObject z = zones.optJSONObject(i);
+         if (z == null) continue;
+         String dev = strJson(z, "device_name");
+         android.widget.CheckBox cb = new android.widget.CheckBox(this);
+         cb.setText("🧭 " + safe(z.optString("label")) + " · 📱 " + (dev != null && !dev.isEmpty() ? dev : "tanpa perangkat")
+               + " · " + (z.optInt("other") + z.optInt("open")) + " order (" + z.optInt("galon") + " gal)");
+         custom.addView(cb);
+         zoneBoxes.add(cb);
+         zoneIdx.add(z.optInt("index", i));
+      }
+      box.addView(custom);
+
+      TextView lblGal = new TextView(this);
+      lblGal.setText("Ambil berapa galon? (kosongkan = semua)");
+      lblGal.setPadding(0, this.dp(10f), 0, 0);
+      box.addView(lblGal);
+      final EditText etGal = new EditText(this);
+      etGal.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+      int maxLoad = this.syncCfg().getMaxLoad();
+      if (maxLoad > 0) etGal.setText(String.valueOf(maxLoad));
+      box.addView(etGal);
+      final android.widget.CheckBox cbSales = new android.widget.CheckBox(this);
+      cbSales.setText("🛒 Penjualan");
+      cbSales.setChecked(true);
+      final android.widget.CheckBox cbPickup = new android.widget.CheckBox(this);
+      cbPickup.setText("↩ Ambil Galon Saja");
+      box.addView(cbSales);
+      box.addView(cbPickup);
+
+      rg.setOnCheckedChangeListener((g, id) -> custom.setVisibility(id == rbCustom.getId() ? View.VISIBLE : View.GONE));
+      rbMine.setChecked(true);
+      custom.setVisibility(View.GONE);
+
+      ScrollView sv = new ScrollView(this);
+      sv.addView(box);
+      AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle("📥 Ambil Antrean").setView(sv)
+            .setPositiveButton("Ambil", (DialogInterface.OnClickListener) null)
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
+      dlg.setOnShowListener(di -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+         if (!cbSales.isChecked() && !cbPickup.isChecked()) {
+            Toast.makeText(this, "Pilih minimal satu jenis.", Toast.LENGTH_SHORT).show();
+            return;
+         }
+         try {
+            JSONObject body = new JSONObject();
+            boolean isCustom = rbCustom.isChecked();
+            body.put("mode", isCustom ? "custom" : "mine");
+            String g = etGal.getText().toString().trim();
+            if (!g.isEmpty()) body.put("max_galon", Integer.parseInt(g));
+            body.put("include_sales", cbSales.isChecked());
+            body.put("include_pickup", cbPickup.isChecked());
+            double km = 0;
+            if (isCustom) {
+               JSONArray zs = new JSONArray();
+               for (int i = 0; i < zoneBoxes.size(); i++) if (zoneBoxes.get(i).isChecked()) zs.put(zoneIdx.get(i));
+               body.put("zones", zs);
+               String k = etKm.getText().toString().trim().replace(',', '.');
+               km = k.isEmpty() ? 0 : Double.parseDouble(k);
+               if (km > 0) body.put("max_km", km);
+               if (km <= 0 && zs.length() == 0) {
+                  Toast.makeText(this, "Isi jarak atau pilih minimal satu wilayah.", Toast.LENGTH_SHORT).show();
+                  return;
+               }
+            }
+            dlg.dismiss();
+            if (km > 0) {
+               Toast.makeText(this, "Mengambil lokasi HP…", Toast.LENGTH_SHORT).show();
+               LocationService.lastLocation(this, (loc) -> {
+                  if (loc == null) {
+                     Toast.makeText(this, "Lokasi HP belum didapat — nyalakan GPS lalu coba lagi.", Toast.LENGTH_LONG).show();
+                     return;
+                  }
+                  try {
+                     body.put("lat", loc.getLatitude());
+                     body.put("lng", loc.getLongitude());
+                  } catch (Exception ignored) {
+                  }
+                  this.runTakeQueue(body);
+               });
+            } else {
+               this.runTakeQueue(body);
+            }
+         } catch (Exception e) {
+            Toast.makeText(this, "Isian tidak valid.", Toast.LENGTH_SHORT).show();
+         }
+      }));
+      dlg.show();
+   }
+
+   private void runTakeQueue(JSONObject body) {
+      SyncSettings cfg = this.syncCfg();
+      android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
+      wait.setMessage("Mengambil antrean…");
+      wait.setCancelable(false);
+      wait.show();
+      (new Thread(() -> {
+         String msg;
+         boolean ok = false;
+         try {
+            JSONObject r = (new SyncApi(cfg)).takeQueue(body);
+            ok = true;
+            msg = r.optString("message", "Antrean diambil.");
+         } catch (SyncApi.SyncException se) {
+            String m = se.serverMessage();
+            msg = m != null && !m.isEmpty() ? m : "Gagal mengambil antrean (kode " + se.code + ").";
+         } catch (Exception e) {
+            msg = "Gagal mengambil antrean — periksa koneksi internet.";
+         }
+         final String fm = msg;
+         final boolean fok = ok;
+         this.runOnUiThread(() -> {
+            try { wait.dismiss(); } catch (Exception ignored) {}
+            if (this.isFinishing() || this.isDestroyed()) return;
+            Toast.makeText(this, fm, Toast.LENGTH_LONG).show();
+            if (fok) com.crowja.damiupos.sync.SyncScheduler.syncNow(this.getApplicationContext());
+            this.loadData();
+            this.loadOtherDevices();
+            this.loadTrips();
          });
       })).start();
    }

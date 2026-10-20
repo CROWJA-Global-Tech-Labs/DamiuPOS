@@ -41,7 +41,7 @@
          DeliveryQueueActivity.showTakeWilayahDialog. Gate tab 0. -->
     <item
         android:id="@+id/action_take_wilayah"
-        android:title="📥 Ambil Alih Sesuai Wilayah"
+        android:title="📥 Ambil Antrean"
         app:showAsAction="never" />
 
     <item
