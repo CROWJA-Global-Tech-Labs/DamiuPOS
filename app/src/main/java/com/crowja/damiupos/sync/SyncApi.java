@@ -300,6 +300,11 @@ public class SyncApi {
         return post(cfg.getBaseUrl() + "/api/delivery/wilayah/take", body, cfg.getToken());
     }
 
+    /** Beralih ke Pengisian Live: server mengalihkan SELURUH antrean belum-selesai HP ini (prioritas perangkat penugasan). */
+    public JSONObject handoverAll() throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/handover-all", new JSONObject(), cfg.getToken());
+    }
+
     public JSONObject openDispatch(JSONObject body) throws Exception {
         return post(cfg.getBaseUrl() + "/api/delivery/open", body, cfg.getToken());
     }
