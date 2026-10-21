@@ -2731,6 +2731,12 @@ public class TransactionActivity extends AppCompatActivity {
      *    tak ditawarkan ulang di sana (statusnya sudah berubah begitu barisnya tertulis).
      *    Pelanggan Umum/walk-in dilewati.
      */
+    /** Ongkir galon gift produk yang dikonfirmasi "Ya" ({@link com.crowja.damiupos.checkout.GiftOngkir}); 0 tanpa gift. */
+    private double confirmedGiftOngkir(String ongkirType, double rate) {
+        if (confirmedProductGiftId <= 0 || pendingConfirmedGift == null) return 0;
+        return com.crowja.damiupos.checkout.GiftOngkir.of(ongkirType, rate, pendingConfirmedGift.qty);
+    }
+
     private void maybeWarnPendingGift(Customer c) {
         confirmedProductGiftId = -1;
         pendingConfirmedGift = null;
@@ -3336,7 +3342,8 @@ public class TransactionActivity extends AppCompatActivity {
             } else if (Transaction.ONGKIR_NONE.equals(ongkirType)) {
                 totalHarga = subtotal;
             } else {
-                totalHarga = subtotal + ongkir * totalJumlah;
+                // + ongkir galon gift produk yang dikonfirmasi (galon itu ikut diantar, owner 21/10/2026).
+                totalHarga = subtotal + ongkir * totalJumlah + confirmedGiftOngkir(ongkirType, ongkir);
             }
             // Tambahkan harga botol × jumlah jika pelanggan membeli botol galon
             if (isBeliSelected()) {
@@ -3470,6 +3477,10 @@ public class TransactionActivity extends AppCompatActivity {
             }
             if (Transaction.ONGKIR_PER_GALON.equals(ongkirType) && ongkir > 0) {
                 msg.append("Ongkir/botol galon: Rp ").append(nf.format(ongkir)).append("\n");
+                double giftOngkir = confirmedGiftOngkir(ongkirType, ongkir);
+                if (giftOngkir > 0) {
+                    msg.append("Ongkir galon gift: Rp ").append(nf.format(giftOngkir)).append("\n");
+                }
             } else if (Transaction.ONGKIR_BORONGAN.equals(ongkirType) && ongkir > 0) {
                 msg.append("Ongkir borongan: Rp ").append(nf.format(ongkir)).append("\n");
             } else {
@@ -5077,6 +5088,8 @@ public class TransactionActivity extends AppCompatActivity {
 
         final double[] totals = new double[n];
         for (int k = 0; k < n; k++) totals[k] = legs.get(k).total(beli, hargaBotol);
+        // Gift produk ikut leg UTAMA (persistRow) → ongkir galon gift-nya juga di leg itu.
+        if (n > 0) totals[0] += confirmedGiftOngkir(legs.get(0).ongkirType, legs.get(0).ongkirRate);
         // Saldo komisi lalu saldo refund dibagi RAKUS per leg (tak pernah melebihi total leg-nya).
         final double[] saldo = CheckoutPart.allocate(saldoDipotong(), totals);
         final double[] refundCaps = new double[n];
