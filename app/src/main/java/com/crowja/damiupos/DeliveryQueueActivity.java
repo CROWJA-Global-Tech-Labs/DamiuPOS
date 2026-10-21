@@ -3009,13 +3009,20 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       // Foto lokasi: nama lokasi cocok persis (kalau ada) menang atas foto default pelanggan -
       // cermin showQueuePreview di antrean sendiri.
       String destPhotoUrl = null;
+      Customer.Location destMatch = null;
       if (c != null && !resellerDest && !destLocName.trim().isEmpty() && c.getLocations() != null) {
          for (Customer.Location l : c.getLocations()) {
-            if (destLocName.trim().equalsIgnoreCase(safe(l.name)) && l.photo != null && !l.photo.trim().isEmpty()) {
-               destPhotoUrl = l.photo.trim();
+            if (destLocName.trim().equalsIgnoreCase(safe(l.name))) {
+               destMatch = l;
+               if (l.photo != null && !l.photo.trim().isEmpty()) destPhotoUrl = l.photo.trim();
                break;
             }
          }
+      }
+      // Tujuan = lokasi LAIN (bukan lokasi utama) → foto rumah pelanggan itu foto lokasi utama, BUKAN
+      // tujuan ini. Jangan dipakai sebagai cadangan (dulu "Stand minum ZzZ" menampilkan foto kedai utama).
+      if (destPhotoUrl == null && c != null && !destLocName.trim().isEmpty() && !isPrimaryLocation(c, destMatch, destLocName)) {
+         photoFallback = null;
       }
 
       PreviewData d = new PreviewData();
@@ -9699,6 +9706,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       Chip(String label, int bg) { this.label = label; this.bg = bg; }
    }
 
+   /** Lokasi tujuan = lokasi UTAMA pelanggan (entri pertama; foto rumah pelanggan = foto lokasi ini)? */
+   private static boolean isPrimaryLocation(Customer c, Customer.Location loc, String name) {
+      java.util.List<Customer.Location> ls = c != null ? c.getLocations() : null;
+      if (ls == null || ls.isEmpty()) return true;   // tanpa multi-lokasi → hanya ada satu lokasi
+      Customer.Location first = ls.get(0);
+      if (loc != null) return loc == first || (Math.abs(loc.lat - first.lat) < 1e-6 && Math.abs(loc.lng - first.lng) < 1e-6);
+      return name != null && name.trim().equalsIgnoreCase(first.name != null ? first.name.trim() : "");
+   }
+
    private void showQueuePreview(Transaction t) {
       double lat = effectiveLat(t);
       double lng = effectiveLng(t);
@@ -9724,6 +9740,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       // dipakai sebagai cadangan, nanti kurir mencocokkan rumah yang salah dengan pin di peta.
       boolean resellerDest = t.isResellerDestination();
       Customer photoFallback = resellerDest ? null : c;
+      // Tujuan lokasi LAIN (bukan utama) tanpa foto sendiri → jangan pakai foto rumah (= foto lokasi utama).
+      if (destLoc != null && c != null && !isPrimaryLocation(c, destLoc, destLoc.name)) photoFallback = null;
       d.address = resellerDest ? "🤝 " + Transaction.resellerDestLabel(t.getDeliveryDestName())
             : destLoc != null ? "Kirim Ke: " + safe(destLoc.name) + areaSuffix
             : (t.getCustomerAddress() != null && !t.getCustomerAddress().trim().isEmpty()
