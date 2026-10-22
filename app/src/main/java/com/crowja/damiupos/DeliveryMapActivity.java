@@ -660,6 +660,10 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "var cluster = L.markerClusterGroup({maxClusterRadius:50,spiderfyOnMaxZoom:true});\n" +
                 "map.addLayer(cluster);\n" +
                 "var hiddenDevices = {};\n" +
+                // Bawaan: hanya pesanan perangkat INI; perangkat lain (termasuk yang baru muncul)
+                // disembunyikan sampai 👁 diketuk.
+                "var seenDevices = {};\n" +
+                "function seedHidden(){ if(!myUuid||typeof legend==='undefined') return; legend.forEach(function(g){ if(seenDevices[g.uuid]) return; seenDevices[g.uuid]=true; if(g.uuid!==myUuid) hiddenDevices[g.uuid]=true; }); }\n" +
                 "function pinIcon(color,emoji,mine,openDispatch){\n" +
                 "  var svg='<svg width=\"30\" height=\"38\" viewBox=\"0 0 30 38\" xmlns=\"http://www.w3.org/2000/svg\">'+\n" +
                 "    '<path d=\"M15 0C6.7 0 0 6.7 0 15c0 10 15 23 15 23s15-13 15-23C30 6.7 23.3 0 15 0z\" fill=\"'+color+'\"/>'+\n" +
@@ -715,7 +719,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "});\n" +
                 "}\n" +
                 "buildMarkers();\n" +
-                "function visible(p){ return !hiddenDevices[p.device_uuid||'__none__'] && productOk(p); }\n" +
+                "function visible(p){ seedHidden(); return!hiddenDevices[p.device_uuid||'__none__'] && productOk(p); }\n" +
                 // FILTER PRODUK: centang = tampilkan HANYA order yang memuat salah satu produk tercentang
                 // (OR). Tak ada yang dicentang = semua. Digabung dengan mata perangkat di legenda.
                 "var productOn={};\n" +
@@ -817,7 +821,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  t.textContent=msg; t.style.display='block';\n" +
                 "  clearTimeout(t._h); t._h=setTimeout(function(){t.style.display='none';},2600);\n" +
                 "}\n" +
-                "function renderLegend(){\n" +
+                "function renderLegend(){ seedHidden();\n" +
                 "  var el=document.getElementById('legend');el.innerHTML='';\n" +
                 "  legend.forEach(function(g){\n" +
                 "    var hasGeo=!!deviceLatLng(g.uuid);\n" +
