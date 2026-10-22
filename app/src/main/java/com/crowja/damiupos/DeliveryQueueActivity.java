@@ -983,8 +983,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       rbCustom.setText("⚙️ Custom (jarak / wilayah perangkat)");
       rbCustom.setId(View.generateViewId());
       android.widget.RadioGroup rg = new android.widget.RadioGroup(this);
+      final android.widget.RadioButton rbOpen = new android.widget.RadioButton(this);
+      rbOpen.setText("📢 Pesanan Terbuka");
+      rbOpen.setId(View.generateViewId());
       rg.addView(rbMine);
       rg.addView(rbCustom);
+      rg.addView(rbOpen);
       box.addView(rg);
 
       final LinearLayout custom = new LinearLayout(this);
@@ -1033,6 +1037,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       final android.widget.CheckBox cbPickup = new android.widget.CheckBox(this);
       cbPickup.setText("↩ Ambil Galon Saja");
       box.addView(cbSales);
+      // Produk (slug) yang mau diambil — bawaan SEMUA terpilih; hanya berlaku untuk penjualan.
+      final java.util.Set<String> takeSlugs = new java.util.HashSet<>();
+      final java.util.Set<String> allSlugs = new java.util.HashSet<>();
+      android.widget.HorizontalScrollView slugRow = this.buildSlugChipRow(takeSlugs, () -> { }, true);
+      if (slugRow != null) {
+         allSlugs.addAll(takeSlugs);
+         box.addView(slugRow);
+         cbSales.setOnCheckedChangeListener((b, on) -> slugRow.setVisibility(on ? View.VISIBLE : View.GONE));
+      }
       box.addView(cbPickup);
 
       rg.setOnCheckedChangeListener((g, id) -> custom.setVisibility(id == rbCustom.getId() ? View.VISIBLE : View.GONE));
@@ -1060,7 +1073,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          try {
             JSONObject body = new JSONObject();
             boolean isCustom = rbCustom.isChecked();
-            body.put("mode", isCustom ? "custom" : "mine");
+            body.put("mode", isCustom ? "custom" : (rbOpen.isChecked() ? "open" : "mine"));
+            if (cbSales.isChecked() && takeSlugs.isEmpty() && !allSlugs.isEmpty()) {
+               Toast.makeText(this, "Pilih minimal satu produk.", Toast.LENGTH_SHORT).show();
+               return;
+            }
+            if (takeSlugs.size() < allSlugs.size()) body.put("slugs", new JSONArray(takeSlugs));
             String g = etGal.getText().toString().trim();
             if (!g.isEmpty()) body.put("max_galon", Integer.parseInt(g));
             body.put("include_sales", cbSales.isChecked());
@@ -3258,6 +3276,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          parent = (android.view.ViewGroup) anchor.getParent();
          at = parent.indexOfChild(anchor) + 2;
       }
+      android.widget.HorizontalScrollView sc = this.buildSlugChipRow(slugSel, onSlug, false);
+      if (sc == null) return;
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+      lp.setMarginStart(this.dp(12f));
+      sc.setLayoutParams(lp);
+      parent.addView(sc, Math.min(at, parent.getChildCount()));
+   }
+
+   /** Deretan chip produk per slug (warna produk; terisi = terpilih). {@code preselectAll} = semua
+    *  langsung terpilih (dialog Ambil Antrean). */
+   private android.widget.HorizontalScrollView buildSlugChipRow(java.util.Set<String> slugSel, Runnable onSlug, boolean preselectAll) {
       List<Product> products = new ProductDao(DatabaseHelper.getInstance(this)).getAll();
       LinearLayout row = new LinearLayout(this);
       row.setOrientation(LinearLayout.HORIZONTAL);
@@ -3273,6 +3302,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
          final int col = color;
          final String key = slug.toUpperCase(Locale.US);
+         if (preselectAll) slugSel.add(key);
          TextView chip = this.makeDetailBadge(slug, col);
          chip.setTextSize(13f);
          chip.setPadding(this.dp(12f), this.dp(5f), this.dp(12f), this.dp(5f));
@@ -3294,14 +3324,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          });
          row.addView(chip);
       }
-      if (row.getChildCount() == 0) return;
+      if (row.getChildCount() == 0) return null;
       android.widget.HorizontalScrollView sc = new android.widget.HorizontalScrollView(this);
       sc.setHorizontalScrollBarEnabled(false);
-      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-      lp.setMarginStart(this.dp(12f));
-      sc.setLayoutParams(lp);
       sc.addView(row);
-      parent.addView(sc, Math.min(at, parent.getChildCount()));
+      return sc;
    }
 
    /** Order punya salah satu produk terpilih? (kosong = lolos semua). */
@@ -11257,7 +11284,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             } else {
                String name = this.str(o, "name").toLowerCase(Locale.US);
                String phone = this.str(o, "phone").toLowerCase(Locale.US);
-               if (name.contains(q) || phone.contains(q) || CustomerDao.phoneMatches(phone, q)) {
+               if (name.contains(q) || phone.contains(q) || CustomerDao.phoneMatches(phone, q)
+                     || this.str(o, "note").toLowerCase(Locale.US).contains(q)) {
                   this.data.add(o);
                }
             }
@@ -11518,7 +11546,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (!DeliveryQueueActivity.this.slugMatches(DeliveryQueueActivity.this.slugMine, t)) continue;
             String name = safe(t.getCustomerName()).toLowerCase(Locale.US);
             String phone = t.getCustomerPhone() != null ? t.getCustomerPhone().toLowerCase(Locale.US) : "";
-            if (q.isEmpty() || name.contains(q) || phone.contains(q) || CustomerDao.phoneMatches(phone, q)) filtered.add(t);
+            if (q.isEmpty() || name.contains(q) || phone.contains(q) || CustomerDao.phoneMatches(phone, q)
+                  || safe(t.getCatatan()).toLowerCase(Locale.US).contains(q)) filtered.add(t);
          }
          return filtered;
       }
@@ -11812,7 +11841,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             } else {
                String name = DeliveryQueueActivity.safe(t.getCustomerName()).toLowerCase(Locale.US);
                String phone = t.getCustomerPhone() != null ? t.getCustomerPhone().toLowerCase(Locale.US) : "";
-               if (name.contains(q) || phone.contains(q) || CustomerDao.phoneMatches(phone, q)) {
+               if (name.contains(q) || phone.contains(q) || CustomerDao.phoneMatches(phone, q)
+                     || DeliveryQueueActivity.safe(t.getCatatan()).toLowerCase(Locale.US).contains(q)) {
                   this.data.add(t);
                }
             }
