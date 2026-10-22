@@ -195,10 +195,28 @@ public class WaInboxActivity extends AppCompatActivity {
         final String acc = account;
         final int d = days;
         if (convs.isEmpty()) progress.setVisibility(View.VISIBLE);
+        else if (tvStatus.getVisibility() != View.VISIBLE) showStatus("⟳ Memperbarui percakapan…");
         final android.content.Context app = getApplicationContext();
         new Thread(() -> {
-            WaInboxApi.Res ra = withAccounts ? api.accounts() : null;
+            // Percakapan akun yang SUDAH dikenal diambil DULUAN & langsung ditampilkan: daftar akun
+            // (badge semua akun) memukul Bridge per akun dan bisa makan belasan detik — selama itu
+            // layar dulu tertahan di cache lama tanpa tanda apa pun ("riwayat chat usang").
             WaInboxApi.Res rc = null;
+            if (acc != null) {
+                rc = api.conversations(acc, d);
+                final WaInboxApi.Res early = rc;
+                if (early.ok()) {
+                    JSONArray carr = early.body.optJSONArray("conversations");
+                    if (carr != null) WaInboxCache.put(app, WaInboxCache.convKey(acc, d), carr.toString());
+                }
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed() || g != gen) return;
+                    progress.setVisibility(View.GONE);
+                    if (early.ok()) { showStatus(null); applyConversations(early.body.optJSONArray("conversations")); render(); }
+                    else showStatus(early.error.isEmpty() ? "Gagal memuat percakapan." : early.error);
+                });
+            }
+            WaInboxApi.Res ra = withAccounts ? api.accounts() : null;
             String pick = acc;
             if (ra != null && ra.ok()) {
                 JSONArray arr = ra.body.optJSONArray("accounts");
@@ -206,7 +224,7 @@ public class WaInboxActivity extends AppCompatActivity {
                 if (pick == null && arr != null && arr.length() > 0) pick = arr.optJSONObject(0).optString("account");
             }
             boolean accountsOk = ra == null || ra.ok();
-            if (accountsOk && pick != null) {
+            if (accountsOk && pick != null && rc == null) {
                 rc = api.conversations(pick, d);
                 if (rc.ok()) {
                     JSONArray carr = rc.body.optJSONArray("conversations");

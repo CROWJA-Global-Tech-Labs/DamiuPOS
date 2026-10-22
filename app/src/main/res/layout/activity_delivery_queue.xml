@@ -357,7 +357,7 @@
                     android:id="@+id/etSearchMine"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:hint="Cari nama / no. WA…"
+                    android:hint="Cari nama / no. WA / catatan…"
                     android:imeOptions="actionSearch"
                     android:inputType="text"
                     android:maxLines="1" />
@@ -436,7 +436,7 @@
                     android:id="@+id/etSearchOther"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:hint="Cari nama / no. WA…"
+                    android:hint="Cari nama / no. WA / catatan…"
                     android:imeOptions="actionSearch"
                     android:inputType="text"
                     android:maxLines="1" />
@@ -552,7 +552,7 @@
                     android:id="@+id/etSearchOpen"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:hint="Cari nama / no. WA…"
+                    android:hint="Cari nama / no. WA / catatan…"
                     android:imeOptions="actionSearch"
                     android:inputType="text"
                     android:maxLines="1" />
