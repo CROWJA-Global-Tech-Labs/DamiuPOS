@@ -6292,7 +6292,20 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       AlertDialog.Builder b = (new AlertDialog.Builder(this)).setTitle(isPickup ? "Tandai Selesai (Pickup)" : "Tandai Selesai").setMessage(msg).setPositiveButton("Selesai", (d, w) -> this.confirmReturnedGalonThenComplete(t, revokeCredit)).setNegativeButton("Batal", (DialogInterface.OnClickListener)null);
       if (!isPickup) {
-         b.setNeutralButton("Ubah…", (d, w) -> this.showAdjustDialog(t, revokeCredit));
+         // "Ubah…" = dialog ✏️ Ubah Pesanan yang sama dengan menu kartu (produk, harga, ongkir, galon kembali,
+         // alasan). Setelah tersimpan, data dimuat ulang lalu konfirmasi Selesai dibuka lagi dengan isi terbaru.
+         b.setNeutralButton("Ubah…", (d, w) -> DeliveryEditDialog.show(this, t, () -> {
+            this.loadData();
+            Transaction fresh = this.dao.getById(t.getId());
+            Transaction row = null;
+            if (this.adapter != null && this.adapter.data != null) {
+               for (Transaction q : this.adapter.data) if (q != null && q.getId() == t.getId()) row = q;
+            }
+            Transaction use = row != null ? row : fresh;
+            if (use != null && Transaction.DELIVERY_PENDING.equals(use.getDeliveryStatus() != null ? use.getDeliveryStatus() : Transaction.DELIVERY_PENDING)) {
+               this.completeConfirm(use, revokeCredit);
+            }
+         }));
       } else if (allocatable) {
          b.setNeutralButton("Ubah Alokasi", (d, w) -> AllocationDialog.show(this, t, "delivery"));
       }
