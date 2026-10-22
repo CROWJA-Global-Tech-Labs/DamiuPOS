@@ -6538,10 +6538,117 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
                dlg.dismiss();
                Transaction fresh = this.dao.getById(t.getId());
-               this.doComplete(fresh != null ? fresh : t, revokeCredit);
+               this.askPaymentThenComplete(fresh != null ? fresh : t, qty, revokeCredit);
             }
          });
       });
+      dlg.show();
+   }
+
+   private static final String[] KASBON_REASON_PRESETS = {
+         TransactionDao.CASH_BON_REASON_AWAY, TransactionDao.CASH_BON_REASON_UNPAID};
+
+   /**
+    * Langkah sesudah galon kembali: NOMINAL DITERIMA (bawaan = tagihan pesanan) atau KASBON
+    * (bayar di pesanan berikutnya). Dilewati bila order sudah LUNAS (bukti bayar dikonfirmasi agen),
+    * sudah Cash Bon / HUTANG, atau tagihannya Rp0. Kasbon ditulis lewat applyDeliveryAdjustment
+    * (penanda [CASH BON] + alasan) → doComplete mewajibkan foto → finishComplete mengirim WA
+    * pemberitahuan sopan beserta fotonya ke pelanggan.
+    */
+   private void askPaymentThenComplete(Transaction t, int returnQty, boolean revokeCredit) {
+      double total = t.getTotalHarga();
+      String pm = t.getPaymentMethod() != null ? t.getPaymentMethod().trim() : "";
+      if (total <= 0 || t.isPaymentConfirmed() || this.isCashBon(t) || "HUTANG".equalsIgnoreCase(pm)) {
+         this.doComplete(t, revokeCredit);
+         return;
+      }
+      float dn = this.getResources().getDisplayMetrics().density;
+      int pad = (int)(20.0F * dn);
+      int gap = (int)(8.0F * dn);
+      LinearLayout box = new LinearLayout(this);
+      box.setOrientation(1);
+      box.setPadding(pad, gap, pad, 0);
+
+      TextView lbl = new TextView(this);
+      lbl.setText("Nominal diterima (Rp)");
+      lbl.setTextSize(13.0F);
+      box.addView(lbl);
+      EditText amt = new EditText(this);
+      amt.setInputType(2);
+      amt.setText(String.valueOf(Math.round(total)));
+      amt.setSelectAllOnFocus(true);
+      box.addView(amt);
+
+      android.widget.CheckBox kasbon = new android.widget.CheckBox(this);
+      kasbon.setText("Kasbon — dibayar di pesanan berikutnya");
+      kasbon.setPadding(0, gap, 0, gap);
+      box.addView(kasbon);
+
+      LinearLayout kb = new LinearLayout(this);
+      kb.setOrientation(1);
+      kb.setVisibility(View.GONE);
+      EditText reason = new EditText(this);
+      reason.setHint("Alasan kasbon (pilih atau ketik)");
+      reason.setText(TransactionDao.CASH_BON_REASON_AWAY);
+      kb.addView(DeliveryVoidDialog.buildQuickReasonRow(this, reason, KASBON_REASON_PRESETS));
+      kb.addView(reason);
+      TextView kh = new TextView(this);
+      kh.setText("📷 Kasbon WAJIB foto bukti. Pelanggan akan dikabari lewat WA beserta fotonya.");
+      kh.setTextSize(12.0F);
+      kh.setTextColor(-8355712);
+      kb.addView(kh);
+      box.addView(kb);
+      kasbon.setOnCheckedChangeListener((b, on) -> {
+         kb.setVisibility(on ? View.VISIBLE : View.GONE);
+         amt.setEnabled(!on);
+      });
+
+      ScrollView sv = new ScrollView(this);
+      sv.addView(box);
+      AlertDialog dlg = (new AlertDialog.Builder(this))
+            .setTitle("💰 Pembayaran — " + safe(t.getCustomerName()))
+            .setMessage("Tagihan pesanan: " + this.rp(total) + (pm.isEmpty() ? "" : " · " + pm))
+            .setView(sv)
+            .setPositiveButton("SELESAI", (DialogInterface.OnClickListener)null)
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener)null)
+            .create();
+      dlg.setOnShowListener((shown) -> dlg.getButton(-1).setOnClickListener((btn) -> {
+         boolean isBon = kasbon.isChecked();
+         Double paid = null;
+         String why = null;
+         if (isBon) {
+            why = reason.getText().toString().trim();
+            if (why.isEmpty()) {
+               reason.setError("Isi alasannya");
+               return;
+            }
+            boolean preset = java.util.Arrays.asList(KASBON_REASON_PRESETS).contains(why);
+            if (!preset) why = TransactionDao.CASH_BON_REASON_OTHER + " — " + why;
+         } else {
+            try {
+               paid = Double.parseDouble(amt.getText().toString().trim());
+            } catch (Exception e) {
+               amt.setError("Isi nominal (0 = centang Kasbon)");
+               return;
+            }
+            if (paid < 0) {
+               amt.setError("Tidak boleh minus");
+               return;
+            }
+            if (paid <= 0) {
+               kasbon.setChecked(true);
+               return;
+            }
+         }
+         // Nominal sama dengan tagihan & bukan kasbon → tak ada yang perlu dicatat ulang.
+         if (isBon || Math.round(paid) != Math.round(total)) {
+            String by = (new SettingsDao(DatabaseHelper.getInstance(this))).getCurrentUserName();
+            this.dao.applyDeliveryAdjustment(t.getId(), null, returnQty, pm, isBon, paid, why, by);
+         }
+         dlg.dismiss();
+         Transaction fresh = this.dao.getById(t.getId());
+         this.doComplete(fresh != null ? fresh : t, revokeCredit);
+      }));
       dlg.show();
    }
 
@@ -7462,8 +7569,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       NumberFormat nf = NumberFormat.getNumberInstance(new Locale("in", "ID"));
       StringBuilder sb = new StringBuilder();
       sb.append("Assalamualaikum, Pelanggan Yth.\n\n")
-            .append("Pesanan air minum Anda sudah kami ANTAR hari ini, namun pembayarannya belum ")
-            .append("kami terima.");
+            .append("Pesanan air minum Anda sudah kami antarkan hari ini. Terlampir foto galon yang ")
+            .append("kami letakkan sebagai konfirmasi.");
       String rno = t.getReceiptNo();
       if (rno != null && !rno.isEmpty()) {
          sb.append("\n\n🧾 ").append(rno);
@@ -7479,15 +7586,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          sb.append("\n(belum ada galon kosong yang kami terima pada pengiriman ini)");
       }
 
-      sb.append("\nTagihan pengiriman ini: Rp").append(nf.format(Math.round(t.getTotalHarga())));
+      sb.append("\nNominal pesanan ini: Rp").append(nf.format(Math.round(t.getTotalHarga())));
       double sisa = t.getCustomerId() > 0L
             ? (new CustomerDebtDao(DatabaseHelper.getInstance(this))).balanceFor(t.getCustomerId())
             : (double)0.0F;
       if (sisa > (double)0.0F) {
-         sb.append("\n*Total tagihan Anda saat ini: Rp").append(nf.format(Math.round(sisa))).append("*");
+         sb.append("\nTotal yang bisa dibayarkan nanti: Rp").append(nf.format(Math.round(sisa)));
       }
 
-      sb.append("\n\nPembayaran bisa diselesaikan saat pengiriman berikutnya. Terima kasih 🙏");
+      sb.append("\n\nPembayarannya bisa sekalian di pesanan berikutnya, tidak perlu repot. ")
+            .append("Terima kasih atas kepercayaannya 🙏");
       return sb.toString();
    }
 
