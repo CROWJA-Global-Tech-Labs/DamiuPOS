@@ -61,7 +61,17 @@ public final class DeliveryEditDialog {
         }
     }
 
+    /** Dipanggil SEKALI setelah perubahan berhasil dikirim (dipakai "Ubah…" di Tandai Selesai untuk membuka ulang
+     *  konfirmasi Selesai dengan data terbaru). Dikosongkan tiap {@link #show} dibuka. */
+    private static Runnable onSaved;
+
+    public static void show(final Activity act, final Transaction queueRow, Runnable afterSaved) {
+        show(act, queueRow);
+        onSaved = afterSaved;
+    }
+
     public static void show(final Activity act, final Transaction queueRow) {
+        onSaved = null;
         if (act == null || queueRow == null) return;
         if (!Transaction.TYPE_JUAL.equals(queueRow.getType())) return;
 
@@ -449,6 +459,9 @@ public final class DeliveryEditDialog {
                 if (fOk != null) {
                     Toast.makeText(act, fOk, Toast.LENGTH_LONG).show();
                     dialog.dismiss();
+                    Runnable r = onSaved;
+                    onSaved = null;
+                    if (r != null) r.run();
                 } else {
                     Toast.makeText(act, fErr, Toast.LENGTH_LONG).show();
                     pos.setEnabled(true);
