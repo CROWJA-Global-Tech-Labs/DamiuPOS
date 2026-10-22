@@ -1191,8 +1191,8 @@ public class NavigationPipActivity extends AppCompatActivity {
             ((android.widget.FrameLayout) pipMedia).addView(fabCycleView, b);
         }
         int vis = show ? View.VISIBLE : View.GONE;
-        fabExitSplit.setVisibility(vis);
-        fabCycleView.setVisibility(vis);
+        fabExitSplit.setVisibility(photoFullscreen ? View.GONE : vis);
+        fabCycleView.setVisibility(photoFullscreen ? View.GONE : vis);
         if (show) {
             fabExitSplit.bringToFront();
             fabCycleView.bringToFront();
@@ -1249,6 +1249,12 @@ public class NavigationPipActivity extends AppCompatActivity {
                     }
 
                     @Override
+                    public boolean onSingleTapConfirmed(android.view.MotionEvent e) {
+                        togglePhotoFullscreen();
+                        return true;
+                    }
+
+                    @Override
                     public boolean onDoubleTap(android.view.MotionEvent e) {
                         resetPhotoZoom();
                         return true;
@@ -1259,6 +1265,39 @@ public class NavigationPipActivity extends AppCompatActivity {
             gd.onTouchEvent(ev);
             return true;
         });
+    }
+
+    /** Ketuk foto = layar penuh foto (utuh, tanpa label/tombol/bar sistem); ketuk lagi = kembali. */
+    private boolean photoFullscreen = false;
+
+    private void togglePhotoFullscreen() {
+        if (pipMedia == null || isInPictureInPictureMode()) return;
+        photoFullscreen = !photoFullscreen;
+        android.view.ViewGroup g = (android.view.ViewGroup) pipMedia;
+        for (int i = 0; i < g.getChildCount(); i++) {
+            View c = g.getChildAt(i);
+            if (c == ivPipPhoto) continue;
+            if (photoFullscreen) {
+                c.setTag(R.id.pipMedia, c.getVisibility());
+                c.setVisibility(View.GONE);
+            } else if (c.getTag(R.id.pipMedia) instanceof Integer) {
+                c.setVisibility((Integer) c.getTag(R.id.pipMedia));
+            }
+        }
+        resetPhotoZoom();
+        ivPipPhoto.setScaleType(photoFullscreen ? ImageView.ScaleType.FIT_CENTER : ImageView.ScaleType.CENTER_CROP);
+        pipMedia.setBackgroundColor(photoFullscreen ? 0xFF000000 : 0x00000000);
+        try {
+            androidx.core.view.WindowInsetsControllerCompat wc =
+                    androidx.core.view.WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+            if (photoFullscreen) {
+                wc.setSystemBarsBehavior(androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                wc.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars());
+            } else {
+                wc.show(androidx.core.view.WindowInsetsCompat.Type.systemBars());
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     private void clampPhotoPan() {
@@ -1293,7 +1332,7 @@ public class NavigationPipActivity extends AppCompatActivity {
             llMediaChips.setVisibility(View.GONE);
             return;
         }
-        llMediaChips.setVisibility(View.VISIBLE);
+        llMediaChips.setVisibility(photoFullscreen ? View.GONE : View.VISIBLE);
         llMediaChips.removeAllViews();
         float d = getResources().getDisplayMetrics().density;
         // Baris 1: nama pelanggan + tombol keluar dari layar terbagi.
