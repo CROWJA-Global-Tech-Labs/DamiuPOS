@@ -1349,6 +1349,31 @@ public class NavigationPipActivity extends AppCompatActivity {
         name.setLayoutParams(new android.widget.LinearLayout.LayoutParams(0, -2, 1f));
         top.addView(name);
         if (last != null && last.active != null) {
+            final Transaction act = last.active;
+            // Chat WA konsumen (ikon WhatsApp resmi) + 💬 Chat Pesanan (riwayat chat order ini).
+            if (act.getCustomerPhone() != null && !act.getCustomerPhone().trim().isEmpty()) {
+                ImageView wa = new ImageView(this);
+                wa.setImageResource(R.drawable.ic_whatsapp);
+                int pad = Math.round(6 * d);
+                wa.setPadding(pad, pad, pad, pad);
+                android.graphics.drawable.GradientDrawable wg = new android.graphics.drawable.GradientDrawable();
+                wg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+                wg.setColor(0xFFFFFFFF);
+                wa.setBackground(wg);
+                android.widget.LinearLayout.LayoutParams wl = new android.widget.LinearLayout.LayoutParams(
+                        Math.round(40 * d), Math.round(40 * d));
+                wl.rightMargin = Math.round(6 * d);
+                wa.setLayoutParams(wl);
+                wa.setContentDescription("Chat WA");
+                wa.setOnClickListener(v -> DeliveryQueueActivity.openWhatsApp(this, act.getCustomerPhone(), ""));
+                top.addView(wa);
+            }
+            TextView chat = mediaChip("💬", 0xFF0F766E);
+            chat.setTextSize(15f);
+            chat.setClickable(true);
+            chat.setContentDescription("Chat Pesanan");
+            chat.setOnClickListener(v -> openOrderChat(act));
+            top.addView(chat);
             TextView done = mediaChip("✅ Selesai", 0xFF15803D);
             done.setTextSize(15f);
             done.setClickable(true);
@@ -1486,6 +1511,26 @@ public class NavigationPipActivity extends AppCompatActivity {
     private void hideNoteOverlay() {
         if (noteOverlay != null && pipMedia != null) ((android.widget.FrameLayout) pipMedia).removeView(noteOverlay);
         noteOverlay = null;
+    }
+
+    /** 💬 Chat Pesanan untuk perhentian aktif (butuh uuid sinkron). */
+    private void openOrderChat(Transaction t) {
+        String uuid = t.getSyncUuid();
+        if (uuid == null || uuid.isEmpty()) {
+            try {
+                uuid = new TransactionDao(DatabaseHelper.getInstance(this)).getSyncUuidById(t.getId());
+            } catch (Exception ignored) {
+            }
+        }
+        if (uuid == null || uuid.isEmpty()) {
+            Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent i = new Intent(this, ChatLogActivity.class);
+        i.putExtra(ChatLogActivity.EXTRA_MODE, ChatLogActivity.MODE_ORDER);
+        i.putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid);
+        i.putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, t.getCustomerName() != null ? t.getCustomerName() : "");
+        startActivity(i);
     }
 
     private TextView mediaChip(String text, int bg) {
