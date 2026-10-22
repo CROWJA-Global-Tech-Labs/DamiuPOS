@@ -166,6 +166,10 @@ public class NavigationPipActivity extends AppCompatActivity {
     /** Tombol bulat melayang di atas foto/peta (layar terbagi): ✕ keluar split & ⇆ ganti tampilan. */
     private TextView fabExitSplit, fabCycleView;
     private String mediaName = "", mediaProducts = "", mediaTotal = "";
+    /** Catatan pesanan untuk pelanggan perhentian aktif (penanda internal dibuang) — badge 📝 di panel. */
+    private String mediaNote = "";
+    /** Panel catatan lengkap yang sedang tampil (hilang sendiri setelah 10 dtk). */
+    private TextView noteOverlay;
     /** Maps baru saja diluncurkan berdampingan; onPause dalam jendela ini = HP menolak layar terbagi. */
     private long splitAttemptAt = 0L;
     /** Tampilan FOTO sedang menampilkan peta karena lokasi belum punya foto. */
@@ -1070,6 +1074,7 @@ public class NavigationPipActivity extends AppCompatActivity {
             mediaName = head;
             mediaProducts = "";
             mediaTotal = "";
+            mediaNote = "";
             renderMedia();
             return;
         }
@@ -1108,6 +1113,8 @@ public class NavigationPipActivity extends AppCompatActivity {
         mediaName = name;
         mediaProducts = s.products != null && !s.products.isEmpty() ? s.products : galon.replace("💧 ", "");
         mediaTotal = DeliveryNavLogic.payLine(kind, money, t.getPaymentMethodLabel());
+        String note = ReceiptActivity.customerNote(t.getCatatan());
+        mediaNote = note != null ? note.trim() : "";
         renderMedia();
 
         // ---- layar penuh ----
@@ -1317,6 +1324,17 @@ public class NavigationPipActivity extends AppCompatActivity {
             }
         }
         llMediaChips.addView(top);
+        // Badge 📝 catatan SATU baris, font seukuran nominal rupiah; diketuk → catatan lengkap 10 detik.
+        if (!mediaNote.isEmpty()) {
+            TextView note = mediaChip("📝 " + mediaNote.replace('\n', ' '), 0xFFB45309);
+            note.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            android.widget.LinearLayout.LayoutParams nlp = new android.widget.LinearLayout.LayoutParams(-1, -2);
+            nlp.topMargin = Math.round(6 * d);
+            note.setLayoutParams(nlp);
+            note.setClickable(true);
+            note.setOnClickListener(v -> showNoteOverlay(mediaNote));
+            llMediaChips.addView(note);
+        }
         // Baris 2: badge produk ×jumlah + TOTAL — BESAR, terbaca sekilas dari motor.
         android.widget.LinearLayout chips = new android.widget.LinearLayout(this);
         chips.setOrientation(android.widget.LinearLayout.HORIZONTAL);
@@ -1402,6 +1420,33 @@ public class NavigationPipActivity extends AppCompatActivity {
             } catch (Exception ignored) {
             }
         }, 350L);
+    }
+
+    /** Catatan lengkap menutupi foto/peta panel selama 10 detik (ketuk untuk menutup lebih cepat). */
+    private void showNoteOverlay(String text) {
+        if (pipMedia == null || text == null || text.isEmpty()) return;
+        android.widget.FrameLayout host = (android.widget.FrameLayout) pipMedia;
+        if (noteOverlay != null) host.removeView(noteOverlay);
+        float d = getResources().getDisplayMetrics().density;
+        TextView tv = new TextView(this);
+        tv.setText("📝 " + text);
+        tv.setTextColor(0xFFFFFFFF);
+        tv.setTextSize(20f);
+        tv.setTypeface(tv.getTypeface(), android.graphics.Typeface.BOLD);
+        tv.setBackgroundColor(0xEE1F2937);
+        int pad = Math.round(16 * d);
+        tv.setPadding(pad, pad, pad, pad);
+        tv.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        tv.setOnClickListener(v -> hideNoteOverlay());
+        host.addView(tv, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        noteOverlay = tv;
+        final TextView shown = tv;
+        tv.postDelayed(() -> { if (noteOverlay == shown) hideNoteOverlay(); }, 10_000L);
+    }
+
+    private void hideNoteOverlay() {
+        if (noteOverlay != null && pipMedia != null) ((android.widget.FrameLayout) pipMedia).removeView(noteOverlay);
+        noteOverlay = null;
     }
 
     private TextView mediaChip(String text, int bg) {
