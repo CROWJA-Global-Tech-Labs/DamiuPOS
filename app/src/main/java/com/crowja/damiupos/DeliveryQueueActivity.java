@@ -2724,11 +2724,90 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             case 3:
                this.openOrderChatUuid(q.optString("uuid", ""), q.optString("name", ""));
                return true;
+            case 4:
+               this.showForwardOtherPicker(q);
+               return true;
             default:
                return false;
          }
       });
+      menu.getMenu().add(0, 4, 3, "📤 Kirim ke Perangkat Lain");
       menu.show();
+   }
+
+   /** Pemegang order di baris tab Perangkat Lain (routed_uuid, jatuh ke device_group_uuid). */
+   private static String otherHolderUuid(JSONObject q) {
+      String h = q.optString("routed_uuid", "");
+      if (h.isEmpty() || "null".equals(h)) h = q.optString("device_group_uuid", "");
+      return "null".equals(h) ? "" : h;
+   }
+
+   /** "📤 Kirim ke Perangkat Lain" dari tab Perangkat Lain: teruskan order yang DIPEGANG HP lain ke HP
+    *  ketiga. Server (/api/delivery/route + from_device_uuid) menolak bila pemegangnya sudah berubah
+    *  atau order sedang diantar dalam rit. */
+   private void showForwardOtherPicker(JSONObject q) {
+      SyncSettings cfg = this.syncCfg();
+      String myUuid = cfg.getDeviceUuid();
+      String holder = otherHolderUuid(q);
+      List<String[]> others = new ArrayList<>();
+      try {
+         JSONArray arr = new JSONArray(cfg.getDeviceRoster());
+         for (int i = 0; i < arr.length(); ++i) {
+            JSONObject d = arr.optJSONObject(i);
+            if (d == null) continue;
+            String uuid = d.optString("uuid", "");
+            if (!uuid.isEmpty() && !uuid.equals(myUuid) && !uuid.equals(holder)) others.add(new String[]{uuid, d.optString("name", "Perangkat")});
+         }
+      } catch (Exception ignored) {
+      }
+      if (others.isEmpty()) {
+         Toast.makeText(this, "Belum ada perangkat delivery lain di roster. Coba sinkron dulu.", 1).show();
+         return;
+      }
+      String[] names = new String[others.size()];
+      for (int i = 0; i < others.size(); ++i) names[i] = others.get(i)[1];
+      String cust = q.optString("name", "");
+      (new AlertDialog.Builder(this)).setTitle("Kirim \"" + cust + "\" ke perangkat mana?")
+            .setItems(names, (dx, which) -> {
+               String[] tg = others.get(which);
+               (new AlertDialog.Builder(this)).setTitle("Kirim ke \"" + tg[1] + "\"?")
+                     .setMessage("Order \"" + cust + "\" dipindahkan ke antrian \"" + tg[1] + "\". Perangkat pemegang sekarang akan kehilangan order ini.")
+                     .setPositiveButton("Kirim", (d2, w2) -> this.forwardOtherOrder(q, holder, tg[0], tg[1]))
+                     .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
+            })
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
+   }
+
+   private void forwardOtherOrder(JSONObject q, String holder, String targetUuid, String targetName) {
+      SyncSettings cfg = this.syncCfg();
+      String trxUuid = q.optString("uuid", "");
+      if (trxUuid.isEmpty()) {
+         Toast.makeText(this, "Order ini belum punya identitas server. Coba muat ulang.", 1).show();
+         return;
+      }
+      (new Thread(() -> {
+         String msg;
+         try {
+            JSONObject body = new JSONObject();
+            body.put("transaction_uuid", trxUuid);
+            body.put("target_device_uuid", targetUuid);
+            body.put("from_device_uuid", holder);
+            JSONObject r = (new SyncApi(cfg)).routeDelivery(body);
+            msg = r.optString("message", "Order dikirim ke perangkat " + targetName + ".");
+         } catch (SyncApi.SyncException se) {
+            msg = extractRouteErrorMessage(se.body);
+            if (msg == null) msg = "Gagal mengirim (kode " + se.code + ").";
+         } catch (Exception e) {
+            msg = "Gagal mengirim — periksa koneksi internet.";
+         }
+         final String m = msg;
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            Toast.makeText(this, m, 1).show();
+            SyncScheduler.syncNow(this.getApplicationContext());
+            this.loadData();
+         });
+      })).start();
    }
 
    /** "\ud83d\udc64 Detail Pelanggan" di menu \u22ee kartu Antrean Perangkat Lain \u2014 pelanggan tersinkron
