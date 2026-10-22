@@ -127,6 +127,14 @@ public class SettingsActivity extends AppCompatActivity {
         findViewById(R.id.cardMultiUser).setOnClickListener(v ->
                 startActivity(new Intent(this, AttendanceSettingsActivity.class)));
 
+        // --- Popup Pesanan Terlambat (lokal HP, bawaan MATI) ---
+        com.google.android.material.switchmaterial.SwitchMaterial swLate = findViewById(R.id.switchLateAlarm);
+        if (swLate != null) {
+            SettingsDao lateSd = new SettingsDao(DatabaseHelper.getInstance(this));
+            swLate.setChecked("1".equals(lateSd.get(DeliveryQueueActivity.K_LATE_ALARM_POPUP, "0")));
+            swLate.setOnCheckedChangeListener((b, checked) -> lateSd.set(DeliveryQueueActivity.K_LATE_ALARM_POPUP, checked ? "1" : "0"));
+        }
+
         // --- Auto-Kirim Struk WhatsApp (AccessibilityService) ---
         switchWaAutoSend = findViewById(R.id.switchWaAutoSend);
         waAutoSendConfig = findViewById(R.id.waAutoSendConfig);
