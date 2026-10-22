@@ -305,62 +305,86 @@
             android:paddingEnd="16dp"
             android:paddingBottom="14dp">
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnLanjutNavigasi"
-                android:layout_width="match_parent"
-                android:layout_height="64dp"
-                android:text="🧭 Lanjut Navigasi"
-                android:textSize="18sp"
-                app:backgroundTint="@color/primary" />
-
-            <!-- Navigasi PER TITIK (wizard): selesaikan perhentian ini (dialog penyelesaian antrean),
-                 lalu navigasi otomatis pindah ke titik berikutnya; atau lewati dulu ke titik berikutnya. -->
+            <!-- 4 tombol dalam grid 2x2: [Lanjut Navigasi | Selesai di Sini (+Lewati)] /
+                 [Tampilan | Kembali ke Antrian]. rowWizard GONE (bukan navigasi per titik) → Lanjut melebar. -->
             <LinearLayout
-                android:id="@+id/rowWizard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnLanjutNavigasi"
+                    android:layout_width="0dp"
+                    android:layout_height="64dp"
+                    android:layout_weight="1"
+                    android:maxLines="2"
+                    android:text="🧭 Lanjut Navigasi"
+                    android:textSize="15sp"
+                    app:backgroundTint="@color/primary" />
+
+                <!-- Navigasi PER TITIK (wizard): selesaikan perhentian ini (dialog penyelesaian antrean),
+                     lalu navigasi otomatis pindah ke titik berikutnya; atau lewati dulu ke titik berikutnya. -->
+                <LinearLayout
+                    android:id="@+id/rowWizard"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnSelesaiTitik"
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:maxLines="2"
+                        android:text="✅ Selesai di Sini"
+                        android:textSize="15sp"
+                        app:backgroundTint="#15803D" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLewatiTitik"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="64dp"
+                        android:layout_marginStart="4dp"
+                        android:minWidth="0dp"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:text="⏭"
+                        android:textColor="@color/primary"
+                        android:textSize="15sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:orientation="horizontal">
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnSelesaiTitik"
+                    android:id="@+id/btnGantiTampilan"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="0dp"
                     android:layout_height="64dp"
-                    android:layout_weight="2"
-                    android:text="✅ Selesai di Sini"
-                    android:textSize="17sp"
-                    app:backgroundTint="#15803D" />
+                    android:layout_weight="1"
+                    android:maxLines="2"
+                    android:textColor="@color/primary"
+                    android:textSize="14sp" />
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnLewatiTitik"
+                    android:id="@+id/btnKembaliAntrian"
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                     android:layout_width="0dp"
                     android:layout_height="64dp"
                     android:layout_marginStart="6dp"
                     android:layout_weight="1"
-                    android:text="⏭ Lewati"
+                    android:maxLines="2"
+                    android:text="📋 Kembali ke Antrian"
                     android:textColor="@color/primary"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
             </LinearLayout>
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnGantiTampilan"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="match_parent"
-                android:layout_height="56dp"
-                android:layout_marginTop="6dp"
-                android:textColor="@color/primary"
-                android:textSize="15sp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnKembaliAntrian"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="match_parent"
-                android:layout_height="64dp"
-                android:layout_marginTop="6dp"
-                android:text="📋 Kembali ke Antrian"
-                android:textColor="@color/primary"
-                android:textSize="18sp" />
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>
