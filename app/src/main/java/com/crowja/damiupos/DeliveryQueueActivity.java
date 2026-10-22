@@ -989,7 +989,30 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       rg.addView(rbMine);
       rg.addView(rbCustom);
       rg.addView(rbOpen);
+      final android.widget.RadioButton rbOldest = new android.widget.RadioButton(this);
+      rbOldest.setText("⏳ Umur Tertua (semua wilayah + Pesanan Terbuka)");
+      rbOldest.setId(View.generateViewId());
+      rg.addView(rbOldest);
       box.addView(rg);
+      // Umur Tertua: zona yang disapu — bawaan SEMUA tercentang (Pesanan Terbuka selalu ikut).
+      final LinearLayout oldest = new LinearLayout(this);
+      oldest.setOrientation(LinearLayout.VERTICAL);
+      oldest.setPadding(this.dp(16f), 0, 0, 0);
+      oldest.setVisibility(View.GONE);
+      final List<android.widget.CheckBox> oldBoxes = new ArrayList<>();
+      final List<Integer> oldIdx = new ArrayList<>();
+      for (int i = 0; i < zones.length(); i++) {
+         JSONObject z = zones.optJSONObject(i);
+         if (z == null) continue;
+         String dev = strJson(z, "device_name");
+         android.widget.CheckBox cb = new android.widget.CheckBox(this);
+         cb.setText("🧭 " + safe(z.optString("label")) + " · 📱 " + (dev != null && !dev.isEmpty() ? dev : "tanpa perangkat"));
+         cb.setChecked(true);
+         oldest.addView(cb);
+         oldBoxes.add(cb);
+         oldIdx.add(z.optInt("index", i));
+      }
+      box.addView(oldest);
 
       final LinearLayout custom = new LinearLayout(this);
       custom.setOrientation(LinearLayout.VERTICAL);
@@ -1048,7 +1071,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
       box.addView(cbPickup);
 
-      rg.setOnCheckedChangeListener((g, id) -> custom.setVisibility(id == rbCustom.getId() ? View.VISIBLE : View.GONE));
+      rg.setOnCheckedChangeListener((g, id) -> {
+         custom.setVisibility(id == rbCustom.getId() ? View.VISIBLE : View.GONE);
+         oldest.setVisibility(id == rbOldest.getId() ? View.VISIBLE : View.GONE);
+      });
       rbMine.setChecked(true);
       custom.setVisibility(View.GONE);
 
@@ -1073,7 +1099,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          try {
             JSONObject body = new JSONObject();
             boolean isCustom = rbCustom.isChecked();
-            body.put("mode", isCustom ? "custom" : (rbOpen.isChecked() ? "open" : "mine"));
+            body.put("mode", isCustom ? "custom" : (rbOpen.isChecked() ? "open" : (rbOldest.isChecked() ? "oldest" : "mine")));
+            if (rbOldest.isChecked()) {
+               JSONArray oz = new JSONArray();
+               for (int i = 0; i < oldBoxes.size(); i++) if (oldBoxes.get(i).isChecked()) oz.put(oldIdx.get(i));
+               if (!oldBoxes.isEmpty() && oz.length() == 0) {
+                  Toast.makeText(this, "Centang minimal satu wilayah.", Toast.LENGTH_SHORT).show();
+                  return;
+               }
+               if (oz.length() < oldBoxes.size()) body.put("zones", oz);
+            }
             if (cbSales.isChecked() && takeSlugs.isEmpty() && !allSlugs.isEmpty()) {
                Toast.makeText(this, "Pilih minimal satu produk.", Toast.LENGTH_SHORT).show();
                return;
