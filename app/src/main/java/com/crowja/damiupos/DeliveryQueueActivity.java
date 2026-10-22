@@ -214,6 +214,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    // Filter jenis order per tab: 0 = semua, 1 = Penjualan saja (JUAL), 2 = Ambil Galon saja (KEMBALI/ambil).
    private static final int KIND_ALL = 0, KIND_JUAL = 1, KIND_AMBIL = 2;
    private int kindMine = KIND_ALL, kindOther = KIND_ALL, kindOpen = KIND_ALL;
+   // Filter PRODUK per tab (badge slug, boleh banyak; kosong = semua produk).
+   private final java.util.Set<String> slugMine = new java.util.HashSet<>(), slugOther = new java.util.HashSet<>(),
+         slugOpen = new java.util.HashSet<>();
    private static final int SORT_OPEN_DISTANCE = 0;
    private static final int SORT_OPEN_GALON = 1;
    private static final int SORT_OPEN_AGE = 2;
@@ -464,7 +467,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.addKindFilter(cbKomplainMine, (k) -> {
          this.kindMine = k;
          this.adapter.applyFilter();
-      });
+      }, this.slugMine, () -> this.adapter.applyFilter());
       if (cbKomplainMine != null) {
          cbKomplainMine.setOnCheckedChangeListener((b, checked) -> {
             this.complaintOnlyMine = checked;
@@ -602,7 +605,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.addKindFilter(cbKomplainOpen, (k) -> {
          this.kindOpen = k;
          this.openDispatchAdapter.applyFilterSort();
-      });
+      }, this.slugOpen, () -> this.openDispatchAdapter.applyFilterSort());
       View searchOtherBox = this.findViewById(id.etSearchOther);
       while (searchOtherBox != null && !(searchOtherBox instanceof com.google.android.material.textfield.TextInputLayout)
             && searchOtherBox.getParent() instanceof View) {
@@ -627,7 +630,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.addKindFilter(cbKomplainOther != null ? cbKomplainOther : searchOtherBox, (k) -> {
          this.kindOther = k;
          this.otherDevicesAdapter.applyFilterSort();
-      });
+      }, this.slugOther, () -> this.otherDevicesAdapter.applyFilterSort());
       if (cbKomplainOpen != null) {
          cbKomplainOpen.setOnCheckedChangeListener((b, checked) -> {
             this.complaintOnlyOpen = checked;
@@ -921,6 +924,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * diambil alih ke Antrean Saya (server: DeliveryWilayahTake). Penjualan default dicentang, Ambil
     * Galon Saja tidak — sama dengan dialog ▶.
     */
+   /** Dialog Ambil Antrean dibuka dari "➕ Tambah ke Rit": hasilnya (termasuk Antrian Saya yang belum ikut rit)
+    *  langsung dimasukkan ke rit berjalan. */
+   private boolean takeForRun = false;
+
    private void showTakeWilayahDialog() {
       SyncSettings cfg = this.syncCfg();
       if (!cfg.isEnrolled()) {
@@ -1034,7 +1041,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       ScrollView sv = new ScrollView(this);
       sv.addView(box);
-      AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle("📥 Ambil Antrean").setView(sv)
+      final boolean forRun = this.takeForRun && this.isRunning();
+      this.takeForRun = false;
+      if (forRun) {
+         // Sisa muatan rit berjalan sebagai batas galon bawaan.
+         int left = maxLoad > 0 ? Math.max(0, maxLoad - this.runLoadGalon()) : 0;
+         etGal.setText(left > 0 ? String.valueOf(left) : "");
+         rbMine.setText("🧭 Sesuai wilayah saya + Antrian Saya yang belum ikut rit");
+      }
+      AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle(forRun ? "➕ Tambah ke Rit Berjalan" : "📥 Ambil Antrean").setView(sv)
             .setPositiveButton("Ambil", (DialogInterface.OnClickListener) null)
             .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
       dlg.setOnShowListener(di -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
@@ -1050,6 +1065,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (!g.isEmpty()) body.put("max_galon", Integer.parseInt(g));
             body.put("include_sales", cbSales.isChecked());
             body.put("include_pickup", cbPickup.isChecked());
+            if (forRun) body.put("include_mine", true);
+            body.put("_for_run", forRun);
             double km = 0;
             if (isCustom) {
                JSONArray zs = new JSONArray();
@@ -1088,7 +1105,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       dlg.show();
    }
 
+   /** Total galon (non ambil-saja) di rit yang sedang berjalan. */
+   private int runLoadGalon() {
+      int g = 0;
+      for (Transaction t : this.runStops()) if (t != null && !DeliveryPlanner.isPickupOnly(t)) g += Math.max(0, t.getJumlahGalon());
+      return g;
+   }
+
    private void runTakeQueue(JSONObject body) {
+      final boolean forRun = body.optBoolean("_for_run", false);
+      body.remove("_for_run");
       SyncSettings cfg = this.syncCfg();
       android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
       wait.setMessage("Mengambil antrean…");
@@ -1097,10 +1123,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       (new Thread(() -> {
          String msg;
          boolean ok = false;
+         List<String> uuids = new ArrayList<>();
          try {
             JSONObject r = (new SyncApi(cfg)).takeQueue(body);
             ok = true;
             msg = r.optString("message", "Antrean diambil.");
+            JSONArray us = r.optJSONArray("uuids");
+            for (int i = 0; us != null && i < us.length(); i++) if (!us.optString(i).isEmpty()) uuids.add(us.optString(i));
          } catch (SyncApi.SyncException se) {
             String m = se.serverMessage();
             msg = m != null && !m.isEmpty() ? m : "Gagal mengambil antrean (kode " + se.code + ").";
@@ -1113,6 +1142,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             try { wait.dismiss(); } catch (Exception ignored) {}
             if (this.isFinishing() || this.isDestroyed()) return;
             Toast.makeText(this, fm, Toast.LENGTH_LONG).show();
+            // Tambah ke Rit: order diserap ke rit berjalan begitu barisnya ada di HP (pola pending-uuid).
+            if (fok && forRun && !uuids.isEmpty()) {
+               (new SettingsDao(DatabaseHelper.getInstance(this))).addDeliveryRunPendingUuids(uuids);
+            }
             if (fok) com.crowja.damiupos.sync.SyncScheduler.syncNow(this.getApplicationContext());
             this.loadData();
             this.loadOtherDevices();
@@ -3210,6 +3243,90 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * setelah {@code anchor} (checkbox Komplain / kotak cari) di induknya. Antrean selama ini campur
     * antara order jual dan order ambil galon (KEMBALI).
     */
+   private void addKindFilter(View anchor, java.util.function.IntConsumer onChange, java.util.Set<String> slugSel, Runnable onSlug) {
+      this.addKindFilter(anchor, onChange);
+      if (anchor == null || !(anchor.getParent() instanceof View)) return;
+      // Baris filter kind sudah disisipkan sebagai HorizontalScrollView; baris badge produk tepat di bawahnya.
+      View kindScroll = anchor.getParent() instanceof LinearLayout && anchor.getParent().getParent() instanceof android.widget.HorizontalScrollView
+            ? (View) anchor.getParent().getParent() : null;
+      android.view.ViewGroup parent;
+      int at;
+      if (kindScroll != null && kindScroll.getParent() instanceof android.view.ViewGroup) {
+         parent = (android.view.ViewGroup) kindScroll.getParent();
+         at = parent.indexOfChild(kindScroll) + 1;
+      } else {
+         parent = (android.view.ViewGroup) anchor.getParent();
+         at = parent.indexOfChild(anchor) + 2;
+      }
+      List<Product> products = new ProductDao(DatabaseHelper.getInstance(this)).getAll();
+      LinearLayout row = new LinearLayout(this);
+      row.setOrientation(LinearLayout.HORIZONTAL);
+      row.setPadding(0, this.dp(2f), 0, this.dp(4f));
+      java.util.Set<String> seen = new java.util.HashSet<>();
+      for (Product pr : products) {
+         String slug = pr.getSlug() != null ? pr.getSlug().trim() : "";
+         if (slug.isEmpty() || !seen.add(slug.toUpperCase(Locale.US))) continue;
+         int color = 0xFF1565C0;
+         try {
+            if (pr.getColor() != null && !pr.getColor().trim().isEmpty()) color = Color.parseColor(pr.getColor().trim());
+         } catch (IllegalArgumentException ignored) {
+         }
+         final int col = color;
+         final String key = slug.toUpperCase(Locale.US);
+         TextView chip = this.makeDetailBadge(slug, col);
+         chip.setTextSize(13f);
+         chip.setPadding(this.dp(12f), this.dp(5f), this.dp(12f), this.dp(5f));
+         final Runnable paint = () -> {
+            boolean on = slugSel.contains(key);
+            GradientDrawable g = new GradientDrawable();
+            g.setCornerRadius(this.dp(12f));
+            g.setColor(on ? col : 0x00000000);
+            g.setStroke(this.dp(1.5f), col);
+            chip.setBackground(g);
+            chip.setTextColor(on ? chipTextColor(col) : col);
+            chip.setText((on ? "✓ " : "") + slug);
+         };
+         paint.run();
+         chip.setOnClickListener(v -> {
+            if (!slugSel.remove(key)) slugSel.add(key);
+            paint.run();
+            onSlug.run();
+         });
+         row.addView(chip);
+      }
+      if (row.getChildCount() == 0) return;
+      android.widget.HorizontalScrollView sc = new android.widget.HorizontalScrollView(this);
+      sc.setHorizontalScrollBarEnabled(false);
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+      lp.setMarginStart(this.dp(12f));
+      sc.setLayoutParams(lp);
+      sc.addView(row);
+      parent.addView(sc, Math.min(at, parent.getChildCount()));
+   }
+
+   /** Order punya salah satu produk terpilih? (kosong = lolos semua). */
+   private boolean slugMatches(java.util.Set<String> sel, Transaction t) {
+      if (sel.isEmpty()) return true;
+      for (String k : this.mergedChipItems(t.getItems()).keySet()) if (sel.contains(k.trim().toUpperCase(Locale.US))) return true;
+      return false;
+   }
+
+   private boolean slugMatches(java.util.Set<String> sel, JSONObject o) {
+      if (sel.isEmpty()) return true;
+      JSONArray arr = o.optJSONArray("item_slugs");
+      for (int i = 0; arr != null && i < arr.length(); i++) {
+         JSONObject it = arr.optJSONObject(i);
+         String sl = it != null ? it.optString("slug", "") : "";
+         if (!sl.isEmpty() && sel.contains(sl.trim().toUpperCase(Locale.US))) return true;
+      }
+      for (String k : this.mergedCsvChips(o.optString("items", "")).keySet()) {
+         int z = k.indexOf('\u0000');
+         String label = (z >= 0 ? k.substring(0, z) : k).trim().toUpperCase(Locale.US);
+         if (sel.contains(label)) return true;
+      }
+      return false;
+   }
+
    private void addKindFilter(View anchor, java.util.function.IntConsumer onChange) {
       if (anchor == null || !(anchor.getParent() instanceof android.view.ViewGroup)) return;
       android.view.ViewGroup parent = (android.view.ViewGroup) anchor.getParent();
@@ -5175,7 +5292,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       View btnRunAdd = this.findViewById(id.btnRunAdd);
       if (btnRunAdd != null) {
          btnRunAdd.setVisibility(run != null ? 0 : 8);
-         btnRunAdd.setOnClickListener((v) -> this.showAddToRunPicker());
+         btnRunAdd.setOnClickListener((v) -> {
+            this.takeForRun = true;
+            this.showTakeWilayahDialog();
+         });
       }
 
       View fabNavigasiRit = this.findViewById(id.fabNavigasiRit);
@@ -6111,7 +6231,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       this.rememberAlarmedLate();
       this.lateAlarmSnoozeUntilMs = now + LATE_ALARM_COOLDOWN_MS;
-      this.showLateAlarmDialog(late);
+      // Popup kini opsional (Pengaturan → "Popup Pesanan Terlambat", bawaan MATI); tanda merah di kartu tetap.
+      if ("1".equals((new SettingsDao(DatabaseHelper.getInstance(this))).get(K_LATE_ALARM_POPUP, "0"))) {
+         this.showLateAlarmDialog(late);
+      }
    }
 
    /** Baca kembali id yang sudah pernah membunyikan alarm. Id yang tak terbaca dilewati diam-diam:
@@ -6163,6 +6286,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       }
    }
+
+   /** SettingsDao: "1" = tampilkan popup Pesanan Terlambat (lokal per HP, bawaan "0"). */
+   public static final String K_LATE_ALARM_POPUP = "late_alarm_popup_enabled";
 
    private void showLateAlarmDialog(List<Transaction> late) {
       if (!this.isFinishing() && !this.isDestroyed() && (this.lateDialog == null || !this.lateDialog.isShowing())) {
@@ -11016,6 +11142,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          boolean complaintOnly = DeliveryQueueActivity.this.complaintOnlyOther;
          for(JSONObject o : this.rawData) {
             if (!kindMatches(kind, o.optBoolean("pickup_only", false))) continue;
+            if (!DeliveryQueueActivity.this.slugMatches(DeliveryQueueActivity.this.slugOther, o)) continue;
             if (complaintOnly && !o.optBoolean("complained", false)) continue;
             if (q.isEmpty()) {
                this.data.add(o);
@@ -11273,13 +11400,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
          boolean complaintOnly = DeliveryQueueActivity.this.complaintOnlyMine;
          int kind = DeliveryQueueActivity.this.kindMine;
-         if (q.isEmpty() && !complaintOnly && kind == KIND_ALL) {
+         if (q.isEmpty() && !complaintOnly && kind == KIND_ALL && DeliveryQueueActivity.this.slugMine.isEmpty()) {
             return base;
          }
          List<Transaction> filtered = new ArrayList<>();
          for (Transaction t : base) {
             if (complaintOnly && !t.isComplained()) continue;
             if (!kindMatches(kind, DeliveryPlanner.isPickupOnly(t))) continue;
+            if (!DeliveryQueueActivity.this.slugMatches(DeliveryQueueActivity.this.slugMine, t)) continue;
             String name = safe(t.getCustomerName()).toLowerCase(Locale.US);
             String phone = t.getCustomerPhone() != null ? t.getCustomerPhone().toLowerCase(Locale.US) : "";
             if (q.isEmpty() || name.contains(q) || phone.contains(q) || CustomerDao.phoneMatches(phone, q)) filtered.add(t);
@@ -11570,6 +11698,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          for(Transaction t : this.rawData) {
             if (complaintOnly && !t.isComplained()) continue;
             if (!kindMatches(kind, DeliveryPlanner.isPickupOnly(t))) continue;
+            if (!DeliveryQueueActivity.this.slugMatches(DeliveryQueueActivity.this.slugOpen, t)) continue;
             if (q.isEmpty()) {
                this.data.add(t);
             } else {
