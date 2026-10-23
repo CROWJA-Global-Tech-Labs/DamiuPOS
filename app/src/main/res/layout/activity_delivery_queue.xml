@@ -222,6 +222,25 @@
                             android:textSize="15sp"
                             android:textStyle="bold" />
 
+                        <!-- 📢 Broadcast WA Masalah: pilih pelanggan antrean (slug + jenis galon, filter) → WA lewat Bridge. -->
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnBroadcastMasalah"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="40dp"
+                            android:layout_height="40dp"
+                            android:layout_marginStart="8dp"
+                            android:contentDescription="Broadcast WA Masalah"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:insetLeft="0dp"
+                            android:insetRight="0dp"
+                            android:minWidth="0dp"
+                            android:minHeight="0dp"
+                            android:padding="0dp"
+                            android:text="📢"
+                            android:textSize="16sp"
+                            app:cornerRadius="10dp" />
+
                         <!-- 🔄 Refresh RIT: susun ulang seluruh antrean jadi rute terpendek (jarak
                              tempuh) dari posisi HP sekarang — dihitung server (OSRM). -->
                         <com.google.android.material.button.MaterialButton

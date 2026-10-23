@@ -22,6 +22,12 @@
         android:title="🚧 Laporkan Kendala Pengiriman"
         app:showAsAction="never" />
 
+    <!-- WA massal ke pelanggan Antrean Saya yang dicentang (DeliveryQueueActivity.showBroadcastMasalah). Gate tab 0. -->
+    <item
+        android:id="@+id/action_broadcast_masalah"
+        android:title="📢 Broadcast WA Masalah"
+        app:showAsAction="never" />
+
     <!-- 📜 dipilih karena 🗺 🚧 ⚠️ 🏁 🎲 sudah dipakai fitur lain. TIDAK di-gate per-tab: riwayat
          lokal ini milik perangkat ini di tab mana pun, jadi menyembunyikannya di tab 2/3 justru
          membingungkan (beda dari 🚧 yang memang soal antrian perangkat ini). -->
