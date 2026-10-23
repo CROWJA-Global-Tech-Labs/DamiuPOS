@@ -572,6 +572,11 @@ public class SyncApi {
         return post(cfg.getBaseUrl() + "/api/delivery/trips/" + ruleId + "/start", body, cfg.getToken());
     }
 
+    /** 📜 Jurnal Pesanan: riwayat order dari server (dibuat, diedit, dialihkan, diselesaikan, …). */
+    public JSONObject transactionJournal(String uuid) throws Exception {
+        return get(cfg.getBaseUrl() + "/api/transactions/" + android.net.Uri.encode(uuid) + "/journal", cfg.getToken());
+    }
+
     public JSONObject devicesQueueAll() throws Exception {
         return get(cfg.getBaseUrl() + "/api/devices/queue-all", cfg.getToken());
     }

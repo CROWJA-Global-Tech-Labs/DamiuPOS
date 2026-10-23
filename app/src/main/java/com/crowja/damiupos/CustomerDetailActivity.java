@@ -1388,7 +1388,20 @@ public class CustomerDetailActivity extends AppCompatActivity {
         body.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.text_primary));
         body.setPadding(dp(22), dp(8), dp(22), 0);
         android.widget.ScrollView sv = new android.widget.ScrollView(this);
-        sv.addView(body);
+        android.widget.LinearLayout col = new android.widget.LinearLayout(this);
+        col.setOrientation(android.widget.LinearLayout.VERTICAL);
+        col.addView(body);
+        final String trxUuid = str(t, "uuid");
+        if (trxUuid != null && !trxUuid.isEmpty()) {
+            android.widget.TextView jl = new android.widget.TextView(this);
+            jl.setText("📜 Lihat Jurnal Pesanan →");
+            jl.setTextSize(15);
+            jl.setTextColor(0xFF1565C0);
+            jl.setPadding(dp(22), dp(12), dp(22), dp(4));
+            jl.setOnClickListener(v -> showOrderJournal(trxUuid));
+            col.addView(jl);
+        }
+        sv.addView(col);
         final long localId = transactionDao.getIdBySyncUuid(str(t, "uuid"));
         androidx.appcompat.app.AlertDialog.Builder b = new androidx.appcompat.app.AlertDialog.Builder(this)
                 .setTitle(kembali ? "Detail Galon Kembali" : "Detail Transaksi")
@@ -1413,6 +1426,49 @@ public class CustomerDetailActivity extends AppCompatActivity {
      * CASH BON lewat jalur yang sama dengan Tandai Selesai (TransactionDao.applyDeliveryAdjustment): bayar Rp0,
      * metode HUTANG, penanda [CASH BON] + alasan; totalnya masuk hutang pelanggan & tersinkron ke server.
      */
+    /** 📜 Jurnal Pesanan dari server — siapa membuat, mengedit, mengalihkan, menyelesaikan order ini. */
+    private void showOrderJournal(String uuid) {
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+        android.widget.Toast.makeText(this, "Memuat jurnal…", android.widget.Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            String text;
+            try {
+                org.json.JSONObject r = new com.crowja.damiupos.sync.SyncApi(cfg).transactionJournal(uuid);
+                StringBuilder sb = new StringBuilder();
+                String dev = r.optString("current_device", "");
+                if (!dev.isEmpty()) sb.append("📱 Sekarang di: ").append(dev).append("\n\n");
+                org.json.JSONArray es = r.optJSONArray("entries");
+                for (int i = 0; es != null && i < es.length(); i++) {
+                    org.json.JSONObject e = es.optJSONObject(i);
+                    if (e == null) continue;
+                    String at = e.optString("at", "");
+                    if (at.length() >= 19) at = at.substring(8, 10) + "/" + at.substring(5, 7) + " " + at.substring(11, 19);
+                    sb.append("• ").append(at).append(" — ").append(e.optString("summary", e.optString("event")));
+                    String who = e.optString("actor", "");
+                    if (!who.isEmpty() && !"null".equals(who)) sb.append("\n   oleh ").append(who);
+                    sb.append("\n\n");
+                }
+                text = sb.length() > 0 ? sb.toString().trim() : "Belum ada catatan jurnal untuk pesanan ini.";
+            } catch (Exception e) {
+                text = "Gagal memuat jurnal — periksa koneksi internet.";
+            }
+            final String ft = text;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                android.widget.TextView tv = new android.widget.TextView(this);
+                tv.setText(ft);
+                tv.setTextSize(14);
+                tv.setTextIsSelectable(true);
+                tv.setTextColor(androidx.core.content.ContextCompat.getColor(this, R.color.text_primary));
+                tv.setPadding(dp(22), dp(8), dp(22), 0);
+                android.widget.ScrollView jsv = new android.widget.ScrollView(this);
+                jsv.addView(tv);
+                new androidx.appcompat.app.AlertDialog.Builder(this).setTitle("📜 Jurnal Pesanan")
+                        .setView(jsv).setPositiveButton("Tutup", null).show();
+            });
+        }).start();
+    }
+
     private void confirmMakeDebt(Transaction t) {
         android.widget.EditText reason = new android.widget.EditText(this);
         reason.setHint("Alasan (mis. uang belum diterima)");
