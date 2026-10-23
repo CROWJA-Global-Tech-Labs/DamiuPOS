@@ -107,6 +107,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
                 android:text="Antar/proses order, lalu tandai Selesai untuk mencatat lama proses."
+                android:visibility="gone"
                 android:textColor="#D6FFFFFF"
                 android:textSize="12sp" />
         </LinearLayout>

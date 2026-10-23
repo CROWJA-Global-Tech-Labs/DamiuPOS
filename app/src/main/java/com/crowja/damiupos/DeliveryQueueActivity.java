@@ -2097,6 +2097,29 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                      if (!v.isEmpty()) this.tripSlugs.put(k, v);
                   }
                }
+               JSONObject wm = res.optJSONObject("wilayah");
+               if (wm != null) {
+                  this.orderWilayah.clear();
+                  for (java.util.Iterator<String> it = wm.keys(); it.hasNext(); ) {
+                     String k = it.next();
+                     this.orderWilayah.put(k, wm.optString(k, ""));
+                  }
+               }
+               JSONArray wo = res.optJSONArray("wilayah_options");
+               if (wo != null) {
+                  List<String[]> opts = new ArrayList<>();
+                  for (int i = 0; i < wo.length(); i++) {
+                     JSONObject o = wo.optJSONObject(i);
+                     if (o != null) opts.add(new String[]{o.optString("uuid"), o.optString("label")});
+                  }
+                  this.wilayahOptions = opts;
+               }
+               JSONArray to = res.optJSONArray("trip_options");
+               if (to != null) {
+                  List<String> opts = new ArrayList<>();
+                  for (int i = 0; i < to.length(); i++) opts.add(to.optString(i));
+                  this.tripOptions = opts;
+               }
             } catch (Exception var6) {
                failed = true;
             }
@@ -3409,11 +3432,106 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          at = parent.indexOfChild(anchor) + 2;
       }
       android.widget.HorizontalScrollView sc = this.buildSlugChipRow(slugSel, onSlug, false);
-      if (sc == null) return;
+      LinearLayout row = new LinearLayout(this);
+      row.setOrientation(LinearLayout.HORIZONTAL);
+      row.setGravity(android.view.Gravity.CENTER_VERTICAL);
       LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
       lp.setMarginStart(this.dp(12f));
-      sc.setLayoutParams(lp);
-      parent.addView(sc, Math.min(at, parent.getChildCount()));
+      row.setLayoutParams(lp);
+      if (sc != null) row.addView(sc, new LinearLayout.LayoutParams(0, -2, 1f));
+      // Dropdown centang "🧭 Wilayah" & "🗓 Trip" — kosong = semua (data dari /api/devices/queue-all).
+      final java.util.Set<String> wil = new java.util.HashSet<>();
+      final java.util.Set<String> trip = new java.util.HashSet<>();
+      this.wilayahSel.put(slugSel, wil);
+      this.tripSel.put(slugSel, trip);
+      row.addView(this.tagDropdown("🧭 Wilayah", wil, true, onSlug));
+      row.addView(this.tagDropdown("🗓 Trip", trip, false, onSlug));
+      parent.addView(row, Math.min(at, parent.getChildCount()));
+   }
+
+   /** Pilihan filter wilayah/trip per tab (kunci = set slug tab itu). */
+   private final java.util.Map<java.util.Set<String>, java.util.Set<String>> wilayahSel = new java.util.IdentityHashMap<>();
+   private final java.util.Map<java.util.Set<String>, java.util.Set<String>> tripSel = new java.util.IdentityHashMap<>();
+   /** uuid order → uuid perangkat pemilik wilayah ("" = tanpa wilayah); pilihan dropdown. */
+   private final java.util.Map<String, String> orderWilayah = new java.util.concurrent.ConcurrentHashMap<>();
+   private volatile List<String[]> wilayahOptions = new ArrayList<>();
+   private volatile List<String> tripOptions = new ArrayList<>();
+   private static final String TAG_NONE = "__none__";
+
+   private TextView tagDropdown(String label, java.util.Set<String> sel, boolean wilayah, Runnable onChange) {
+      TextView b = this.makeDetailBadge(label + " ▾", 0xFF475569);
+      b.setTextSize(13f);
+      b.setPadding(this.dp(10f), this.dp(5f), this.dp(10f), this.dp(5f));
+      final Runnable paint = () -> {
+         int col = sel.isEmpty() ? 0xFF475569 : 0xFF6D28D9;
+         GradientDrawable g = new GradientDrawable();
+         g.setCornerRadius(this.dp(12f));
+         g.setColor(sel.isEmpty() ? 0x00000000 : col);
+         g.setStroke(this.dp(1.5f), col);
+         b.setBackground(g);
+         b.setTextColor(sel.isEmpty() ? col : chipTextColor(col));
+         b.setText(label + (sel.isEmpty() ? "" : " (" + sel.size() + ")") + " ▾");
+      };
+      paint.run();
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+      lp.setMarginStart(this.dp(6f));
+      b.setLayoutParams(lp);
+      b.setOnClickListener(v -> {
+         List<String> keys = new ArrayList<>();
+         List<String> names = new ArrayList<>();
+         if (wilayah) {
+            for (String[] o : this.wilayahOptions) { keys.add(o[0]); names.add(o[1]); }
+            keys.add(TAG_NONE); names.add("(tanpa wilayah)");
+         } else {
+            for (String t : this.tripOptions) { keys.add(t); names.add(t); }
+            keys.add(TAG_NONE); names.add("(bukan trip)");
+         }
+         if (keys.size() <= 1) {
+            Toast.makeText(this, wilayah ? "Data wilayah belum dimuat — buka tab Perangkat Lain / tunggu sebentar." : "Belum ada order di wilayah Trip Khusus.", 0).show();
+            return;
+         }
+         boolean[] on = new boolean[keys.size()];
+         for (int i = 0; i < keys.size(); i++) on[i] = sel.contains(keys.get(i));
+         (new AlertDialog.Builder(this)).setTitle(label + " (kosong = semua)")
+               .setMultiChoiceItems(names.toArray(new String[0]), on, (d, i, checked) -> on[i] = checked)
+               .setPositiveButton("Terapkan", (d, w) -> {
+                  sel.clear();
+                  for (int i = 0; i < keys.size(); i++) if (on[i]) sel.add(keys.get(i));
+                  paint.run();
+                  onChange.run();
+               })
+               .setNeutralButton("Semua", (d, w) -> { sel.clear(); paint.run(); onChange.run(); })
+               .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
+      });
+      return b;
+   }
+
+   /** Lolos filter wilayah & trip tab ini? (set kosong = semua). */
+   private boolean tagMatches(java.util.Set<String> slugSel, String uuid) {
+      java.util.Set<String> w = this.wilayahSel.get(slugSel);
+      java.util.Set<String> t = this.tripSel.get(slugSel);
+      String u = uuid != null ? uuid : "";
+      if (w != null && !w.isEmpty()) {
+         String o = this.orderWilayah.get(u);
+         if (!w.contains(o == null || o.isEmpty() ? TAG_NONE : o)) return false;
+      }
+      if (t != null && !t.isEmpty()) {
+         String s = this.tripSlugs.get(u);
+         if (!t.contains(s == null || s.isEmpty() ? TAG_NONE : s)) return false;
+      }
+      return true;
+   }
+
+   private boolean tagFiltersEmpty(java.util.Set<String> slugSel) {
+      java.util.Set<String> w = this.wilayahSel.get(slugSel);
+      java.util.Set<String> t = this.tripSel.get(slugSel);
+      return (w == null || w.isEmpty()) && (t == null || t.isEmpty());
+   }
+
+   private String trxUuid(Transaction t) {
+      String u = t.getSyncUuid();
+      if ((u == null || u.isEmpty()) && t.getId() > 0) u = this.dao.getSyncUuidById(t.getId());
+      return u;
    }
 
    /** Deretan chip produk per slug (warna produk; terisi = terpilih). {@code preselectAll} = semua
@@ -5448,6 +5566,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       } else {
          this.tvSummary.setText(n + " order menunggu diproses" + galonSuffix(totalGalonOf(list)));
       }
+      // Ringkasan "N order menunggu" redundan dengan badge tab — header biru hanya tampil saat rit berjalan
+      // (Mengantar…, badge muatan, Tambah ke Rit) atau di mode terpandu.
+      View hdr = (View) this.tvSummary.getParent();
+      if (hdr != null) hdr.setVisibility(!stops.isEmpty() || this.guidedMode ? View.VISIBLE : View.GONE);
 
       this.updateGuidedProductBadges(stops);
       Transaction run = stops.isEmpty() ? null : (Transaction)stops.get(0);
@@ -11537,6 +11659,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          for(JSONObject o : this.rawData) {
             if (!kindMatches(kind, o.optBoolean("pickup_only", false))) continue;
             if (!DeliveryQueueActivity.this.slugMatches(DeliveryQueueActivity.this.slugOther, o)) continue;
+            if (!DeliveryQueueActivity.this.tagMatches(DeliveryQueueActivity.this.slugOther, o.optString("uuid", ""))) continue;
             if (complaintOnly && !o.optBoolean("complained", false)) continue;
             if (q.isEmpty()) {
                this.data.add(o);
@@ -11795,7 +11918,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
          boolean complaintOnly = DeliveryQueueActivity.this.complaintOnlyMine;
          int kind = DeliveryQueueActivity.this.kindMine;
-         if (q.isEmpty() && !complaintOnly && kind == KIND_ALL && DeliveryQueueActivity.this.slugMine.isEmpty()) {
+         if (q.isEmpty() && !complaintOnly && kind == KIND_ALL && DeliveryQueueActivity.this.slugMine.isEmpty()
+               && DeliveryQueueActivity.this.tagFiltersEmpty(DeliveryQueueActivity.this.slugMine)) {
             return base;
          }
          List<Transaction> filtered = new ArrayList<>();
@@ -11803,6 +11927,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (complaintOnly && !t.isComplained()) continue;
             if (!kindMatches(kind, DeliveryPlanner.isPickupOnly(t))) continue;
             if (!DeliveryQueueActivity.this.slugMatches(DeliveryQueueActivity.this.slugMine, t)) continue;
+            if (!DeliveryQueueActivity.this.tagFiltersEmpty(DeliveryQueueActivity.this.slugMine)
+                  && !DeliveryQueueActivity.this.tagMatches(DeliveryQueueActivity.this.slugMine, DeliveryQueueActivity.this.trxUuid(t))) continue;
             String name = safe(t.getCustomerName()).toLowerCase(Locale.US);
             String phone = t.getCustomerPhone() != null ? t.getCustomerPhone().toLowerCase(Locale.US) : "";
             if (q.isEmpty() || name.contains(q) || phone.contains(q) || CustomerDao.phoneMatches(phone, q)
@@ -12095,6 +12221,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (complaintOnly && !t.isComplained()) continue;
             if (!kindMatches(kind, DeliveryPlanner.isPickupOnly(t))) continue;
             if (!DeliveryQueueActivity.this.slugMatches(DeliveryQueueActivity.this.slugOpen, t)) continue;
+            if (!DeliveryQueueActivity.this.tagFiltersEmpty(DeliveryQueueActivity.this.slugOpen)
+                  && !DeliveryQueueActivity.this.tagMatches(DeliveryQueueActivity.this.slugOpen, DeliveryQueueActivity.this.trxUuid(t))) continue;
             if (q.isEmpty()) {
                this.data.add(t);
             } else {
