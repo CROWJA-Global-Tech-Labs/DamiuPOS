@@ -2850,6 +2850,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          int bg = (Integer) r[3];
          TextView chip = this.chipAt(box, shown);
          chip.setText(typedChipText(r, assumed));
+         // Kapsul ber-tag jenis tak boleh di-ellipsis: ellipsis + span pil membuat tag menimpa angka qty.
+         chip.setEllipsize(chip.getText() instanceof android.text.Spanned ? null : TruncateAt.END);
          chip.setTextColor(chipTextColor(bg));
          ((GradientDrawable)chip.getBackground()).setColor(bg);
          chip.setVisibility(0);
@@ -3517,7 +3519,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          parent = (android.view.ViewGroup) anchor.getParent();
          at = parent.indexOfChild(anchor) + 2;
       }
-      android.widget.HorizontalScrollView sc = this.buildSlugChipRow(slugSel, onSlug, false);
+      android.widget.HorizontalScrollView sc = this.buildSlugChipRow(slugSel, onSlug, false, true);
       LinearLayout row = new LinearLayout(this);
       row.setOrientation(LinearLayout.HORIZONTAL);
       row.setGravity(android.view.Gravity.CENTER_VERTICAL);
@@ -3623,6 +3625,58 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    /** Deretan chip produk per slug (warna produk; terisi = terpilih). {@code preselectAll} = semua
     *  langsung terpilih (dialog Ambil Antrean). */
    private android.widget.HorizontalScrollView buildSlugChipRow(java.util.Set<String> slugSel, Runnable onSlug, boolean preselectAll) {
+      return this.buildSlugChipRow(slugSel, onSlug, preselectAll, false);
+   }
+
+   /** Pilihan jenis galon per produk di filter tiap tab (kunci = set slug tab itu): slug → jenis (kosong = semua). */
+   private final java.util.Map<java.util.Set<String>, java.util.Map<String, java.util.Set<String>>> slugTypeSel = new java.util.IdentityHashMap<>();
+   /** Kunci "Belum diketahui" (order tanpa jenis galon) di filter jenis. */
+   private static final String TYPE_UNKNOWN = "?";
+
+   private java.util.Set<String> slugTypes(java.util.Set<String> slugSel, String key) {
+      java.util.Map<String, java.util.Set<String>> m = this.slugTypeSel.get(slugSel);
+      if (m == null) this.slugTypeSel.put(slugSel, m = new java.util.HashMap<>());
+      java.util.Set<String> s = m.get(key);
+      if (s == null) m.put(key, s = new java.util.LinkedHashSet<>());
+      return s;
+   }
+
+   /** Ketuk kapsul produk di filter → pilih jenis galon untuk produk itu (KRN/NON-KRN/AQUA/BEBAS/CAMPUR/?). */
+   private void showSlugTypeMenu(String slug, String key, java.util.Set<String> slugSel, Runnable paint, Runnable onSlug) {
+      String[] keys = {GalonTypeUi.KERAN, GalonTypeUi.NON_KERAN, GalonTypeUi.AQUA, GalonTypeUi.BEBAS, GalonTypeUi.CAMPUR, TYPE_UNKNOWN};
+      String[] labels = {"🚰 KRN — Keran", "⭕ NON-KRN — Non-keran", "💧 AQUA", "✳️ BEBAS", "🔀 CAMPUR", "❔ Belum diketahui"};
+      java.util.Set<String> types = this.slugTypes(slugSel, key);
+      boolean picked = slugSel.contains(key);
+      boolean[] on = new boolean[keys.length];
+      for (int i = 0; i < keys.length; i++) on[i] = picked && types.contains(keys[i]);
+      (new AlertDialog.Builder(this)).setTitle(slug + " — jenis galon (kosong = semua)")
+            .setMultiChoiceItems(labels, on, (d, i, checked) -> on[i] = checked)
+            .setPositiveButton("Terapkan", (d, w) -> {
+               types.clear();
+               for (int i = 0; i < keys.length; i++) if (on[i]) types.add(keys[i]);
+               slugSel.add(key);
+               paint.run();
+               onSlug.run();
+            })
+            .setNeutralButton("Semua jenis", (d, w) -> {
+               types.clear();
+               slugSel.add(key);
+               paint.run();
+               onSlug.run();
+            })
+            .setNegativeButton(picked ? "Hapus filter" : "Batal", (d, w) -> {
+               if (slugSel.remove(key)) {
+                  types.clear();
+                  paint.run();
+                  onSlug.run();
+               }
+            })
+            .show();
+   }
+
+   /** @param typeMenu true = kapsul membuka pilihan jenis galon (filter tab); false = toggle biasa (Ambil Antrean). */
+   private android.widget.HorizontalScrollView buildSlugChipRow(java.util.Set<String> slugSel, Runnable onSlug, boolean preselectAll,
+                                                                boolean typeMenu) {
       List<Product> products = new ProductDao(DatabaseHelper.getInstance(this)).getAll();
       LinearLayout row = new LinearLayout(this);
       row.setOrientation(LinearLayout.HORIZONTAL);
@@ -3650,10 +3704,23 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             g.setStroke(this.dp(1.5f), col);
             chip.setBackground(g);
             chip.setTextColor(on ? chipTextColor(col) : col);
-            chip.setText((on ? "✓ " : "") + slug);
+            String suffix = "";
+            if (typeMenu && on) {
+               StringBuilder tg = new StringBuilder();
+               for (String ty : this.slugTypes(slugSel, key)) {
+                  if (tg.length() > 0) tg.append('+');
+                  tg.append(TYPE_UNKNOWN.equals(ty) ? "?" : GalonTypeUi.tag(ty));
+               }
+               if (tg.length() > 0) suffix = " · " + tg;
+            }
+            chip.setText((on ? "✓ " : "") + slug + suffix + (typeMenu ? " ▾" : ""));
          };
          paint.run();
          chip.setOnClickListener(v -> {
+            if (typeMenu) {
+               this.showSlugTypeMenu(slug, key, slugSel, paint, onSlug);
+               return;
+            }
             if (!slugSel.remove(key)) slugSel.add(key);
             paint.run();
             onSlug.run();
@@ -3670,12 +3737,38 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    /** Order punya salah satu produk terpilih? (kosong = lolos semua). */
    private boolean slugMatches(java.util.Set<String> sel, Transaction t) {
       if (sel.isEmpty()) return true;
-      for (String k : this.mergedChipItems(t.getItems()).keySet()) if (sel.contains(k.trim().toUpperCase(Locale.US))) return true;
+      return this.typedRowsMatch(sel, this.typedRows(t));
+   }
+
+   /** Ada baris (produk, jenis galon) yang lolos filter? Produk terpilih tanpa pilihan jenis = semua jenis. */
+   private boolean typedRowsMatch(java.util.Set<String> sel, List<Object[]> rows) {
+      java.util.Map<String, java.util.Set<String>> tsel = this.slugTypeSel.get(sel);
+      for (Object[] r : rows) {
+         String k = ((String) r[0]).trim().toUpperCase(Locale.US);
+         if (!sel.contains(k)) continue;
+         java.util.Set<String> want = tsel != null ? tsel.get(k) : null;
+         if (want == null || want.isEmpty()) return true;
+         String ty = (String) r[1];
+         if (want.contains(ty.isEmpty() ? TYPE_UNKNOWN : ty)) return true;
+      }
+      return false;
+   }
+
+   /** Ada produk terpilih yang dibatasi jenis galonnya? */
+   private boolean slugTypeFiltered(java.util.Set<String> sel) {
+      java.util.Map<String, java.util.Set<String>> tsel = this.slugTypeSel.get(sel);
+      if (tsel == null) return false;
+      for (String k : sel) {
+         java.util.Set<String> w = tsel.get(k);
+         if (w != null && !w.isEmpty()) return true;
+      }
       return false;
    }
 
    private boolean slugMatches(java.util.Set<String> sel, JSONObject o) {
       if (sel.isEmpty()) return true;
+      // Dibatasi jenis galon → cocokkan per (produk, jenis) dari kapsul ber-tag baris server.
+      if (this.slugTypeFiltered(sel)) return this.typedRowsMatch(sel, this.typedRows(o));
       JSONArray arr = o.optJSONArray("item_slugs");
       for (int i = 0; arr != null && i < arr.length(); i++) {
          JSONObject it = arr.optJSONObject(i);
@@ -4737,6 +4830,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                TextView chip = this.chipAt(box, shown);
                int bg = (Integer) r[3];
                chip.setText(typedChipText(r, assumed));
+               chip.setEllipsize(chip.getText() instanceof android.text.Spanned ? null : TruncateAt.END);
                chip.setTextColor(chipTextColor(bg));
                ((GradientDrawable)chip.getBackground()).setColor(bg);
                chip.setVisibility(0);
@@ -4784,6 +4878,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       chip.setBackground(bgDrawable);
       chip.setText(label);
       chip.setTextColor(chipTextColor(bg));
+      if (label instanceof android.text.Spanned) chip.setEllipsize(null);   // tag jenis galon — lihat typedRows
       return chip;
    }
 
