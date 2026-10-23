@@ -1398,8 +1398,55 @@ public class CustomerDetailActivity extends AppCompatActivity {
         if (localId > 0 && !kembali) {
             b.setNeutralButton("Buka Struk", (d, w) -> startActivity(new android.content.Intent(this, ReceiptActivity.class)
                     .putExtra("transaction_id", localId)));
+            Transaction lt = transactionDao.getById(localId);
+            if (lt != null && "JUAL".equals(lt.getType()) && lt.getTotalHarga() > 0
+                    && !Transaction.PAY_HUTANG.equalsIgnoreCase(lt.getPaymentMethod() != null ? lt.getPaymentMethod().trim() : "")
+                    && (lt.getCatatan() == null || !lt.getCatatan().contains(TransactionDao.CASH_BON_MARKER))) {
+                b.setNegativeButton("Jadikan Hutang", (d, w) -> confirmMakeDebt(lt));
+            }
         }
         b.show();
+    }
+
+    /**
+     * "Jadikan Hutang": transaksi yang tercatat lunas ternyata uangnya belum diterima → ditulis ulang sebagai
+     * CASH BON lewat jalur yang sama dengan Tandai Selesai (TransactionDao.applyDeliveryAdjustment): bayar Rp0,
+     * metode HUTANG, penanda [CASH BON] + alasan; totalnya masuk hutang pelanggan & tersinkron ke server.
+     */
+    private void confirmMakeDebt(Transaction t) {
+        android.widget.EditText reason = new android.widget.EditText(this);
+        reason.setHint("Alasan (mis. uang belum diterima)");
+        reason.setText(TransactionDao.CASH_BON_REASON_UNPAID);
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        box.setPadding(dp(22), dp(8), dp(22), 0);
+        box.addView(reason);
+        androidx.appcompat.app.AlertDialog dlg = new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Jadikan Hutang?")
+                .setMessage("Transaksi " + (t.getReceiptNo() != null ? t.getReceiptNo() : "") + " senilai "
+                        + rupiah(t.getTotalHarga()) + " dicatat BELUM DIBAYAR dan ditambahkan ke hutang pelanggan.")
+                .setView(box)
+                .setPositiveButton("Jadikan Hutang", null)
+                .setNegativeButton("Batal", null)
+                .create();
+        dlg.setOnShowListener(x -> dlg.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String why = reason.getText().toString().trim();
+            if (why.isEmpty()) {
+                reason.setError("Isi alasannya");
+                return;
+            }
+            if (!why.equals(TransactionDao.CASH_BON_REASON_UNPAID) && !why.equals(TransactionDao.CASH_BON_REASON_AWAY)) {
+                why = TransactionDao.CASH_BON_REASON_OTHER + " — " + why;
+            }
+            int ret = transactionDao.getReturnedGalonForSale(t.getCustomerId(), t.getTanggal());
+            String by = new com.crowja.damiupos.db.SettingsDao(com.crowja.damiupos.db.DatabaseHelper.getInstance(this)).getCurrentUserName();
+            transactionDao.applyDeliveryAdjustment(t.getId(), null, ret, Transaction.PAY_HUTANG, true, 0.0, why, by);
+            com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+            dlg.dismiss();
+            android.widget.Toast.makeText(this, "Transaksi dijadikan hutang " + rupiah(t.getTotalHarga()) + ".", android.widget.Toast.LENGTH_LONG).show();
+            recreate();
+        }));
+        dlg.show();
     }
 
     private static String statusLabel(String s) {
