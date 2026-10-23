@@ -586,6 +586,12 @@ public class SyncApi {
         return post(cfg.getBaseUrl() + "/api/delivery/trips/" + ruleId + "/start", body, cfg.getToken());
     }
 
+    /** 📢 Broadcast WA Masalah: satu pesan ({nama}) ke pelanggan order antrean terpilih → {ok,message,queued,skipped,total,failed[]}. */
+    public JSONObject broadcastMasalah(String message, java.util.Collection<String> uuids) throws Exception {
+        JSONObject body = new JSONObject().put("message", message).put("uuids", new org.json.JSONArray(uuids));
+        return post(cfg.getBaseUrl() + "/api/delivery/broadcast-masalah", body, cfg.getToken());
+    }
+
     /** 📜 Jurnal Pesanan: riwayat order dari server (dibuat, diedit, dialihkan, diselesaikan, …). */
     public JSONObject transactionJournal(String uuid) throws Exception {
         return get(cfg.getBaseUrl() + "/api/transactions/" + android.net.Uri.encode(uuid) + "/journal", cfg.getToken());
