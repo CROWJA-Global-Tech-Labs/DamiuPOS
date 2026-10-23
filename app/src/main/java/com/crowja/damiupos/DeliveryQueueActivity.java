@@ -1526,7 +1526,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (failed.length() == 0) {
                Toast.makeText(this, fm, Toast.LENGTH_LONG).show();
             } else {
-               (new AlertDialog.Builder(this)).setTitle("📢 Broadcast WA Masalah").setMessage(fm + "\n\nDilewati:\n" + failed)
+               (new AlertDialog.Builder(this)).setTitle("📢 Broadcast WA Masalah").setMessage(fm + "\n\nTidak terkirim:\n" + failed)
                      .setPositiveButton("OK", (DialogInterface.OnClickListener) null).show();
             }
          });
