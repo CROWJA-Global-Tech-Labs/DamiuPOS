@@ -9634,25 +9634,47 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       AlertDialog.Builder b = (new AlertDialog.Builder(this)).setTitle("▶ Lanjutkan pesanan tertunda")
             .setMessage("Dari " + what + ":" + "\n\n" + "Pesanan kembali ke antrian aktif sekarang.")
             .setNegativeButton("Batal", (DialogInterface.OnClickListener) null)
-            .setPositiveButton("Semua (" + scope.size() + ")", (d, w) -> this.confirmBulkResumeTertunda(scope, offline, reload));
+            .setPositiveButton("Semua (" + scope.size() + ")", (d, w) -> this.askBulkResumeMode(scope, offline, reload));
       if (!due.isEmpty()) {
-         b.setNeutralButton("Jatuh tempo hari ini (" + due.size() + ")", (d, w) -> this.confirmBulkResumeTertunda(due, offline, reload));
+         b.setNeutralButton("Jatuh tempo hari ini (" + due.size() + ")", (d, w) -> this.askBulkResumeMode(due, offline, reload));
       }
       b.show();
    }
 
-   private void confirmBulkResumeTertunda(List<TertundaRows.Merged<Transaction>> todo, boolean offline, Runnable reload) {
+   /** Cara melanjutkan: sesuai perangkat pemegang (server merutekan) atau 📥 Lanjutkan & Ambil ke HP ini. */
+   private void askBulkResumeMode(List<TertundaRows.Merged<Transaction>> todo, boolean offline, Runnable reload) {
       if (todo.isEmpty()) return;
-      this.confirmTertundaTwoTap("▶ Lanjutkan " + todo.size() + " pesanan?",
-            todo.size() + " pesanan tertunda akan langsung kembali ke antrian aktif sekarang." + "\n\n" + "Ketuk \"Lanjutkan\" dua kali untuk memastikan.",
-            "Lanjutkan", "Melanjutkan…", (dialog, pos, neg) -> this.runBulkResumeTertunda(dialog, todo, offline, reload));
+      int claimable = 0;
+      for (TertundaRows.Merged<Transaction> m : todo) if (!offline && this.canClaimTertunda(m.server)) claimable++;
+      if (claimable == 0) {
+         this.confirmBulkResumeTertunda(todo, offline, false, reload);
+         return;
+      }
+      String[] opts = {"▶ Lanjutkan sesuai perangkat (" + todo.size() + ")", "📥 Lanjutkan & Ambil ke HP ini (" + claimable + ")"};
+      (new AlertDialog.Builder(this)).setTitle("Lanjutkan " + todo.size() + " pesanan")
+            .setItems(opts, (d, which) -> this.confirmBulkResumeTertunda(todo, offline, which == 1, reload))
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
    }
 
-   private void runBulkResumeTertunda(AlertDialog dialog, List<TertundaRows.Merged<Transaction>> todo, boolean offline, Runnable reload) {
+   private void confirmBulkResumeTertunda(List<TertundaRows.Merged<Transaction>> todo, boolean offline, boolean claim, Runnable reload) {
+      if (todo.isEmpty()) return;
+      if (claim) {
+         this.confirmTertundaTwoTap("📥 Lanjutkan & Ambil " + todo.size() + " pesanan?",
+               todo.size() + " pesanan dilanjutkan sekarang lalu dipindahkan ke antrian perangkat ini (yang tak bisa diambil tetap dilanjutkan sesuai perangkatnya).\n\nKetuk \"Lanjutkan & Ambil\" dua kali untuk memastikan.",
+               "Lanjutkan & Ambil", "Memindahkan…", (dialog, pos, neg) -> this.runBulkResumeTertunda(dialog, todo, offline, true, reload));
+         return;
+      }
+      this.confirmTertundaTwoTap("▶ Lanjutkan " + todo.size() + " pesanan?",
+            todo.size() + " pesanan tertunda akan langsung kembali ke antrian aktif sekarang." + "\n\n" + "Ketuk \"Lanjutkan\" dua kali untuk memastikan.",
+            "Lanjutkan", "Melanjutkan…", (dialog, pos, neg) -> this.runBulkResumeTertunda(dialog, todo, offline, false, reload));
+   }
+
+   private void runBulkResumeTertunda(AlertDialog dialog, List<TertundaRows.Merged<Transaction>> todo, boolean offline, boolean claim, Runnable reload) {
       SyncSettings cfg = this.syncCfg();
       new Thread(() -> {
          int ok = 0;
          int fail = 0;
+         int taken = 0;
          boolean anyLocal = false;
          List<String> touched = new ArrayList<>();
          for (TertundaRows.Merged<Transaction> m : todo) {
@@ -9661,9 +9683,24 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                if (path == TertundaRows.WritePath.SERVER) {
                   JSONObject body = new JSONObject();
                   body.put("transaction_uuid", m.uuid());
-                  new SyncApi(cfg).resumeTertunda(body);
+                  SyncApi api = new SyncApi(cfg);
+                  TertundaRows.ResumeOutcome res = TertundaRows.parseResume(api.resumeTertunda(body).toString());
                   touched.add(m.uuid());
                   ok++;
+                  if (claim && this.canClaimTertunda(m.server)) {
+                     String expected = TertundaRows.claimExpectedAfterResume(res, cfg.getDeviceUuid());
+                     try {
+                        if (expected != null) {
+                           JSONObject cb = new JSONObject();
+                           cb.put("transaction_uuid", m.uuid());
+                           cb.put("expected_device_uuid", expected);
+                           api.claimDelivery(cb);
+                        }
+                        taken++;
+                     } catch (Exception ignored) {
+                        // tetap dilanjutkan sesuai perangkatnya
+                     }
+                  }
                } else if (path != TertundaRows.WritePath.NONE && m.local != null) {
                   (new TransactionDao(DatabaseHelper.getInstance(this))).resumeTertunda(m.local.getId());
                   anyLocal = true;
@@ -9684,6 +9721,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
          final int fOk = ok;
          final int fFail = fail;
+         final int fTaken = taken;
          final boolean fLocal = anyLocal;
          this.runOnUiThread(() -> {
             if (this.isFinishing() || this.isDestroyed()) return;
@@ -9693,7 +9731,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (fLocal) SyncScheduler.syncNow(this.getApplicationContext());
             this.afterTertundaServerChange();
             this.loadData();
-            Toast.makeText(this, "▶ " + fOk + " pesanan dilanjutkan" + (fFail > 0 ? " · " + fFail + " gagal (coba lagi)" : "") + ".", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "▶ " + fOk + " pesanan dilanjutkan" + (claim ? ", " + fTaken + " diambil ke HP ini" : "") + (fFail > 0 ? " · " + fFail + " gagal (coba lagi)" : "") + ".", Toast.LENGTH_LONG).show();
             if (reload != null) reload.run();
          });
       }).start();
