@@ -53,9 +53,10 @@ public final class GalonTypeUi {
         return "";
     }
 
-    /** Teks tag kapital ringkas. */
+    /** Teks tag kapital ringkas — "KRN" / "NON-KRN" (dipendekkan supaya muat di kapsul slug). */
     public static String tag(String type) {
-        if (NON_KERAN.equals(type)) return "NON-KERAN";
+        if (KERAN.equals(type)) return "KRN";
+        if (NON_KERAN.equals(type)) return "NON-KRN";
         return type != null ? type : "";
     }
 
@@ -147,7 +148,8 @@ public final class GalonTypeUi {
         @Override
         public int getSize(Paint paint, CharSequence text, int start, int end, Paint.FontMetricsInt fm) {
             if (fm != null) paint.getFontMetricsInt(fm);
-            return Math.round(paint.measureText(text, start, end) + 2 * padH);
+            // ceil, bukan round: lebar yang dilaporkan tak boleh lebih kecil dari yang digambar.
+            return (int) Math.ceil(paint.measureText(text, start, end) + 2 * padH);
         }
 
         @Override
