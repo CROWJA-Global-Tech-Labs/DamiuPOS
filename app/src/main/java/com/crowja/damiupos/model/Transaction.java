@@ -131,6 +131,11 @@ public class Transaction {
     /** Foto bukti Selesai WAJIB untuk order INI (pesanan link reseller), apa pun setelan cabang.
      *  Server-authoritative, pull-only — lihat DatabaseHelper.COL_DELIVERY_PROOF_REQUIRED. */
     private boolean deliveryProofRequired;
+    /** Jenis galon pesanan — server-authoritative (lihat DatabaseHelper.COL_GALON_TYPE, GalonTypeUi). */
+    private String galonType;
+    private String galonTypeSource;
+    /** Rincian CAMPUR per produk, JSON [{slug,type,qty}] apa adanya dari server. */
+    private String galonSpec;
     private String deliveryDoneAt;
     /** Nama kurir yang menekan "Selesai" — bisa BEDA dari pembuat order (lihat markDelivered). */
     private String completedByName;
@@ -387,6 +392,13 @@ public class Transaction {
     public boolean isResellerOrder() {
         return catatan != null && catatan.contains(RESELLER_ORDER_MARKER);
     }
+
+    public String getGalonType() { return galonType; }
+    public void setGalonType(String v) { this.galonType = v; }
+    public String getGalonTypeSource() { return galonTypeSource; }
+    public void setGalonTypeSource(String v) { this.galonTypeSource = v; }
+    public String getGalonSpec() { return galonSpec; }
+    public void setGalonSpec(String v) { this.galonSpec = v; }
 
     public boolean isDeliveryProofRequired() { return deliveryProofRequired; }
     public void setDeliveryProofRequired(boolean v) { this.deliveryProofRequired = v; }

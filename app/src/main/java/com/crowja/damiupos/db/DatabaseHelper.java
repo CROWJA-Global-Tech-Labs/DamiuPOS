@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 104;
+    private static final int DATABASE_VERSION = 105;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -336,6 +336,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
      *  order dibuat; server-authoritative & pull-only, sama pola dengan {@link #COL_COMPLAINED_AT}
      *  (push HP di-skip fillColumns, jadi HP tak bisa melepasnya). */
     public static final String COL_DELIVERY_PROOF_REQUIRED = "delivery_proof_required";
+    /** Jenis galon pesanan (Keran/Non-keran/Aqua/Bebas/Campur — GalonTypeUi), sumbernya (agent/staff/note/
+     *  default), dan rincian per produk untuk CAMPUR (JSON [{slug,type,qty}]). Server-authoritative:
+     *  ikut pull, di-skip server saat push; staf mengubahnya lewat SyncApi.setGalonType. */
+    public static final String COL_GALON_TYPE = "galon_type";
+    public static final String COL_GALON_TYPE_SOURCE = "galon_type_source";
+    public static final String COL_GALON_SPEC = "galon_spec";
     /** Token acak per-order untuk link lacak publik web ({base}/track/{token}).
      *  Pelanggan memantau progres + lokasi kurir langsung. Disinkron ke server. */
     public static final String COL_DELIVERY_TOKEN = "delivery_token";
@@ -686,6 +692,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_COMPLAINED_AT + " TEXT, " +
                     COL_CHAT_SESSION_AT + " TEXT, " +
                     COL_DELIVERY_PROOF_REQUIRED + " INTEGER DEFAULT 0, " +
+                    COL_GALON_TYPE + " TEXT, " +
+                    COL_GALON_TYPE_SOURCE + " TEXT, " +
+                    COL_GALON_SPEC + " TEXT, " +
                     COL_CHECKOUT_UUID + " TEXT, " +
                     COL_CHECKOUT_SEQ + " INTEGER, " +
                     COL_CHECKOUT_SIZE + " INTEGER, " +
@@ -1798,6 +1807,13 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             // reseller yang sudah ada di HP tetap tergerbang lewat penanda [ORDER RESELLER] di catatan
             // sampai pull berikutnya membawa flag-nya.
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_PROOF_REQUIRED + " INTEGER DEFAULT 0");
+        }
+        if (oldVersion < 105) {
+            // Jenis galon pesanan (lihat COL_GALON_TYPE); baris lama terisi lewat tarik-ulang transaksi
+            // 7 hari sekali di SyncEngine.pull (kunci v105).
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_GALON_TYPE + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_GALON_TYPE_SOURCE + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_GALON_SPEC + " TEXT");
         }
         if (oldVersion < 104) {
             // Harga dasar khusus reseller (lihat COL_AFFILIATE_PRICES); baris lama terisi lewat tarik-ulang

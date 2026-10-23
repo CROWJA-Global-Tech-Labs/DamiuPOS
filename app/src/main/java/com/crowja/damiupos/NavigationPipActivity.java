@@ -1404,6 +1404,20 @@ public class NavigationPipActivity extends AppCompatActivity {
         chips.setOrientation(android.widget.LinearLayout.HORIZONTAL);
         chips.setGravity(android.view.Gravity.CENTER_VERTICAL);
         chips.setPadding(0, Math.round(6 * d), 0, 0);
+        // 🚰 Jenis galon perhentian aktif PALING DEPAN (warna jenis, GalonTypeUi) — keran/non-keran/Aqua yang
+        // harus diserahkan harus terbaca sekilas sebelum kurir menurunkan galon.
+        Transaction act = last != null ? last.active : null;
+        if (act != null && !DeliveryPlanner.isPickupOnly(act) && GalonTypeUi.known(act.getGalonType())) {
+            String gt = act.getGalonType();
+            String txt = GalonTypeUi.emoji(gt) + " " + GalonTypeUi.tag(gt)
+                    + (GalonTypeUi.SOURCE_DEFAULT.equals(act.getGalonTypeSource()) ? "?" : "");
+            if (GalonTypeUi.CAMPUR.equals(gt)) {
+                String sum = GalonTypeUi.summary(gt, null, act.getGalonSpec());
+                int c = sum.indexOf(": ");
+                if (c >= 0) txt += " " + sum.substring(c + 2);
+            }
+            chips.addView(mediaChip(txt, GalonTypeUi.color(gt)));
+        }
         if (!mediaProducts.isEmpty()) {
             for (String part : mediaProducts.split(" · ")) {
                 if (!part.trim().isEmpty()) chips.addView(mediaChip(part.trim(), 0xFF1565C0));

@@ -216,6 +216,9 @@ public class SyncEngine {
                     // "🤝 📷" Pesanan Reseller: foto bukti Selesai wajib per-order — server-authoritative,
                     // pola sama: di-skip dari fillColumns push (HP tak bisa melepasnya), dibaca via pull.
                     DatabaseHelper.COL_DELIVERY_PROOF_REQUIRED,
+                    // 🚰 Jenis galon (Keran/Non-keran/Aqua/Bebas/Campur) — server-authoritative, pola sama:
+                    // server men-skip-nya dari push; staf mengubahnya lewat SyncApi.setGalonType.
+                    DatabaseHelper.COL_GALON_TYPE, DatabaseHelper.COL_GALON_TYPE_SOURCE, DatabaseHelper.COL_GALON_SPEC,
                     DatabaseHelper.COL_TANGGAL, DatabaseHelper.COL_CATATAN,
                     // BUKTI SELESAI: hanya URL yang disinkron — photo_path lokal-saja (pola persis
                     // attendance/expenses: path tak pernah meninggalkan perangkat).
@@ -1230,6 +1233,7 @@ public class SyncEngine {
     private static final String K_REPULL_CHECKOUT_V102 = "sync_repull_checkout_v102";
     private static final String K_REPULL_PRIORITY_LEVEL_V103 = "sync_repull_priority_level_v103";
     private static final String K_REPULL_AFFILIATE_PRICES_V104 = "sync_repull_affiliate_prices_v104";
+    private static final String K_REPULL_GALON_TYPE_V105 = "sync_repull_galon_type_v105";
 
     private int pull() throws Exception {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
@@ -1293,6 +1297,14 @@ public class SyncEngine {
         if (!"1".equals(settingsDao.get(K_REPULL_AFFILIATE_PRICES_V104, "0"))) {
             cfg.setCursor("customers", "1970-01-01 00:00:00.000000");
             settingsDao.set(K_REPULL_AFFILIATE_PRICES_V104, "1");
+        }
+
+        // DB v105 (🚰 jenis galon), SEKALI: APK lama membuang kolom galon_* dari pull, jadi antrean yang sudah
+        // ditarik tak punya jenisnya. Mundurkan kursor transaksi 7 hari (pola v103).
+        if (!"1".equals(settingsDao.get(K_REPULL_GALON_TYPE_V105, "0"))) {
+            String back = SyncSettings.trxLookbackCursor(cfg.getCursor("transactions"), 7 * 24);
+            if (back != null) cfg.setCursor("transactions", back);
+            settingsDao.set(K_REPULL_GALON_TYPE_V105, "1");
         }
 
         int applied = 0;
