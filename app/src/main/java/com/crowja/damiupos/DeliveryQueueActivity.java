@@ -4385,19 +4385,56 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          JSONObject o = orders.optJSONObject(i);
          if (o != null) cands.add(new Object[]{o, this.typedRows(o), o.optBoolean("pickup_only", false)});
       }
-      this.askRunLoad("▶ Mulai Trip " + safe(t0.optString("name", "Trip")), cands, this.tripKindPickup, picked -> {
-         java.util.Set<String> uuids = new java.util.LinkedHashSet<>();
-         boolean anyPickup = false;
-         boolean anySale = false;
-         for (Object o : picked) {
-            JSONObject j = (JSONObject) o;
-            uuids.add(j.optString("uuid"));
-            if (j.optBoolean("pickup_only", false)) anyPickup = true;
-            else anySale = true;
-         }
-         this.tripPickedUuids = uuids;
-         this.confirmStartTripKhusus(anySale, anyPickup);
-      });
+      this.askRunLoad("▶ Mulai Trip " + safe(t0.optString("name", "Trip")), cands, this.tripKindPickup,
+            picked -> {
+               boolean[] kinds = this.setTripPicked(picked);
+               this.confirmStartTripKhusus(kinds[0], kinds[1]);
+            },
+            "➕ Ke Antrean", picked -> {
+               boolean[] kinds = this.setTripPicked(picked);
+               this.askTripAddOrReplace(kinds[0], kinds[1]);
+            });
+   }
+
+   /** Simpan uuid order hasil dialog muatan → {adaPenjualan, adaAmbilSaja}. */
+   private boolean[] setTripPicked(List<Object> picked) {
+      java.util.Set<String> uuids = new java.util.LinkedHashSet<>();
+      boolean[] kinds = {false, false};
+      for (Object o : picked) {
+         JSONObject j = (JSONObject) o;
+         uuids.add(j.optString("uuid"));
+         if (j.optBoolean("pickup_only", false)) kinds[1] = true;
+         else kinds[0] = true;
+      }
+      this.tripPickedUuids = uuids;
+      return kinds;
+   }
+
+   /**
+    * "➕ Ke Antrean": TAMBAHKAN = order trip terpilih diambil alih ke Antrean Saya, antrean yang ada tetap
+    * (server keep_queue); GANTIKAN = alur Mulai Trip biasa (order di luar trip dilepas ke Pesanan Terbuka).
+    */
+   private void askTripAddOrReplace(boolean includeSales, boolean includePickup) {
+      JSONObject t = this.currentTripPage();
+      if (t == null) return;
+      SyncSettings cfg = this.syncCfg();
+      if (!cfg.isEnrolled() || !cfg.isDeliveryDevice()) {
+         this.confirmStartTripKhusus(includeSales, includePickup);   // pesan gerbangnya ada di sana
+         return;
+      }
+      int n = this.tripPickedUuids != null ? this.tripPickedUuids.size() : 0;
+      (new AlertDialog.Builder(this)).setTitle("➕ " + n + " order ke Antrean Saya")
+            .setMessage("• TAMBAHKAN — order terpilih masuk ke Antrean Saya, antrean yang sudah ada tetap."
+                  + "\n• GANTIKAN — order terpilih masuk, order Antrean Saya di luar trip dilepas menjadi Pesanan Terbuka (yang sedang diantar tidak dilepas).")
+            .setPositiveButton("➕ Tambahkan", (d, w) -> {
+               android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
+               wait.setMessage("Menambahkan ke antrean…");
+               wait.setCancelable(false);
+               wait.show();
+               this.runStartTripKhusus(wait, t.optLong("id"), includeSales, includePickup, true);
+            })
+            .setNeutralButton("🔁 Gantikan", (d, w) -> this.confirmStartTripKhusus(includeSales, includePickup))
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
    }
 
    /** uuid order trip hasil dialog muatan (null = semua order trip berjenis terpilih). */
@@ -4460,13 +4497,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       dialog.show();
    }
 
-   private void runStartTripKhusus(AlertDialog dialog, long ruleId, boolean includeSales, boolean includePickup) {
+   private void runStartTripKhusus(android.app.Dialog dialog, long ruleId, boolean includeSales, boolean includePickup) {
+      this.runStartTripKhusus(dialog, ruleId, includeSales, includePickup, false);
+   }
+
+   private void runStartTripKhusus(android.app.Dialog dialog, long ruleId, boolean includeSales, boolean includePickup, boolean keepQueue) {
       SyncSettings cfg = this.syncCfg();
       new Thread(() -> {
          String msg;
          boolean ok = false;
          try {
-            JSONObject r = new SyncApi(cfg).startDeliveryTrip(ruleId, includeSales, includePickup, this.tripPickedUuids);
+            JSONObject r = new SyncApi(cfg).startDeliveryTrip(ruleId, includeSales, includePickup, this.tripPickedUuids, keepQueue);
             ok = true;
             msg = r.optString("message", "Trip dimulai.");
          } catch (SyncApi.SyncException se) {
@@ -5145,6 +5186,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * @param cands {order, typedRows, pickupOnly}
     */
    private void askRunLoad(String title, List<Object[]> cands, boolean pickupDefault, java.util.function.Consumer<List<Object>> then) {
+      this.askRunLoad(title, cands, pickupDefault, then, null, null);
+   }
+
+   /** @param neutralLabel tombol kiri bawah opsional (mis. "➕ Ke Antrean") — menerima order terpilih yang sama. */
+   private void askRunLoad(String title, List<Object[]> cands, boolean pickupDefault, java.util.function.Consumer<List<Object>> then,
+                           @Nullable String neutralLabel, @Nullable java.util.function.Consumer<List<Object>> onNeutral) {
       LinkedHashMap<String, int[]> total = new LinkedHashMap<>();
       int pickups = 0;
       for (Object[] c : cands) {
@@ -5195,10 +5242,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       box.addView(cbPickup);
       ScrollView sv = new ScrollView(this);
       sv.addView(box);
-      AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle(title).setView(sv)
+      AlertDialog.Builder bld = (new AlertDialog.Builder(this)).setTitle(title).setView(sv)
             .setPositiveButton("Lanjut", (DialogInterface.OnClickListener) null)
-            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
-      dlg.setOnShowListener(di -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null);
+      if (neutralLabel != null && onNeutral != null) bld.setNeutralButton(neutralLabel, (DialogInterface.OnClickListener) null);
+      AlertDialog dlg = bld.create();
+      java.util.function.Consumer<java.util.function.Consumer<List<Object>>> pick = dest -> {
          Map<String, Integer> budget = new HashMap<>();
          for (Map.Entry<String, EditText> e : inputs.entrySet()) {
             int n;
@@ -5243,8 +5292,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             return;
          }
          dlg.dismiss();
-         then.accept(picked);
-      }));
+         dest.accept(picked);
+      };
+      dlg.setOnShowListener(di -> {
+         dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> pick.accept(then));
+         Button nb = dlg.getButton(AlertDialog.BUTTON_NEUTRAL);
+         if (nb != null && onNeutral != null) nb.setOnClickListener(v -> pick.accept(onNeutral));
+      });
       dlg.show();
    }
 
