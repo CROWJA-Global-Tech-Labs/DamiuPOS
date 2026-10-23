@@ -3988,12 +3988,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       tvSum.setVisibility(sum.length() > 0 ? View.VISIBLE : View.GONE);
       // Ganti baris hitungan "N galon · Saya · HP lain · Terbuka" + keterangan ▶ dengan TOTAL produk
       // yang harus dimuat untuk trip ini ("MIN ×13  BIO ×2") — baris badge yang sama dgn halaman Strategi.
-      this.bindTripTotalBadges(t.optJSONArray("orders"));
+      JSONArray tripOrders = this.tripOrdersOfKind(t.optJSONArray("orders"));
+      this.bindTripTotalBadges(tripOrders);
+      this.appendTripKindBadge();
       View refresh = this.findViewById(id.btnRefreshRit);
       if (refresh != null) refresh.setVisibility(View.GONE);
       TextView all = (TextView) this.findViewById(id.tvStrategyAll);
       if (all != null) all.setText("Ketuk untuk lihat seluruh order trip →");
-      this.bindTripOrders(t.optJSONArray("orders"), 4);
+      this.bindTripOrders(tripOrders, 4);
       boolean hideCard = this.strategyHidden || this.isRunning();
       card.setVisibility(hideCard ? View.GONE : View.VISIBLE);
       this.applyStrategyCollapsed();
@@ -4060,6 +4062,47 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
       }
       return TransactionAdapter.paletteColor(slug);
+   }
+
+   /** Jenis order trip yang ditampilkan & dijalankan ▶ — badge dropdown di kartu trip (bawaan Penjualan saja). */
+   private boolean tripKindSales = true;
+   private boolean tripKindPickup = false;
+
+   private JSONArray tripOrdersOfKind(JSONArray orders) {
+      JSONArray out = new JSONArray();
+      for (int i = 0; orders != null && i < orders.length(); i++) {
+         JSONObject o = orders.optJSONObject(i);
+         if (o == null) continue;
+         if (o.optBoolean("pickup_only") ? this.tripKindPickup : this.tripKindSales) out.put(o);
+      }
+      return out;
+   }
+
+   private void appendTripKindBadge() {
+      LinearLayout row = (LinearLayout) this.findViewById(id.strategyItemBadges);
+      View scroll = this.findViewById(id.strategyItemBadgesScroll);
+      if (row == null || scroll == null) return;
+      String label = this.tripKindSales && this.tripKindPickup ? "🛒 Penjualan + ↩ Ambil Galon"
+            : (this.tripKindPickup ? "↩ Ambil Galon" : "🛒 Penjualan");
+      TextView b = this.makeDetailBadge(label + " ▾", 0xFF6D28D9);
+      b.setOnClickListener(v -> {
+         boolean[] on = new boolean[]{this.tripKindSales, this.tripKindPickup};
+         (new AlertDialog.Builder(this)).setTitle("Jenis order trip")
+               .setMultiChoiceItems(new String[]{"🛒 Penjualan", "↩ Ambil Galon Saja"}, on, (d, i, chk) -> on[i] = chk)
+               .setPositiveButton("Terapkan", (d, w) -> {
+                  if (!on[0] && !on[1]) {
+                     Toast.makeText(this, "Pilih minimal satu jenis.", Toast.LENGTH_SHORT).show();
+                     return;
+                  }
+                  this.tripKindSales = on[0];
+                  this.tripKindPickup = on[1];
+                  MaterialCardView card = (MaterialCardView) this.findViewById(id.cardStrategy);
+                  if (card != null) this.renderTripKhususPage(card);
+               })
+               .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
+      });
+      row.addView(b);
+      scroll.setVisibility(View.VISIBLE);
    }
 
    private void bindTripTotalBadges(JSONArray orders) {
@@ -4146,7 +4189,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private void confirmStartTripKhusus() {
       JSONObject t0 = this.currentTripPage();
       if (t0 == null) return;
-      this.askRunKinds("▶ Mulai Trip " + safe(t0.optString("name", "Trip")), (sales, pickup) -> this.confirmStartTripKhusus(sales, pickup));
+      // Jenis mengikuti badge dropdown di kartu trip (bukan dialog terpisah).
+      this.confirmStartTripKhusus(this.tripKindSales, this.tripKindPickup);
    }
 
    private void confirmStartTripKhusus(boolean includeSales, boolean includePickup) {
