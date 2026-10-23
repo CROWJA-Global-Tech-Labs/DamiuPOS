@@ -587,6 +587,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.barClaimOpen = this.findViewById(id.barClaimOpen);
       this.tvClaimOpenCount = (TextView)this.findViewById(id.tvClaimOpenCount);
       this.findViewById(id.btnClaimOpenCancel).setOnClickListener((v) -> this.exitClaimSelect(true));
+      this.cbClaimAllOther = this.addSelectAllBox(this.tvClaimOtherCount, false);
+      this.cbClaimAllOpen = this.addSelectAllBox(this.tvClaimOpenCount, true);
       this.findViewById(id.btnClaimOpenGo).setOnClickListener((v) -> this.confirmBulkClaimOpen());
 
       this.etSearchOpen = (TextInputEditText)this.findViewById(id.etSearchOpen);
@@ -11267,7 +11269,48 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.updateClaimSelectUi(open);
    }
 
+   private android.widget.CheckBox cbClaimAllOther, cbClaimAllOpen;
+   private boolean syncingClaimAll;
+
+   /** Kotak "Semua" di bar mode-pilih Perangkat Lain / Pesanan Terbuka (cermin bar Antrian Saya):
+    *  centang = pilih semua kartu yang TAMPIL (hasil filter), lepas = kosongkan pilihan. */
+   private android.widget.CheckBox addSelectAllBox(TextView countLabel, boolean open) {
+      if (countLabel == null || !(countLabel.getParent() instanceof LinearLayout)) return null;
+      LinearLayout bar = (LinearLayout) countLabel.getParent();
+      android.widget.CheckBox cb = new android.widget.CheckBox(this);
+      cb.setText("Semua");
+      bar.addView(cb, bar.indexOfChild(countLabel));
+      cb.setOnCheckedChangeListener((b, on) -> {
+         if (this.syncingClaimAll) return;
+         if (open) {
+            this.claimSelectedOpen.clear();
+            if (on && this.openDispatchAdapter != null) for (Transaction t : this.openDispatchAdapter.data) this.claimSelectedOpen.add(t.getId());
+            if (this.openDispatchAdapter != null) this.openDispatchAdapter.notifyDataSetChanged();
+         } else {
+            this.claimSelectedOther.clear();
+            if (on && this.otherDevicesAdapter != null) {
+               for (JSONObject o : this.otherDevicesAdapter.data) {
+                  String u = o.optString("uuid", "");
+                  if (!u.isEmpty() && !isBeingDelivered(o)) this.claimSelectedOther.add(u);
+               }
+            }
+            if (this.otherDevicesAdapter != null) this.otherDevicesAdapter.notifyDataSetChanged();
+         }
+         this.updateClaimSelectUi(open);
+      });
+      return cb;
+   }
+
    private void updateClaimSelectUi(boolean open) {
+      android.widget.CheckBox all = open ? this.cbClaimAllOpen : this.cbClaimAllOther;
+      if (all != null) {
+         int total = open ? (this.openDispatchAdapter != null ? this.openDispatchAdapter.data.size() : 0)
+               : (this.otherDevicesAdapter != null ? this.otherDevicesAdapter.data.size() : 0);
+         int sel = open ? this.claimSelectedOpen.size() : this.claimSelectedOther.size();
+         this.syncingClaimAll = true;
+         all.setChecked(total > 0 && sel >= total);
+         this.syncingClaimAll = false;
+      }
       View bar = open ? this.barClaimOpen : this.barClaimOther;
       TextView label = open ? this.tvClaimOpenCount : this.tvClaimOtherCount;
       boolean on = open ? this.claimSelectOpen : this.claimSelectOther;
