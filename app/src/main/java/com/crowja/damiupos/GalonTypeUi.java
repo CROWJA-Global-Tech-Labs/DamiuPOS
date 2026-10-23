@@ -81,11 +81,13 @@ public final class GalonTypeUi {
     /** {@code base} + tag jenis sebagai pil. {@code chipFg} = warna teks kapsul (dipakai garis tepi tag asumsi). */
     public static CharSequence tagged(CharSequence base, String type, boolean assumed, int chipFg) {
         if (!known(type)) return base;
-        SpannableStringBuilder sb = new SpannableStringBuilder(base).append(' ');
+        // Jarak ke "MIN ×2" = margin kiri DI DALAM span (bukan karakter spasi): spasi sebelum pil sempat tampil
+        // tanpa lebar di baris total muatan, membuat pil menempel/menimpa angka qty.
+        SpannableStringBuilder sb = new SpannableStringBuilder(base);
         int start = sb.length();
         sb.append(tag(type)).append(assumed ? "?" : "");
         float d = Resources.getSystem().getDisplayMetrics().density;
-        sb.setSpan(assumed ? new TagSpan(0, chipFg, chipFg, 4 * d, 6 * d) : new TagSpan(0xFFFFFFFF, color(type), 0, 4 * d, 6 * d),
+        sb.setSpan(assumed ? new TagSpan(0, chipFg, chipFg, 4 * d, 6 * d, 5 * d) : new TagSpan(0xFFFFFFFF, color(type), 0, 4 * d, 6 * d, 5 * d),
                 start, sb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         return sb;
     }
@@ -135,28 +137,30 @@ public final class GalonTypeUi {
     /** Pil di dalam teks: latar (0 = transparan) + teks berwarna + garis tepi opsional (0 = tanpa). */
     static final class TagSpan extends ReplacementSpan {
         private final int bg, fg, stroke;
-        private final float radius, padH;
+        private final float radius, padH, marginL;
 
-        TagSpan(int bg, int fg, int stroke, float radius, float padH) {
+        TagSpan(int bg, int fg, int stroke, float radius, float padH, float marginL) {
             this.bg = bg;
             this.fg = fg;
             this.stroke = stroke;
             this.radius = radius;
             this.padH = padH;
+            this.marginL = marginL;
         }
 
         @Override
         public int getSize(Paint paint, CharSequence text, int start, int end, Paint.FontMetricsInt fm) {
             if (fm != null) paint.getFontMetricsInt(fm);
             // ceil, bukan round: lebar yang dilaporkan tak boleh lebih kecil dari yang digambar.
-            return (int) Math.ceil(paint.measureText(text, start, end) + 2 * padH);
+            return (int) Math.ceil(marginL + paint.measureText(text, start, end) + 2 * padH);
         }
 
         @Override
         public void draw(Canvas canvas, CharSequence text, int start, int end, float x, int top, int y, int bottom, Paint paint) {
             Paint.FontMetrics fm = paint.getFontMetrics();
+            float left = x + marginL;
             float w = paint.measureText(text, start, end) + 2 * padH;
-            RectF r = new RectF(x, y + fm.ascent, x + w, y + fm.descent);
+            RectF r = new RectF(left, y + fm.ascent, left + w, y + fm.descent);
             int oldColor = paint.getColor();
             Paint.Style oldStyle = paint.getStyle();
             float oldStroke = paint.getStrokeWidth();
@@ -173,7 +177,7 @@ public final class GalonTypeUi {
             }
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(fg);
-            canvas.drawText(text, start, end, x + padH, y, paint);
+            canvas.drawText(text, start, end, left + padH, y, paint);
             paint.setColor(oldColor);
             paint.setStyle(oldStyle);
             paint.setStrokeWidth(oldStroke);
