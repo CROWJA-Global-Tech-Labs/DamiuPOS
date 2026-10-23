@@ -4378,9 +4378,30 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private void confirmStartTripKhusus() {
       JSONObject t0 = this.currentTripPage();
       if (t0 == null) return;
-      // Jenis mengikuti badge dropdown di kartu trip (bukan dialog terpisah).
-      this.confirmStartTripKhusus(this.tripKindSales, this.tripKindPickup);
+      // Dialog MUATAN: jumlah galon per produk & jenis (bawaan semua), Ambil Galon Saja mengikuti badge jenis kartu trip.
+      JSONArray orders = t0.optJSONArray("orders");
+      List<Object[]> cands = new ArrayList<>();
+      for (int i = 0; orders != null && i < orders.length(); i++) {
+         JSONObject o = orders.optJSONObject(i);
+         if (o != null) cands.add(new Object[]{o, this.typedRows(o), o.optBoolean("pickup_only", false)});
+      }
+      this.askRunLoad("▶ Mulai Trip " + safe(t0.optString("name", "Trip")), cands, this.tripKindPickup, picked -> {
+         java.util.Set<String> uuids = new java.util.LinkedHashSet<>();
+         boolean anyPickup = false;
+         boolean anySale = false;
+         for (Object o : picked) {
+            JSONObject j = (JSONObject) o;
+            uuids.add(j.optString("uuid"));
+            if (j.optBoolean("pickup_only", false)) anyPickup = true;
+            else anySale = true;
+         }
+         this.tripPickedUuids = uuids;
+         this.confirmStartTripKhusus(anySale, anyPickup);
+      });
    }
+
+   /** uuid order trip hasil dialog muatan (null = semua order trip berjenis terpilih). */
+   private java.util.Set<String> tripPickedUuids = null;
 
    private void confirmStartTripKhusus(boolean includeSales, boolean includePickup) {
       JSONObject t = this.currentTripPage();
@@ -4402,7 +4423,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          if (o == null) continue;
          inTrip.add(o.optString("uuid"));
          boolean kindOk = o.optBoolean("pickup_only") ? includePickup : includeSales;
-         if (kindOk && !"mine".equals(o.optString("source"))) take++;
+         boolean pickedOk = this.tripPickedUuids == null || this.tripPickedUuids.contains(o.optString("uuid"));
+         if (kindOk && pickedOk && !"mine".equals(o.optString("source"))) take++;
       }
       int release = 0;
       if (this.adapter != null && this.adapter.data != null) {
@@ -4444,7 +4466,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          String msg;
          boolean ok = false;
          try {
-            JSONObject r = new SyncApi(cfg).startDeliveryTrip(ruleId, includeSales, includePickup);
+            JSONObject r = new SyncApi(cfg).startDeliveryTrip(ruleId, includeSales, includePickup, this.tripPickedUuids);
             ok = true;
             msg = r.optString("message", "Trip dimulai.");
          } catch (SyncApi.SyncException se) {
@@ -5093,11 +5115,146 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private void runStrategyTrip() {
-      if (this.strategyTrips != null && !this.strategyTrips.isEmpty()) {
-         this.askRunKinds("▶ Jalankan Rit 1", (sales, pickup) -> this.runStrategyTrip(sales, pickup));
-      } else {
+      if (this.strategyTrips == null || this.strategyTrips.isEmpty()) {
          Toast.makeText(this, "Strategi belum tersedia.", 0).show();
+         return;
       }
+      List<Object[]> cands = new ArrayList<>();
+      int skippedOpen = 0;
+      for (Transaction t : ((DeliveryPlanner.Trip) this.strategyTrips.get(0)).stops) {
+         if (t == null) continue;
+         if (t.isOpenDispatch()) {
+            ++skippedOpen;
+            continue;
+         }
+         cands.add(new Object[]{t, this.typedRows(t), DeliveryPlanner.isPickupOnly(t)});
+      }
+      final int open = skippedOpen;
+      this.askRunLoad("▶ Jalankan Rit 1", cands, false, picked -> {
+         List<Transaction> stops = new ArrayList<>();
+         for (Object o : picked) stops.add((Transaction) o);
+         this.confirmRunStops(stops, open);
+      });
+   }
+
+   /**
+    * Dialog ▶ MUATAN: jumlah galon yang dibawa per produk & jenis galon ("MIN ×23 KRN"), bawaan = semua di antrean,
+    * bisa diubah; plus centang "Ambil Galon Saja". Order diambil berurutan (urutan rit/trip) selama SEMUA barisnya
+    * masih muat di sisa jumlah — yang tak muat dilewati utuh (tak pernah dipecah). Order tanpa rincian ikut.
+    *
+    * @param cands {order, typedRows, pickupOnly}
+    */
+   private void askRunLoad(String title, List<Object[]> cands, boolean pickupDefault, java.util.function.Consumer<List<Object>> then) {
+      LinkedHashMap<String, int[]> total = new LinkedHashMap<>();
+      int pickups = 0;
+      for (Object[] c : cands) {
+         if ((Boolean) c[2]) {
+            pickups++;
+            continue;
+         }
+         @SuppressWarnings("unchecked") List<Object[]> rows = (List<Object[]>) c[1];
+         for (Object[] r : rows) {
+            int q = (Integer) r[2];
+            if (q <= 0) continue;
+            String key = typedKey((String) r[0], (String) r[1]);
+            int[] v = total.get(key);
+            if (v == null) total.put(key, new int[]{q, (Integer) r[3]});
+            else v[0] += q;
+         }
+      }
+      int pad = this.dp(20f);
+      LinearLayout box = new LinearLayout(this);
+      box.setOrientation(LinearLayout.VERTICAL);
+      box.setPadding(pad, this.dp(8f), pad, 0);
+      TextView hint = new TextView(this);
+      hint.setText("Jumlah galon yang dibawa (bawaan: semua di antrean). Kurangi bila muatan tak cukup — order yang tak muat dilewati.");
+      hint.setTextSize(13f);
+      box.addView(hint);
+      LinkedHashMap<String, EditText> inputs = new LinkedHashMap<>();
+      for (Map.Entry<String, int[]> e : total.entrySet()) {
+         LinearLayout row = new LinearLayout(this);
+         row.setOrientation(LinearLayout.HORIZONTAL);
+         row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+         row.setPadding(0, this.dp(6f), 0, 0);
+         TextView chip = this.makeDetailBadge(typedTotalText(e.getKey(), e.getValue()[0], e.getValue()[1]), e.getValue()[1]);
+         chip.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+         row.addView(chip);
+         EditText et = new EditText(this);
+         et.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+         et.setText(String.valueOf(e.getValue()[0]));
+         et.setSelectAllOnFocus(true);
+         et.setMinEms(3);
+         row.addView(et);
+         box.addView(row);
+         inputs.put(e.getKey(), et);
+      }
+      android.widget.CheckBox cbPickup = new android.widget.CheckBox(this);
+      cbPickup.setText("↩ Ambil Galon Saja (" + pickups + " order)");
+      cbPickup.setChecked(pickupDefault && pickups > 0);
+      cbPickup.setEnabled(pickups > 0);
+      box.addView(cbPickup);
+      ScrollView sv = new ScrollView(this);
+      sv.addView(box);
+      AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle(title).setView(sv)
+            .setPositiveButton("Lanjut", (DialogInterface.OnClickListener) null)
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
+      dlg.setOnShowListener(di -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+         Map<String, Integer> budget = new HashMap<>();
+         for (Map.Entry<String, EditText> e : inputs.entrySet()) {
+            int n;
+            try {
+               String s = e.getValue().getText().toString().trim();
+               n = s.isEmpty() ? 0 : Integer.parseInt(s);
+            } catch (NumberFormatException ex) {
+               n = -1;
+            }
+            if (n < 0) {
+               e.getValue().setError("Angka tidak valid");
+               return;
+            }
+            budget.put(e.getKey(), n);
+         }
+         List<Object> picked = new ArrayList<>();
+         for (Object[] c : cands) {
+            if ((Boolean) c[2]) {
+               if (cbPickup.isChecked()) picked.add(c[0]);
+               continue;
+            }
+            @SuppressWarnings("unchecked") List<Object[]> rows = (List<Object[]>) c[1];
+            Map<String, Integer> need = new HashMap<>();
+            for (Object[] r : rows) {
+               int q = (Integer) r[2];
+               if (q > 0) need.merge(typedKey((String) r[0], (String) r[1]), q, Integer::sum);
+            }
+            boolean fits = true;
+            for (Map.Entry<String, Integer> n : need.entrySet()) {
+               Integer left = budget.get(n.getKey());
+               if (left == null || left < n.getValue()) {
+                  fits = false;
+                  break;
+               }
+            }
+            if (!fits) continue;
+            for (Map.Entry<String, Integer> n : need.entrySet()) budget.put(n.getKey(), budget.get(n.getKey()) - n.getValue());
+            picked.add(c[0]);
+         }
+         if (picked.isEmpty()) {
+            Toast.makeText(this, "Tak ada order yang muat dengan jumlah ini.", Toast.LENGTH_SHORT).show();
+            return;
+         }
+         dlg.dismiss();
+         then.accept(picked);
+      }));
+      dlg.show();
+   }
+
+   /** Konfirmasi ▶ Jalankan untuk order hasil dialog muatan. */
+   private void confirmRunStops(List<Transaction> stops, int skippedOpen) {
+      (new AlertDialog.Builder(this)).setTitle("Jalankan Rit 1 (" + stops.size() + " order)?")
+            .setView(this.stopsDialogView(null, stops, "Semua ditandai SEDANG DIANTAR sebagai satu rit. Antar satu per satu, tandai ✓ Selesai pada tiap kartu."
+                  + (skippedOpen > 0 ? "\n\n" + skippedOpen + " Pesanan Terbuka dilewati (klaim dulu satu per satu)." : "")))
+            .setPositiveButton("Jalankan", (d, w) -> this.doStartRuns(stops))
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
    }
 
    private void runStrategyTrip(boolean includeSales, boolean includePickup) {

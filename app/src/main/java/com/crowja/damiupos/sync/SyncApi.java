@@ -568,7 +568,14 @@ public class SyncApi {
      * 404 aturan tak dikenal, 422 bukan perangkat delivery / trip kosong, 429 terlalu sering.
      */
     public JSONObject startDeliveryTrip(long ruleId, boolean includeSales, boolean includePickup) throws Exception {
+        return startDeliveryTrip(ruleId, includeSales, includePickup, null);
+    }
+
+    /** @param uuids hanya order ini yang diambil alih (dialog muatan ▶); null = semua order trip berjenis terpilih. */
+    public JSONObject startDeliveryTrip(long ruleId, boolean includeSales, boolean includePickup,
+                                        @Nullable java.util.Collection<String> uuids) throws Exception {
         JSONObject body = new JSONObject().put("include_sales", includeSales).put("include_pickup", includePickup);
+        if (uuids != null) body.put("uuids", new org.json.JSONArray(uuids));
         return post(cfg.getBaseUrl() + "/api/delivery/trips/" + ruleId + "/start", body, cfg.getToken());
     }
 
