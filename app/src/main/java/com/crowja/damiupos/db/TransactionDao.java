@@ -647,6 +647,7 @@ public class TransactionDao {
                 t.setComplainedAt(getStr(c, DatabaseHelper.COL_COMPLAINED_AT));
                 t.setChatSessionAt(getStr(c, DatabaseHelper.COL_CHAT_SESSION_AT));
                 t.setDeliveryProofRequired(getLong(c, DatabaseHelper.COL_DELIVERY_PROOF_REQUIRED) != 0);
+                mapGalonType(t, c);
                 // 🧺 Leg checkout multi-lokasi — badge k/N di daftar ini juga (tiap leg baris sendiri:
                 // ditunda/dilanjutkan per baris, tak ada kaskade ke leg saudara).
                 mapCheckout(t, c);
@@ -784,6 +785,7 @@ public class TransactionDao {
                 t.setChatSessionAt(getStr(c, DatabaseHelper.COL_CHAT_SESSION_AT));
                 // Badge "🤝 📷" — foto bukti Selesai wajib per-order (pesanan reseller), pull-only.
                 t.setDeliveryProofRequired(getLong(c, DatabaseHelper.COL_DELIVERY_PROOF_REQUIRED) != 0);
+                mapGalonType(t, c);
                 // Reseller order ini — dipakai preview untuk mencari foto lokasi reseller bila
                 // tujuannya "Reseller: …" (lihat DeliveryQueueActivity.resolveResellerDestLocation).
                 t.setResellerId(getLong(c, DatabaseHelper.COL_TRX_RESELLER_ID));
@@ -972,6 +974,27 @@ public class TransactionDao {
         t.setCheckoutUuid(getStr(c, DatabaseHelper.COL_CHECKOUT_UUID));
         t.setCheckoutSeq((int) getLong(c, DatabaseHelper.COL_CHECKOUT_SEQ));
         t.setCheckoutSize((int) getLong(c, DatabaseHelper.COL_CHECKOUT_SIZE));
+    }
+
+    /** Jenis galon (server-authoritative) dari cursor ber-{@code t.*} — kolom absen/NULL → null. */
+    private static void mapGalonType(Transaction t, Cursor c) {
+        t.setGalonType(getStr(c, DatabaseHelper.COL_GALON_TYPE));
+        t.setGalonTypeSource(getStr(c, DatabaseHelper.COL_GALON_TYPE_SOURCE));
+        t.setGalonSpec(getStr(c, DatabaseHelper.COL_GALON_SPEC));
+    }
+
+    /**
+     * Simpan jenis galon hasil "🚰 Ubah Jenis Galon" (jawaban server) ke baris LOKAL tanpa menandainya
+     * kotor/edited_at: kolom ini milik server (push di-skip), jadi cukup cermin agar kartu langsung berubah
+     * sebelum pull berikutnya membawa nilai yang sama.
+     */
+    public void applyGalonTypeLocal(long trxId, String type, String source, String specJson) {
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_GALON_TYPE, type);
+        v.put(DatabaseHelper.COL_GALON_TYPE_SOURCE, source);
+        v.put(DatabaseHelper.COL_GALON_SPEC, specJson);
+        dbHelper.getWritableDatabase().update(DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_ID + " = ?", new String[]{String.valueOf(trxId)});
     }
 
     /** Pembaca kolom per NAMA (absen/NULL → null / 0) — Cursor di produksi, Map di uji JVM. */
@@ -2189,6 +2212,7 @@ public class TransactionDao {
         if (chatSessIdx >= 0) t.setChatSessionAt(cursor.getString(chatSessIdx));
         // Gerbang foto bukti Selesai (DeliveryQueueActivity.doComplete) membaca baris SEGAR lewat
         // getById → flag per-order ini WAJIB terpetakan di sini, bukan hanya di getDeliveryQueue.
+        mapGalonType(t, cursor);
         int proofReqIdx = cursor.getColumnIndex(DatabaseHelper.COL_DELIVERY_PROOF_REQUIRED);
         if (proofReqIdx >= 0 && !cursor.isNull(proofReqIdx)) {
             t.setDeliveryProofRequired(cursor.getLong(proofReqIdx) != 0);

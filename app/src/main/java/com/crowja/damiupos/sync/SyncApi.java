@@ -577,6 +577,11 @@ public class SyncApi {
         return get(cfg.getBaseUrl() + "/api/transactions/" + android.net.Uri.encode(uuid) + "/journal", cfg.getToken());
     }
 
+    /** 🚰 Ubah jenis galon pesanan (staf): {galon_type, galon_spec?} → server menyimpan dgn sumber "staff". */
+    public JSONObject setGalonType(String uuid, JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/transactions/" + android.net.Uri.encode(uuid) + "/galon-type", body, cfg.getToken());
+    }
+
     public JSONObject devicesQueueAll() throws Exception {
         return get(cfg.getBaseUrl() + "/api/devices/queue-all", cfg.getToken());
     }

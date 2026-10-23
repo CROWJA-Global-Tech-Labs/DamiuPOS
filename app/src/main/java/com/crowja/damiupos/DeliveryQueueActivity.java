@@ -2759,18 +2759,97 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return e.getValue()[0] >= 0 ? label + " ×" + e.getValue()[0] : label;
    }
 
-   private void bindOtherDeviceChips(LinearLayout box, String itemsCsv, String uuid) {
-      this.bindOtherDeviceChips(box, itemsCsv);
-      this.appendTripChip(box, uuid);
+   // ------------------------------------------------------------------ 🚰 jenis galon di kapsul slug
+
+   /** Jenis galon order DIASUMSIKAN (sumber "default": pelanggan tak menjawab) → tag bergaris tepi + "?". */
+   private static boolean galonAssumed(String source) {
+      return GalonTypeUi.SOURCE_DEFAULT.equals(source);
+   }
+
+   /**
+    * Kapsul produk dipecah/ditandai per JENIS GALON ({@link GalonTypeUi}): baris {label, jenis ("" = tak
+    * diketahui / ambil-saja), qty (-1 = tanpa angka), warna}. CAMPUR ber-rincian → satu baris per (produk,
+    * jenis); tanpa rincian → jenis CAMPUR. Satu sumber untuk kartu 3 tab, baris rit/trip, total muatan, Preview.
+    */
+   private List<Object[]> typedRows(LinkedHashMap<String, int[]> merged, boolean csv, String type, Object spec, boolean pickup) {
+      List<Object[]> out = new ArrayList<>();
+      boolean typed = !pickup && GalonTypeUi.known(type);
+      Map<String, LinkedHashMap<String, Integer>> bySlug = typed && GalonTypeUi.CAMPUR.equals(type)
+            ? GalonTypeUi.specBySlug(spec) : new java.util.HashMap<>();
+      for (Map.Entry<String, int[]> e : merged.entrySet()) {
+         String key = e.getKey();
+         int z = csv ? key.indexOf('\u0000') : -1;
+         String label = z >= 0 ? key.substring(0, z) : key;
+         int qty = e.getValue()[0];
+         int bg = e.getValue()[1];
+         LinkedHashMap<String, Integer> rows = bySlug.get(label.trim().toUpperCase(Locale.US));
+         if (rows != null && !rows.isEmpty()) {
+            for (Map.Entry<String, Integer> r : rows.entrySet()) out.add(new Object[]{label, r.getKey(), r.getValue(), bg});
+         } else {
+            out.add(new Object[]{label, typed ? type : "", qty, bg});
+         }
+      }
+      return out;
+   }
+
+   private List<Object[]> typedRows(Transaction t) {
+      return this.typedRows(this.mergedChipItems(t.getItems()), false, t.getGalonType(), t.getGalonSpec(),
+            DeliveryPlanner.isPickupOnly(t));
+   }
+
+   private List<Object[]> typedRows(JSONObject o) {
+      return this.typedRows(this.mergedCsvChips(o.optString("items", "")), true, strJson(o, "galon_type"),
+            o.opt("galon_spec"), o.optBoolean("pickup_only", false));
+   }
+
+   /** Teks kapsul satu baris {@link #typedRows}: "MIN ×2" + tag jenis. */
+   private static CharSequence typedChipText(Object[] r, boolean assumed) {
+      String label = (String) r[0];
+      String type = (String) r[1];
+      int qty = (Integer) r[2];
+      String base = qty >= 0 ? label + " ×" + qty : label;
+      return type.isEmpty() ? base : GalonTypeUi.tagged(base, type, assumed, chipTextColor((Integer) r[3]));
+   }
+
+   /** Kunci total muatan per (slug, jenis) — {@link #typedTotalText} memecahnya lagi. */
+   private static String typedKey(String label, String type) {
+      return type == null || type.isEmpty() ? label : label + '\u0001' + type;
+   }
+
+   private static CharSequence typedTotalText(String key, int qty, int bg) {
+      int z = key.indexOf('\u0001');
+      String base = (z >= 0 ? key.substring(0, z) : key) + " ×" + qty;
+      return z >= 0 ? GalonTypeUi.tagged(base, key.substring(z + 1), false, chipTextColor(bg)) : base;
+   }
+
+   private static String typedTotalPlain(String key, int qty) {
+      int z = key.indexOf('\u0001');
+      String base = (z >= 0 ? key.substring(0, z) : key) + " ×" + qty;
+      return z >= 0 ? base + " " + GalonTypeUi.label(key.substring(z + 1)) : base;
+   }
+
+   private void bindOtherDeviceChips(LinearLayout box, String itemsCsv, JSONObject json) {
+      this.bindOtherDeviceChips(box, itemsCsv, json, true);
+      this.appendTripChip(box, json != null ? json.optString("uuid", "") : null);
    }
 
    private void bindOtherDeviceChips(LinearLayout box, String itemsCsv) {
-      int shown = 0;
+      this.bindOtherDeviceChips(box, itemsCsv, null, false);
+   }
 
-      for (Map.Entry<String, int[]> e : this.mergedCsvChips(itemsCsv).entrySet()) {
-         int bg = e.getValue()[1];
+   /** Kapsul produk kartu perangkat lain — ber-tag jenis galon bila {@code json} (baris server) ada. */
+   private void bindOtherDeviceChips(LinearLayout box, String itemsCsv, JSONObject json, boolean typed) {
+      int shown = 0;
+      List<Object[]> rows = typed && json != null
+            ? this.typedRows(this.mergedCsvChips(itemsCsv), true, strJson(json, "galon_type"), json.opt("galon_spec"),
+                  json.optBoolean("pickup_only", false))
+            : this.typedRows(this.mergedCsvChips(itemsCsv), true, null, null, true);
+      boolean assumed = json != null && galonAssumed(strJson(json, "galon_type_source"));
+
+      for (Object[] r : rows) {
+         int bg = (Integer) r[3];
          TextView chip = this.chipAt(box, shown);
-         chip.setText(csvChipText(e));
+         chip.setText(typedChipText(r, assumed));
          chip.setTextColor(chipTextColor(bg));
          ((GradientDrawable)chip.getBackground()).setColor(bg);
          chip.setVisibility(0);
@@ -2805,11 +2884,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             case 4:
                this.showForwardOtherPicker(q);
                return true;
+            case 5:
+               this.showGalonTypeDialog(q);
+               return true;
             default:
                return false;
          }
       });
       menu.getMenu().add(0, 4, 3, "📤 Kirim ke Perangkat Lain");
+      if (!q.optBoolean("pickup_only", false)) menu.getMenu().add(0, 5, 4, "🚰 Jenis Galon");
       menu.show();
    }
 
@@ -3270,8 +3353,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     */
    private List<Chip> buildOtherDeviceDetailChips(JSONObject q) {
       List<Chip> chips = new ArrayList<>();
-      for (Map.Entry<String, int[]> e : this.mergedCsvChips(q.optString("items", "")).entrySet()) {
-         chips.add(new Chip(csvChipText(e), e.getValue()[1]));
+      boolean assumed = galonAssumed(strJson(q, "galon_type_source"));
+      for (Object[] r : this.typedRows(q)) {
+         chips.add(new Chip(typedChipText(r, assumed), (Integer) r[3]));
       }
       chips.add(new Chip("TOTAL " + this.rp(q.optDouble("total", (double) 0.0F)), 0xFF0369A1));
       return chips;
@@ -4016,19 +4100,30 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          JSONObject o = orders.optJSONObject(i);
          if (o == null || o.optBoolean("pickup_only")) continue;
          boolean counted = false;
+         // Dipecah per jenis galon ("MIN ×15 [KERAN]" + "MIN ×3 [NON-KERAN]") — yang harus dimuat berangkat.
+         String gt = strJson(o, "galon_type");
+         boolean typed = GalonTypeUi.known(gt);
+         Map<String, LinkedHashMap<String, Integer>> spec = typed && GalonTypeUi.CAMPUR.equals(gt)
+               ? GalonTypeUi.specBySlug(o.opt("galon_spec")) : new java.util.HashMap<>();
          JSONArray slugs = o.optJSONArray("item_slugs");
          for (int k = 0; slugs != null && k < slugs.length(); k++) {
             JSONObject it = slugs.optJSONObject(k);
             String slug = it != null ? strJson(it, "slug") : null;
             int qty = it != null ? (int) Math.round(it.optDouble("qty", 0)) : 0;
             if (slug == null || slug.trim().isEmpty() || qty <= 0) continue;
-            addTripChip(total, slug.trim(), qty, this.slugColor(slug.trim(), strJson(it, "color")));
+            int color = this.slugColor(slug.trim(), strJson(it, "color"));
+            LinkedHashMap<String, Integer> rows = spec.get(slug.trim().toUpperCase(Locale.US));
+            if (rows != null && !rows.isEmpty()) {
+               for (Map.Entry<String, Integer> r : rows.entrySet()) addTripChip(total, typedKey(slug.trim(), r.getKey()), r.getValue(), color);
+            } else {
+               addTripChip(total, typedKey(slug.trim(), typed ? gt : ""), qty, color);
+            }
             counted = true;
          }
          if (!counted) {
-            for (Map.Entry<String, int[]> e : this.mergedCsvChips(o.optString("items", "")).entrySet()) {
-               if (e.getValue()[0] <= 0) continue;   // label tanpa angka ("1 galon") = produk tak diketahui
-               addTripChip(total, e.getKey(), e.getValue()[0], e.getValue()[1]);   // ber-angka → kunci = label murni
+            for (Object[] r : this.typedRows(o)) {
+               if ((Integer) r[2] <= 0) continue;   // label tanpa angka ("1 galon") = produk tak diketahui
+               addTripChip(total, typedKey((String) r[0], (String) r[1]), (Integer) r[2], (Integer) r[3]);
                counted = true;
             }
          }
@@ -4112,7 +4207,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       LinkedHashMap<String, int[]> items = this.tripTotalItems(orders);
       row.removeAllViews();
       for (Map.Entry<String, int[]> e : items.entrySet()) {
-         row.addView(this.makeDetailBadge(e.getKey() + " ×" + e.getValue()[0], e.getValue()[1]));
+         row.addView(this.makeDetailBadge(typedTotalText(e.getKey(), e.getValue()[0], e.getValue()[1]), e.getValue()[1]));
       }
       scroll.setVisibility(items.isEmpty() ? View.GONE : View.VISIBLE);
    }
@@ -4154,12 +4249,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       row.addView(name);
       row.addView(this.makeDetailBadge(tripSourceLabel(o), tripSourceColor(o)));
       // Badge produk ×jumlah (seperti kartu Strategi); tanpa rincian item → total galon.
-      LinkedHashMap<String, int[]> chips = this.mergedCsvChips(o.optString("items", ""));
+      List<Object[]> chips = this.typedRows(o);
       if (chips.isEmpty()) {
          row.addView(this.makeDetailBadge(o.optInt("galon") + " gal", 0xFF0369A1));
       }
-      for (Map.Entry<String, int[]> e : chips.entrySet()) {
-         row.addView(this.makeDetailBadge(csvChipText(e), e.getValue()[1]));
+      boolean assumed = galonAssumed(strJson(o, "galon_type_source"));
+      for (Object[] r : chips) {
+         row.addView(this.makeDetailBadge(typedChipText(r, assumed), (Integer) r[3]));
       }
       return row;
    }
@@ -4290,10 +4386,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       LinkedHashMap<String, int[]> total = new LinkedHashMap<>();
       for (Transaction s : trip.stops) {
          if (DeliveryPlanner.isPickupOnly(s)) continue;
-         for (Map.Entry<String, int[]> e : this.mergedChipItems(s.getItems()).entrySet()) {
-            int[] v = total.get(e.getKey());
-            if (v == null) total.put(e.getKey(), new int[]{e.getValue()[0], e.getValue()[1]});
-            else v[0] += e.getValue()[0];
+         for (Object[] r : this.typedRows(s)) {
+            String key = typedKey((String) r[0], (String) r[1]);
+            int[] v = total.get(key);
+            if (v == null) total.put(key, new int[]{(Integer) r[2], (Integer) r[3]});
+            else v[0] += (Integer) r[2];
          }
       }
       return total;
@@ -4307,7 +4404,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       LinkedHashMap<String, int[]> items = this.tripLoadItems(trip);
       row.removeAllViews();
       for (Map.Entry<String, int[]> e : items.entrySet()) {
-         row.addView(this.makeDetailBadge(e.getKey() + " ×" + e.getValue()[0], e.getValue()[1]));
+         row.addView(this.makeDetailBadge(typedTotalText(e.getKey(), e.getValue()[0], e.getValue()[1]), e.getValue()[1]));
       }
       scroll.setVisibility(items.isEmpty() ? View.GONE : View.VISIBLE);
    }
@@ -4349,12 +4446,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          if (DeliveryPlanner.isPickupOnly(s)) {
             badges.addView(this.makeDetailBadge("↩ ambil " + s.getJumlahGalon() + " gal", 0xFF64748B));
          } else {
-            LinkedHashMap<String, int[]> items = this.mergedChipItems(s.getItems());
+            List<Object[]> items = this.typedRows(s);
             if (items.isEmpty()) {
                badges.addView(this.makeDetailBadge(s.getJumlahGalon() + " gal", 0xFF64748B));
             }
-            for (Map.Entry<String, int[]> e : items.entrySet()) {
-               badges.addView(this.makeDetailBadge(e.getKey() + " ×" + e.getValue()[0], e.getValue()[1]));
+            boolean assumed = galonAssumed(s.getGalonTypeSource());
+            for (Object[] r : items) {
+               badges.addView(this.makeDetailBadge(typedChipText(r, assumed), (Integer) r[3]));
             }
          }
          row.addView(badges);
@@ -4373,7 +4471,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       StringBuilder sb = new StringBuilder();
       for (Map.Entry<String, int[]> e : this.tripLoadItems(trip).entrySet()) {
          if (sb.length() > 0) sb.append(" · ");
-         sb.append(e.getKey()).append(" ×").append(e.getValue()[0]);
+         sb.append(typedTotalPlain(e.getKey(), e.getValue()[0]));
       }
       return sb.toString();
    }
@@ -4631,13 +4729,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          int shown = 0;
          int hidden = 0;
 
-         for (Map.Entry<String, int[]> e : this.mergedChipItems(items).entrySet()) {
+         boolean assumed = galonAssumed(t.getGalonTypeSource());
+         for (Object[] r : this.typedRows(t)) {
             if (shown >= 4) {
                ++hidden;
             } else {
                TextView chip = this.chipAt(box, shown);
-               int bg = e.getValue()[1];
-               chip.setText(e.getKey() + " ×" + e.getValue()[0]);
+               int bg = (Integer) r[3];
+               chip.setText(typedChipText(r, assumed));
                chip.setTextColor(chipTextColor(bg));
                ((GradientDrawable)chip.getBackground()).setColor(bg);
                chip.setVisibility(0);
@@ -4668,7 +4767,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    /** Badge "Detail Transaksi" Preview — cermin PERSIS chipAt() (kapsul produk kartu Antrean
     *  Delivery), bukan Material Chip: satu-satunya cara dua badge yang mestinya kembar ("MIN ×1" di
     *  kartu, "MIN ×1" di Preview) benar-benar terlihat identik ukurannya. */
-   private TextView makeDetailBadge(String label, int bg) {
+   private TextView makeDetailBadge(CharSequence label, int bg) {
       TextView chip = new TextView(this);
       LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
       lp.setMarginEnd(this.dp(6f));
@@ -4832,8 +4931,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          badges.setOrientation(LinearLayout.HORIZONTAL);
          badges.setPadding(this.dp(6.0F), 0, 0, 0);
          if (!isPickupOnly(t)) {
-            for (Map.Entry<String, int[]> e : this.mergedChipItems(t.getItems()).entrySet()) {
-               badges.addView(this.makeDetailBadge(e.getKey() + " ×" + e.getValue()[0], e.getValue()[1]));
+            boolean assumed = galonAssumed(t.getGalonTypeSource());
+            for (Object[] r : this.typedRows(t)) {
+               badges.addView(this.makeDetailBadge(typedChipText(r, assumed), (Integer) r[3]));
             }
          }
          row.addView(badges);
@@ -5149,8 +5249,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          menu.getMenu().add(0, 4, 3, "\ud83d\udcac Chat Pesanan");
       }
       menu.getMenu().add(0, 5, 4, "\ud83d\udccd Kirim Link Lacak");
+      if ("JUAL".equals(t.getType())) {
+         menu.getMenu().add(0, 6, 5, "🚰 Jenis Galon");
+      }
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
+            case 6:
+               this.showGalonTypeDialog(t);
+               return true;
             case 1:
                this.confirmStopRun();
                return true;
@@ -5183,8 +5289,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if ("JUAL".equals(t.getType())) {
          menu.getMenu().add(0, 4, 3, "\ud83d\udcac Chat Pesanan");
       }
+      if ("JUAL".equals(t.getType())) {
+         menu.getMenu().add(0, 5, 4, "🚰 Jenis Galon");
+      }
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
+            case 5:
+               this.showGalonTypeDialog(t);
+               return true;
             case 1:
                this.promptMarkPriority(t);
                return true;
@@ -6289,8 +6401,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          h.tvOngkir.setVisibility(row.hasOngkir ? View.VISIBLE : View.GONE);
          DeliveryQueueActivity.bindPickupOnlyBadge(h.tvPickupOnly, row.pickupOnly);
          if (row.itemsCsv != null) {
-            DeliveryQueueActivity.this.bindOtherDeviceChips(h.productChips, row.itemsCsv,
-                  row.json != null ? row.json.optString("uuid", "") : null);
+            DeliveryQueueActivity.this.bindOtherDeviceChips(h.productChips, row.itemsCsv, row.json);
          } else {
             DeliveryQueueActivity.this.bindProductChips(h.productChips, row.trx);
          }
@@ -7010,6 +7121,179 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return "Rp " + NumberFormat.getNumberInstance(new Locale("in", "ID")).format(Math.round(v));
    }
 
+   /** Hasil "🚰 Ubah Jenis Galon" dari server: jenis, sumber, rincian (JSON / null). */
+   private interface GalonTypeSaved {
+      void saved(String type, String source, String specJson);
+   }
+
+   /** 🚰 Jenis Galon — order antrean SENDIRI / Pesanan Terbuka (baris lokal). */
+   private void showGalonTypeDialog(Transaction t) {
+      String uuid = this.dao.getSyncUuidById(t.getId());
+      if (uuid == null || uuid.isEmpty()) {
+         Toast.makeText(this, "Order ini belum tersinkron ke server — coba lagi sebentar.", Toast.LENGTH_SHORT).show();
+         return;
+      }
+      LinkedHashMap<String, Integer> slugQty = new LinkedHashMap<>();
+      for (Map.Entry<String, int[]> e : this.mergedChipItems(t.getItems()).entrySet()) slugQty.put(e.getKey(), e.getValue()[0]);
+      this.galonTypeDialog(safe(t.getCustomerName()), uuid, t.getGalonType(), t.getGalonSpec(), slugQty, (type, source, spec) -> {
+         this.dao.applyGalonTypeLocal(t.getId(), type, source, spec);
+         this.loadData();
+      });
+   }
+
+   /** 🚰 Jenis Galon — kartu tab Perangkat Lain (baris server). */
+   private void showGalonTypeDialog(JSONObject q) {
+      String uuid = q.optString("uuid", "");
+      if (uuid.isEmpty()) return;
+      LinkedHashMap<String, Integer> slugQty = new LinkedHashMap<>();
+      for (Map.Entry<String, int[]> e : this.mergedCsvChips(q.optString("items", "")).entrySet()) {
+         if (e.getValue()[0] > 0) slugQty.put(e.getKey(), e.getValue()[0]);
+      }
+      Object spec = q.opt("galon_spec");
+      this.galonTypeDialog(safe(strJson(q, "name")), uuid, strJson(q, "galon_type"), spec != null ? spec.toString() : null, slugQty,
+            (type, source, s) -> this.loadOtherDevices());
+   }
+
+   /**
+    * Pilih Keran / Non-keran / Aqua / Bebas, atau "Campur" → jumlah per produk per jenis. Disimpan di server
+    * (POST /api/transactions/{uuid}/galon-type — sumber "staff": catatan yang diedit belakangan tak menimpanya)
+    * dan tercatat di Jurnal Pesanan; {@code done} mencerminkan hasilnya ke tampilan.
+    */
+   private void galonTypeDialog(String name, String uuid, String current, String currentSpec,
+                                LinkedHashMap<String, Integer> slugQty, GalonTypeSaved done) {
+      String[] keys = {GalonTypeUi.KERAN, GalonTypeUi.NON_KERAN, GalonTypeUi.AQUA, GalonTypeUi.BEBAS, GalonTypeUi.CAMPUR};
+      String[] labels = {"🚰 Keran", "⭕ Non-keran", "💧 Aqua", "✳️ Bebas (yang mana saja)", "🔀 Campur — atur per produk…"};
+      int checked = -1;
+      for (int i = 0; i < keys.length; i++) if (keys[i].equals(current)) checked = i;
+      (new AlertDialog.Builder(this)).setTitle("🚰 Jenis Galon — " + name)
+            .setSingleChoiceItems(labels, checked, (d, which) -> {
+               d.dismiss();
+               if (GalonTypeUi.CAMPUR.equals(keys[which])) {
+                  this.galonMixDialog(name, uuid, currentSpec, slugQty, done);
+               } else {
+                  this.saveGalonType(uuid, keys[which], null, done);
+               }
+            })
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
+   }
+
+   /** Campur: per produk, jumlah Keran / Non-keran / Aqua — total per produk wajib = qty pesanan. */
+   private void galonMixDialog(String name, String uuid, String currentSpec, LinkedHashMap<String, Integer> slugQty, GalonTypeSaved done) {
+      if (slugQty.isEmpty()) {
+         this.saveGalonType(uuid, GalonTypeUi.CAMPUR, null, done);
+         return;
+      }
+      String[] types = {GalonTypeUi.KERAN, GalonTypeUi.NON_KERAN, GalonTypeUi.AQUA};
+      Map<String, LinkedHashMap<String, Integer>> cur = GalonTypeUi.specBySlug(currentSpec);
+      LinearLayout box = new LinearLayout(this);
+      box.setOrientation(LinearLayout.VERTICAL);
+      int pad = this.dp(20f);
+      box.setPadding(pad, this.dp(8f), pad, 0);
+      List<Object[]> inputs = new ArrayList<>();   // {slug, qty, EditText[3]}
+      for (Map.Entry<String, Integer> e : slugQty.entrySet()) {
+         TextView head = new TextView(this);
+         head.setText(e.getKey() + " ×" + e.getValue());
+         head.setTypeface(head.getTypeface(), android.graphics.Typeface.BOLD);
+         head.setPadding(0, this.dp(8f), 0, 0);
+         box.addView(head);
+         LinearLayout row = new LinearLayout(this);
+         row.setOrientation(LinearLayout.HORIZONTAL);
+         EditText[] ets = new EditText[types.length];
+         LinkedHashMap<String, Integer> have = cur.get(e.getKey().trim().toUpperCase(Locale.US));
+         for (int i = 0; i < types.length; i++) {
+            EditText et = new EditText(this);
+            et.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+            et.setHint(GalonTypeUi.label(types[i]));
+            Integer v = have != null ? have.get(types[i]) : null;
+            if (v != null) et.setText(String.valueOf(v));
+            else if (have == null && i == 0) et.setText(String.valueOf(e.getValue()));
+            row.addView(et, new LinearLayout.LayoutParams(0, -2, 1f));
+            ets[i] = et;
+         }
+         box.addView(row);
+         TextView legend = new TextView(this);
+         legend.setText("Keran · Non-keran · Aqua");
+         legend.setTextSize(11f);
+         box.addView(legend);
+         inputs.add(new Object[]{e.getKey(), e.getValue(), ets});
+      }
+      ScrollView sv = new ScrollView(this);
+      sv.addView(box);
+      AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle("🔀 Campur — " + name).setView(sv)
+            .setPositiveButton("Simpan", (DialogInterface.OnClickListener) null)
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
+      dlg.setOnShowListener(x -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+         JSONArray spec = new JSONArray();
+         java.util.Set<String> used = new java.util.HashSet<>();
+         for (Object[] in : inputs) {
+            String slug = (String) in[0];
+            int want = (Integer) in[1];
+            EditText[] ets = (EditText[]) in[2];
+            int sum = 0;
+            for (int i = 0; i < types.length; i++) {
+               int n;
+               try {
+                  n = ets[i].getText().toString().trim().isEmpty() ? 0 : Integer.parseInt(ets[i].getText().toString().trim());
+               } catch (NumberFormatException ex) {
+                  n = -1;
+               }
+               if (n < 0) {
+                  ets[i].setError("Angka tidak valid");
+                  return;
+               }
+               if (n > 0) {
+                  try {
+                     spec.put(new JSONObject().put("slug", slug).put("qty", n).put("type", types[i]));
+                  } catch (Exception ignored) {
+                  }
+                  used.add(types[i]);
+               }
+               sum += n;
+            }
+            if (sum != want) {
+               ets[0].setError(slug + ": jumlah " + sum + " ≠ " + want + " galon");
+               return;
+            }
+         }
+         dlg.dismiss();
+         // Ternyata hanya satu jenis → simpan sebagai jenis tunggal itu, bukan "Campur".
+         if (used.size() == 1) this.saveGalonType(uuid, used.iterator().next(), null, done);
+         else this.saveGalonType(uuid, GalonTypeUi.CAMPUR, spec, done);
+      }));
+      dlg.show();
+   }
+
+   private void saveGalonType(String uuid, String type, JSONArray spec, GalonTypeSaved done) {
+      SyncSettings cfg = this.syncCfg();
+      (new Thread(() -> {
+         String msg;
+         JSONObject res = null;
+         try {
+            JSONObject body = new JSONObject().put("galon_type", type);
+            if (spec != null) body.put("galon_spec", spec);
+            res = (new SyncApi(cfg)).setGalonType(uuid, body);
+            String warn = strJson(res, "warning");
+            msg = warn != null && !warn.isEmpty() ? warn : "🚰 Jenis galon: " + GalonTypeUi.label(strJson(res, "galon_type"));
+         } catch (SyncApi.SyncException se) {
+            msg = extractRouteErrorMessage(se.body);
+            if (msg == null) msg = "Gagal menyimpan (kode " + se.code + ").";
+         } catch (Exception e) {
+            msg = "Gagal menyimpan — periksa koneksi internet.";
+         }
+         final String m = msg;
+         final JSONObject r = res;
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            Toast.makeText(this, m, Toast.LENGTH_LONG).show();
+            if (r != null && r.optBoolean("ok", false)) {
+               Object sp = r.opt("galon_spec");
+               done.saved(strJson(r, "galon_type"), strJson(r, "galon_type_source"),
+                     sp instanceof JSONArray ? sp.toString() : null);
+            }
+         });
+      })).start();
+   }
+
    private String orderDetailText(Transaction t) {
       StringBuilder sb = new StringBuilder();
       List<TransactionItem> items = t.getItems();
@@ -7023,6 +7307,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          sb.append("• ").append(t.getJumlahGalon()).append(" galon\n");
       }
 
+      String jenis = DeliveryPlanner.isPickupOnly(t) ? "" : GalonTypeUi.summary(t.getGalonType(), t.getGalonTypeSource(), t.getGalonSpec());
+      if (!jenis.isEmpty()) sb.append(GalonTypeUi.emoji(t.getGalonType())).append(" Jenis galon: ").append(jenis).append("\n");
       int kembali = this.dao.getReturnedGalonForSale(t.getCustomerId(), t.getTanggal());
       sb.append("Galon kembali: ").append(kembali).append("\n");
       String pay = t.getPaymentMethodLabel();
@@ -10316,9 +10602,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    /** Satu badge "Detail Transaksi" — label siap-tampil + warna latar (teks dihitung kontras). */
    private static class Chip {
-      final String label;
+      final CharSequence label;
       final int bg;
-      Chip(String label, int bg) { this.label = label; this.bg = bg; }
+      Chip(CharSequence label, int bg) { this.label = label; this.bg = bg; }
    }
 
    /** Lokasi tujuan = lokasi UTAMA pelanggan (entri pertama; foto rumah pelanggan = foto lokasi ini)? */
@@ -10390,8 +10676,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     */
    private List<Chip> buildQueueDetailChips(Transaction t) {
       List<Chip> chips = new ArrayList<>();
-      for (Map.Entry<String, int[]> e : this.mergedChipItems(t.getItems()).entrySet()) {
-         chips.add(new Chip(e.getKey() + " ×" + e.getValue()[0], e.getValue()[1]));
+      boolean assumed = galonAssumed(t.getGalonTypeSource());
+      for (Object[] r : this.typedRows(t)) {
+         chips.add(new Chip(typedChipText(r, assumed), (Integer) r[3]));
       }
       int kembali = this.dao.getReturnedGalonForSale(t.getCustomerId(), t.getTanggal());
       chips.add(new Chip("↩ " + kembali + " gln", 0xFF64748B));
@@ -10426,13 +10713,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       java.util.LinkedHashMap<String, Integer> colorByLabel = new java.util.LinkedHashMap<>();
       for (Transaction t : stops) {
          if (t == null) continue;
-         List<TransactionItem> items = t.getItems();
-         if (items == null) continue;
-         for (TransactionItem it : items) {
-            if (it == null || it.jumlah <= 0) continue;
-            String label = this.chipLabel(it);
-            qtyByLabel.merge(label, it.jumlah, Integer::sum);
-            colorByLabel.putIfAbsent(label, this.chipColor(it));
+         // Dipecah per jenis galon ("MIN ×10 [KERAN]" + "MIN ×3 [NON-KERAN]") — yang dimuat berangkat.
+         for (Object[] r : this.typedRows(t)) {
+            if ((Integer) r[2] <= 0) continue;
+            String key = typedKey((String) r[0], (String) r[1]);
+            qtyByLabel.merge(key, (Integer) r[2], Integer::sum);
+            colorByLabel.putIfAbsent(key, (Integer) r[3]);
          }
       }
       double total = 0;
@@ -10445,8 +10731,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
       row.removeAllViews();
       for (Map.Entry<String, Integer> e : qtyByLabel.entrySet()) {
-         row.addView(this.makeDetailBadge(e.getKey() + " ×" + e.getValue(),
-               colorByLabel.getOrDefault(e.getKey(), -10193781)));
+         int bg = colorByLabel.getOrDefault(e.getKey(), -10193781);
+         row.addView(this.makeDetailBadge(typedTotalText(e.getKey(), e.getValue(), bg), bg));
       }
       // Warna sama dengan badge TOTAL di Preview/detail order (buildQueueDetailChips).
       row.addView(this.makeDetailBadge("TOTAL " + this.rp(total), 0xFF0369A1));
@@ -10488,8 +10774,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       row.setOrientation(LinearLayout.HORIZONTAL);
       row.setPadding(0, this.dp(4f), 0, 0);
       boolean any = false;
-      for (Map.Entry<String, int[]> e : this.mergedChipItems(stop.getItems()).entrySet()) {
-         row.addView(this.makeDetailBadge(e.getKey() + " ×" + e.getValue()[0], e.getValue()[1]));
+      boolean assumed = galonAssumed(stop.getGalonTypeSource());
+      for (Object[] r : this.typedRows(stop)) {
+         row.addView(this.makeDetailBadge(typedChipText(r, assumed), (Integer) r[3]));
          any = true;
       }
       if (!any) {
@@ -11854,7 +12141,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          double ongkir = q.optDouble("ongkir", (double)0.0F);
          h.tvOngkir.setVisibility(ongkir > (double)0.0F ? 0 : 8);
          DeliveryQueueActivity.bindPickupOnlyBadge(h.tvPickupOnly, q.optBoolean("pickup_only", false));
-         DeliveryQueueActivity.this.bindOtherDeviceChips(h.productChips, this.str(q, "items"), q.optString("uuid", ""));
+         DeliveryQueueActivity.this.bindOtherDeviceChips(h.productChips, this.str(q, "items"), q);
          DeliveryQueueActivity.bindLocationLine(h.tvAdminArea, DeliveryQueueActivity.queueLocationLine(c, q, jarakOther));
 
          h.btnMore.setOnClickListener((v) -> DeliveryQueueActivity.this.showOtherDeviceMoreMenu(v, q));
@@ -12411,9 +12698,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             menu.getMenu().add(0, 1, 0, "\ud83d\udd0d Preview" + jarakSuffix);
             if ("JUAL".equals(t.getType())) {
                menu.getMenu().add(0, 2, 1, "\ud83d\udcac Chat Pesanan");
+               menu.getMenu().add(0, 3, 2, "🚰 Jenis Galon");
             }
             menu.setOnMenuItemClickListener((item) -> {
                switch (item.getItemId()) {
+                  case 3:
+                     DeliveryQueueActivity.this.showGalonTypeDialog(t);
+                     return true;
                   case 1:
                      DeliveryQueueActivity.this.showQueuePreview(t);
                      return true;
