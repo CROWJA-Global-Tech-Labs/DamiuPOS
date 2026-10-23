@@ -2088,6 +2088,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             try {
                JSONObject res = (new SyncApi(cfg)).devicesQueueAll();
                queue = res.optJSONArray("queue");
+               JSONObject ts = res.optJSONObject("trip_slugs");
+               if (ts != null) {
+                  this.tripSlugs.clear();
+                  for (java.util.Iterator<String> it = ts.keys(); it.hasNext(); ) {
+                     String k = it.next();
+                     String v = ts.optString(k, "");
+                     if (!v.isEmpty()) this.tripSlugs.put(k, v);
+                  }
+               }
             } catch (Exception var6) {
                failed = true;
             }
@@ -2097,6 +2106,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.runOnUiThread(() -> {
                if (!this.isFinishing() && !this.isDestroyed()) {
                   this.otherDevicesAdapter.setData(queueF);
+                  // Slug trip baru tiba → kartu Antrian Saya & Pesanan Terbuka ikut memasang badgenya.
+                  if (this.adapter != null) this.adapter.notifyDataSetChanged();
+                  if (this.openDispatchAdapter != null) this.openDispatchAdapter.notifyDataSetChanged();
                   this.setTabCount(1, this.otherDevicesAdapter.rawCount());
                   if (failedF && this.activeTab == 1) {
                      this.tvOtherDevicesEmpty.setText("Gagal memuat — periksa koneksi lalu coba lagi.");
@@ -2720,6 +2732,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       int z = k.indexOf('\u0000');
       String label = z >= 0 ? k.substring(0, z) : k;
       return e.getValue()[0] >= 0 ? label + " ×" + e.getValue()[0] : label;
+   }
+
+   private void bindOtherDeviceChips(LinearLayout box, String itemsCsv, String uuid) {
+      this.bindOtherDeviceChips(box, itemsCsv);
+      this.appendTripChip(box, uuid);
    }
 
    private void bindOtherDeviceChips(LinearLayout box, String itemsCsv) {
@@ -4418,7 +4435,33 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return lum > 0.65 ? -14735049 : -1;
    }
 
+   /** uuid order → slug trip ("TRIP-KAM") se-cabang, dari /api/devices/queue-all (trip_slugs). */
+   private final java.util.Map<String, String> tripSlugs = new java.util.concurrent.ConcurrentHashMap<>();
+   private static final int TRIP_CHIP_BG = 0xFF6D28D9;
+
+   /** Tambahkan badge slug trip di belakang chip produk (bila order di wilayah Aturan Trip). */
+   private void appendTripChip(LinearLayout box, String uuid) {
+      String slug = uuid != null ? this.tripSlugs.get(uuid) : null;
+      if (slug == null || slug.isEmpty()) return;
+      int shown = 0;
+      for (int i = 0; i < box.getChildCount(); i++) if (box.getChildAt(i).getVisibility() == View.VISIBLE) shown = i + 1;
+      TextView chip = this.chipAt(box, shown);
+      chip.setText("🗓 " + slug);
+      chip.setTextColor(chipTextColor(TRIP_CHIP_BG));
+      ((GradientDrawable) chip.getBackground()).setColor(TRIP_CHIP_BG);
+      chip.setVisibility(View.VISIBLE);
+      box.setVisibility(View.VISIBLE);
+   }
+
    private void bindProductChips(LinearLayout box, Transaction t) {
+      this.bindProductChipsBase(box, t);
+      if (this.tripSlugs.isEmpty()) return;
+      String u = t.getSyncUuid();
+      if ((u == null || u.isEmpty()) && t.getId() > 0) u = this.dao.getSyncUuidById(t.getId());
+      this.appendTripChip(box, u);
+   }
+
+   private void bindProductChipsBase(LinearLayout box, Transaction t) {
       List<TransactionItem> items = t.getItems();
       if (items != null && !items.isEmpty()) {
          int shown = 0;
@@ -6078,7 +6121,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          h.tvOngkir.setVisibility(row.hasOngkir ? View.VISIBLE : View.GONE);
          DeliveryQueueActivity.bindPickupOnlyBadge(h.tvPickupOnly, row.pickupOnly);
          if (row.itemsCsv != null) {
-            DeliveryQueueActivity.this.bindOtherDeviceChips(h.productChips, row.itemsCsv);
+            DeliveryQueueActivity.this.bindOtherDeviceChips(h.productChips, row.itemsCsv,
+                  row.json != null ? row.json.optString("uuid", "") : null);
          } else {
             DeliveryQueueActivity.this.bindProductChips(h.productChips, row.trx);
          }
@@ -11586,7 +11630,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          double ongkir = q.optDouble("ongkir", (double)0.0F);
          h.tvOngkir.setVisibility(ongkir > (double)0.0F ? 0 : 8);
          DeliveryQueueActivity.bindPickupOnlyBadge(h.tvPickupOnly, q.optBoolean("pickup_only", false));
-         DeliveryQueueActivity.this.bindOtherDeviceChips(h.productChips, this.str(q, "items"));
+         DeliveryQueueActivity.this.bindOtherDeviceChips(h.productChips, this.str(q, "items"), q.optString("uuid", ""));
          DeliveryQueueActivity.bindLocationLine(h.tvAdminArea, DeliveryQueueActivity.queueLocationLine(c, q, jarakOther));
 
          h.btnMore.setOnClickListener((v) -> DeliveryQueueActivity.this.showOtherDeviceMoreMenu(v, q));
