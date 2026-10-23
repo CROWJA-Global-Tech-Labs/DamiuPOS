@@ -113,6 +113,47 @@ public final class Ts {
     }
 
     /**
+     * Stempel → MIKRODETIK epoch (fraksi detik ikut dihitung, beda dengan {@link #millis}); {@link Long#MIN_VALUE}
+     * bila kosong/tak terurai. Untuk kunci LWW edited_at: dua suntingan dalam detik yang sama tetap terurut.
+     */
+    public static long micros(String s) {
+        long ms = millisOrMin(s);
+        if (ms == Long.MIN_VALUE) {
+            return Long.MIN_VALUE;
+        }
+        long frac = 0;
+        int dot = s.indexOf('.');
+        int n = 0;
+        for (int i = dot + 1; dot > 0 && i < s.length() && n < 6 && Character.isDigit(s.charAt(i)); i++, n++) {
+            frac = frac * 10 + (s.charAt(i) - '0');
+        }
+        for (; n < 6; n++) {
+            frac *= 10;
+        }
+
+        return ms * 1000L + frac;
+    }
+
+    /**
+     * Kunci LWW {@code local} (suntingan HP yang belum terdorong) lebih BARU dari {@code server}? Dibandingkan
+     * sebagai WAKTU — server lama mengirim edited_at "…T…Z" sedangkan HP menstempel jam dinding lokal, dan
+     * perbandingan string membuat ✓ Selesai / ▶ yang belum terdorong selalu kalah lalu tertimpa pull (order
+     * "bagus melati 2" muncul lagi, 23 Okt 2026). Tak terurai → jatuh ke perbandingan string lama.
+     */
+    public static boolean newerStamp(String local, String server) {
+        if (local == null || local.isEmpty()) {
+            return false;
+        }
+        long l = micros(local);
+        long s = micros(server);
+        if (l == Long.MIN_VALUE || s == Long.MIN_VALUE) {
+            return server == null || local.compareTo(server) > 0;
+        }
+
+        return l > s;
+    }
+
+    /**
      * Ekspresi SQL yang menormalkan kolom stempel waktu ke waktu LOKAL "YYYY-MM-DD HH:MM:SS",
      * sehingga dua kolom bisa dibandingkan sebagai string dengan benar.
      *

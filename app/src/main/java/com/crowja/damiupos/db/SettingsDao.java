@@ -343,7 +343,7 @@ public class SettingsDao {
         if (c.moveToFirst()) { exists = true; localSynced = c.getInt(0); localEdited = c.getString(1); }
         c.close();
         if (exists && localSynced == 0 && localEdited != null && editedAt != null
-                && localEdited.compareTo(editedAt) > 0) {
+                && com.crowja.damiupos.util.Ts.newerStamp(localEdited, editedAt)) {
             return;   // keep newer un-pushed local edit
         }
         if (deleted) {

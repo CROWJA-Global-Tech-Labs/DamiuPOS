@@ -1552,8 +1552,10 @@ public class SyncEngine {
                 continue;
             }
 
+            // Bandingkan sebagai WAKTU (Ts.newerStamp), bukan string: edited_at server bisa "…T…Z" sementara
+            // stempel lokal jam dinding — perbandingan string membuat ✓ Selesai yang belum terdorong tertimpa.
             if (localId != -1 && localSynced == 0 && localEdited != null
-                    && localEdited.compareTo(editedAt) > 0) {
+                    && com.crowja.damiupos.util.Ts.newerStamp(localEdited, editedAt)) {
                 // Kolom data di-skip (edit lokal lebih baru), TAPI field pelanggan yang
                 // server-authoritative (agregat lintas-perangkat + is_mine + origin_label) tetap
                 // disegarkan — tak pernah di-push dari device, jadi tak ada risiko clobber.
