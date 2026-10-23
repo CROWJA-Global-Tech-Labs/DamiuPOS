@@ -1404,24 +1404,31 @@ public class NavigationPipActivity extends AppCompatActivity {
         chips.setOrientation(android.widget.LinearLayout.HORIZONTAL);
         chips.setGravity(android.view.Gravity.CENTER_VERTICAL);
         chips.setPadding(0, Math.round(6 * d), 0, 0);
-        // 🚰 Jenis galon perhentian aktif PALING DEPAN (warna jenis, GalonTypeUi) — keran/non-keran/Aqua yang
-        // harus diserahkan harus terbaca sekilas sebelum kurir menurunkan galon.
+        // 🚰 Jenis galon perhentian aktif MENYATU di kapsul produk ("MIN ×2 NON-KRN", pil GalonTypeUi — sama dengan
+        // kartu antrean): keran/non-keran/Aqua yang harus diserahkan terbaca sekilas sebelum kurir menurunkan galon.
+        // CAMPUR ber-rincian → satu kapsul per (produk, jenis).
         Transaction act = last != null ? last.active : null;
-        if (act != null && !DeliveryPlanner.isPickupOnly(act) && GalonTypeUi.known(act.getGalonType())) {
-            String gt = act.getGalonType();
-            String txt = GalonTypeUi.emoji(gt) + " " + GalonTypeUi.tag(gt)
-                    + (GalonTypeUi.SOURCE_DEFAULT.equals(act.getGalonTypeSource()) ? "?" : "");
-            if (GalonTypeUi.CAMPUR.equals(gt)) {
-                String sum = GalonTypeUi.summary(gt, null, act.getGalonSpec());
-                int c = sum.indexOf(": ");
-                if (c >= 0) txt += " " + sum.substring(c + 2);
-            }
-            chips.addView(mediaChip(txt, GalonTypeUi.color(gt)));
-        }
+        String gt = act != null && !DeliveryPlanner.isPickupOnly(act) && GalonTypeUi.known(act.getGalonType()) ? act.getGalonType() : null;
+        boolean assumed = gt != null && GalonTypeUi.SOURCE_DEFAULT.equals(act.getGalonTypeSource());
+        java.util.Map<String, java.util.LinkedHashMap<String, Integer>> spec = GalonTypeUi.CAMPUR.equals(gt)
+                ? GalonTypeUi.specBySlug(act.getGalonSpec()) : new java.util.HashMap<>();
         if (!mediaProducts.isEmpty()) {
             for (String part : mediaProducts.split(" · ")) {
-                if (!part.trim().isEmpty()) chips.addView(mediaChip(part.trim(), 0xFF1565C0));
+                String p = part.trim();
+                if (p.isEmpty()) continue;
+                int x = p.indexOf(" ×");
+                String slug = x >= 0 ? p.substring(0, x) : p;
+                java.util.LinkedHashMap<String, Integer> rows = spec.get(slug.trim().toUpperCase(java.util.Locale.US));
+                if (rows != null && !rows.isEmpty()) {
+                    for (java.util.Map.Entry<String, Integer> r : rows.entrySet()) {
+                        chips.addView(mediaChip(GalonTypeUi.tagged(slug + " ×" + r.getValue(), r.getKey(), false, 0xFFFFFFFF), 0xFF1565C0));
+                    }
+                } else {
+                    chips.addView(mediaChip(gt != null ? GalonTypeUi.tagged(p, gt, assumed, 0xFFFFFFFF) : p, 0xFF1565C0));
+                }
             }
+        } else if (gt != null) {
+            chips.addView(mediaChip(GalonTypeUi.emoji(gt) + " " + GalonTypeUi.tag(gt) + (assumed ? "?" : ""), GalonTypeUi.color(gt)));
         }
         if (!mediaTotal.isEmpty()) chips.addView(mediaChip("💰 " + mediaTotal, 0xFF15803D));
         android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
@@ -1547,7 +1554,7 @@ public class NavigationPipActivity extends AppCompatActivity {
         startActivity(i);
     }
 
-    private TextView mediaChip(String text, int bg) {
+    private TextView mediaChip(CharSequence text, int bg) {
         TextView tv = new TextView(this);
         float d = getResources().getDisplayMetrics().density;
         tv.setText(text);
