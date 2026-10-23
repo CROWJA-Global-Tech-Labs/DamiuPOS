@@ -9563,9 +9563,140 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       boolean viewer = this.currentUserIsViewer();
       boolean offline = source == TERTUNDA_SRC_OFFLINE;
-      for (TertundaRows.Merged<Transaction> m : rows) {
-         list.addView(this.buildTertundaRow(m, viewer, offline, reload));
+      // Pilih-banyak: centang per kartu + "Pilih semua" → ▶ Lanjutkan (jatuh tempo hari ini / semua).
+      java.util.Set<String> listed = new java.util.HashSet<>();
+      for (TertundaRows.Merged<Transaction> m : rows) listed.add(m.uuid());
+      this.tertundaSelected.retainAll(listed);
+      List<android.widget.CheckBox> boxes = new ArrayList<>();
+      Button bulk = new Button(this);
+      Runnable paintBulk = () -> {
+         int n = this.tertundaSelected.size();
+         bulk.setText(n > 0 ? "▶ Lanjutkan (" + n + ")" : "▶ Lanjutkan…");
+      };
+      if (!viewer) {
+         LinearLayout bar = new LinearLayout(this);
+         bar.setOrientation(LinearLayout.HORIZONTAL);
+         bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
+         bar.setPadding(0, 0, 0, this.dp(8f));
+         android.widget.CheckBox all = new android.widget.CheckBox(this);
+         all.setText("Pilih semua");
+         all.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+         all.setChecked(!this.tertundaSelected.isEmpty() && this.tertundaSelected.size() == rows.size());
+         all.setOnClickListener((v) -> {
+            boolean on = all.isChecked();
+            for (android.widget.CheckBox b : boxes) b.setChecked(on);
+         });
+         bar.addView(all);
+         bulk.setAllCaps(false);
+         bulk.setOnClickListener((v) -> this.askBulkResumeTertunda(rows, offline, reload));
+         bar.addView(bulk);
+         list.addView(bar);
+         paintBulk.run();
       }
+      for (TertundaRows.Merged<Transaction> m : rows) {
+         View card = this.buildTertundaRow(m, viewer, offline, reload);
+         if (!viewer && card instanceof LinearLayout) {
+            android.widget.CheckBox cb = new android.widget.CheckBox(this);
+            cb.setText("Pilih");
+            cb.setChecked(this.tertundaSelected.contains(m.uuid()));
+            cb.setOnCheckedChangeListener((b, on) -> {
+               if (on) this.tertundaSelected.add(m.uuid());
+               else this.tertundaSelected.remove(m.uuid());
+               paintBulk.run();
+            });
+            boxes.add(cb);
+            ((LinearLayout) card).addView(cb, 0);
+         }
+         list.addView(card);
+      }
+   }
+
+   /** uuid order Antrean Tertunda yang dicentang (bertahan selama dialog dimuat ulang). */
+   private final java.util.Set<String> tertundaSelected = new java.util.LinkedHashSet<>();
+
+   /** Jadwal lanjut order ini jatuh pada HARI INI atau sudah lewat? */
+   private static boolean tertundaDueToday(TertundaRows.Merged<Transaction> m) {
+      String at = Ts.local(m.server != null ? m.server.resumeAtLocal : (m.local != null ? m.local.getDeliveryTertundaResumeAt() : null));
+      if (at.length() < 10) return true;   // tanpa jadwal = siap dilanjutkan
+      String today = new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new java.util.Date());
+      return at.substring(0, 10).compareTo(today) <= 0;
+   }
+
+   /** ▶ Lanjutkan massal: yang dicentang (kosong = semua di daftar) → "jatuh tempo hari ini" atau "semua". */
+   private void askBulkResumeTertunda(List<TertundaRows.Merged<Transaction>> rows, boolean offline, Runnable reload) {
+      List<TertundaRows.Merged<Transaction>> scope = new ArrayList<>();
+      for (TertundaRows.Merged<Transaction> m : rows) {
+         if (this.tertundaSelected.isEmpty() || this.tertundaSelected.contains(m.uuid())) scope.add(m);
+      }
+      List<TertundaRows.Merged<Transaction>> due = new ArrayList<>();
+      for (TertundaRows.Merged<Transaction> m : scope) if (tertundaDueToday(m)) due.add(m);
+      String what = this.tertundaSelected.isEmpty() ? "semua " + scope.size() + " pesanan di daftar" : scope.size() + " pesanan terpilih";
+      AlertDialog.Builder b = (new AlertDialog.Builder(this)).setTitle("▶ Lanjutkan pesanan tertunda")
+            .setMessage("Dari " + what + ":" + "\n\n" + "Pesanan kembali ke antrian aktif sekarang.")
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null)
+            .setPositiveButton("Semua (" + scope.size() + ")", (d, w) -> this.confirmBulkResumeTertunda(scope, offline, reload));
+      if (!due.isEmpty()) {
+         b.setNeutralButton("Jatuh tempo hari ini (" + due.size() + ")", (d, w) -> this.confirmBulkResumeTertunda(due, offline, reload));
+      }
+      b.show();
+   }
+
+   private void confirmBulkResumeTertunda(List<TertundaRows.Merged<Transaction>> todo, boolean offline, Runnable reload) {
+      if (todo.isEmpty()) return;
+      this.confirmTertundaTwoTap("▶ Lanjutkan " + todo.size() + " pesanan?",
+            todo.size() + " pesanan tertunda akan langsung kembali ke antrian aktif sekarang." + "\n\n" + "Ketuk \"Lanjutkan\" dua kali untuk memastikan.",
+            "Lanjutkan", "Melanjutkan…", (dialog, pos, neg) -> this.runBulkResumeTertunda(dialog, todo, offline, reload));
+   }
+
+   private void runBulkResumeTertunda(AlertDialog dialog, List<TertundaRows.Merged<Transaction>> todo, boolean offline, Runnable reload) {
+      SyncSettings cfg = this.syncCfg();
+      new Thread(() -> {
+         int ok = 0;
+         int fail = 0;
+         boolean anyLocal = false;
+         List<String> touched = new ArrayList<>();
+         for (TertundaRows.Merged<Transaction> m : todo) {
+            TertundaRows.WritePath path = this.tertundaWritePath(m, offline);
+            try {
+               if (path == TertundaRows.WritePath.SERVER) {
+                  JSONObject body = new JSONObject();
+                  body.put("transaction_uuid", m.uuid());
+                  new SyncApi(cfg).resumeTertunda(body);
+                  touched.add(m.uuid());
+                  ok++;
+               } else if (path != TertundaRows.WritePath.NONE && m.local != null) {
+                  (new TransactionDao(DatabaseHelper.getInstance(this))).resumeTertunda(m.local.getId());
+                  anyLocal = true;
+                  ok++;
+               } else {
+                  fail++;
+               }
+            } catch (SyncApi.SyncException se) {
+               if (TertundaRows.isStaleCode(se.code)) {   // sudah dilanjutkan di tempat lain
+                  touched.add(m.uuid());
+                  ok++;
+               } else {
+                  fail++;
+               }
+            } catch (Exception e) {
+               fail++;
+            }
+         }
+         final int fOk = ok;
+         final int fFail = fail;
+         final boolean fLocal = anyLocal;
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            try { dialog.dismiss(); } catch (Exception ignored) {}
+            for (String u : touched) this.markTertundaServerTouched(u, true);
+            this.tertundaSelected.clear();
+            if (fLocal) SyncScheduler.syncNow(this.getApplicationContext());
+            this.afterTertundaServerChange();
+            this.loadData();
+            Toast.makeText(this, "▶ " + fOk + " pesanan dilanjutkan" + (fFail > 0 ? " · " + fFail + " gagal (coba lagi)" : "") + ".", Toast.LENGTH_LONG).show();
+            if (reload != null) reload.run();
+         });
+      }).start();
    }
 
    private TextView tertundaBanner(String text, boolean warn, Runnable onTap) {
