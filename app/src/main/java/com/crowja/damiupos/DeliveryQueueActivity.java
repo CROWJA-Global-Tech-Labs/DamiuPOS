@@ -575,6 +575,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.barClaimOther = this.findViewById(id.barClaimOther);
       this.tvClaimOtherCount = (TextView)this.findViewById(id.tvClaimOtherCount);
       this.findViewById(id.btnClaimOtherCancel).setOnClickListener((v) -> this.exitClaimSelect(false));
+      this.findViewById(id.btnClaimOtherAksi).setOnClickListener((v) -> this.showOtherSelectionActions(v));
       this.findViewById(id.btnClaimOtherGo).setOnClickListener((v) -> this.confirmBulkClaimOther());
 
       this.rvOpenDispatch = (RecyclerView)this.findViewById(id.rvOpenDispatch);
@@ -11153,6 +11154,106 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             .setPositiveButton("Ambil Alih", (d, w) -> this.runBulkClaim(picked, false))
             .setNegativeButton("Batal", (DialogInterface.OnClickListener)null)
             .show();
+   }
+
+   /** "Aksi ⋮" mode-pilih tab Perangkat Lain — cermin Aksi massal Antrian Saya: Alihkan ke perangkat
+    *  lain / sesuai wilayah. Tiap order lewat /api/delivery/route + from_device_uuid (pemegang yang
+    *  dilihat), jadi order yang keburu pindah / sedang diantar ditolak server. */
+   private void showOtherSelectionActions(View anchor) {
+      java.util.LinkedHashMap<String, String[]> picked = new java.util.LinkedHashMap<>();
+      for (JSONObject o : this.otherDevicesAdapter.data) {
+         String uuid = o.optString("uuid", "");
+         if (!uuid.isEmpty() && this.claimSelectedOther.contains(uuid) && !isBeingDelivered(o)) {
+            picked.put(uuid, new String[]{otherHolderUuid(o), o.optString("name", "")});
+         }
+      }
+      if (picked.isEmpty()) {
+         Toast.makeText(this, "Belum ada order yang dipilih.", 0).show();
+         return;
+      }
+      PopupMenu menu = new PopupMenu(this, anchor);
+      menu.getMenu().add(0, 1, 0, "📲 Alihkan " + picked.size() + " order ke perangkat lain");
+      menu.getMenu().add(0, 2, 1, "🧭 Alihkan " + picked.size() + " order sesuai wilayahnya");
+      menu.setOnMenuItemClickListener((item) -> {
+         if (item.getItemId() == 2) {
+            (new AlertDialog.Builder(this)).setTitle("Alihkan " + picked.size() + " order sesuai wilayah?")
+                  .setMessage("Tiap order dikirim ke perangkat pemilik wilayahnya.")
+                  .setPositiveButton("Alihkan", (d, w) -> this.runBulkForwardOther(picked, "__wilayah__", "wilayah masing-masing"))
+                  .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
+            return true;
+         }
+         SyncSettings cfg = this.syncCfg();
+         String myUuid = cfg.getDeviceUuid();
+         List<String[]> devs = new ArrayList<>();
+         try {
+            JSONArray arr = new JSONArray(cfg.getDeviceRoster());
+            for (int i = 0; i < arr.length(); ++i) {
+               JSONObject d = arr.optJSONObject(i);
+               if (d == null) continue;
+               String u = d.optString("uuid", "");
+               if (!u.isEmpty() && !u.equals(myUuid)) devs.add(new String[]{u, d.optString("name", "Perangkat")});
+            }
+         } catch (Exception ignored) {
+         }
+         if (devs.isEmpty()) {
+            Toast.makeText(this, "Belum ada perangkat delivery lain di roster. Coba sinkron dulu.", 1).show();
+            return true;
+         }
+         String[] names = new String[devs.size()];
+         for (int i = 0; i < devs.size(); ++i) names[i] = devs.get(i)[1];
+         (new AlertDialog.Builder(this)).setTitle("Alihkan " + picked.size() + " order ke perangkat mana?")
+               .setItems(names, (dx, which) -> {
+                  String[] tg = devs.get(which);
+                  (new AlertDialog.Builder(this)).setTitle("Alihkan ke \"" + tg[1] + "\"?")
+                        .setMessage(picked.size() + " order dipindahkan ke antrian \"" + tg[1] + "\".")
+                        .setPositiveButton("Alihkan Semua", (d, w) -> this.runBulkForwardOther(picked, tg[0], tg[1]))
+                        .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
+               })
+               .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
+         return true;
+      });
+      menu.show();
+   }
+
+   private void runBulkForwardOther(java.util.LinkedHashMap<String, String[]> picked, String targetUuid, String targetName) {
+      SyncSettings cfg = this.syncCfg();
+      android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
+      wait.setMessage("Mengalihkan " + picked.size() + " order…");
+      wait.setCancelable(false);
+      wait.show();
+      (new Thread(() -> {
+         int ok = 0;
+         StringBuilder fail = new StringBuilder();
+         for (Map.Entry<String, String[]> e : picked.entrySet()) {
+            String holder = e.getValue()[0];
+            if (holder.equals(targetUuid)) continue;
+            try {
+               JSONObject body = new JSONObject();
+               body.put("transaction_uuid", e.getKey());
+               body.put("target_device_uuid", targetUuid);
+               body.put("from_device_uuid", holder);
+               (new SyncApi(cfg)).routeDelivery(body);
+               ok++;
+            } catch (SyncApi.SyncException se) {
+               String m = extractRouteErrorMessage(se.body);
+               fail.append("\n• ").append(e.getValue()[1]).append(": ").append(m != null ? m : "kode " + se.code);
+            } catch (Exception ex) {
+               fail.append("\n• ").append(e.getValue()[1]).append(": gagal koneksi");
+            }
+         }
+         final int okF = ok;
+         final String failF = fail.toString();
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            wait.dismiss();
+            this.exitClaimSelect(false);
+            SyncScheduler.syncNow(this.getApplicationContext());
+            this.loadData();
+            String msg = okF + " order dialihkan ke " + targetName + "." + (failF.isEmpty() ? "" : "\n\nGagal:" + failF);
+            (new AlertDialog.Builder(this)).setTitle("Alihkan Massal").setMessage(msg)
+                  .setPositiveButton("OK", (DialogInterface.OnClickListener) null).show();
+         });
+      })).start();
    }
 
    private void confirmBulkClaimOpen() {

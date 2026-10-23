@@ -708,6 +708,15 @@
             android:text="Batal"
             android:textAllCaps="false" />
 
+        <!-- Aksi massal order perangkat lain terpilih: Alihkan ke perangkat lain / sesuai wilayah. -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnClaimOtherAksi"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Aksi ⋮"
+            android:textAllCaps="false" />
+
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnClaimOtherGo"
             android:layout_width="wrap_content"
