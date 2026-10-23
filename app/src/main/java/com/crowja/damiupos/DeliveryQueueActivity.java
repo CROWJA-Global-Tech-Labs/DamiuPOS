@@ -7583,11 +7583,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          (new AlertDialog.Builder(this))
                .setCancelable(false)
                .setTitle("📷 WAJIB: Foto Bukti — Pesanan Reseller")
-               .setMessage("Order ini dipesan RESELLER untuk pelanggannya lewat link pemesanan "
-                     + "reseller, jadi fotonya WAJIB.\n\n"
+               .setMessage("Order ini milik pelanggan RESELLER (dipesan reseller atau pelanggan "
+                     + "terafiliasi reseller), jadi fotonya WAJIB.\n\n"
                      + "Foto galon yang sudah diserahkan (atau rumah/lokasi tujuan) sebagai bukti "
-                     + "barangnya benar-benar sampai. Reseller melihat foto ini di halaman "
-                     + "pesanannya.")
+                     + "barangnya benar-benar sampai. Foto ini tampil di web & halaman reseller, "
+                     + "lalu dikirim lewat WA ke reseller dan pelanggan.")
                .setPositiveButton("AMBIL FOTO", (d, w) -> this.requestProofPhoto(t, revokeCredit))
                .setNegativeButton("Batal", (d, w) ->
                      Toast.makeText(this, "Order belum ditandai Selesai — foto bukti wajib untuk pesanan reseller.", 1).show())
@@ -7621,11 +7621,25 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * wajib. {@code t} sendiri tetap dipakai untuk langkah berikutnya (ia membawa delivery_queued_at
     * untuk durasi; baris getById tidak).
     */
+   /** Pelanggan terafiliasi reseller (linked_reseller_uuid) → foto bukti WAJIB: reseller melihatnya di halaman
+    *  link-nya & server mengirim WA selesai + foto ke reseller (ResellerSelesaiWa) dan pelanggan. */
+   private boolean isAffiliatedCustomer(Transaction t) {
+      if (t == null || t.getCustomerId() <= 0) return false;
+      try {
+         Customer c = this.customerDao.getById(t.getCustomerId());
+         String r = c != null ? c.getLinkedResellerUuid() : null;
+         return r != null && !r.trim().isEmpty() && !"null".equals(r.trim());
+      } catch (Exception e) {
+         return false;
+      }
+   }
+
    private DeliveryProofPolicy.Reason proofReason(Transaction t) {
       Transaction fresh = t != null ? this.dao.getById(t.getId()) : null;
       boolean cashBon = this.isCashBon(t) || this.isCashBon(fresh);
       boolean orderRequired = (t != null && t.requiresDeliveryProof())
-            || (fresh != null && fresh.requiresDeliveryProof());
+            || (fresh != null && fresh.requiresDeliveryProof())
+            || this.isAffiliatedCustomer(t);
       SettingsDao sd = new SettingsDao(DatabaseHelper.getInstance(this));
       // Perangkat INI ditandai "📷 Wajib Foto Bukti Selesai" di dashboard (/api/me) — di atas
       // setelan cabang yang berlaku untuk semua HP.
