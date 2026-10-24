@@ -164,7 +164,13 @@ public class NavigationPipActivity extends AppCompatActivity {
     /** Baris badge (produk ×jumlah + total) di bawah foto/peta — tampilan bawaan layar terbagi. */
     private android.widget.LinearLayout llMediaChips;
     /** Tombol bulat melayang di atas foto/peta (layar terbagi): ✕ keluar split & ⇆ ganti tampilan. */
-    private TextView fabExitSplit, fabCycleView;
+    private TextView fabExitSplit, fabCycleView, fabPhotoFix;
+    private static final int REQ_FIX_PHOTO = 7711;
+    private static final int REQ_FIX_PHOTO_PERM = 7712;
+    /** Foto koreksi yang sedang diambil: path berkas + pelanggan + tujuan perhentian aktif. */
+    private String fixPhotoPath;
+    private long fixCustomerId = -1L;
+    private String fixDestName;
     private String mediaName = "", mediaProducts = "", mediaTotal = "";
     /** Catatan pesanan untuk pelanggan perhentian aktif (penanda internal dibuang) — badge 📝 di panel. */
     private String mediaNote = "";
@@ -1189,14 +1195,124 @@ public class NavigationPipActivity extends AppCompatActivity {
             b.setMargins(m, m + size + m, m, m);
             ((android.widget.FrameLayout) pipMedia).addView(fabExitSplit, a);
             ((android.widget.FrameLayout) pipMedia).addView(fabCycleView, b);
+            // 📷 Koreksi foto lokasi: foto baru jadi foto PERTAMA lokasi tujuan, foto lama digeser ke belakang.
+            fabPhotoFix = floatingRound("📷", 0xFF0D47A1);
+            fabPhotoFix.setContentDescription("Koreksi foto lokasi");
+            fabPhotoFix.setOnClickListener(v -> startFixPhoto());
+            android.widget.FrameLayout.LayoutParams cp = new android.widget.FrameLayout.LayoutParams(size, size,
+                    android.view.Gravity.TOP | android.view.Gravity.START);
+            cp.setMargins(m, m, m, m);
+            ((android.widget.FrameLayout) pipMedia).addView(fabPhotoFix, cp);
         }
         int vis = show ? View.VISIBLE : View.GONE;
         fabExitSplit.setVisibility(photoFullscreen ? View.GONE : vis);
         fabCycleView.setVisibility(photoFullscreen ? View.GONE : vis);
+        boolean canFix = last != null && last.active != null && last.active.getCustomerId() > 0
+                && !last.active.isResellerDestination();
+        fabPhotoFix.setVisibility(photoFullscreen || !canFix ? View.GONE : vis);
         if (show) {
             fabExitSplit.bringToFront();
             fabCycleView.bringToFront();
+            fabPhotoFix.bringToFront();
         }
+    }
+
+    /** 📷 ketuk: buka kamera (izin dulu bila perlu) untuk foto lokasi perhentian aktif. */
+    private void startFixPhoto() {
+        Transaction a = last != null ? last.active : null;
+        if (a == null || a.getCustomerId() <= 0) return;
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{android.Manifest.permission.CAMERA}, REQ_FIX_PHOTO_PERM);
+            return;
+        }
+        try {
+            java.io.File dir = getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES);
+            java.io.File f = java.io.File.createTempFile("LOKASI_" + System.currentTimeMillis(), ".jpg", dir);
+            fixPhotoPath = f.getAbsolutePath();
+            fixCustomerId = a.getCustomerId();
+            fixDestName = a.getDeliveryDestName();
+            Uri uri = androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", f);
+            Intent i = com.crowja.damiupos.util.CameraIntents.preferBackCamera(new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE));
+            i.putExtra(android.provider.MediaStore.EXTRA_OUTPUT, uri);
+            i.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            startActivityForResult(i, REQ_FIX_PHOTO);
+        } catch (Exception e) {
+            Toast.makeText(this, "Kamera tidak bisa dibuka.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_FIX_PHOTO_PERM) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) startFixPhoto();
+            else Toast.makeText(this, "Izin kamera diperlukan untuk foto lokasi.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_FIX_PHOTO) return;
+        final String path = fixPhotoPath;
+        fixPhotoPath = null;
+        if (path == null) return;
+        java.io.File f = new java.io.File(path);
+        if (resultCode != RESULT_OK || !f.exists() || f.length() == 0) {
+            f.delete();
+            return;
+        }
+        uploadFixPhoto(path, fixCustomerId, fixDestName);
+    }
+
+    /** Unggah (720p) ke lokasi tujuan dgn prepend=1 → server menjadikannya foto pertama; tampil langsung di panel. */
+    private void uploadFixPhoto(String path, long customerId, String destName) {
+        Toast.makeText(this, "Mengunggah foto lokasi…", Toast.LENGTH_SHORT).show();
+        final Context app = getApplicationContext();
+        new Thread(() -> {
+            String err = null;
+            try {
+                DatabaseHelper db = DatabaseHelper.getInstance(app);
+                CustomerDao cdao = new CustomerDao(db);
+                String custUuid = cdao.getSyncUuidById(customerId);
+                Customer c = cdao.getByIdMerged(customerId);
+                String locId = "primary";
+                String dn = clean(destName);
+                if (c != null && c.getLocations() != null) {
+                    for (Customer.Location l : c.getLocations()) {
+                        if (l != null && !dn.isEmpty() && dn.equalsIgnoreCase(clean(l.name)) && l.id != null && !l.id.isEmpty()) {
+                            locId = l.id;
+                            break;
+                        }
+                    }
+                }
+                if (custUuid == null || custUuid.isEmpty()) throw new IllegalStateException("Pelanggan belum tersinkron.");
+                java.io.File tmp = new java.io.File(new java.io.File(path).getParentFile(), "loc_upl_" + System.nanoTime() + ".jpg");
+                java.io.File up = com.crowja.damiupos.util.BitmapUtils.compressForUpload(path, tmp, 1280, 85) ? tmp : new java.io.File(path);
+                new com.crowja.damiupos.sync.SyncApi(new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(db)))
+                        .uploadLocationPhoto(custUuid, locId, up, true);
+                if (tmp.exists()) tmp.delete();
+            } catch (IllegalStateException e) {
+                err = e.getMessage();
+            } catch (Exception e) {
+                err = "Gagal mengunggah foto — periksa koneksi internet.";
+            }
+            final String fErr = err;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (fErr != null) {
+                    Toast.makeText(this, fErr, Toast.LENGTH_LONG).show();
+                    return;
+                }
+                Toast.makeText(this, "📷 Foto lokasi diperbarui (jadi foto pertama).", Toast.LENGTH_LONG).show();
+                if (last != null) {
+                    last.photoLocal = path;
+                    last.photoUrl = null;
+                    render(last);
+                }
+                com.crowja.damiupos.sync.SyncScheduler.syncNow(app);
+            });
+        }).start();
     }
 
     private TextView floatingRound(String glyph, int fg) {

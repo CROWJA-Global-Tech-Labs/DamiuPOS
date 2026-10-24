@@ -773,13 +773,19 @@ public class SyncApi {
      * pemanggil — tak ada kolom photo_url tunggal yang otomatis membawanya seperti foto rumah.
      */
     public JSONObject uploadLocationPhoto(String customerUuid, String locationId, File file) throws Exception {
+        return uploadLocationPhoto(customerUuid, locationId, file, false);
+    }
+
+    /** @param prepend true = server langsung menjadikannya foto PERTAMA lokasi (koreksi dari panel navigasi). */
+    public JSONObject uploadLocationPhoto(String customerUuid, String locationId, File file, boolean prepend) throws Exception {
         RequestBody fileBody = RequestBody.create(file, MediaType.parse("image/jpeg"));
-        RequestBody body = new MultipartBody.Builder()
+        MultipartBody.Builder mb = new MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
                 .addFormDataPart("customer_uuid", customerUuid)
                 .addFormDataPart("location_id", locationId)
-                .addFormDataPart("file", file.getName(), fileBody)
-                .build();
+                .addFormDataPart("file", file.getName(), fileBody);
+        if (prepend) mb.addFormDataPart("prepend", "1");
+        RequestBody body = mb.build();
         Request.Builder b = new Request.Builder()
                 .url(cfg.getBaseUrl() + "/api/media/upload-location-photo")
                 .header("Accept", "application/json")
