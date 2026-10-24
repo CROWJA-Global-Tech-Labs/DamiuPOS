@@ -1312,10 +1312,79 @@ public class CustomerDetailActivity extends AppCompatActivity {
         getTheme().resolveAttribute(android.R.attr.selectableItemBackground, tv, true);
         row.setBackgroundResource(tv.resourceId);
         row.setClickable(true);
-        row.setOnClickListener(v -> showHistoryDetail(t));
+        // Galon kembali: ketuk = ubah jumlah / hapus (baris bisa milik HP lain → diubah di server).
+        row.setOnClickListener(v -> {
+            if (kembali && !str(t, "uuid").isEmpty()) editKembaliRow(t, t2);
+            else showHistoryDetail(t);
+        });
         outer.addView(divider, new android.widget.LinearLayout.LayoutParams(
                 android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 1));
         return outer;
+    }
+
+    /** ↩ Ubah jumlah galon kembali / hapus barisnya (server, lalu sinkron ke semua HP). */
+    private void editKembaliRow(org.json.JSONObject t, TextView label) {
+        final android.widget.EditText et = new android.widget.EditText(this);
+        et.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        et.setText(String.valueOf(t.optInt("galon", 0)));
+        et.setSelectAllOnFocus(true);
+        android.widget.FrameLayout wrap = new android.widget.FrameLayout(this);
+        wrap.setPadding(dp(20), dp(8), dp(20), 0);
+        wrap.addView(et);
+        AlertDialog dlg = new AlertDialog.Builder(this).setTitle("↩ Ubah Galon Kembali")
+                .setMessage("Jumlah galon kosong yang dikembalikan pelanggan:")
+                .setView(wrap)
+                .setPositiveButton("Simpan", null)
+                .setNeutralButton("🗑️ Hapus", null)
+                .setNegativeButton("Batal", null).create();
+        dlg.setOnShowListener(d -> {
+            dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                int n;
+                try { n = Integer.parseInt(et.getText().toString().trim()); } catch (Exception e) { n = 0; }
+                if (n < 1) {
+                    et.setError("Minimal 1 (atau pakai Hapus)");
+                    return;
+                }
+                dlg.dismiss();
+                sendKembaliEdit(t, n, label);
+            });
+            dlg.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> new AlertDialog.Builder(this)
+                    .setTitle("Hapus baris galon kembali?")
+                    .setPositiveButton("Hapus", (d2, w) -> { dlg.dismiss(); sendKembaliEdit(t, 0, label); })
+                    .setNegativeButton("Batal", null).show());
+        });
+        dlg.show();
+    }
+
+    /** @param n 0 = hapus. */
+    private void sendKembaliEdit(org.json.JSONObject t, int n, TextView label) {
+        final com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+        new Thread(() -> {
+            String msg;
+            boolean ok = false;
+            try {
+                org.json.JSONObject body = new org.json.JSONObject();
+                if (n <= 0) body.put("delete", true);
+                else body.put("jumlah_galon", n);
+                msg = new com.crowja.damiupos.sync.SyncApi(cfg).editKembali(str(t, "uuid"), body).optString("message", "Tersimpan.");
+                ok = true;
+            } catch (com.crowja.damiupos.sync.SyncApi.SyncException se) {
+                String m = se.serverMessage();
+                msg = m != null && !m.isEmpty() ? m : "Gagal menyimpan (kode " + se.code + ").";
+            } catch (Exception e) {
+                msg = "Gagal menyimpan — periksa koneksi internet.";
+            }
+            final String fm = msg;
+            final boolean fok = ok;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(this, fm, Toast.LENGTH_LONG).show();
+                if (!fok) return;
+                try { t.put("galon", n); } catch (Exception ignored) { }
+                label.setText(n <= 0 ? "🗑️ Dihapus" : "Galon kembali " + n);
+                com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+            });
+        }).start();
     }
 
     /** Popup Detail Transaksi dari baris histori (data server — transaksi HP lain pun lengkap). */
