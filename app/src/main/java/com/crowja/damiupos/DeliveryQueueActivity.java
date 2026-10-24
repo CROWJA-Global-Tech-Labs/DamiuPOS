@@ -1467,7 +1467,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          android.widget.CheckBox cb = new android.widget.CheckBox(this);
          cb.setChecked(true);
          cb.setText((DeliveryPlanner.isPriority(t) ? "⚡ " : "") + safe(t.getCustomerName())
-               + (DeliveryPlanner.isPickupOnly(t) ? "  ↩ ambil galon" : ""));
+               + (t.isVisitTask() ? "  📞 kunjungan" : DeliveryPlanner.isPickupOnly(t) ? "  ↩ ambil galon" : ""));
          cb.setTextColor(textColor);
          cb.setTextSize(14f);
          cb.setOnCheckedChangeListener((b, c) -> recount.run());
@@ -4979,7 +4979,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          LinearLayout badges = new LinearLayout(this);
          badges.setOrientation(LinearLayout.HORIZONTAL);
          if (DeliveryPlanner.isPickupOnly(s)) {
-            badges.addView(this.makeDetailBadge("↩ ambil " + s.getJumlahGalon() + " gal", 0xFF64748B));
+            badges.addView(this.makeDetailBadge(s.isVisitTask() ? "📞 kunjungan" : "↩ ambil " + s.getJumlahGalon() + " gal", 0xFF64748B));
          } else {
             List<Object[]> items = this.typedRows(s);
             if (items.isEmpty()) {
@@ -13239,7 +13239,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          DeliveryQueueActivity.bindOrderNote(h.tvOrderNote, voidPending ? null : t.getCatatan());
          // "🤝 📷" = dipesan reseller untuk afiliasinya + foto bukti Selesai WAJIB — kurir tahu sejak
          // di kartu bahwa order ini tak bisa diselesaikan tanpa memotret (📷 saja = flag server tanpa penanda).
-         h.tvCustomer.setText(voidPending ? DeliveryQueueActivity.safe(t.getCustomerName()) : (t.isOpenDispatch() ? "\ud83c\udfb2 " : "") + (t.isSelfOrder() ? "\ud83d\udecd️ " : "") + (t.isResellerOrder() ? "🤝 " : "") + (t.requiresDeliveryProof() ? "📷 " : "") + (t.isCustomerPriority() ? "⭐ " : "") + (t.isCustomerDataIncomplete() ? "❗ " : "") + (t.isComplained() ? "\ud83d\ude20 " : "") + DeliveryQueueActivity.safe(t.getCustomerName()));
+         h.tvCustomer.setText(voidPending ? DeliveryQueueActivity.safe(t.getCustomerName()) : (t.isVisitTask() ? "📞 " : "") + (t.isOpenDispatch() ? "\ud83c\udfb2 " : "") + (t.isSelfOrder() ? "\ud83d\udecd️ " : "") + (t.isResellerOrder() ? "🤝 " : "") + (t.requiresDeliveryProof() ? "📷 " : "") + (t.isCustomerPriority() ? "⭐ " : "") + (t.isCustomerDataIncomplete() ? "❗ " : "") + (t.isComplained() ? "\ud83d\ude20 " : "") + DeliveryQueueActivity.safe(t.getCustomerName()));
          int flags = h.tvCustomer.getPaintFlags();
          h.tvCustomer.setPaintFlags(voidPending ? flags | 16 : flags & -17);
          if (voidPending) {
@@ -13288,7 +13288,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             StringBuilder meta = new StringBuilder();
             String jarak = DeliveryQueueActivity.this.myLat == (double)0.0F && DeliveryQueueActivity.this.myLng == (double)0.0F ? null : DeliveryQueueActivity.formatJarak(DeliveryQueueActivity.distOrInf(t, DeliveryQueueActivity.this.myLat, DeliveryQueueActivity.this.myLng));
             h.jarakLabel = jarak;
-            meta.append(t.getJumlahGalon()).append(" galon").append(t.wasManuallyEdited() ? " ✏️" : "").append(" · Rp ").append(DeliveryQueueActivity.formatRupiah(t.getTotalHarga()));
+            if (t.isVisitTask()) meta.append("📞 Kunjungan Follow Up");
+            else meta.append(t.getJumlahGalon()).append(" galon").append(t.wasManuallyEdited() ? " ✏️" : "").append(" · Rp ").append(DeliveryQueueActivity.formatRupiah(t.getTotalHarga()));
             meta.append(DeliveryQueueActivity.checkoutLegSuffix(t));
             meta.append(DeliveryQueueActivity.receiptSuffix(t.getReceiptNo()));
             meta.append(DeliveryQueueActivity.orderedSuffix(t) + sourceWaSuffix(t.getSourceWa()));

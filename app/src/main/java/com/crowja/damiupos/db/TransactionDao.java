@@ -43,6 +43,31 @@ public class TransactionDao {
         }
     }
 
+    /**
+     * Tugas "📞 Kunjungan Follow Up" di Antrean Saya: KEMBALI 0 galon Rp0 berpenanda {@link Transaction#VISIT_MARKER},
+     * PENDING di perangkat ini — ikut rit, rute terpendek & navigasi seperti order "ambil galon". Tak menyentuh
+     * penjualan maupun galon dipinjam (0 galon). Selesai → pelanggan ditandai sudah di-follow up.
+     */
+    public long insertVisitTask(long customerId, String note) {
+        Transaction trx = new Transaction();
+        trx.setCustomerId(customerId);
+        trx.setType(Transaction.TYPE_KEMBALI);
+        trx.setJumlahGalon(0);
+        trx.setTotalHarga(0);
+        trx.setCatatan(Transaction.VISIT_MARKER + (note != null && !note.trim().isEmpty() ? " " + note.trim() : ""));
+        long id = insert(trx);
+        if (id <= 0) return id;
+        ContentValues v = new ContentValues();
+        String now = DatabaseHelper.nowIso();
+        v.put(DatabaseHelper.COL_DELIVERY_STATUS, Transaction.DELIVERY_PENDING);
+        v.put(DatabaseHelper.COL_DELIVERY_QUEUED_AT, now);
+        v.put(DatabaseHelper.COL_ORDERED_AT, now);
+        v.put(DatabaseHelper.COL_DELIVERY_TOKEN, java.util.UUID.randomUUID().toString().replace("-", ""));
+        dbHelper.syncUpdate(dbHelper.getWritableDatabase(), DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(id)});
+        return id;
+    }
+
     public long insert(Transaction trx) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         ContentValues values = new ContentValues();
@@ -896,6 +921,11 @@ public class TransactionDao {
         String doneTrxUuid = getSyncUuidById(trxId);
         if (doneTrxUuid != null && !doneTrxUuid.isEmpty()) {
             new CustomerGiftDao(dbHelper).finalizeAttachedForTransaction(doneTrxUuid);
+        }
+        // 📞 Kunjungan Follow Up selesai = pelanggan sudah di-follow up (keluar dari daftar Follow Up).
+        Transaction done = getById(trxId);
+        if (done != null && done.isVisitTask() && done.getCustomerId() > 0) {
+            new CustomerDao(dbHelper).markFollowedUp(done.getCustomerId());
         }
     }
 

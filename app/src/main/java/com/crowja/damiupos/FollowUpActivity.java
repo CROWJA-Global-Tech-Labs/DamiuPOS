@@ -99,6 +99,72 @@ public class FollowUpActivity extends AppCompatActivity {
         loadData();
     }
 
+    /**
+     * 📞 Pilih banyak pelanggan Follow Up (+ Pilih semua) → masing-masing jadi tugas "Kunjungan Follow Up" di
+     * Antrian Saya, supaya bisa dijalankan sebagai rit dengan rute terpendek & navigasi per titik.
+     */
+    private void showVisitPicker() {
+        final List<Customer> list = currentList != null ? new ArrayList<>(currentList) : new ArrayList<>();
+        if (list.isEmpty()) {
+            Toast.makeText(this, "Daftar Follow Up kosong.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        // Pelanggan yang SUDAH punya order / kunjungan di Antrian Saya tak dibuatkan tugas lagi.
+        final java.util.Set<Long> queued = new java.util.HashSet<>();
+        com.crowja.damiupos.db.TransactionDao tdao = new com.crowja.damiupos.db.TransactionDao(DatabaseHelper.getInstance(this));
+        for (Transaction q : tdao.getDeliveryQueue()) if (q != null) queued.add(q.getCustomerId());
+        String[] labels = new String[list.size()];
+        final boolean[] on = new boolean[list.size()];
+        for (int i = 0; i < list.size(); i++) {
+            Customer c = list.get(i);
+            labels[i] = c.getName() + (queued.contains(c.getId()) ? "  (sudah di antrean)" : "")
+                    + (c.getLatitude() == 0 && c.getLongitude() == 0 ? "  📍❌" : "");
+        }
+        final AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle("📞 Kunjungi — pilih pelanggan")
+                .setMultiChoiceItems(labels, on, (d, i, chk) -> on[i] = chk)
+                .setPositiveButton("➕ Ke Antrian Saya", null)
+                .setNeutralButton("Pilih semua", null)
+                .setNegativeButton("Batal", null).create();
+        dlg.setOnShowListener(d -> {
+            dlg.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
+                boolean all = true;
+                for (boolean b : on) all &= b;
+                for (int i = 0; i < on.length; i++) {
+                    on[i] = !all;
+                    dlg.getListView().setItemChecked(i, !all);
+                }
+                ((android.widget.Button) v).setText(all ? "Pilih semua" : "Kosongkan");
+            });
+            dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                int made = 0, skipped = 0;
+                for (int i = 0; i < on.length; i++) {
+                    if (!on[i]) continue;
+                    Customer c = list.get(i);
+                    if (queued.contains(c.getId())) {
+                        skipped++;
+                        continue;
+                    }
+                    if (tdao.insertVisitTask(c.getId(), null) > 0) {
+                        made++;
+                        queued.add(c.getId());
+                    }
+                }
+                if (made + skipped == 0) {
+                    Toast.makeText(this, "Belum ada pelanggan yang dipilih.", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                dlg.dismiss();
+                com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                Toast.makeText(this, "📞 " + made + " kunjungan masuk Antrian Saya"
+                        + (skipped > 0 ? " · " + skipped + " sudah di antrean" : "")
+                        + ". Jalankan sebagai rit lalu Urutkan Rute Terpendek.", Toast.LENGTH_LONG).show();
+                if (made > 0) startActivity(new Intent(this, DeliveryQueueActivity.class));
+            });
+        });
+        dlg.show();
+    }
+
     /** Generasi muat ulang — jawaban server yang datang terlambat (filter/urutan sudah berganti) dibuang. */
     private int loadGen = 0;
 
@@ -265,6 +331,8 @@ public class FollowUpActivity extends AppCompatActivity {
         menu.add(0, 3, 2, "Perangkat")
                 .setIcon(android.R.drawable.ic_menu_manage)
                 .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        menu.add(0, 4, 3, "📞 Kunjungi → Antrian Saya")
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
         return true;
     }
 
@@ -282,6 +350,10 @@ public class FollowUpActivity extends AppCompatActivity {
         }
         if (item.getItemId() == 3) {
             showOriginFilterDialog();
+            return true;
+        }
+        if (item.getItemId() == 4) {
+            showVisitPicker();
             return true;
         }
         return super.onOptionsItemSelected(item);

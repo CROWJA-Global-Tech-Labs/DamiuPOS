@@ -384,6 +384,13 @@ public class Transaction {
     /** Order ini dibuat pelanggan sendiri via halaman Order Online (kampanye jenis ORDER)? Pesanan
      *  reseller TIDAK pernah dihitung di sini walau catatannya kebetulan memuat kedua penanda —
      *  kalau iya, kurir dipaksa mengirim struk WA ke afiliasi yang tak memesan sendiri. */
+    /** Penanda tugas "📞 Kunjungan Follow Up" (KEMBALI 0 galon Rp0 di antrean — ikut rit/rute/wizard). */
+    public static final String VISIT_MARKER = "[KUNJUNGAN FOLLOW UP]";
+
+    public boolean isVisitTask() {
+        return TYPE_KEMBALI.equals(type) && catatan != null && catatan.contains(VISIT_MARKER);
+    }
+
     public boolean isSelfOrder() {
         return catatan != null && catatan.contains(SELF_ORDER_MARKER) && !isResellerOrder();
     }
