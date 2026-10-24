@@ -1101,9 +1101,42 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          etGal.setText(left > 0 ? String.valueOf(left) : "");
          rbMine.setText("🧭 Sesuai wilayah saya + Antrian Saya yang belum ikut rit");
       }
+      final AlertDialog[] dlgRef = new AlertDialog[1];
+      if (forRun) {
+         // 🔎 Pelanggan tertentu: cari nama → pemilih order (Antrian Saya / perangkat lain / Pesanan Terbuka).
+         LinearLayout sr = new LinearLayout(this);
+         sr.setOrientation(LinearLayout.HORIZONTAL);
+         sr.setGravity(android.view.Gravity.CENTER_VERTICAL);
+         final EditText etFind = new EditText(this);
+         etFind.setHint("🔎 Cari nama pelanggan…");
+         etFind.setSingleLine(true);
+         etFind.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
+         etFind.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+         Button btFind = new Button(this);
+         btFind.setText("Cari");
+         btFind.setAllCaps(false);
+         Runnable go = () -> {
+            String q = etFind.getText().toString().trim();
+            if (q.isEmpty()) {
+               etFind.setError("Ketik nama pelanggan");
+               return;
+            }
+            if (dlgRef[0] != null) dlgRef[0].dismiss();
+            this.showAddToRunPicker(q);
+         };
+         btFind.setOnClickListener((v) -> go.run());
+         etFind.setOnEditorActionListener((v, a, e) -> {
+            go.run();
+            return true;
+         });
+         sr.addView(etFind);
+         sr.addView(btFind);
+         box.addView(sr, 0);
+      }
       AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle(forRun ? "➕ Tambah ke Rit Berjalan" : "📥 Ambil Antrean").setView(sv)
             .setPositiveButton("Ambil", (DialogInterface.OnClickListener) null)
             .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
+      dlgRef[0] = dlg;
       dlg.setOnShowListener(di -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
          if (!cbSales.isChecked() && !cbPickup.isChecked()) {
             Toast.makeText(this, "Pilih minimal satu jenis.", Toast.LENGTH_SHORT).show();
@@ -6019,6 +6052,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * endpoint klaim yang sama, lalu ikut rit begitu barisnya tersinkron (absorbPendingRunAdds).
     */
    private void showAddToRunPicker() {
+      this.showAddToRunPicker(null);
+   }
+
+   /** @param query saring nama pelanggan (null/kosong = semua); bisa diubah langsung di kotak cari pemilih. */
+   private void showAddToRunPicker(@Nullable String query) {
       if (!this.isRunning()) {
          Toast.makeText(this, "Tidak ada rit yang sedang berjalan.", 0).show();
          return;
@@ -6029,6 +6067,25 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       box.setPadding(pad, this.dp(8.0F), pad, 0);
       android.widget.ScrollView sv = new android.widget.ScrollView(this);
       sv.addView(box);
+      final EditText etFind = new EditText(this);
+      etFind.setHint("🔎 Cari nama pelanggan…");
+      etFind.setSingleLine(true);
+      if (query != null) etFind.setText(query);
+      box.addView(etFind);
+      // Centang yang tak cocok disembunyikan (yang sudah dicentang tetap tampil).
+      final List<CheckBox> allBoxes = new ArrayList<>();
+      final Runnable applyFind = () -> {
+         String q = etFind.getText().toString().trim().toLowerCase(Locale.ROOT);
+         for (CheckBox b : allBoxes) {
+            boolean hit = q.isEmpty() || b.isChecked() || b.getText().toString().toLowerCase(Locale.ROOT).contains(q);
+            b.setVisibility(hit ? View.VISIBLE : View.GONE);
+         }
+      };
+      etFind.addTextChangedListener(new android.text.TextWatcher() {
+         public void beforeTextChanged(CharSequence a, int b, int c2, int d) { }
+         public void onTextChanged(CharSequence a, int b, int c2, int d) { }
+         public void afterTextChanged(android.text.Editable e) { applyFind.run(); }
+      });
 
       final LinkedHashMap<CheckBox, Transaction> mineBoxes = new LinkedHashMap<>();
       final LinkedHashMap<CheckBox, String[]> otherBoxes = new LinkedHashMap<>();
@@ -6044,6 +6101,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          cb.setText(runPickLabel(t));
          box.addView(cb);
          mineBoxes.put(cb, t);
+         allBoxes.add(cb);
       }
       if (mineBoxes.isEmpty()) box.addView(this.pickerNote("Semua order Antrian Saya sudah ikut rit."));
 
@@ -6057,8 +6115,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             box.addView(cb);
             otherBoxes.put(cb, new String[]{u, ""});
             openLocalIds.put(u, t.getId());
+            allBoxes.add(cb);
          }
       }
+      applyFind.run();
       final TextView loading = this.pickerNote("Memuat antrean perangkat lain…");
       box.addView(loading);
 
@@ -6115,8 +6175,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                cb.setText(runPickLabel(o));
                box.addView(cb);
                otherBoxes.put(cb, new String[]{u, o.optString("routed_uuid", "")});
+               allBoxes.add(cb);
                n++;
             }
+            applyFind.run();
             if (n == 0 && otherBoxes.isEmpty()) {
                box.addView(this.pickerNote("Tidak ada order di perangkat lain / Pesanan Terbuka."));
             }
