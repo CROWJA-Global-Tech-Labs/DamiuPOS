@@ -3149,13 +3149,132 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             case 5:
                this.showGalonTypeDialog(q);
                return true;
+            case 6:
+               this.showEditItemsDialog(q.optString("uuid", ""), safe(q.optString("name", "")), this.slugQtyOf(q));
+               return true;
             default:
                return false;
          }
       });
       menu.getMenu().add(0, 4, 3, "📤 Kirim ke Perangkat Lain");
       if (!q.optBoolean("pickup_only", false)) menu.getMenu().add(0, 5, 4, "🚰 Jenis Galon");
+      if (!q.optBoolean("pickup_only", false)) menu.getMenu().add(0, 6, 5, "✏️ Ubah Item");
       menu.show();
+   }
+
+   /** Jumlah per slug produk (KAPITAL) dari baris server (item_slugs). */
+   private Map<String, Integer> slugQtyOf(JSONObject q) {
+      Map<String, Integer> m = new HashMap<>();
+      JSONArray arr = q.optJSONArray("item_slugs");
+      for (int i = 0; arr != null && i < arr.length(); i++) {
+         JSONObject it = arr.optJSONObject(i);
+         if (it == null) continue;
+         m.merge(it.optString("slug", "").trim().toUpperCase(Locale.US), (int) Math.round(it.optDouble("qty", 0)), Integer::sum);
+      }
+      return m;
+   }
+
+   /** Jumlah per slug produk (KAPITAL) dari baris lokal. */
+   private Map<String, Integer> slugQtyOf(Transaction t) {
+      Map<String, Integer> m = new HashMap<>();
+      if (t.getItems() != null) {
+         for (TransactionItem it : t.getItems()) {
+            if (it != null && it.jumlah > 0) m.merge(this.chipLabel(it).trim().toUpperCase(Locale.US), it.jumlah, Integer::sum);
+         }
+      }
+      return m;
+   }
+
+   /**
+    * "✏️ Ubah Item" pesanan antrean perangkat lain / Pesanan Terbuka: jumlah per produk (prefill pesanan sekarang),
+    * dikirim ke server (POST /api/transactions/{uuid}/items) yang menghitung harga & total lalu menyinkronkannya.
+    */
+   private void showEditItemsDialog(String uuid, String custName, Map<String, Integer> current) {
+      if (uuid == null || uuid.isEmpty()) {
+         Toast.makeText(this, "Pesanan belum tersinkron — coba lagi sebentar.", Toast.LENGTH_SHORT).show();
+         return;
+      }
+      List<Product> products = new ProductDao(DatabaseHelper.getInstance(this)).getAll();
+      int pad = this.dp(20f);
+      LinearLayout box = new LinearLayout(this);
+      box.setOrientation(LinearLayout.VERTICAL);
+      box.setPadding(pad, this.dp(8f), pad, 0);
+      TextView hint = new TextView(this);
+      hint.setText("Jumlah galon per produk (0 = hapus). Harga & total dihitung server sesuai harga pelanggan/lokasi.");
+      hint.setTextSize(12f);
+      box.addView(hint);
+      LinkedHashMap<String, EditText> inputs = new LinkedHashMap<>();
+      java.util.Set<String> seen = new java.util.HashSet<>();
+      for (Product pr : products) {
+         String pu = pr.getUuid();
+         if (pu == null || pu.isEmpty() || !seen.add(pu)) continue;
+         String slug = pr.getSlug() != null && !pr.getSlug().trim().isEmpty() ? pr.getSlug().trim() : safe(pr.getName());
+         LinearLayout row = new LinearLayout(this);
+         row.setOrientation(LinearLayout.HORIZONTAL);
+         row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+         TextView lbl = new TextView(this);
+         lbl.setText(slug + " · " + safe(pr.getName()));
+         lbl.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+         row.addView(lbl);
+         EditText et = new EditText(this);
+         et.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+         et.setMinEms(3);
+         et.setSelectAllOnFocus(true);
+         Integer cur = current.remove(slug.toUpperCase(Locale.US));
+         et.setText(String.valueOf(cur != null ? cur : 0));
+         row.addView(et);
+         box.addView(row);
+         inputs.put(pu, et);
+      }
+      ScrollView sv = new ScrollView(this);
+      sv.addView(box);
+      AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle("✏️ Ubah Item — " + custName).setView(sv)
+            .setPositiveButton("Simpan", (DialogInterface.OnClickListener) null)
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
+      dlg.setOnShowListener(di -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+         JSONArray items = new JSONArray();
+         try {
+            for (Map.Entry<String, EditText> e : inputs.entrySet()) {
+               String s2 = e.getValue().getText().toString().trim();
+               int n = s2.isEmpty() ? 0 : Integer.parseInt(s2);
+               if (n > 0) items.put(new JSONObject().put("product_uuid", e.getKey()).put("qty", n));
+            }
+         } catch (Exception ex) {
+            Toast.makeText(this, "Isian tidak valid.", Toast.LENGTH_SHORT).show();
+            return;
+         }
+         if (items.length() == 0) {
+            Toast.makeText(this, "Minimal satu produk.", Toast.LENGTH_SHORT).show();
+            return;
+         }
+         dlg.dismiss();
+         SyncSettings cfg = this.syncCfg();
+         new Thread(() -> {
+            String m;
+            boolean ok = false;
+            try {
+               m = new SyncApi(cfg).updateOrderItems(uuid, new JSONObject().put("items", items)).optString("message", "Tersimpan.");
+               ok = true;
+            } catch (SyncApi.SyncException se) {
+               String sm = se.serverMessage();
+               m = sm != null && !sm.isEmpty() ? sm : "Gagal menyimpan (kode " + se.code + ").";
+            } catch (Exception ex) {
+               m = "Gagal menyimpan — periksa koneksi internet.";
+            }
+            final String fm = m;
+            final boolean fok = ok;
+            this.runOnUiThread(() -> {
+               if (this.isFinishing() || this.isDestroyed()) return;
+               Toast.makeText(this, fm, Toast.LENGTH_LONG).show();
+               if (fok) {
+                  SyncScheduler.syncNow(this.getApplicationContext());
+                  this.loadOtherDevices();
+                  this.loadData();
+               }
+            });
+         }).start();
+      }));
+      dlg.show();
    }
 
    /** Pemegang order di baris tab Perangkat Lain (routed_uuid, jatuh ke device_group_uuid). */
@@ -13463,11 +13582,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if ("JUAL".equals(t.getType())) {
                menu.getMenu().add(0, 2, 1, "\ud83d\udcac Chat Pesanan");
                menu.getMenu().add(0, 3, 2, "🚰 Jenis Galon");
+               menu.getMenu().add(0, 4, 3, "✏️ Ubah Item");
             }
             menu.setOnMenuItemClickListener((item) -> {
                switch (item.getItemId()) {
                   case 3:
                      DeliveryQueueActivity.this.showGalonTypeDialog(t);
+                     return true;
+                  case 4:
+                     DeliveryQueueActivity.this.showEditItemsDialog(DeliveryQueueActivity.this.trxUuid(t),
+                           safe(t.getCustomerName()), DeliveryQueueActivity.this.slugQtyOf(t));
                      return true;
                   case 1:
                      DeliveryQueueActivity.this.showQueuePreview(t);
