@@ -612,6 +612,11 @@ public class SyncApi {
         return post(cfg.getBaseUrl() + "/api/transactions/" + android.net.Uri.encode(uuid) + "/items", body, cfg.getToken());
     }
 
+    /** Daftar Follow Up = daftar web: {days, customers:[{uuid,name,last_jual,fu_reorder_day,fu_rate,manual}]}. */
+    public JSONObject followUpDue() throws Exception {
+        return get(cfg.getBaseUrl() + "/api/followup/due", cfg.getToken());
+    }
+
     public JSONObject devicesQueueAll() throws Exception {
         return get(cfg.getBaseUrl() + "/api/devices/queue-all", cfg.getToken());
     }
