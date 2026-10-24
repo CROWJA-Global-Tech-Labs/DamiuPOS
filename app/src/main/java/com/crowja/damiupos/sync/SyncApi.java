@@ -602,6 +602,11 @@ public class SyncApi {
         return post(cfg.getBaseUrl() + "/api/transactions/" + android.net.Uri.encode(uuid) + "/galon-type", body, cfg.getToken());
     }
 
+    /** ↩ Ubah ({jumlah_galon}) / hapus ({delete:true}) baris Galon kembali dari Histori Transaksi. */
+    public JSONObject editKembali(String uuid, JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/transactions/" + android.net.Uri.encode(uuid) + "/kembali", body, cfg.getToken());
+    }
+
     public JSONObject devicesQueueAll() throws Exception {
         return get(cfg.getBaseUrl() + "/api/devices/queue-all", cfg.getToken());
     }
