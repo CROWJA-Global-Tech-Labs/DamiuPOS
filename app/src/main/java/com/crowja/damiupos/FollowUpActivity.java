@@ -99,10 +99,58 @@ public class FollowUpActivity extends AppCompatActivity {
         loadData();
     }
 
+    /** Generasi muat ulang — jawaban server yang datang terlambat (filter/urutan sudah berganti) dibuang. */
+    private int loadGen = 0;
+
     private void loadData() {
         thresholdDays = settingsDao.getFollowupDays();
         List<Customer> list = customerDao.getFollowUpCandidates(thresholdDays, selectedOrigins);
-        // Default (beli + asc) = urutan DAO; kombinasi lain di-sort ulang di sini.
+        showList(list);
+        loadServerList(++loadGen);
+    }
+
+    /**
+     * Daftar dari SERVER = daftar halaman Follow Up web (FollowUpList::due: order terakhir lintas perangkat, ambang
+     * dinamis, dedup nomor, berhenti langganan). Daftar lokal di atas hanya tampilan sementara / cadangan luring —
+     * dulu satu-satunya sumber, sehingga isinya berbeda dengan web.
+     */
+    private void loadServerList(int gen) {
+        final com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+        if (!cfg.isEnrolled()) return;
+        final java.util.Set<String> origins = selectedOrigins;
+        new Thread(() -> {
+            org.json.JSONObject res = null;
+            try {
+                res = new com.crowja.damiupos.sync.SyncApi(cfg).followUpDue();
+            } catch (Exception ignored) {
+            }
+            if (res == null) return;
+            org.json.JSONArray arr = res.optJSONArray("customers");
+            List<Customer> list = new ArrayList<>();
+            java.util.Set<Long> seen = new java.util.HashSet<>();
+            for (int i = 0; arr != null && i < arr.length(); i++) {
+                org.json.JSONObject o = arr.optJSONObject(i);
+                if (o == null) continue;
+                Customer cu = customerDao.getBySyncUuid(o.optString("uuid", ""));
+                if (cu == null || !seen.add(cu.getId())) continue;   // belum tersinkron ke HP ini
+                if (origins != null && !origins.isEmpty() && !origins.contains(cu.getOriginLabel())) continue;
+                String lj = o.isNull("last_jual") ? null : o.optString("last_jual", null);
+                cu.setCreatedAt(lj);   // kolom "terakhir beli" kartu (sama dgn getFollowUpCandidates)
+                cu.setFollowUpReorderDay(o.isNull("fu_reorder_day") ? null : o.optString("fu_reorder_day", null));
+                cu.setFollowUpRate(o.optDouble("fu_rate", 0));
+                list.add(cu);
+            }
+            final int days = res.optInt("days", thresholdDays);
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed() || gen != loadGen) return;
+                thresholdDays = days;
+                showList(list);
+            });
+        }).start();
+    }
+
+    private void showList(List<Customer> list) {
+        // Default (beli + asc) = urutan sumber; kombinasi lain di-sort ulang di sini.
         if (sortByFollowUp) sortByLastFollowUp(list, sortDesc);
         else if (sortDesc) sortByLastPurchase(list, true);
         currentList = list;
