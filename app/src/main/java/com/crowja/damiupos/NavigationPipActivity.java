@@ -1251,7 +1251,11 @@ public class NavigationPipActivity extends AppCompatActivity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQ_FIX_PHOTO) return;
         fixPhotoPath = null;
-        if (resultCode != RESULT_OK || data == null) return;   // Batal
+        if (resultCode != RESULT_OK || data == null) {   // Batal → Selesai juga batal (foto wajib)
+            if (completeAfterFixPhoto) Toast.makeText(this, "Pesanan belum diselesaikan — foto lokasi wajib.", Toast.LENGTH_LONG).show();
+            completeAfterFixPhoto = false;
+            return;
+        }
         final String path = data.getStringExtra(PhotoCoordinateActivity.EXTRA_PHOTO_PATH);
         if (path == null || !new java.io.File(path).exists()) return;
         final double lat = data.getDoubleExtra(PhotoCoordinateActivity.EXTRA_LAT, 0);
@@ -1310,6 +1314,16 @@ public class NavigationPipActivity extends AppCompatActivity {
                 if (isFinishing() || isDestroyed()) return;
                 if (fErr != null) {
                     Toast.makeText(this, fErr, Toast.LENGTH_LONG).show();
+                    if (completeAfterFixPhoto) {
+                        // Sinyal jelek di lokasi: jangan kunci kurir — boleh selesaikan tanpa foto terunggah.
+                        completeAfterFixPhoto = false;
+                        new androidx.appcompat.app.AlertDialog.Builder(this)
+                                .setTitle("Foto gagal diunggah")
+                                .setMessage(fErr + "\n\nSelesaikan pesanan tanpa foto lokasi?")
+                                .setPositiveButton("Selesaikan saja", (d, w) -> doCompleteActiveStop())
+                                .setNegativeButton("Batal", null)
+                                .show();
+                    }
                     return;
                 }
                 Toast.makeText(this, "📷 Foto lokasi diperbarui (jadi foto pertama).", Toast.LENGTH_LONG).show();
@@ -1319,6 +1333,10 @@ public class NavigationPipActivity extends AppCompatActivity {
                     render(last);
                 }
                 com.crowja.damiupos.sync.SyncScheduler.syncNow(app);
+                if (completeAfterFixPhoto) {
+                    completeAfterFixPhoto = false;
+                    doCompleteActiveStop();
+                }
             });
         }).start();
     }
@@ -1566,7 +1584,31 @@ public class NavigationPipActivity extends AppCompatActivity {
      * penyelesaian yang SAMA dengan tombol ✓ di kartu (dialog bayar/foto/struk). Sesudahnya antrean
      * menyusun ulang sisa rute dan meluncurkan navigasi ke titik berikutnya.
      */
+    /** Selesai ditekan saat lokasi belum berfoto → foto dulu, lalu penyelesaian dilanjutkan otomatis. */
+    private boolean completeAfterFixPhoto = false;
+
     private void completeActiveStop() {
+        // Lokasi tujuan belum punya foto sama sekali → WAJIB foto dulu (kurir sedang di lokasi; foto ini yang dipakai
+        // kurir berikutnya mengenali rumahnya). Tujuan reseller / tanpa pelanggan dikecualikan.
+        Transaction act = last != null ? last.active : null;
+        if (act != null && act.getCustomerId() > 0 && !act.isResellerDestination()
+                && last.photoUrl == null && last.photoLocal == null) {
+            new androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("📷 Wajib Foto Lokasi")
+                    .setMessage("Lokasi \"" + clean(act.getCustomerName()) + "\" belum punya foto. Ambil foto lokasi dulu "
+                            + "(GPS akurat) — pesanan diselesaikan otomatis setelah foto tersimpan.")
+                    .setPositiveButton("📷 Ambil Foto", (d, w) -> {
+                        completeAfterFixPhoto = true;
+                        startFixPhoto();
+                    })
+                    .setNegativeButton("Batal", null)
+                    .show();
+            return;
+        }
+        doCompleteActiveStop();
+    }
+
+    private void doCompleteActiveStop() {
         Transaction a = last != null ? last.active : null;
         if (a == null) {
             Toast.makeText(this, "Tidak ada perhentian aktif", Toast.LENGTH_SHORT).show();
