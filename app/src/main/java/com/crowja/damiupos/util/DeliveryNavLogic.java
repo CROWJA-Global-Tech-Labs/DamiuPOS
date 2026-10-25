@@ -36,18 +36,15 @@ public final class DeliveryNavLogic {
     public static final int PIP_VIEW_PHOTO = 1;
     public static final int PIP_VIEW_MAP = 2;
 
-    /** Urutan "Ganti tampilan": Detail → Foto → Peta → Detail. Nilai tak dikenal → Foto (setelah Detail). */
+    /** Urutan "Ganti tampilan": Foto ⇄ Peta. Tampilan Detail di panel melayang/layar terbagi DIHAPUS (owner
+     *  2026-10-25) — kartu detail tetap ada di layar penuh Navigasi Pengiriman. */
     public static int nextPipView(int current) {
-        switch (sanitizePipView(current)) {
-            case PIP_VIEW_DETAIL: return PIP_VIEW_PHOTO;
-            case PIP_VIEW_PHOTO: return PIP_VIEW_MAP;
-            default: return PIP_VIEW_DETAIL;
-        }
+        return sanitizePipView(current) == PIP_VIEW_PHOTO ? PIP_VIEW_MAP : PIP_VIEW_PHOTO;
     }
 
-    /** Nilai tersimpan → tampilan sah (data lama/rusak = Detail). */
+    /** Nilai tersimpan → tampilan sah (Detail lama / data rusak = Foto). */
     public static int sanitizePipView(int v) {
-        return v == PIP_VIEW_PHOTO || v == PIP_VIEW_MAP ? v : PIP_VIEW_DETAIL;
+        return v == PIP_VIEW_MAP ? PIP_VIEW_MAP : PIP_VIEW_PHOTO;
     }
 
     public static String pipViewLabel(int v) {

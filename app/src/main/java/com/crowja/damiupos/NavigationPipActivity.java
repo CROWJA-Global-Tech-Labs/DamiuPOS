@@ -157,7 +157,7 @@ public class NavigationPipActivity extends AppCompatActivity {
     private WebView webPipMap;
     private TextView tvPipMediaEmpty, tvPipMediaLabel, btnGantiTampilan;
     /** Tampilan jendela melayang yang dipilih kurir (diingat antar-navigasi). */
-    private int pipView = DeliveryNavLogic.PIP_VIEW_DETAIL;
+    private int pipView = DeliveryNavLogic.PIP_VIEW_PHOTO;
     /** Sumber foto yang sedang tampil / kunci peta yang sedang termuat — hindari muat ulang tiap 30 dtk. */
     private String shownPhotoSrc, mapKey;
     private String mediaLabel = "";
@@ -1226,16 +1226,12 @@ public class NavigationPipActivity extends AppCompatActivity {
             return;
         }
         try {
-            java.io.File dir = getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES);
-            java.io.File f = java.io.File.createTempFile("LOKASI_" + System.currentTimeMillis(), ".jpg", dir);
-            fixPhotoPath = f.getAbsolutePath();
+            // Kamera in-app "Ambil Foto & Koordinat" (ada tombol Batal; shutter baru aktif saat GPS akurat) —
+            // sama dengan alur foto pelanggan, jadi foto koreksi selalu membawa koordinat yang bisa dipercaya.
+            fixPhotoPath = "";
             fixCustomerId = a.getCustomerId();
             fixDestName = a.getDeliveryDestName();
-            Uri uri = androidx.core.content.FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", f);
-            Intent i = com.crowja.damiupos.util.CameraIntents.preferBackCamera(new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE));
-            i.putExtra(android.provider.MediaStore.EXTRA_OUTPUT, uri);
-            i.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-            startActivityForResult(i, REQ_FIX_PHOTO);
+            startActivityForResult(new Intent(this, PhotoCoordinateActivity.class), REQ_FIX_PHOTO);
         } catch (Exception e) {
             Toast.makeText(this, "Kamera tidak bisa dibuka.", Toast.LENGTH_LONG).show();
         }
@@ -1254,19 +1250,31 @@ public class NavigationPipActivity extends AppCompatActivity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQ_FIX_PHOTO) return;
-        final String path = fixPhotoPath;
         fixPhotoPath = null;
-        if (path == null) return;
-        java.io.File f = new java.io.File(path);
-        if (resultCode != RESULT_OK || !f.exists() || f.length() == 0) {
-            f.delete();
+        if (resultCode != RESULT_OK || data == null) return;   // Batal
+        final String path = data.getStringExtra(PhotoCoordinateActivity.EXTRA_PHOTO_PATH);
+        if (path == null || !new java.io.File(path).exists()) return;
+        final double lat = data.getDoubleExtra(PhotoCoordinateActivity.EXTRA_LAT, 0);
+        final double lng = data.getDoubleExtra(PhotoCoordinateActivity.EXTRA_LNG, 0);
+        final float acc = (float) data.getDoubleExtra(PhotoCoordinateActivity.EXTRA_ACCURACY, data.getFloatExtra(PhotoCoordinateActivity.EXTRA_ACCURACY, 0f));
+        final long cust = fixCustomerId;
+        final String dest = fixDestName;
+        if (lat == 0 && lng == 0) {
+            uploadFixPhoto(path, cust, dest, null);
             return;
         }
-        uploadFixPhoto(path, fixCustomerId, fixDestName);
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("📍 Simpan koordinat juga?")
+                .setMessage("Foto lokasi akan dijadikan foto pertama.\n\nSimpan juga koordinat GPS saat foto diambil sebagai titik lokasi ini?\n"
+                        + String.format(java.util.Locale.US, "%.6f, %.6f", lat, lng) + (acc > 0 ? String.format(java.util.Locale.US, " (±%.0f m)", acc) : ""))
+                .setCancelable(false)
+                .setPositiveButton("Ya, simpan koordinat", (d, w) -> uploadFixPhoto(path, cust, dest, new double[]{lat, lng}))
+                .setNegativeButton("Foto saja", (d, w) -> uploadFixPhoto(path, cust, dest, null))
+                .show();
     }
 
     /** Unggah (720p) ke lokasi tujuan dgn prepend=1 → server menjadikannya foto pertama; tampil langsung di panel. */
-    private void uploadFixPhoto(String path, long customerId, String destName) {
+    private void uploadFixPhoto(String path, long customerId, String destName, double[] coords) {
         Toast.makeText(this, "Mengunggah foto lokasi…", Toast.LENGTH_SHORT).show();
         final Context app = getApplicationContext();
         new Thread(() -> {
@@ -1290,7 +1298,7 @@ public class NavigationPipActivity extends AppCompatActivity {
                 java.io.File tmp = new java.io.File(new java.io.File(path).getParentFile(), "loc_upl_" + System.nanoTime() + ".jpg");
                 java.io.File up = com.crowja.damiupos.util.BitmapUtils.compressForUpload(path, tmp, 1280, 85) ? tmp : new java.io.File(path);
                 new com.crowja.damiupos.sync.SyncApi(new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(db)))
-                        .uploadLocationPhoto(custUuid, locId, up, true);
+                        .uploadLocationPhoto(custUuid, locId, up, true, coords);
                 if (tmp.exists()) tmp.delete();
             } catch (IllegalStateException e) {
                 err = e.getMessage();

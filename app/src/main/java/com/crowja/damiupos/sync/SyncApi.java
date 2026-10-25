@@ -793,6 +793,12 @@ public class SyncApi {
 
     /** @param prepend true = server langsung menjadikannya foto PERTAMA lokasi (koreksi dari panel navigasi). */
     public JSONObject uploadLocationPhoto(String customerUuid, String locationId, File file, boolean prepend) throws Exception {
+        return uploadLocationPhoto(customerUuid, locationId, file, prepend, null);
+    }
+
+    /** @param coords {lat, lng} = ikut simpan koordinat lokasi (koreksi dari panel navigasi); null = foto saja. */
+    public JSONObject uploadLocationPhoto(String customerUuid, String locationId, File file, boolean prepend,
+                                          @Nullable double[] coords) throws Exception {
         RequestBody fileBody = RequestBody.create(file, MediaType.parse("image/jpeg"));
         MultipartBody.Builder mb = new MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
@@ -800,6 +806,10 @@ public class SyncApi {
                 .addFormDataPart("location_id", locationId)
                 .addFormDataPart("file", file.getName(), fileBody);
         if (prepend) mb.addFormDataPart("prepend", "1");
+        if (coords != null && coords.length == 2) {
+            mb.addFormDataPart("lat", String.valueOf(coords[0]));
+            mb.addFormDataPart("lng", String.valueOf(coords[1]));
+        }
         RequestBody body = mb.build();
         Request.Builder b = new Request.Builder()
                 .url(cfg.getBaseUrl() + "/api/media/upload-location-photo")

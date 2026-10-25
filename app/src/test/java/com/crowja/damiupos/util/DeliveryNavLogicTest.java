@@ -19,11 +19,12 @@ import java.util.List;
 public class DeliveryNavLogicTest {
 
     @Test public void pipViewCyclesDetailPhotoMap() {
-        assertEquals(DeliveryNavLogic.PIP_VIEW_PHOTO, DeliveryNavLogic.nextPipView(DeliveryNavLogic.PIP_VIEW_DETAIL));
+        assertEquals(DeliveryNavLogic.PIP_VIEW_MAP, DeliveryNavLogic.nextPipView(DeliveryNavLogic.PIP_VIEW_DETAIL));   // Detail lama = Foto
         assertEquals(DeliveryNavLogic.PIP_VIEW_MAP, DeliveryNavLogic.nextPipView(DeliveryNavLogic.PIP_VIEW_PHOTO));
-        assertEquals(DeliveryNavLogic.PIP_VIEW_DETAIL, DeliveryNavLogic.nextPipView(DeliveryNavLogic.PIP_VIEW_MAP));
-        assertEquals(DeliveryNavLogic.PIP_VIEW_PHOTO, DeliveryNavLogic.nextPipView(99));   // rusak = Detail → Foto
-        assertEquals(DeliveryNavLogic.PIP_VIEW_DETAIL, DeliveryNavLogic.sanitizePipView(-1));
+        assertEquals(DeliveryNavLogic.PIP_VIEW_PHOTO, DeliveryNavLogic.nextPipView(DeliveryNavLogic.PIP_VIEW_MAP));
+        assertEquals(DeliveryNavLogic.PIP_VIEW_MAP, DeliveryNavLogic.nextPipView(99));   // rusak = Foto → Peta
+        assertEquals(DeliveryNavLogic.PIP_VIEW_PHOTO, DeliveryNavLogic.sanitizePipView(-1));
+        assertEquals(DeliveryNavLogic.PIP_VIEW_PHOTO, DeliveryNavLogic.sanitizePipView(DeliveryNavLogic.PIP_VIEW_DETAIL));
     }
 
     private static final StopState P = StopState.PENDING;
