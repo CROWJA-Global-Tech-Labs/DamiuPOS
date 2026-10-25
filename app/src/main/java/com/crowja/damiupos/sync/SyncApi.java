@@ -222,6 +222,11 @@ public class SyncApi {
      * (soft-delete + pasangan KEMBALI) setelah super admin menyetujui, lalu tombstone tersinkron
      * balik. Balas {@code {"ok":true,"emailed":true,"message":"..."}} atau 422. Branch-scoped.
      */
+    /** 🗑️ Void massal: {transaction_uuids[], reason, requester_name} → {pending, auto_accepted, skipped, message}. */
+    public JSONObject proposeVoidBulk(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/void-requests/bulk", body, cfg.getToken());
+    }
+
     public JSONObject proposeVoid(JSONObject body) throws Exception {
         return post(cfg.getBaseUrl() + "/api/void-requests", body, cfg.getToken());
     }

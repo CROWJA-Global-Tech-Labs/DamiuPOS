@@ -34,6 +34,102 @@ public final class DeliveryVoidDialog {
 
     private DeliveryVoidDialog() {}
 
+    /**
+     * 🗑️ VOID MASSAL (mode pilih di ketiga tab): satu alasan untuk banyak order → POST /api/void-requests/bulk.
+     * Server membuat pengajuan per order (atau langsung batal bila auto-accept) dan mengirim SATU email daftar.
+     *
+     * @param items {uuid, nama pelanggan}
+     */
+    public static void showBulk(final Activity act, final java.util.List<String[]> items, final Runnable onDone) {
+        if (act == null || items == null || items.isEmpty()) return;
+        final DatabaseHelper dbh = DatabaseHelper.getInstance(act);
+        final SyncSettings cfg = new SyncSettings(new SettingsDao(dbh));
+        if (!cfg.isEnrolled()) {
+            toast(act, "Perangkat belum terhubung ke server — void perlu persetujuan super admin.");
+            return;
+        }
+        final int pad = dp(act, 16);
+        final LinearLayout root = new LinearLayout(act);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(pad, dp(act, 8), pad, dp(act, 4));
+        StringBuilder names = new StringBuilder();
+        for (int i = 0; i < items.size(); i++) {
+            names.append(i + 1).append(". ").append(safe(items.get(i)[1])).append('\n');
+        }
+        final TextView hint = new TextView(act);
+        hint.setText("Batalkan " + items.size() + " pesanan berikut (satu alasan untuk semua). Pengajuan dikirim ke "
+                + "super admin dalam SATU email; pesanan dibatalkan setelah disetujui (atau langsung bila auto-accept aktif)."
+                + '\n' + '\n' + names.toString().trim());
+        hint.setTextSize(13f);
+        root.addView(hint);
+        final EditText note = new EditText(act);
+        note.setHint("Alasan void (wajib, min. 5 karakter)…");
+        note.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        note.setMinLines(2);
+        root.addView(note);
+        root.addView(buildQuickReasonRow(act, note));
+        final ScrollView scroll = new ScrollView(act);
+        scroll.addView(root);
+        final AlertDialog dialog = new AlertDialog.Builder(act)
+                .setTitle("🗑️ Void " + items.size() + " Pesanan")
+                .setView(scroll)
+                .setPositiveButton("Kirim untuk Persetujuan", null)
+                .setNegativeButton("Batal", null)
+                .create();
+        dialog.setOnShowListener(d -> {
+            final Button pos = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            pos.setOnClickListener(v -> {
+                final String n = note.getText().toString().trim();
+                if (n.length() < 5) {
+                    toast(act, "Isi alasan void dulu (min. 5 karakter).");
+                    return;
+                }
+                pos.setEnabled(false);
+                pos.setText("Mengirim…");
+                dialog.setCancelable(false);
+                final Button neg = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
+                if (neg != null) neg.setEnabled(false);
+                new Thread(() -> {
+                    String msg;
+                    boolean ok = false;
+                    try {
+                        JSONObject body = new JSONObject();
+                        org.json.JSONArray arr = new org.json.JSONArray();
+                        for (String[] it : items) if (it[0] != null && !it[0].isEmpty()) arr.put(it[0]);
+                        body.put("transaction_uuids", arr);
+                        body.put("reason", n);
+                        String uname = new SettingsDao(dbh).getCurrentUserName();
+                        if (uname != null && !uname.isEmpty()) body.put("requester_name", uname);
+                        msg = new SyncApi(cfg).proposeVoidBulk(body).optString("message", "Pengajuan void dikirim.");
+                        ok = true;
+                    } catch (SyncApi.SyncException se) {
+                        msg = extractMessage(se.body);
+                        if (msg == null) msg = "Gagal mengirim (kode " + se.code + ").";
+                    } catch (Exception e) {
+                        msg = "Gagal mengirim — periksa koneksi internet.";
+                    }
+                    final String fMsg = msg;
+                    final boolean fOk = ok;
+                    act.runOnUiThread(() -> {
+                        if (act.isFinishing() || act.isDestroyed()) return;
+                        Toast.makeText(act, fMsg, Toast.LENGTH_LONG).show();
+                        if (fOk) {
+                            dialog.dismiss();
+                            SyncScheduler.syncNow(act.getApplicationContext());
+                            if (onDone != null) onDone.run();
+                        } else {
+                            pos.setEnabled(true);
+                            pos.setText("Kirim untuk Persetujuan");
+                            dialog.setCancelable(true);
+                            if (neg != null) neg.setEnabled(true);
+                        }
+                    });
+                }).start();
+            });
+        });
+        dialog.show();
+    }
+
     public static void show(final Activity act, final Transaction t) {
         if (act == null || t == null) return;
 
