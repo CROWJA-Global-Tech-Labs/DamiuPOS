@@ -590,6 +590,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.cbClaimAllOther = this.addSelectAllBox(this.tvClaimOtherCount, false);
       this.cbClaimAllOpen = this.addSelectAllBox(this.tvClaimOpenCount, true);
       this.findViewById(id.btnClaimOpenGo).setOnClickListener((v) -> this.confirmBulkClaimOpen());
+      this.findViewById(id.btnClaimOpenAksi).setOnClickListener((v) -> this.showOpenSelectionActions(v));
 
       this.etSearchOpen = (TextInputEditText)this.findViewById(id.etSearchOpen);
       this.etSearchOpen.addTextChangedListener(new TextWatcher() {
@@ -1728,7 +1729,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       menu.getMenu().add(0, 1, 0, "\ud83d\udd13 Lepas " + picked.size() + " order (jadi Pesanan Terbuka)");
       menu.getMenu().add(0, 2, 1, "\ud83d\udcf2 Alihkan " + picked.size() + " order ke perangkat lain");
       menu.getMenu().add(0, 3, 2, "\ud83e\udded Alihkan " + picked.size() + " order sesuai wilayahnya");
+      menu.getMenu().add(0, 4, 3, "🗑️ Void " + picked.size() + " order (persetujuan)");
       menu.setOnMenuItemClickListener((item) -> {
+         if (item.getItemId() == 4) {
+            List<String[]> items = new ArrayList<>();
+            for (Transaction t : picked) items.add(new String[]{this.trxUuid(t), safe(t.getCustomerName())});
+            DeliveryVoidDialog.showBulk(this, items, () -> {
+               this.exitSelectionMode();
+               this.loadData();
+            });
+            return true;
+         }
          if (item.getItemId() == 1) {
             (new AlertDialog.Builder(this)).setTitle("Lepas " + picked.size() + " order?")
                   .setMessage("Order terpilih keluar dari antrian perangkat ini dan menjadi PESANAN TERBUKA — perangkat mana pun bisa mengklaimnya.\n\n" + this.numberedNames(picked))
@@ -12610,6 +12621,28 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             .show();
    }
 
+   /** "Aksi ⋮" mode-pilih tab Pesanan Terbuka: 🗑️ Void order terpilih (persetujuan). */
+   private void showOpenSelectionActions(View anchor) {
+      List<String[]> items = new ArrayList<>();
+      for (Transaction t : this.openDispatchAdapter.data) {
+         if (t != null && this.claimSelectedOpen.contains(t.getId())) items.add(new String[]{this.trxUuid(t), safe(t.getCustomerName())});
+      }
+      if (items.isEmpty()) {
+         Toast.makeText(this, "Belum ada order yang dipilih.", 0).show();
+         return;
+      }
+      PopupMenu menu = new PopupMenu(this, anchor);
+      menu.getMenu().add(0, 1, 0, "🗑️ Void " + items.size() + " order (persetujuan)");
+      menu.setOnMenuItemClickListener((item) -> {
+         DeliveryVoidDialog.showBulk(this, items, () -> {
+            this.exitClaimSelect(true);
+            this.loadData();
+         });
+         return true;
+      });
+      menu.show();
+   }
+
    /** "Aksi ⋮" mode-pilih tab Perangkat Lain — cermin Aksi massal Antrian Saya: Alihkan ke perangkat
     *  lain / sesuai wilayah. Tiap order lewat /api/delivery/route + from_device_uuid (pemegang yang
     *  dilihat), jadi order yang keburu pindah / sedang diantar ditolak server. */
@@ -12628,7 +12661,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       PopupMenu menu = new PopupMenu(this, anchor);
       menu.getMenu().add(0, 1, 0, "📲 Alihkan " + picked.size() + " order ke perangkat lain");
       menu.getMenu().add(0, 2, 1, "🧭 Alihkan " + picked.size() + " order sesuai wilayahnya");
+      menu.getMenu().add(0, 3, 2, "🗑️ Void " + picked.size() + " order (persetujuan)");
       menu.setOnMenuItemClickListener((item) -> {
+         if (item.getItemId() == 3) {
+            List<String[]> items = new ArrayList<>();
+            for (Map.Entry<String, String[]> e : picked.entrySet()) items.add(new String[]{e.getKey(), e.getValue()[1]});
+            DeliveryVoidDialog.showBulk(this, items, () -> {
+               this.exitClaimSelect(false);
+               this.loadOtherDevices();
+            });
+            return true;
+         }
          if (item.getItemId() == 2) {
             (new AlertDialog.Builder(this)).setTitle("Alihkan " + picked.size() + " order sesuai wilayah?")
                   .setMessage("Tiap order dikirim ke perangkat pemilik wilayahnya.")

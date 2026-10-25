@@ -781,6 +781,15 @@
             android:text="Batal"
             android:textAllCaps="false" />
 
+        <!-- Aksi massal Pesanan Terbuka terpilih: 🗑️ Void. -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnClaimOpenAksi"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Aksi ⋮"
+            android:textAllCaps="false" />
+
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnClaimOpenGo"
             android:layout_width="wrap_content"
