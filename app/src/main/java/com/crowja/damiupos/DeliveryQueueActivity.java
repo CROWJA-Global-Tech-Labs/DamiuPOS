@@ -8252,6 +8252,32 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    /**
+    * 🧾 Baris "Hutang sebelumnya: Rp …" di Detail Order jadi bisa diketuk → {@link DebtDetailDialog}
+    * (buku besar hutang + transaksi asal & fotonya, dari server). Teks lain tak berubah.
+    */
+   private CharSequence debtDetailLink(String text, Transaction t) {
+      String label = "Hutang sebelumnya: ";
+      int start = text.indexOf(label);
+      if (start < 0) return text;
+      int end = text.indexOf('\n', start);
+      if (end < 0) end = text.length();
+      String hint = "  🔍 Rincian";
+      android.text.SpannableStringBuilder ssb = new android.text.SpannableStringBuilder(text);
+      ssb.insert(end, hint);
+      end += hint.length();
+      ssb.setSpan(new android.text.style.ClickableSpan() {
+         @Override
+         public void onClick(View w) {
+            DatabaseHelper db = DatabaseHelper.getInstance(DeliveryQueueActivity.this);
+            String custUuid = (new CustomerDao(db)).getSyncUuidById(t.getCustomerId());
+            String trxUuid = (new TransactionDao(db)).getSyncUuidById(t.getId());
+            DebtDetailDialog.show(DeliveryQueueActivity.this, custUuid, trxUuid, safe(t.getCustomerName()));
+         }
+      }, start, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+      return ssb;
+   }
+
+   /**
     * Hutang LAMA pelanggan untuk pintu sebuah order + pintu tagihnya — SATU sumber untuk popup
     * antrean ({@link #debtSummaryText}) dan jendela melayang navigasi (NavigationPipActivity), jadi
     * keduanya tak mungkin menyebut angka berbeda.
@@ -9632,9 +9658,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       body.setOrientation(1);
       body.setPadding(padH, Math.round(8.0F * this.getResources().getDisplayMetrics().density), padH, 0);
       TextView msg = new TextView(this);
-      msg.setText(sb.toString());
+      msg.setText(this.debtDetailLink(sb.toString(), t));
       msg.setTextSize(14.0F);
       com.crowja.damiupos.util.NoteLinks.apply(msg);   // link di Catatan bisa diketuk
+      if (msg.getText() instanceof android.text.Spanned
+            && ((android.text.Spanned) msg.getText()).getSpans(0, msg.length(), android.text.style.ClickableSpan.class).length > 0) {
+         msg.setMovementMethod(android.text.method.LinkMovementMethod.getInstance());
+      }
       body.addView(msg);
       if (t.wasManuallyEdited()) {
          TextView tvEdited = new TextView(this);

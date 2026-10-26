@@ -454,6 +454,14 @@ public class SyncApi {
                 + Math.max(1, page), cfg.getToken());
     }
 
+    /** 🧾 Rincian "Hutang sebelumnya": buku besar hutang orang ini + transaksi asal & fotonya.
+     *  {@code exclude} = order yang sedang dibuka (barisnya disisihkan). Balas {ok, balance, rows[]}. */
+    public JSONObject debtDetail(String customerUuid, @Nullable String excludeTrxUuid) throws Exception {
+        String q = excludeTrxUuid != null && !excludeTrxUuid.isEmpty()
+                ? "?exclude=" + java.net.URLEncoder.encode(excludeTrxUuid, "UTF-8") : "";
+        return get(cfg.getBaseUrl() + "/api/customers/" + customerUuid + "/debt-detail" + q, cfg.getToken());
+    }
+
     public JSONObject orderInsights(String customerUuid) throws Exception {
         return get(cfg.getBaseUrl() + "/api/customers/" + customerUuid + "/order-insights", cfg.getToken());
     }
