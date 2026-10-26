@@ -344,6 +344,11 @@ public class MainActivity extends AppCompatActivity {
         if (btnDashboardWeb != null) {
             btnDashboardWeb.setOnClickListener(v -> startActivity(new Intent(this, AdminWebActivity.class)));
         }
+        // Admin: 🗓️ Pesanan Terjadwal native (jadwal kunjungan rutin pelanggan).
+        View btnJadwal = findViewById(R.id.btnJadwal);
+        if (btnJadwal != null) {
+            btnJadwal.setOnClickListener(v -> startActivity(new Intent(this, ScheduledOrderActivity.class)));
+        }
 
         // Channel pengingat jam kerja + izin notifikasi (Android 13+), sinkron berkala tetap
         // terpasang, dan cek versi baru saat dibuka — satu paket dengan layar Pengisian.
@@ -767,6 +772,11 @@ public class MainActivity extends AppCompatActivity {
         if (btnDashboardWeb != null) {
             boolean enrolled = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled();
             btnDashboardWeb.setVisibility(adminOnly && enrolled ? View.VISIBLE : View.GONE);
+        }
+        View btnJadwal = findViewById(R.id.btnJadwal);
+        if (btnJadwal != null) {
+            boolean enrolled = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled();
+            btnJadwal.setVisibility(adminOnly && enrolled ? View.VISIBLE : View.GONE);
         }
 
         if (!show) return;
