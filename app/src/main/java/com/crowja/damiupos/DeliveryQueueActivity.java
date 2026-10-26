@@ -1007,6 +1007,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       rbOldest.setText("⏳ Umur Tertua (semua wilayah + Pesanan Terbuka)");
       rbOldest.setId(View.generateViewId());
       rg.addView(rbOldest);
+      // ⏰ Order berbatas waktu HARI INI (semua wilayah + Pesanan Terbuka), deadline terdekat dulu.
+      final android.widget.RadioButton rbDeadline = new android.widget.RadioButton(this);
+      rbDeadline.setText("⏰ Batas waktu hari ini (deadline terdekat dulu)");
+      rbDeadline.setId(View.generateViewId());
+      rg.addView(rbDeadline);
       box.addView(rg);
       // Umur Tertua: zona yang disapu — bawaan SEMUA tercentang (Pesanan Terbuka selalu ikut).
       final LinearLayout oldest = new LinearLayout(this);
@@ -1146,7 +1151,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          try {
             JSONObject body = new JSONObject();
             boolean isCustom = rbCustom.isChecked();
-            body.put("mode", isCustom ? "custom" : (rbOpen.isChecked() ? "open" : (rbOldest.isChecked() ? "oldest" : "mine")));
+            body.put("mode", isCustom ? "custom" : (rbOpen.isChecked() ? "open" : (rbOldest.isChecked() ? "oldest"
+                  : (rbDeadline.isChecked() ? "deadline" : "mine"))));
             if (rbOldest.isChecked()) {
                JSONArray oz = new JSONArray();
                for (int i = 0; i < oldBoxes.size(); i++) if (oldBoxes.get(i).isChecked()) oz.put(oldIdx.get(i));
@@ -1290,6 +1296,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          sb.append(" · 📍 ");
          if (c.isNull("km")) sb.append("? km");
          else sb.append(String.format(java.util.Locale.US, "%.1f km", c.optDouble("km")));
+         JSONObject dl = c.optJSONObject("deadline");
+         if (dl != null && !dl.optString("label").isEmpty()) {
+            sb.append(" · ⏰ ").append(dl.optString("label"));
+            if (!dl.isNull("remaining")) {
+               long rem = dl.optLong("remaining");
+               if (rem < 0) sb.append(" (lewat)");
+               else sb.append(" · sisa ").append(rem / 3600 > 0 ? (rem / 3600) + "j " : "").append((rem % 3600) / 60).append("m");
+            }
+         }
          if ("mine".equals(src)) sb.append(" · Antrian Saya");
          else if ("open".equals(src)) sb.append(" · 📢 Terbuka");
          android.widget.CheckBox cb = new android.widget.CheckBox(this);
