@@ -1181,23 +1181,22 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                }
             }
             dlg.dismiss();
-            if (km > 0) {
-               Toast.makeText(this, "Mengambil lokasi HP…", Toast.LENGTH_SHORT).show();
-               LocationService.lastLocation(this, (loc) -> {
-                  if (loc == null) {
-                     Toast.makeText(this, "Lokasi HP belum didapat — nyalakan GPS lalu coba lagi.", Toast.LENGTH_LONG).show();
-                     return;
-                  }
-                  try {
+            // Posisi HP selalu dicoba (jarak km di ceklis preview); wajib hanya bila Custom memakai batas jarak.
+            final boolean needLoc = km > 0;
+            LocationService.lastLocation(this, (loc) -> {
+               if (loc == null && needLoc) {
+                  Toast.makeText(this, "Lokasi HP belum didapat — nyalakan GPS lalu coba lagi.", Toast.LENGTH_LONG).show();
+                  return;
+               }
+               try {
+                  if (loc != null) {
                      body.put("lat", loc.getLatitude());
                      body.put("lng", loc.getLongitude());
-                  } catch (Exception ignored) {
                   }
-                  this.runTakeQueue(body);
-               });
-            } else {
-               this.runTakeQueue(body);
-            }
+               } catch (Exception ignored) {
+               }
+               this.previewTakeQueue(body);
+            });
          } catch (Exception e) {
             Toast.makeText(this, "Isian tidak valid.", Toast.LENGTH_SHORT).show();
          }
@@ -1210,6 +1209,141 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       int g = 0;
       for (Transaction t : this.runStops()) if (t != null && !DeliveryPlanner.isPickupOnly(t)) g += Math.max(0, t.getJumlahGalon());
       return g;
+   }
+
+   /**
+    * Langkah PREVIEW "Ambil": server mengembalikan kandidat tanpa klaim → ceklis (nama, item, galon, jarak km).
+    * Yang dicentang dikirim sebagai only_uuids ke {@link #runTakeQueue}.
+    */
+   private void previewTakeQueue(JSONObject body) {
+      SyncSettings cfg = this.syncCfg();
+      android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
+      wait.setMessage("Menyiapkan daftar order…");
+      wait.setCancelable(false);
+      wait.show();
+      (new Thread(() -> {
+         JSONArray cands = null;
+         String err = null;
+         boolean legacy = false;
+         try {
+            JSONObject pb = new JSONObject(body.toString());
+            pb.remove("_for_run");
+            pb.put("preview", true);
+            JSONObject r = (new SyncApi(cfg)).takeQueue(pb);
+            cands = r.optJSONArray("candidates");
+            legacy = cands == null;
+         } catch (SyncApi.SyncException se) {
+            String m = se.serverMessage();
+            err = m != null && !m.isEmpty() ? m : "Gagal memuat daftar (kode " + se.code + ").";
+         } catch (Exception e) {
+            err = "Gagal memuat daftar — periksa koneksi internet.";
+         }
+         final JSONArray fc = cands;
+         final String fe = err;
+         final boolean fl = legacy;
+         this.runOnUiThread(() -> {
+            try { wait.dismiss(); } catch (Exception ignored) {}
+            if (this.isFinishing() || this.isDestroyed()) return;
+            if (fe != null) {
+               Toast.makeText(this, fe, Toast.LENGTH_LONG).show();
+               return;
+            }
+            if (fl) {
+               // Server lama: "preview" diabaikan dan order SUDAH diklaim — cukup segarkan tampilan.
+               Toast.makeText(this, "Antrean diambil.", Toast.LENGTH_LONG).show();
+               com.crowja.damiupos.sync.SyncScheduler.syncNow(this.getApplicationContext());
+               this.loadData();
+               this.loadOtherDevices();
+               return;
+            }
+            this.showTakePreview(body, fc);
+         });
+      })).start();
+   }
+
+   private void showTakePreview(JSONObject body, JSONArray cands) {
+      int pad = this.dp(16f);
+      LinearLayout box = new LinearLayout(this);
+      box.setOrientation(LinearLayout.VERTICAL);
+      box.setPadding(pad, this.dp(4f), pad, 0);
+      final TextView sum = new TextView(this);
+      sum.setTextSize(13f);
+      sum.setPadding(0, 0, 0, this.dp(6f));
+      box.addView(sum);
+      final List<android.widget.CheckBox> boxes = new ArrayList<>();
+      final List<JSONObject> rows = new ArrayList<>();
+      final Runnable[] upd = new Runnable[1];
+      for (int i = 0; i < cands.length(); i++) {
+         JSONObject c = cands.optJSONObject(i);
+         if (c == null || c.optString("uuid").isEmpty()) continue;
+         String dest = strJson(c, "dest_name");
+         String items = strJson(c, "items");
+         boolean pickup = c.optBoolean("pickup_only");
+         int gal = c.optInt("galon");
+         String src = c.optString("source");
+         StringBuilder sb = new StringBuilder();
+         sb.append(safe(c.optString("name")));
+         if (dest != null && !dest.isEmpty()) sb.append(" · ").append(dest);
+         sb.append('\n');
+         if (pickup) sb.append("↩ ambil galon saja");
+         else sb.append(items != null && !items.isEmpty() ? items : "-").append(" · ").append(gal).append(" galon");
+         sb.append(" · 📍 ");
+         if (c.isNull("km")) sb.append("? km");
+         else sb.append(String.format(java.util.Locale.US, "%.1f km", c.optDouble("km")));
+         if ("mine".equals(src)) sb.append(" · Antrian Saya");
+         else if ("open".equals(src)) sb.append(" · 📢 Terbuka");
+         android.widget.CheckBox cb = new android.widget.CheckBox(this);
+         cb.setText(sb.toString());
+         cb.setChecked(true);
+         cb.setPadding(0, this.dp(4f), 0, this.dp(4f));
+         cb.setOnCheckedChangeListener((b, on) -> upd[0].run());
+         box.addView(cb);
+         boxes.add(cb);
+         rows.add(c);
+      }
+      ScrollView sv = new ScrollView(this);
+      sv.addView(box);
+      final AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle("📋 Cek Order yang Diambil").setView(sv)
+            .setPositiveButton("Ambil", (DialogInterface.OnClickListener) null)
+            .setNeutralButton("Kosongkan", (DialogInterface.OnClickListener) null)
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
+      upd[0] = () -> {
+         int n = 0, g = 0;
+         for (int i = 0; i < boxes.size(); i++) {
+            if (!boxes.get(i).isChecked()) continue;
+            n++;
+            g += rows.get(i).optInt("galon");
+         }
+         sum.setText(n + " dari " + boxes.size() + " order dicentang · " + g + " galon");
+         Button pos = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
+         if (pos != null) {
+            pos.setText("Ambil (" + n + ")");
+            pos.setEnabled(n > 0);
+         }
+         Button neu = dlg.getButton(AlertDialog.BUTTON_NEUTRAL);
+         if (neu != null) neu.setText(n == boxes.size() ? "Kosongkan" : "Pilih semua");
+      };
+      dlg.setOnShowListener(di -> {
+         upd[0].run();
+         dlg.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
+            boolean all = true;
+            for (android.widget.CheckBox cb : boxes) all &= cb.isChecked();
+            for (android.widget.CheckBox cb : boxes) cb.setChecked(!all);
+            upd[0].run();
+         });
+         dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            JSONArray pick = new JSONArray();
+            for (int i = 0; i < boxes.size(); i++) if (boxes.get(i).isChecked()) pick.put(rows.get(i).optString("uuid"));
+            if (pick.length() == 0) return;
+            try {
+               body.put("only_uuids", pick);
+            } catch (Exception ignored) {
+            }
+            dlg.dismiss();
+            this.runTakeQueue(body);
+         });
+      });
+      dlg.show();
    }
 
    private void runTakeQueue(JSONObject body) {
