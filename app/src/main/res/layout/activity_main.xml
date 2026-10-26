@@ -1421,6 +1421,33 @@
                         app:iconSize="22dp"
                         app:iconTint="@color/white" />
 
+                    <!-- 🗓️ Pesanan Terjadwal: khusus Admin (multi user + tersinkron). Disembunyikan untuk
+                         peran lain → Pengaturan melebar sebaris penuh (lebar 0dp + weight). -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnJadwal"
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        android:minHeight="60dp"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:maxLines="2"
+                        android:text="Pesanan\nTerjadwal"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:visibility="gone"
+                        app:backgroundTint="#5C6BC0"
+                        app:cornerRadius="14dp"
+                        app:elevation="3dp"
+                        app:icon="@android:drawable/ic_menu_my_calendar"
+                        app:iconGravity="textStart"
+                        app:iconPadding="8dp"
+                        app:iconSize="22dp"
+                        app:iconTint="@color/white" />
+
                     <!-- Dulu ada sel kosong di sini supaya "Pengaturan" tetap setengah lebar dan
                          sekolom dengan baris di atasnya. Dibuang: aturan menunya sekarang "melebar
                          kalau tetangganya tidak ada", dan sel kosong itu tetangga palsu yang membuat

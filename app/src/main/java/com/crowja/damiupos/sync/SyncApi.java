@@ -695,6 +695,32 @@ public class SyncApi {
         return get(cfg.getBaseUrl() + "/api/delivery/record", cfg.getToken());
     }
 
+    // ------------------------------------------------ Pesanan Terjadwal (/api/order-schedules)
+    // Tabel jadwal hanya di server (tak tersinkron). Semua panggilan membawa X-Staff-Uuid: server
+    // hanya melayani staf Admin aktif cabang ini (cermin halaman web owner/admin).
+
+    /** {ok, schedules[], due_count, products[{uuid,name}], devices[{uuid,name}], default_auto_tertunda_time}. */
+    public JSONObject orderSchedules(String staffUuid) throws Exception {
+        return get(cfg.getBaseUrl() + "/api/order-schedules", cfg.getToken(), staffUuid);
+    }
+
+    /** Tambah (tanpa {@code id}) / ubah ({@code id}) jadwal — field sama dengan form web. */
+    public JSONObject saveOrderSchedule(JSONObject body, String staffUuid) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/order-schedules", body, cfg.getToken(), staffUuid);
+    }
+
+    /** @param action {@code toggle} | {@code snooze} ({until: Y-m-d | null}) | {@code delete} */
+    public JSONObject orderScheduleAction(long id, String action, @Nullable JSONObject body,
+                                          String staffUuid) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/order-schedules/" + id + "/" + action,
+                body != null ? body : new JSONObject(), cfg.getToken(), staffUuid);
+    }
+
+    /** Kirim pengingat yang jatuh tempo hari ini sekarang → {ok, sent, message}. */
+    public JSONObject orderSchedulesSendNow(String staffUuid) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/order-schedules/send-now", new JSONObject(), cfg.getToken(), staffUuid);
+    }
+
     // ------------------------------------------------ Pengisian Day-time (/api/fill/*)
     // Semua panggilan membawa header X-Staff-Uuid: token perangkat hanya mengenali perangkat &
     // cabang, sedangkan server memeriksa peran orangnya (pengisian/admin) dari tabel staff.

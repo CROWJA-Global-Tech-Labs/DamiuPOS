@@ -152,6 +152,7 @@
         <activity android:name=".FollowUpActivity" />
         <activity android:name=".PromoCustomersActivity" />
         <activity android:name=".VisitListActivity" />
+        <activity android:name=".ScheduledOrderActivity" />
         <activity android:name=".FollowUpMapActivity" />
         <activity android:name=".CustomerMapActivity" />
         <!-- "Dashboard Web" Admin: seluruh dashboard web di WebView, sesi via link masuk sekali pakai.
