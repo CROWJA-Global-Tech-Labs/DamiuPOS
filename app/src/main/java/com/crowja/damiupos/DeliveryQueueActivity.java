@@ -10010,6 +10010,38 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return at.substring(0, 10).compareTo(today) <= 0;
    }
 
+   /** "Rabu, 28 Okt 08:00" — jadwal lanjut order tertunda (kosong bila tak berjadwal). */
+   private static String tertundaResumeLabel(TertundaRows.Merged<Transaction> m) {
+      String at = Ts.local(m.server != null ? m.server.resumeAtLocal : (m.local != null ? m.local.getDeliveryTertundaResumeAt() : null));
+      if (at.length() < 16) return "";
+      try {
+         java.util.Date d = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).parse(at.substring(0, 16).replace('T', ' '));
+         return d == null ? "" : new java.text.SimpleDateFormat("EEEE, d MMM HH:mm", new Locale("id", "ID")).format(d);
+      } catch (java.text.ParseException e) {
+         return at.substring(0, 16);
+      }
+   }
+
+   /**
+    * ⚠️ Peringatan untuk order yang jadwal lanjutnya BELUM hari ini (mis. pelanggan minta dikirim Rabu)
+    * — '' bila semua sudah jatuh tempo. Kasus 26/10/2026: pesanan "kirim Rabu 28/10" ikut dilanjutkan
+    * Senin pagi tanpa peringatan apa pun, lalu muncul di antrean (dan berbunyi terlambat) dua hari lebih awal.
+    */
+   private static String tertundaNotDueWarning(List<TertundaRows.Merged<Transaction>> todo) {
+      List<String> names = new ArrayList<>();
+      for (TertundaRows.Merged<Transaction> m : todo) {
+         if (tertundaDueToday(m)) continue;
+         String n = m.server != null ? m.server.name : (m.local != null ? m.local.getCustomerName() : null);
+         names.add("• " + (n == null || n.trim().isEmpty() ? "Pelanggan" : n.trim()) + " — " + tertundaResumeLabel(m));
+      }
+      if (names.isEmpty()) return "";
+      StringBuilder sb = new StringBuilder("⚠️ BELUM WAKTUNYA — " + names.size() + " pesanan dijadwalkan hari lain:\n");
+      for (int i = 0; i < names.size() && i < 5; i++) sb.append(names.get(i)).append('\n');
+      if (names.size() > 5) sb.append("• … dan ").append(names.size() - 5).append(" lainnya\n");
+      sb.append("Pelanggan minta dikirim pada tanggal itu. Lanjutkan sekarang HANYA bila pelanggan minta dimajukan.\n\n");
+      return sb.toString();
+   }
+
    /** ▶ Lanjutkan massal: yang dicentang (kosong = semua di daftar) → "jatuh tempo hari ini" atau "semua". */
    private void askBulkResumeTertunda(List<TertundaRows.Merged<Transaction>> rows, boolean offline, Runnable reload) {
       List<TertundaRows.Merged<Transaction>> scope = new ArrayList<>();
@@ -10019,8 +10051,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       List<TertundaRows.Merged<Transaction>> due = new ArrayList<>();
       for (TertundaRows.Merged<Transaction> m : scope) if (tertundaDueToday(m)) due.add(m);
       String what = this.tertundaSelected.isEmpty() ? "semua " + scope.size() + " pesanan di daftar" : scope.size() + " pesanan terpilih";
+      int notDue = scope.size() - due.size();
       AlertDialog.Builder b = (new AlertDialog.Builder(this)).setTitle("▶ Lanjutkan pesanan tertunda")
-            .setMessage("Dari " + what + ":" + "\n\n" + "Pesanan kembali ke antrian aktif sekarang.")
+            .setMessage("Dari " + what + ":" + "\n\n" + "Pesanan kembali ke antrian aktif sekarang."
+                  + (notDue > 0 ? "\n\n⚠️ " + notDue + " pesanan dijadwalkan HARI LAIN — pilih \"Jatuh tempo hari ini\" supaya tidak ikut terkirim lebih awal." : ""))
             .setNegativeButton("Batal", (DialogInterface.OnClickListener) null)
             .setPositiveButton("Semua (" + scope.size() + ")", (d, w) -> this.askBulkResumeMode(scope, offline, reload));
       if (!due.isEmpty()) {
@@ -10048,12 +10082,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (todo.isEmpty()) return;
       if (claim) {
          this.confirmTertundaTwoTap("📥 Lanjutkan & Ambil " + todo.size() + " pesanan?",
-               todo.size() + " pesanan dilanjutkan sekarang lalu dipindahkan ke antrian perangkat ini (yang tak bisa diambil tetap dilanjutkan sesuai perangkatnya).\n\nKetuk \"Lanjutkan & Ambil\" dua kali untuk memastikan.",
+               tertundaNotDueWarning(todo) + todo.size() + " pesanan dilanjutkan sekarang lalu dipindahkan ke antrian perangkat ini (yang tak bisa diambil tetap dilanjutkan sesuai perangkatnya).\n\nKetuk \"Lanjutkan & Ambil\" dua kali untuk memastikan.",
                "Lanjutkan & Ambil", "Memindahkan…", (dialog, pos, neg) -> this.runBulkResumeTertunda(dialog, todo, offline, true, reload));
          return;
       }
       this.confirmTertundaTwoTap("▶ Lanjutkan " + todo.size() + " pesanan?",
-            todo.size() + " pesanan tertunda akan langsung kembali ke antrian aktif sekarang." + "\n\n" + "Ketuk \"Lanjutkan\" dua kali untuk memastikan.",
+            tertundaNotDueWarning(todo) + todo.size() + " pesanan tertunda akan langsung kembali ke antrian aktif sekarang." + "\n\n" + "Ketuk \"Lanjutkan\" dua kali untuk memastikan.",
             "Lanjutkan", "Melanjutkan…", (dialog, pos, neg) -> this.runBulkResumeTertunda(dialog, todo, offline, false, reload));
    }
 
@@ -10486,6 +10520,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
       final boolean viaServer = path == TertundaRows.WritePath.SERVER;
       StringBuilder msg = new StringBuilder();
+      if (!tertundaDueToday(m)) {
+         msg.append("⚠️ BELUM WAKTUNYA — dijadwalkan ").append(tertundaResumeLabel(m))
+               .append(". Lanjutkan sekarang HANYA bila pelanggan minta dimajukan.\n\n");
+      }
       msg.append("Order \"").append(custName).append("\" akan langsung kembali ke antrian aktif sekarang.");
       if (viaServer) {
          // Server merutekan SEMUA baris, termasuk milik HP ini — jangan menjanjikan tujuan yang belum pasti.
