@@ -57,16 +57,24 @@ public class DamiuApplication extends Application {
         // activity yang menjadwalkan iklan).
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
             @Override public void onActivityCreated(@NonNull Activity a, @Nullable Bundle b) {}
-            @Override public void onActivityStarted(@NonNull Activity a) {}
+            @Override public void onActivityStarted(@NonNull Activity a) {
+                // Poll permintaan "Ambil Alih butuh persetujuan" hanya selama app di depan.
+                com.crowja.damiupos.util.ClaimApprovalPrompter.onActivityStarted();
+            }
             @Override public void onActivityResumed(@NonNull Activity a) {
                 currentActivity = new WeakReference<>(a);
+                com.crowja.damiupos.util.ClaimApprovalPrompter.onActivityResumed(a);
             }
             @Override public void onActivityPaused(@NonNull Activity a) {
                 if (currentActivity.get() == a) currentActivity = new WeakReference<>(null);
             }
-            @Override public void onActivityStopped(@NonNull Activity a) {}
+            @Override public void onActivityStopped(@NonNull Activity a) {
+                com.crowja.damiupos.util.ClaimApprovalPrompter.onActivityStopped();
+            }
             @Override public void onActivitySaveInstanceState(@NonNull Activity a, @NonNull Bundle b) {}
-            @Override public void onActivityDestroyed(@NonNull Activity a) {}
+            @Override public void onActivityDestroyed(@NonNull Activity a) {
+                com.crowja.damiupos.util.ClaimApprovalPrompter.onActivityDestroyed(a);
+            }
         });
     }
 
