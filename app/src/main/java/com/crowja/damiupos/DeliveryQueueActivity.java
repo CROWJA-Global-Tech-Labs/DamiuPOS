@@ -10056,11 +10056,55 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             .setMessage("Dari " + what + ":" + "\n\n" + "Pesanan kembali ke antrian aktif sekarang."
                   + (notDue > 0 ? "\n\n⚠️ " + notDue + " pesanan dijadwalkan HARI LAIN — pilih \"Jatuh tempo hari ini\" supaya tidak ikut terkirim lebih awal." : ""))
             .setNegativeButton("Batal", (DialogInterface.OnClickListener) null)
-            .setPositiveButton("Semua (" + scope.size() + ")", (d, w) -> this.askBulkResumeMode(scope, offline, reload));
+            .setPositiveButton("Semua (" + scope.size() + ")", (d, w) -> {
+               if (notDue > 0) this.confirmResumeNotDue(scope, due, offline, reload);
+               else this.askBulkResumeMode(scope, offline, reload);
+            });
       if (!due.isEmpty()) {
          b.setNeutralButton("Jatuh tempo hari ini (" + due.size() + ")", (d, w) -> this.askBulkResumeMode(due, offline, reload));
       }
       b.show();
+   }
+
+   /**
+    * "Semua" padahal ada pesanan yang BELUM jatuh tempo hari ini → tampilkan SELURUH daftarnya (nama +
+    * jadwal) dan minta dua ketuk sebelum ikut dilanjutkan. Tombol netral = hanya yang jatuh tempo.
+    */
+   private void confirmResumeNotDue(List<TertundaRows.Merged<Transaction>> scope, List<TertundaRows.Merged<Transaction>> due,
+                                    boolean offline, Runnable reload) {
+      StringBuilder sb = new StringBuilder();
+      int n = 0;
+      for (TertundaRows.Merged<Transaction> m : scope) {
+         if (tertundaDueToday(m)) continue;
+         n++;
+         String name = m.server != null ? m.server.name : (m.local != null ? m.local.getCustomerName() : null);
+         String label = tertundaResumeLabel(m);
+         sb.append(n).append(". ").append(name == null || name.trim().isEmpty() ? "Pelanggan" : name.trim())
+               .append(label.isEmpty() ? "" : "\n    🗓️ " + label).append('\n');
+      }
+      String msg = n + " pesanan ini dijadwalkan HARI LAIN tapi akan IKUT dilanjutkan sekarang:\n\n" + sb
+            + "\nLanjutkan HANYA bila pelanggan minta dimajukan.\nKetuk \"Tetap lanjutkan\" dua kali untuk memastikan.";
+      AlertDialog.Builder b = (new AlertDialog.Builder(this)).setIcon(17301543)
+            .setTitle("⚠️ " + n + " pesanan belum jatuh tempo hari ini").setCancelable(false).setMessage(msg)
+            .setPositiveButton("Tetap lanjutkan", (DialogInterface.OnClickListener) null)
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null);
+      if (!due.isEmpty()) {
+         b.setNeutralButton("Hanya hari ini (" + due.size() + ")", (d, w) -> this.askBulkResumeMode(due, offline, reload));
+      }
+      AlertDialog dialog = b.create();
+      dialog.setOnShowListener((d) -> {
+         Button pos = dialog.getButton(-1);
+         int[] clicks = new int[]{0};
+         pos.setOnClickListener((v) -> {
+            if (++clicks[0] < 2) {
+               pos.setText("Ketuk sekali lagi");
+            } else {
+               dialog.dismiss();
+               this.askBulkResumeMode(scope, offline, reload);
+            }
+         });
+      });
+      dialog.show();
    }
 
    /** Cara melanjutkan: sesuai perangkat pemegang (server merutekan) atau 📥 Lanjutkan & Ambil ke HP ini. */
