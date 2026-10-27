@@ -97,15 +97,29 @@ public final class ClaimRequests {
         }
     }
 
+    private static boolean isClaimRejected(@Nullable Throwable t) {
+        if (!(t instanceof SyncApi.SyncException)) return false;
+        SyncApi.SyncException se = (SyncApi.SyncException) t;
+        if (se.code != 409 || se.body == null) return false;
+        try {
+            return "claim_rejected".equals(new JSONObject(se.body).optString("code", ""));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** Dipanggil {@link SyncApi#claimDelivery} saat klaim gagal — catat bila butuh persetujuan. */
     static void noteClaimError(@Nullable String trxUuid, Throwable t) {
-        if (trxUuid == null || trxUuid.isEmpty() || !isNeedsApproval(t)) return;
+        if (trxUuid == null || trxUuid.isEmpty()) return;
+        // 409 claim_rejected = permintaan sebelumnya DITOLAK & jendela 1 jamnya belum habis → kunci juga.
+        boolean rejected = isClaimRejected(t);
+        if (!rejected && !isNeedsApproval(t)) return;
         try {
             JSONObject j = new JSONObject(((SyncApi.SyncException) t).body);
             long now = System.currentTimeMillis();
             long exp = ClaimRequestRules.parseServerTime(str(j, "expires_at"), now + ClaimRequestRules.WINDOW_MS);
             Entry e = new Entry(trxUuid, j.optLong("request_id", 0L), str(j, "owner_device_name"),
-                    ClaimRequestRules.PENDING, exp, now);
+                    rejected ? ClaimRequestRules.REJECTED : ClaimRequestRules.PENDING, exp, now);
             synchronized (LOCK) {
                 map().put(trxUuid, e);
                 save();
