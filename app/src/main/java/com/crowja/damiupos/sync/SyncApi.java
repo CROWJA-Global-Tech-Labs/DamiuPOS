@@ -251,7 +251,35 @@ public class SyncApi {
      * Balas {@code {"ok":true,"message":"…"}} atau 422/409. Branch-scoped by the token.
      */
     public JSONObject claimDelivery(JSONObject body) throws Exception {
-        return postRegionGated("/api/delivery/claim", body);
+        try {
+            return postRegionGated("/api/delivery/claim", body);
+        } catch (SyncException e) {
+            // 409 needs_approval (antrean pemilik minta persetujuan) → catat permintaan KELUAR di
+            // sini supaya SEMUA jalur klaim ikut mengunci tombol Ambil order itu ±1 jam.
+            ClaimRequests.noteClaimError(body.optString("transaction_uuid", ""), e);
+            throw e;
+        }
+    }
+
+    /**
+     * Permintaan ambil alih yang butuh persetujuan: {@code {ok, incoming:[{id, transaction_uuid,
+     * requester_device_uuid, requester_device_name, customer_name, address, items:[{name,qty}],
+     * galon, total, created_at, expires_at}], outgoing:[{id, transaction_uuid, owner_device_name,
+     * status, expires_at, decided_at}]}}. incoming = MENUNGGU yang menuju perangkat INI; outgoing =
+     * permintaan perangkat ini 2 jam terakhir. Dipoll {@link com.crowja.damiupos.util.ClaimApprovalPrompter}.
+     */
+    public JSONObject claimRequests() throws Exception {
+        return get(cfg.getBaseUrl() + "/api/delivery/claim-requests", cfg.getToken());
+    }
+
+    /** Pemilik menyetujui: server sendiri yang memindahkan order ke peminta. 422 = order tak bisa lagi dipindah. */
+    public JSONObject approveClaimRequest(long id) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/claim-requests/" + id + "/approve", new JSONObject(), cfg.getToken());
+    }
+
+    /** Pemilik menolak permintaan ambil alih. 422 = sudah tak menunggu lagi. */
+    public JSONObject rejectClaimRequest(long id) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/claim-requests/" + id + "/reject", new JSONObject(), cfg.getToken());
     }
 
     /**

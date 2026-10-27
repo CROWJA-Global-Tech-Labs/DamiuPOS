@@ -402,6 +402,12 @@ public class DeliveryMapActivity extends AppCompatActivity {
 
     private void confirmClaim(String trxUuid, String expectedDeviceUuid, String custName,
                                String items, double total, boolean resume, boolean mine) {
+        if (!mine && com.crowja.damiupos.sync.ClaimRequests.blocks(trxUuid)) {
+            // Sudah minta persetujuan pemilik antrean (≤1 jam lalu) — jangan kirim ulang.
+            forceRunOnClaim = false;
+            Toast.makeText(this, com.crowja.damiupos.sync.ClaimRequests.blockedToast(trxUuid), Toast.LENGTH_LONG).show();
+            return;
+        }
         StringBuilder msg = new StringBuilder();
         if (resume && mine) {
             msg.append("Order \"").append(custName).append("\" sedang DIJEDA. Lanjutkan sekarang — kembali ke antrian aktif perangkat ini.\n\n");
@@ -456,6 +462,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
         new Thread(() -> {
             String okMsg = null, errMsg = null;
             boolean stale = false;
+            boolean awaiting = false;
             try {
                 JSONObject body = new JSONObject();
                 body.put("transaction_uuid", trxUuid);
@@ -466,14 +473,23 @@ public class DeliveryMapActivity extends AppCompatActivity {
             } catch (SyncApi.SyncException se) {
                 try { errMsg = new JSONObject(se.body).optString("message", null); } catch (Exception ignored) {}
                 if (errMsg == null) errMsg = "Gagal mengambil alih (kode " + se.code + ").";
-                stale = se.code == 409;
+                awaiting = com.crowja.damiupos.sync.ClaimRequests.isNeedsApproval(se);
+                stale = se.code == 409 && !awaiting;
             } catch (Exception e) {
                 errMsg = "Gagal mengambil alih — periksa koneksi internet.";
             }
             final String fOk = okMsg, fErr = errMsg;
             final boolean fStale = stale;
+            final boolean fAwaiting = awaiting;
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
+                if (fAwaiting) {
+                    // Pemilik antrean wajib menyetujui — permintaan terkirim; ketukan Ambil berikutnya
+                    // pada pin ini ditahan (ClaimRequests) sampai dijawab / ±1 jam.
+                    Toast.makeText(this, fErr, Toast.LENGTH_LONG).show();
+                    dialog.dismiss();
+                    return;
+                }
                 if (fOk != null) {
                     Toast.makeText(this, fOk + (addToRun ? " Masuk rit berjalan." : ""), Toast.LENGTH_LONG).show();
                     dialog.dismiss();

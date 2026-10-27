@@ -93,6 +93,7 @@ import com.crowja.damiupos.model.Product;
 import com.crowja.damiupos.model.Transaction;
 import com.crowja.damiupos.model.TransactionItem;
 import com.crowja.damiupos.model.User;
+import com.crowja.damiupos.sync.ClaimRequests;
 import com.crowja.damiupos.sync.LocationReporter;
 import com.crowja.damiupos.sync.SyncApi;
 import com.crowja.damiupos.sync.SyncScheduler;
@@ -326,6 +327,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private java.lang.ref.WeakReference<OtherQueueRowAdapter> guidedOtherRowsAdapterRef;
    /** Wilayah lokasi non-utama baru tiba (DestAreaCache) → bind ulang baris 📍 semua kartu antrean
     *  yang sedang tampil supaya "Kedai" menjadi "Kedai · Desa, Kec. X" tanpa menunggu refresh. */
+   /** Status permintaan "Ambil Alih butuh persetujuan" berubah (dicatat / disegarkan poll) →
+    *  bind ulang kartu order perangkat lain supaya tombol ⏳ & baris statusnya mengikuti. */
+   private final Runnable claimRequestRefresh = () -> {
+      if (this.isFinishing() || this.isDestroyed()) return;
+      if (this.otherDevicesAdapter != null) this.otherDevicesAdapter.notifyDataSetChanged();
+      OtherQueueRowAdapter go = this.guidedOtherRowsAdapterRef != null ? this.guidedOtherRowsAdapterRef.get() : null;
+      if (go != null && go.hostDialog != null && go.hostDialog.isShowing()) go.notifyDataSetChanged();
+   };
+
    private final Runnable destAreaRefresh = () -> {
       if (this.isFinishing() || this.isDestroyed()) return;
       if (this.adapter != null) this.adapter.notifyDataSetChanged();
@@ -2281,6 +2291,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       lateMs = (long)lateCfg.getDeliveryMaxAgeMinutes() * 60000L;
       this.revokeLateCredit = lateCfg.isRevokeCreditLateEnabled();
       DestAreaCache.addListener(this.destAreaRefresh);
+      ClaimRequests.addListener(this.claimRequestRefresh);
       com.crowja.damiupos.util.LowPowerBlink.resumeAll();
       this.loadData();
       this.openPendingFocus();
@@ -2310,6 +2321,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    protected void onPause() {
       super.onPause();
       DestAreaCache.removeListener(this.destAreaRefresh);
+      ClaimRequests.removeListener(this.claimRequestRefresh);
       // Layar tak tampil → hentikan semua kedip (dulu terus berjalan di latar = HP panas).
       com.crowja.damiupos.util.LowPowerBlink.pauseAll();
       this.tick.removeCallbacks(this.ticker);
@@ -2593,6 +2605,41 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * <p>Kosong \u2192 View GONE, bukan teks kosong: kartu tanpa catatan harus setinggi sebelum fitur ini
     * ada, kalau tidak seluruh daftar jadi lebih renggang tanpa alasan.</p>
     */
+   /**
+    * Kartu order PERANGKAT LAIN: bila perangkat ini sudah minta persetujuan ambil alih (antrean
+    * pemilik wajib menyetujui, lihat {@link ClaimRequests}), tombol Ambil dikunci (⏳, redup) ±1 jam
+    * dan baris status kecil tampil di bawah kartu. Dipakai ulang Tab 2 (OtherDevicesAdapter),
+    * "Antrean Lain" terpandu (OtherQueueRowAdapter) dan OtherDeviceQueueActivity.
+    *
+    * @param iconOnly true untuk tombol ikon 📥 kartu ringkas (teks jadi ⏳); false untuk tombol berteks
+    * @return true bila tombol Ambil sedang dikunci
+    */
+   static boolean bindClaimRequest(TextView line, android.widget.Button btn, String trxUuid, boolean delivering, boolean iconOnly) {
+      String text = trxUuid == null || trxUuid.isEmpty() ? null : ClaimRequests.cardLine(trxUuid);
+      boolean blocked = trxUuid != null && !trxUuid.isEmpty() && ClaimRequests.blocks(trxUuid);
+      if (line != null) {
+         line.setText(text != null ? text : "");
+         line.setVisibility(text != null ? View.VISIBLE : View.GONE);
+      }
+      if (btn != null) {
+         // ViewHolder didaur ulang → selalu setel ulang keduanya, bukan hanya saat terkunci.
+         btn.setEnabled(!blocked);
+         if (blocked) {
+            btn.setText(iconOnly ? "⏳" : "⏳ Menunggu Persetujuan");
+            btn.setAlpha(0.45F);
+         } else if (!iconOnly) {
+            btn.setAlpha(1.0F);
+         } else {
+            btn.setAlpha(delivering ? 0.5F : 1.0F);
+         }
+      }
+      return blocked;
+   }
+
+   static boolean bindClaimRequest(TextView line, android.widget.Button btn, String trxUuid, boolean delivering) {
+      return bindClaimRequest(line, btn, trxUuid, delivering, true);
+   }
+
    static void bindOrderNote(TextView tv, String rawCatatan) {
       if (tv != null) {
          String note = ReceiptActivity.customerNote(rawCatatan);
@@ -3579,6 +3626,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          return;
       }
       String uuid = q.optString("uuid", "");
+      if (ClaimRequests.blocks(uuid)) {
+         // Sudah minta persetujuan pemilik antrean (≤1 jam lalu) — jangan kirim ulang.
+         Toast.makeText(this, ClaimRequests.blockedToast(uuid), Toast.LENGTH_LONG).show();
+         return;
+      }
       String name = q.optString("name", "Pelanggan");
       String fromDevice = q.optString("device_group_label", "");
       StringBuilder msg = new StringBuilder();
@@ -3616,6 +3668,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          (new Thread(() -> {
             String okMsg = null;
             String errMsg = null;
+            boolean needsApproval = false;
 
             try {
                JSONObject body = new JSONObject();
@@ -3625,6 +3678,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                okMsg = r.optString("message", "Order diambil alih ke perangkat ini.");
             } catch (SyncApi.SyncException var12) {
                SyncApi.SyncException se = var12;
+               needsApproval = ClaimRequests.isNeedsApproval(se);
 
                try {
                   errMsg = (new JSONObject(se.body)).optString("message", (String)null);
@@ -3640,6 +3694,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
             final String okMsgF = okMsg;
             final String errMsgF = errMsg;
+            final boolean needsApprovalF = needsApproval;
             this.runOnUiThread(() -> {
                if (!this.isFinishing() && !this.isDestroyed()) {
                   if (okMsgF != null) {
@@ -3649,6 +3704,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                      if (this.activeTab == 1) {
                         this.loadOtherDevices();
                      }
+                  } else if (needsApprovalF) {
+                     // Pemilik antrean wajib menyetujui — permintaan sudah terkirim (ClaimRequests
+                     // mencatatnya), kartu order ini kini ⏳ terkunci. Pesan server apa adanya.
+                     Toast.makeText(this, errMsgF, 1).show();
+                     dialog.dismiss();
+                     if (this.otherDevicesAdapter != null) this.otherDevicesAdapter.notifyDataSetChanged();
                   } else {
                      Toast.makeText(this, errMsgF, 1).show();
                      pos.setEnabled(true);
@@ -3725,11 +3786,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       String name = q.optString("name", "Pelanggan");
       boolean delivering = isBeingDelivered(q);
       String text = this.otherDeviceOrderDetailText(q);
+      // Permintaan persetujuan ambil alih yang masih berjalan → statusnya di atas detail, tanpa tombol Ambil.
+      String claimLine = ClaimRequests.cardLine(q.optString("uuid", ""));
+      boolean awaiting = ClaimRequests.blocks(q.optString("uuid", ""));
+      if (claimLine != null) text = claimLine + "\n\n" + text;
       AlertDialog.Builder b = (new AlertDialog.Builder(this)).setTitle("Detail Order \u2014 " + name)
             .setMessage(delivering ? "\ud83d\ude9a SEDANG DIANTAR \u2014 tidak bisa diambil alih.\n\n" + text : text)
             .setNeutralButton("\ud83d\udd0d Preview", (d, w) -> this.showOtherDevicePreview(q))
             .setNegativeButton("Kembali", (DialogInterface.OnClickListener)null);
-      if (!delivering) {
+      if (!delivering && !awaiting) {
          b.setPositiveButton("\ud83d\udce5 Ambil Alih", (d, w) -> this.confirmTakeOverOtherDevices(q));
       }
       b.show();
@@ -6514,6 +6579,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       (new Thread(() -> {
          List<String> ok = new ArrayList<>();
          int fail = 0;
+         int awaiting = 0;
          for (Map.Entry<String, String> e : others.entrySet()) {
             try {
                JSONObject body = new JSONObject();
@@ -6522,10 +6588,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                (new SyncApi(cfg)).claimDelivery(body);
                ok.add(e.getKey());
             } catch (Exception ex) {
-               fail++;
+               if (ClaimRequests.isNeedsApproval(ex)) awaiting++; else fail++;
             }
          }
          final int failF = fail;
+         final int awaitingF = awaiting;
          this.runOnUiThread(() -> {
             try { wait.dismiss(); } catch (Throwable ignored) {}
             if (this.isFinishing() || this.isDestroyed()) return;
@@ -6539,6 +6606,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                }
             }
             Toast.makeText(this, (mine.size() + ok.size()) + " order ditambahkan ke rit"
+                  + (awaitingF > 0 ? " · ⏳ " + awaitingF + " menunggu persetujuan pemilik antrean" : "")
                   + (failF > 0 ? " · " + failF + " gagal diambil (mungkin sudah diambil rekan)" : "."), 1).show();
             SyncScheduler.syncNow(this.getApplicationContext());
             this.loadData();
@@ -7284,9 +7352,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          boolean delivering = row.json != null && DeliveryQueueActivity.isBeingDelivered(row.json);
          h.btnTakeOver.setText(delivering ? "🚚" : "📥");
          h.btnTakeOver.setAlpha(delivering ? 0.5F : 1.0F);
+         final String rowUuid = row.json != null ? row.json.optString("uuid", "") : null;
+         final boolean awaiting = DeliveryQueueActivity.bindClaimRequest(h.tvClaimRequest, h.btnTakeOver, rowUuid, delivering);
          h.btnTakeOver.setOnClickListener((v) -> {
             if (delivering) {
                DeliveryQueueActivity.this.toastBeingDelivered(row.json);
+               return;
+            }
+            if (awaiting) {
+               Toast.makeText(DeliveryQueueActivity.this, ClaimRequests.blockedToast(rowUuid), Toast.LENGTH_LONG).show();
                return;
             }
             this.hostDialog.dismiss();
@@ -7300,12 +7374,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
 
       class VH extends RecyclerView.ViewHolder {
-         TextView tvCustomer, tvElapsed, tvMeta, tvOngkir, tvPickupOnly, tvAdminArea, tvOrderNote;
+         TextView tvCustomer, tvElapsed, tvMeta, tvOngkir, tvPickupOnly, tvAdminArea, tvOrderNote, tvClaimRequest;
          LinearLayout productChips;
          MaterialButton btnMore, btnTakeOver;
 
          VH(View v) {
             super(v);
+            this.tvClaimRequest = v.findViewById(id.tvClaimRequest);
             this.tvCustomer = v.findViewById(id.tvCustomer);
             this.tvElapsed = v.findViewById(id.tvElapsed);
             this.tvMeta = v.findViewById(id.tvMeta);
@@ -10728,6 +10803,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
          boolean claimed = false;
          boolean alreadyHere = false;
+         boolean claimAwaiting = false;
          String claimErr = null;
          if (resumed != null) {
             String expected = TertundaRows.claimExpectedAfterResume(resumed, cfg.getDeviceUuid());
@@ -10741,6 +10817,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                   api.claimDelivery(body);
                   claimed = true;
                } catch (SyncApi.SyncException se) {
+                  claimAwaiting = ClaimRequests.isNeedsApproval(se);
                   claimErr = se.serverMessage();
                   if (claimErr == null) {
                      claimErr = "kode " + se.code;
@@ -10757,6 +10834,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          final boolean claimedF = claimed;
          final boolean alreadyHereF = alreadyHere;
          final String claimErrF = claimErr;
+         final boolean claimAwaitingF = claimAwaiting;
          this.runOnUiThread(() -> {
             if (this.isFinishing() || this.isDestroyed()) return;
             if (resumedF == null) {
@@ -10777,6 +10855,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                msg = "Order dilanjutkan & diambil ke perangkat ini.";
             } else if (alreadyHereF) {
                msg = "Order dilanjutkan — sudah di antrian perangkat ini.";
+            } else if (claimAwaitingF) {
+               // Pemilik antrean wajib menyetujui pengambilalihan — bukan gagal.
+               msg = (resumedF.message.isEmpty() ? "Order sudah dilanjutkan." : resumedF.message)
+                     + "\n" + claimErrF;
             } else {
                msg = (resumedF.message.isEmpty() ? "Order sudah dilanjutkan." : resumedF.message)
                      + "\nTetapi gagal diambil ke perangkat ini: " + claimErrF;
@@ -13059,6 +13141,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       (new Thread(() -> {
          int ok = 0;
          int fail = 0;
+         int awaiting = 0;
          for (java.util.Map.Entry<String, String> e : picked.entrySet()) {
             try {
                JSONObject body = new JSONObject();
@@ -13067,11 +13150,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                (new SyncApi(cfg)).claimDelivery(body);
                ok++;
             } catch (Exception ex) {
-               fail++;
+               if (ClaimRequests.isNeedsApproval(ex)) awaiting++; else fail++;
             }
          }
          final int okF = ok;
          final int failF = fail;
+         final int awaitingF = awaiting;
          this.runOnUiThread(() -> {
             try { wait.dismiss(); } catch (Throwable ignored) {}
             if (this.isFinishing() || this.isDestroyed()) {
@@ -13079,6 +13163,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             }
             this.exitClaimSelect(open);
             String msg = okF + " order masuk Antrian Saya"
+                  + (awaitingF > 0 ? " \u00b7 \u23f3 " + awaitingF + " menunggu persetujuan pemilik antrean" : "")
                   + (failF > 0 ? " \u00b7 " + failF + " gagal (mungkin sudah diambil rekan)" : ".");
             Toast.makeText(this, msg, 1).show();
             com.crowja.damiupos.sync.SyncScheduler.syncNow(this.getApplicationContext());
@@ -13353,6 +13438,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          h.btnTakeOver.setText(delivering ? "🚚" : "📥");
          h.btnTakeOver.setAlpha(delivering ? 0.5F : 1.0F);
          h.btnTakeOver.setOnClickListener((v) -> DeliveryQueueActivity.this.showOtherDeviceOrderDetail(q));
+         // Sudah minta persetujuan pemilik antrean → 📥 jadi ⏳ terkunci ±1 jam + baris status.
+         DeliveryQueueActivity.bindClaimRequest(h.tvClaimRequest, h.btnTakeOver, this.str(q, "uuid"), delivering);
          if (h.btnWaChat != null) {
             String waPhone = q.optString("phone", "");
             boolean hasPhone = !waPhone.isEmpty() && !"null".equals(waPhone);
@@ -13433,9 +13520,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          MaterialButton btnTakeOver;
          MaterialButton btnWaChat;
          TextView tvPriorityBig;
+         TextView tvClaimRequest;
 
          VH(View v) {
             super(v);
+            this.tvClaimRequest = (TextView)v.findViewById(id.tvClaimRequest);
             this.tvPriorityBig = (TextView)v.findViewById(id.tvPriorityBig);
             this.tvCustomer = (TextView)v.findViewById(id.tvCustomer);
             this.tvElapsed = (TextView)v.findViewById(id.tvElapsed);

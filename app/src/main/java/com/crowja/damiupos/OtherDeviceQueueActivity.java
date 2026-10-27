@@ -22,6 +22,7 @@ import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.model.Customer;
+import com.crowja.damiupos.sync.ClaimRequests;
 import com.crowja.damiupos.sync.SyncApi;
 import com.crowja.damiupos.sync.SyncScheduler;
 import com.crowja.damiupos.sync.SyncSettings;
@@ -125,10 +126,16 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         if (!isFinishing() && !isDestroyed() && adapter != null) adapter.notifyDataSetChanged();
     };
 
+    /** Status permintaan persetujuan ambil alih berubah → bind ulang kartu (tombol ⏳ + baris status). */
+    private final Runnable claimRequestRefresh = () -> {
+        if (!isFinishing() && !isDestroyed() && adapter != null) adapter.notifyDataSetChanged();
+    };
+
     @Override
     protected void onResume() {
         super.onResume();
         DeliveryQueueActivity.DestAreaCache.addListener(destAreaRefresh);
+        ClaimRequests.addListener(claimRequestRefresh);
         tick.postDelayed(ticker, 1000);
     }
 
@@ -136,6 +143,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
     protected void onPause() {
         super.onPause();
         DeliveryQueueActivity.DestAreaCache.removeListener(destAreaRefresh);
+        ClaimRequests.removeListener(claimRequestRefresh);
         tick.removeCallbacks(ticker);
     }
 
@@ -336,6 +344,11 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
             Toast.makeText(this, "🚚 Sedang diantar — tidak bisa diambil alih.", Toast.LENGTH_LONG).show();
             return;
         }
+        if (ClaimRequests.blocks(uuid)) {
+            // Sudah minta persetujuan pemilik antrean (≤1 jam lalu) — jangan kirim ulang.
+            Toast.makeText(this, ClaimRequests.blockedToast(uuid), Toast.LENGTH_LONG).show();
+            return;
+        }
 
         StringBuilder msg = new StringBuilder();
         msg.append("Order \"").append(name).append("\" akan DIPINDAHKAN dari perangkat ")
@@ -389,6 +402,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         }
         new Thread(() -> {
             String okMsg = null, errMsg = null;
+            boolean needsApproval = false;
             try {
                 JSONObject body = new JSONObject();
                 body.put("transaction_uuid", trxUuid);
@@ -398,14 +412,23 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
                 JSONObject r = new SyncApi(cfg).claimDelivery(body);
                 okMsg = r.optString("message", "Order diambil alih ke perangkat ini.");
             } catch (SyncApi.SyncException se) {
+                needsApproval = ClaimRequests.isNeedsApproval(se);
                 errMsg = extractMessage(se.body);
                 if (errMsg == null) errMsg = "Gagal mengambil alih (kode " + se.code + ").";
             } catch (Exception e) {
                 errMsg = "Gagal mengambil alih — periksa koneksi internet.";
             }
             final String fOk = okMsg, fErr = errMsg;
+            final boolean fAwaiting = needsApproval;
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
+                if (fAwaiting) {
+                    // Pemilik antrean wajib menyetujui — permintaan terkirim, kartu kini ⏳ terkunci.
+                    Toast.makeText(this, fErr, Toast.LENGTH_LONG).show();
+                    dialog.dismiss();
+                    adapter.notifyDataSetChanged();
+                    return;
+                }
                 if (fOk != null) {
                     Toast.makeText(this, fOk, Toast.LENGTH_LONG).show();
                     // Notifikasi di perangkat TUJUAN (perangkat ini). Perangkat ASAL mendapat
@@ -555,8 +578,10 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
             h.btnNavigasi.setOnClickListener(v -> navigateTo(q));
             // Sedang diantar kurirnya → tak bisa diambil alih (server juga menolak).
             boolean delivering = q.optBoolean("in_progress", false);
-            h.btnAmbilAlih.setEnabled(!delivering);
             h.btnAmbilAlih.setText(delivering ? "🚚 Sedang Diantar" : "Ambil Alih");
+            // Sudah minta persetujuan pemilik antrean → "⏳ Menunggu Persetujuan" terkunci ±1 jam.
+            DeliveryQueueActivity.bindClaimRequest(h.tvClaimRequest, h.btnAmbilAlih, str(q, "uuid"), delivering, false);
+            if (delivering) h.btnAmbilAlih.setEnabled(false);
             h.btnAmbilAlih.setOnClickListener(v -> confirmTakeOver(q));
             boolean hasPhone = !phone.isEmpty() && !phone.equals("null");
             h.btnWaChat.setVisibility(hasPhone ? View.VISIBLE : View.GONE);
@@ -567,11 +592,12 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         public int getItemCount() { return data.size(); }
 
         class VH extends RecyclerView.ViewHolder {
-            TextView tvCustomer, tvLocation, tvPhone, tvOrder, tvItems, tvAddress, tvPriority, tvOpenDispatch, tvQueued, tvOrderNote;
+            TextView tvCustomer, tvLocation, tvPhone, tvOrder, tvItems, tvAddress, tvPriority, tvOpenDispatch, tvQueued, tvOrderNote, tvClaimRequest;
             MaterialButton btnNavigasi, btnAmbilAlih, btnWaChat;
 
             VH(View v) {
                 super(v);
+                tvClaimRequest = v.findViewById(R.id.tvClaimRequest);
                 btnWaChat = v.findViewById(R.id.btnWaChat);
                 tvOrderNote = v.findViewById(R.id.tvOrderNote);
                 tvCustomer = v.findViewById(R.id.tvCustomer);

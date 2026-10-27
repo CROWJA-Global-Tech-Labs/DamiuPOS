@@ -132,6 +132,24 @@
             android:textSize="12sp"
             android:visibility="gone" />
 
+        <!-- "⏳ Permintaan ambil alih sudah dikirim ke … — menunggu persetujuan" (ClaimRequests):
+             order ini dikunci ±1 jam setelah perangkat ini minta persetujuan pemilik antrean.
+             GONE default. -->
+        <TextView
+            android:id="@+id/tvClaimRequest"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/bg_claim_request"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingTop="5dp"
+            android:paddingBottom="5dp"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
         <LinearLayout
             android:id="@+id/actionsNav"
             android:layout_width="match_parent"

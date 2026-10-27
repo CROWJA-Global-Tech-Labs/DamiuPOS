@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Latar baris status "Ambil Alih butuh persetujuan" (tvClaimRequest) di kartu order perangkat
+     lain. Latar TERANG eksplisit + teks @color/text_primary → tetap terbaca walau HP dalam mode
+     gelap (app Light-only, tapi kontras tak boleh bergantung pada tema). Garis kiri biru = beda
+     dari panel catatan order (kuning). -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#E3F2FD" />
+            <corners android:radius="6dp" />
+        </shape>
+    </item>
+    <item android:right="0dp" android:width="3dp" android:gravity="left|fill_vertical">
+        <shape android:shape="rectangle">
+            <solid android:color="#1565C0" />
+        </shape>
+    </item>
+</layer-list>
