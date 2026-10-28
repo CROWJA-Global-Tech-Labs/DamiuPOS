@@ -156,6 +156,7 @@
             android:name=".IderModeActivity"
             android:screenOrientation="portrait" />
         <activity android:name=".ScheduledOrderActivity" />
+        <activity android:name=".DeviceAdminActivity" />
         <activity android:name=".FollowUpMapActivity" />
         <activity android:name=".CustomerMapActivity" />
         <!-- "Dashboard Web" Admin: seluruh dashboard web di WebView, sesi via link masuk sekali pakai.

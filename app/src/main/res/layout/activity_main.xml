@@ -1486,6 +1486,36 @@
                          kalau tetangganya tidak ada", dan sel kosong itu tetangga palsu yang membuat
                          Pengaturan satu-satunya menu yang menyisakan ruang menganggur. -->
                 </LinearLayout>
+
+                <!-- Row 5: ⚙️ Pengaturan Perangkat — khusus Admin (multi user + tersinkron), sebaris
+                     penuh. Tombol satu-satunya di barisnya: saat GONE barisnya ikut kempis. -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:baselineAligned="false"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnPengaturanPerangkat"
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        android:minHeight="60dp"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="⚙️ Pengaturan Perangkat"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:visibility="gone"
+                        app:backgroundTint="#37474F"
+                        app:cornerRadius="14dp"
+                        app:elevation="3dp" />
+                </LinearLayout>
             </LinearLayout>
 
             <!-- Recent Transactions -->
