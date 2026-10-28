@@ -783,6 +783,105 @@ public class IderModeActivity extends AppCompatActivity {
                 .putExtra(TransactionActivity.EXTRA_DEST_LNG, lng));
     }
 
+    /** Ketuk kartu → menu: riwayat transaksi, tunjukkan di peta, hapus pelanggan (Admin / HP owner). */
+    private void showCardMenu(Row r) {
+        boolean canDelete = canDeleteCustomer();
+        List<String> items = new ArrayList<>();
+        items.add("📜 Riwayat Transaksi");
+        items.add("📍 Tunjukkan di Peta");
+        if (canDelete) items.add("🗑️ Hapus Pelanggan");
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle(r.name)
+                .setItems(items.toArray(new String[0]), (d, which) -> {
+                    if (which == 0) {
+                        // Popup "Histori Transaksi" Detail Pelanggan (server, semua perangkat).
+                        startActivity(new Intent(this, CustomerDetailActivity.class)
+                                .putExtra("customer_id", r.customerId)
+                                .putExtra(CustomerDetailActivity.EXTRA_HISTORY_ONLY, true));
+                    } else if (which == 1) {
+                        focusOnMap(r);
+                    } else {
+                        confirmDeleteCustomer(r);
+                    }
+                })
+                .setNegativeButton("Tutup", null)
+                .show();
+    }
+
+    /** Aturan sama dengan tombol Hapus di Detail Pelanggan: Admin saja; HP satu-pengguna (owner) boleh. */
+    private boolean canDeleteCustomer() {
+        DatabaseHelper db = DatabaseHelper.getInstance(this);
+        long uid = new SettingsDao(db).getCurrentUserId();
+        if (uid <= 0) return true;
+        com.crowja.damiupos.model.User u = new com.crowja.damiupos.db.UserDao(db).getById(uid);
+        return u == null || u.canDeleteCustomer();
+    }
+
+    /** Hapus pelanggan — konfirmasi DUA ketukan (ketuk pertama mengubah tombol jadi "Ketuk sekali lagi"). */
+    private void confirmDeleteCustomer(Row r) {
+        androidx.appcompat.app.AlertDialog dlg = new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("🗑️ Hapus pelanggan?")
+                .setMessage("\"" + r.name + "\" beserta datanya akan dihapus dari perangkat ini dan server "
+                        + "(sama dengan Hapus di Detail Pelanggan).\n\nKetuk \"Hapus\" dua kali untuk memastikan.")
+                .setPositiveButton("Hapus", null)
+                .setNegativeButton("Batal", null)
+                .create();
+        dlg.setOnShowListener(x -> {
+            android.widget.Button pos = dlg.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE);
+            pos.setTextColor(0xFFC62828);
+            int[] taps = {0};
+            pos.setOnClickListener(v -> {
+                if (++taps[0] < 2) {
+                    pos.setText("Ketuk sekali lagi");
+                    return;
+                }
+                pos.setEnabled(false);
+                new CustomerDao(DatabaseHelper.getInstance(this)).delete(r.customerId);
+                Toast.makeText(this, "Pelanggan dihapus", Toast.LENGTH_SHORT).show();
+                dlg.dismiss();
+                loadData();
+            });
+        });
+        dlg.show();
+    }
+
+    /** Ketuk foto → layar penuh (ketuk untuk menutup). Tanpa foto lokasi → beri tahu. */
+    private void openPhoto(Row r) {
+        if (r.photo == null) {
+            Toast.makeText(this, "Belum ada foto lokasi untuk pelanggan ini.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final String src = r.photo;
+        final android.content.Context app = getApplicationContext();
+        new Thread(() -> {
+            String path = src;
+            if (isUrl(src)) {
+                // Nama cache sama dengan thumbnail kartu → biasanya tak perlu unduh ulang.
+                java.io.File f = com.crowja.damiupos.util.BitmapUtils.downloadToCache(app, src,
+                        "loc_" + Integer.toHexString(src.hashCode()) + ".img");
+                path = f != null ? f.getAbsolutePath() : null;
+            }
+            final android.graphics.Bitmap bmp = path != null
+                    ? com.crowja.damiupos.util.BitmapUtils.decodeForScreen(this, path) : null;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (bmp == null) {
+                    Toast.makeText(this, "Foto tidak dapat dimuat", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                ImageView iv = new ImageView(this);
+                iv.setImageBitmap(bmp);
+                iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                iv.setBackgroundColor(0xFF000000);
+                android.app.Dialog d = new android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen);
+                d.setContentView(iv, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
+                iv.setOnClickListener(v -> d.dismiss());
+                d.show();
+            });
+        }).start();
+    }
+
     private void focusOnMap(Row r) {
         if (pageReady && web != null) {
             web.evaluateJavascript("focusPin(" + JSONObject.quote(r.pinKey) + ")", null);
@@ -1012,6 +1111,8 @@ public class IderModeActivity extends AppCompatActivity {
         final long lastOrderMillis;
         final String photo;
         final String reorderDay;
+        /** Wakil orang ini (salinan milik perangkat bila ada) — untuk riwayat & hapus. */
+        final long customerId;
 
         Row(IderRanking.Ranked r, int rank) {
             IderRanking.Spot s = r.spot();
@@ -1028,6 +1129,7 @@ public class IderModeActivity extends AppCompatActivity {
             this.lastOrderMillis = r.person.lastOrderMillis;
             this.photo = s.photo;
             this.reorderDay = r.person.reorderDay;
+            this.customerId = r.person.customerId;
         }
 
         boolean sameContent(Row o) {
@@ -1098,7 +1200,10 @@ public class IderModeActivity extends AppCompatActivity {
             buy = v.findViewById(R.id.tvIderBuy);
             reorder = v.findViewById(R.id.tvIderReorder);
             v.setOnClickListener(x -> {
-                if (row != null) focusOnMap(row);
+                if (row != null) showCardMenu(row);
+            });
+            thumb.setOnClickListener(x -> {
+                if (row != null) openPhoto(row);
             });
             v.findViewById(R.id.btnIderTrx).setOnClickListener(x -> {
                 if (row != null) openTransaction(row.ownerId, row.lat, row.lng);
