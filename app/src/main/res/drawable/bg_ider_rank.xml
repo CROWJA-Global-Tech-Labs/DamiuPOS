@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Nomor urut kartu Modus Ider (sama dengan nomor pin di peta). Putih di atas #BF360C = 5,6:1. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#BF360C" />
+    <stroke
+        android:width="2dp"
+        android:color="#FFFFFF" />
+</shape>

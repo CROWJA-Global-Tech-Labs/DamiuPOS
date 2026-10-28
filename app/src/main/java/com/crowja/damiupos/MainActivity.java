@@ -247,6 +247,9 @@ public class MainActivity extends AppCompatActivity {
         if (btnSetoran != null) btnSetoran.setOnClickListener(v -> DepositDialog.show(this));
 
         // Pengisian Live: layar rencana isi galon — terbuka untuk semua peran (Viewer hanya melihat).
+        View btnModusIder = findViewById(R.id.btnModusIder);
+        if (btnModusIder != null) btnModusIder.setOnClickListener(v ->
+                startActivity(new Intent(this, IderModeActivity.class)));
         View btnPengisianLive = findViewById(R.id.btnPengisianLive);
         if (btnPengisianLive != null) btnPengisianLive.setOnClickListener(v -> openPengisianLive());
 
@@ -748,6 +751,10 @@ public class MainActivity extends AppCompatActivity {
         if (wrapKunjungan != null) {
             wrapKunjungan.setVisibility(show && (isMarketing || isAdmin) ? View.VISIBLE : View.GONE);
         }
+
+        // Modus Ider: semua peran yang boleh membuat transaksi (bukan Viewer), termasuk HP satu-pengguna.
+        View boxModusIder = findViewById(R.id.boxModusIder);
+        if (boxModusIder != null) boxModusIder.setVisibility(isViewer ? View.GONE : View.VISIBLE);
 
         // Sel WA Perkenalan ikut ditentukan di updatePromoIntroBadge (gate-nya bukan peran, tapi
         // centang "Petugas WA Perkenalan" di web) — panggil dulu supaya grid ditata setelah SEMUA

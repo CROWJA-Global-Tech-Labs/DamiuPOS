@@ -89,6 +89,10 @@ public class TransactionActivity extends AppCompatActivity {
 
     /** Mode "Input Promosi Galon": pelanggan baru terkunci + toggle Gratis/Berbayar.
      *  Caller: CustomerFormActivity (alur promosi). */
+    /** Tujuan "Kirim ke" langsung dipilih: koordinat salah satu lokasi pelanggan preset ({@code customer_id}).
+     *  Modus Ider mengirim titik TERDEKAT dari posisi kurir. Tak cocok dengan lokasi mana pun = tetap lokasi utama. */
+    public static final String EXTRA_DEST_LAT = "preset_dest_lat";
+    public static final String EXTRA_DEST_LNG = "preset_dest_lng";
     public static final String EXTRA_PROMOSI = "promosi_mode";
     public static final String EXTRA_PROMOSI_CUSTOMER_ID = "promosi_customer_id";
     /** Penanda catatan untuk promosi GRATIS (membedakan dari penjualan biasa). */
@@ -661,6 +665,8 @@ public class TransactionActivity extends AppCompatActivity {
         syncKembaliToTotalJumlah();
         updateTotal();
         refreshUseSaldoCard();   // tampilkan kartu saldo kalau pelanggan prefilled = reseller
+        // Setelah baris produk & ongkir siap: tujuan "Kirim ke" dari pemanggil (Modus Ider).
+        applyPresetDestination();
 
         // Mode Pencairan Komisi: setelah semua setup jual selesai, alihkan layar ini
         // menjadi form payout (sembunyikan kartu jual, tampilkan kartu pencairan).
@@ -2477,6 +2483,21 @@ public class TransactionActivity extends AppCompatActivity {
             dlg.dismiss();
         });
         dlg.show();
+    }
+
+    /** {@link #EXTRA_DEST_LAT}/{@link #EXTRA_DEST_LNG} → pilih lokasi pelanggan preset yang koordinatnya sama
+     *  (5 desimal ≈ 1 m, cermin Customer::coordKey web) lewat jalur picker biasa. Lokasi utama (indeks 0) = sudah default. */
+    private void applyPresetDestination() {
+        if (selectedCustomerId <= 0 || !getIntent().hasExtra(EXTRA_DEST_LAT)) return;
+        String want = String.format(Locale.US, "%.5f,%.5f",
+                getIntent().getDoubleExtra(EXTRA_DEST_LAT, 0), getIntent().getDoubleExtra(EXTRA_DEST_LNG, 0));
+        for (int i = 1; i < selectedLocations.size(); i++) {
+            Customer.Location l = selectedLocations.get(i);
+            if (want.equals(String.format(Locale.US, "%.5f,%.5f", l.lat, l.lng))) {
+                selectDestLocation(i);
+                return;
+            }
+        }
     }
 
     /** Terapkan lokasi tujuan terpilih (indeks di selectedLocations) + re-derive flag Wajib Ongkir

@@ -152,6 +152,9 @@
         <activity android:name=".FollowUpActivity" />
         <activity android:name=".PromoCustomersActivity" />
         <activity android:name=".VisitListActivity" />
+        <activity
+            android:name=".IderModeActivity"
+            android:screenOrientation="portrait" />
         <activity android:name=".ScheduledOrderActivity" />
         <activity android:name=".FollowUpMapActivity" />
         <activity android:name=".CustomerMapActivity" />
