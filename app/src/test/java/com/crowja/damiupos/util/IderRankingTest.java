@@ -52,6 +52,17 @@ public class IderRankingTest {
     }
 
     @Test
+    public void radiusFilterDropsFartherPeople() {
+        List<IderRanking.Person> people = new ArrayList<>();
+        for (int i = 1; i <= 5; i++) people.add(person("k" + i, "P" + i, new double[]{LAT + i * 0.0005, LNG}));
+        // 0,0005° ≈ 55,6 m → dalam 120 m hanya k1 (56 m) & k2 (111 m).
+        List<IderRanking.Ranked> near = IderRanking.nearest(people, LAT, LNG, 10, 120);
+        assertEquals(2, near.size());
+        assertEquals("k2", near.get(1).person.key);
+        assertEquals(5, IderRanking.nearest(people, LAT, LNG, 10, 0).size());
+    }
+
+    @Test
     public void tieBreaksByNameSoOrderIsStable() {
         IderRanking.Person b = person("b", "Budi", new double[]{LAT + 0.001, LNG});
         IderRanking.Person a = person("a", "Ani", new double[]{LAT + 0.001, LNG});
@@ -90,6 +101,21 @@ public class IderRankingTest {
         c.clear();
         c.set(y, mo - 1, d, h, mi, 0);
         return c.getTimeInMillis();
+    }
+
+    @Test
+    public void reorderBadgeMirrorsForecastStatus() {
+        long now = wib(2026, 10, 28, 9, 0);
+        assertEquals(null, IderRanking.reorderBadge(null, now, WIB));
+        IderRanking.BuyBadge late = IderRanking.reorderBadge("2026-10-25", now, WIB);
+        assertEquals("⏰ Jatuh tempo order · lewat 3 hari", late.text);
+        assertEquals(IderRanking.BuyLevel.STALE, late.level);
+        assertEquals("⌛ Prediksi order lagi hari ini", IderRanking.reorderBadge("2026-10-28", now, WIB).text);
+        assertEquals("⌛ Prediksi order lagi besok", IderRanking.reorderBadge("2026-10-29", now, WIB).text);
+        assertEquals(IderRanking.BuyLevel.WARN, IderRanking.reorderBadge("2026-10-31", now, WIB).level);
+        IderRanking.BuyBadge later = IderRanking.reorderBadge("2026-11-05", now, WIB);
+        assertEquals("📅 Prediksi order lagi 8 hari · 5 Nov", later.text);
+        assertEquals(IderRanking.BuyLevel.FRESH, later.level);
     }
 
     @Test
