@@ -352,6 +352,11 @@ public class MainActivity extends AppCompatActivity {
         if (btnJadwal != null) {
             btnJadwal.setOnClickListener(v -> startActivity(new Intent(this, ScheduledOrderActivity.class)));
         }
+        // Admin: ⚙️ Pengaturan Perangkat native (bagian non-destruktif halaman web "Perangkat").
+        View btnPengaturanPerangkat = findViewById(R.id.btnPengaturanPerangkat);
+        if (btnPengaturanPerangkat != null) {
+            btnPengaturanPerangkat.setOnClickListener(v -> startActivity(new Intent(this, DeviceAdminActivity.class)));
+        }
 
         // Channel pengingat jam kerja + izin notifikasi (Android 13+), sinkron berkala tetap
         // terpasang, dan cek versi baru saat dibuka — satu paket dengan layar Pengisian.
@@ -784,6 +789,11 @@ public class MainActivity extends AppCompatActivity {
         if (btnJadwal != null) {
             boolean enrolled = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled();
             btnJadwal.setVisibility(adminOnly && enrolled ? View.VISIBLE : View.GONE);
+        }
+        View btnPengaturanPerangkat = findViewById(R.id.btnPengaturanPerangkat);
+        if (btnPengaturanPerangkat != null) {
+            boolean enrolled = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled();
+            btnPengaturanPerangkat.setVisibility(adminOnly && enrolled ? View.VISIBLE : View.GONE);
         }
 
         if (!show) return;

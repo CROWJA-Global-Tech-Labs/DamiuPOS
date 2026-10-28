@@ -757,6 +757,30 @@ public class SyncApi {
         return post(cfg.getBaseUrl() + "/api/order-schedules/send-now", new JSONObject(), cfg.getToken(), staffUuid);
     }
 
+    // ------------------------------------------------ Pengaturan Perangkat (/api/admin/devices)
+    // Bagian non-destruktif halaman web "Perangkat". Semua panggilan membawa X-Staff-Uuid: server
+    // hanya melayani staf Admin aktif cabang ini (403 {ok:false,message} selain itu).
+
+    /** {ok, devices[], icons[], colors[], staff[{uuid,name,role}], products[{uuid,name,harga_jual}],
+     *  zones[{index,label,device}]} — hanya perangkat cabang ini yang belum dicabut. */
+    public JSONObject adminDevices(String staffUuid) throws Exception {
+        return get(cfg.getBaseUrl() + "/api/admin/devices", cfg.getToken(), staffUuid);
+    }
+
+    /**
+     * Simpan SATU bagian pengaturan perangkat → {ok, message}; 4xx dilempar sebagai
+     * {@link SyncException} (422 membawa pesan validasi yang bisa langsung ditampilkan).
+     *
+     * @param section {@code identity} | {@code flags} | {@code intro-wa} | {@code marketing} |
+     *                {@code staff-logins} | {@code command}
+     */
+    public JSONObject adminDeviceUpdate(String deviceUuid, String section, JSONObject body,
+                                        String staffUuid) throws Exception {
+        String path = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/admin/devices").newBuilder()
+                .addPathSegment(deviceUuid).addPathSegment(section).build().toString();
+        return post(path, body, cfg.getToken(), staffUuid);
+    }
+
     // ------------------------------------------------ Pengisian Day-time (/api/fill/*)
     // Semua panggilan membawa header X-Staff-Uuid: token perangkat hanya mengenali perangkat &
     // cabang, sedangkan server memeriksa peran orangnya (pengisian/admin) dari tabel staff.
