@@ -37,6 +37,11 @@ import java.util.List;
 
 public class CustomerDetailActivity extends AppCompatActivity {
 
+    /** Buka langsung popup "Histori Transaksi" (server, semua perangkat); layar ini ikut tertutup saat
+     *  popup ditutup — dipakai Mode Keliling supaya terasa seperti popup di atas layarnya sendiri. */
+    public static final String EXTRA_HISTORY_ONLY = "history_only";
+    private boolean historyOnly;
+
     /** Menu: tandai "Sudah Order Ulang" (serah-terima pelanggan marketing → perangkat lain). */
     private static final int MENU_HANDOFF = 10;
     /** Menu: buat & bagikan link publik 7 hari (kartu info pelanggan). */
@@ -108,6 +113,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
             finish();
             return;
         }
+        historyOnly = getIntent().getBooleanExtra(EXTRA_HISTORY_ONLY, false);
 
         tvNama = findViewById(R.id.tvNama);
         tvTelepon = findViewById(R.id.tvTelepon);
@@ -197,7 +203,13 @@ public class CustomerDetailActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         loadData();
+        if (historyOnly && !historyShown) {
+            historyShown = true;
+            showAllTransactionsDialog();
+        }
     }
+
+    private boolean historyShown;
 
     @Override
     public boolean onCreateOptionsMenu(android.view.Menu menu) {
@@ -1172,6 +1184,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
         final String uuid = customerDao.getSyncUuidById(customerId);
         if (uuid == null || uuid.isEmpty()) {
             android.widget.Toast.makeText(this, "Pelanggan ini belum tersinkron ke server.", android.widget.Toast.LENGTH_SHORT).show();
+            if (historyOnly) finish();
             return;
         }
         final android.widget.LinearLayout list = new android.widget.LinearLayout(this);
@@ -1200,6 +1213,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 .setView(scroll)
                 .setPositiveButton("Tutup", null)
                 .show();
+        if (historyOnly) dlg.setOnDismissListener(d -> finish());
         final int[] page = {1};
         final Runnable[] load = new Runnable[1];
         load[0] = () -> {
