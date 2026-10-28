@@ -93,6 +93,9 @@ public class TransactionActivity extends AppCompatActivity {
      *  Modus Ider mengirim titik TERDEKAT dari posisi kurir. Tak cocok dengan lokasi mana pun = tetap lokasi utama. */
     public static final String EXTRA_DEST_LAT = "preset_dest_lat";
     public static final String EXTRA_DEST_LNG = "preset_dest_lng";
+    /** Penugasan default = "Perangkat ini" (tanpa auto-route wilayah/override). Mode Keliling: kurir
+     *  sedang di depan pelanggan, jadi pesanannya untuk perangkat ini. Pilihan manual tetap bisa. */
+    public static final String EXTRA_ASSIGN_SELF = "assign_self";
     public static final String EXTRA_PROMOSI = "promosi_mode";
     public static final String EXTRA_PROMOSI_CUSTOMER_ID = "promosi_customer_id";
     /** Penanda catatan untuk promosi GRATIS (membedakan dari penjualan biasa). */
@@ -135,6 +138,7 @@ public class TransactionActivity extends AppCompatActivity {
     // jadi butuh perlindungan dari salah-pindah kredit tanpa sadar. SPV TIDAK ikut flag ini: peran
     // dispatch/koordinasi SPV memang butuh auto-route wilayah tanpa gerbang konfirmasi (lihat bawah).
     private boolean assignDefaultSelf;
+    private boolean assignPresetSelf;        // EXTRA_ASSIGN_SELF: default "Perangkat ini" untuk semua peran
     private boolean assignUserTouched;       // spinner disentuh user (bukan set programatik) → picu konfirmasi
     private int assignPrevPos;               // posisi terakhir yang menetap (utk revert saat BATAL)
     private boolean suppressAssignConfirm;   // cegah re-entry saat revert programatik
@@ -1101,6 +1105,7 @@ public class TransactionActivity extends AppCompatActivity {
         // SENGAJA tidak masuk: bagi mereka menugaskan ke perangkat lain justru pekerjaan normal,
         // jadi popup konfirmasi tiap kali cuma jadi gangguan.
         assignDefaultSelf = cur != null && (cur.isMarketing() || cur.isStaf());
+        assignPresetSelf = getIntent().getBooleanExtra(EXTRA_ASSIGN_SELF, false);
         if (!assignDeviceEligible) {
             cardAssignDevice.setVisibility(View.GONE);
             return;
@@ -1218,7 +1223,7 @@ public class TransactionActivity extends AppCompatActivity {
         // STAF & MARKETING: default penugasan = DIRI SENDIRI — jangan auto-route ke perangkat
         // wilayah/override. Mereka memilih perangkat/staf lain secara SADAR (lewat picker +
         // konfirmasi), bukan otomatis. SPV tetap auto-route (peran dispatch/koordinasi tim).
-        if (assignDefaultSelf) return;
+        if (assignDefaultSelf || assignPresetSelf) return;
         if (spinnerAssignDevice.getSelectedItemPosition() != 0) return;   // sudah dipilih manual
         SyncSettings cfg = new SyncSettings(settingsDao);
         // Override penugasan pelanggan (di-set web) MENGALAHKAN wilayah; kalau kosong, pakai wilayah
@@ -4718,7 +4723,7 @@ public class TransactionActivity extends AppCompatActivity {
      * perangkat ini (juga bila hasilnya perangkat ini sendiri / tak ada di roster).
      */
     private String defaultDeviceFor(Customer.Location loc) {
-        if (!assignDeviceEligible || assignDefaultSelf || loc == null) return null;
+        if (!assignDeviceEligible || assignDefaultSelf || assignPresetSelf || loc == null) return null;
         SyncSettings cfg = new SyncSettings(settingsDao);
         String dev;
         if (selectedAssignOverride != null && !selectedAssignOverride.trim().isEmpty()) {
