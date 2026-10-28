@@ -392,13 +392,13 @@ public class DeviceAdminActivity extends AppCompatActivity {
         etName.setFilters(new InputFilter[]{new InputFilter.LengthFilter(120)});
         s.addView(etName);
 
-        // Ikon — null = otomatis (display_icon). Server tak bisa mengosongkan ikon yang sudah
-        // dipilih (icon null → tetap nilai lama), jadi "Otomatis" hanya ditawarkan selama belum dipilih.
+        // Ikon/warna — null = OTOMATIS (palet dari uuid perangkat). Dikirim sebagai icon_auto/color_auto
+        // supaya server benar-benar mengosongkan pilihan lama (icon null saja = "biarkan").
         final String[] selIcon = {str(d, "icon")};
         final String[] selColor = {str(d, "color")};
-        final boolean iconWasAuto = selIcon[0] == null, colorWasAuto = selColor[0] == null;
         final TextView preview = circle(str(d, "display_icon"), str(d, "display_color"), 44);
-        final String autoIcon = str(d, "display_icon"), autoColor = str(d, "display_color");
+        final String autoIcon = nz(str(d, "auto_icon"), str(d, "display_icon"));
+        final String autoColor = nz(str(d, "auto_color"), str(d, "display_color"));
         Runnable refreshPreview = () -> {
             preview.setText(nz(selIcon[0] != null ? selIcon[0] : autoIcon, "📱"));
             ((GradientDrawable) preview.getBackground()).setColor(
@@ -418,7 +418,7 @@ public class DeviceAdminActivity extends AppCompatActivity {
         Flow icons = new Flow(this, dp(6));
         List<TextView> iconViews = new ArrayList<>();
         List<String> iconVals = new ArrayList<>();
-        if (iconWasAuto) iconVals.add(null);
+        iconVals.add(null);
         JSONArray ia = arr("icons");
         for (int i = 0; i < ia.length(); i++) iconVals.add(ia.optString(i));
         Runnable paintIcons = () -> {
@@ -462,7 +462,7 @@ public class DeviceAdminActivity extends AppCompatActivity {
         Flow colors = new Flow(this, dp(6));
         List<TextView> colorViews = new ArrayList<>();
         List<String> colorVals = new ArrayList<>();
-        if (colorWasAuto) colorVals.add(null);
+        colorVals.add(null);
         JSONArray ca = arr("colors");
         for (int i = 0; i < ca.length(); i++) colorVals.add(ca.optString(i));
         Runnable paintColors = () -> {
@@ -509,9 +509,6 @@ public class DeviceAdminActivity extends AppCompatActivity {
         }
         paintColors.run();
         s.addView(colors);
-        if (!iconWasAuto || !colorWasAuto) {
-            s.addView(hint("Ikon/warna yang sudah dipilih tidak bisa dikembalikan ke otomatis dari sini — pilih ikon/warna lain."));
-        }
 
         s.addView(label("Kode struk (maks 3 huruf/angka — kosong = otomatis dari nama)"));
         EditText etCode = edit(str(d, "receipt_code"), "otomatis", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
@@ -577,6 +574,8 @@ public class DeviceAdminActivity extends AppCompatActivity {
                 b.put("name", name);
                 b.put("icon", selIcon[0] != null ? selIcon[0] : JSONObject.NULL);
                 b.put("color", selColor[0] != null ? selColor[0] : JSONObject.NULL);
+                b.put("icon_auto", selIcon[0] == null);
+                b.put("color_auto", selColor[0] == null);
                 Integer ml = DeviceAdminRules.optPositiveInt(etLoad.getText().toString());
                 b.put("max_load", ml != null ? (Object) ml : JSONObject.NULL);
                 Integer age = DeviceAdminRules.optPositiveInt(etAge.getText().toString());
