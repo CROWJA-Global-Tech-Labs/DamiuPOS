@@ -129,6 +129,126 @@ public class IderModeActivity extends AppCompatActivity {
 
     private boolean pageReady;
 
+    // ---- tampilan daftar (📏 di kepala): radius + jumlah maks, disimpan per HP ----
+    private static final String PREFS = "mode_keliling";
+    /** Langkah slider radius 10–500 m. Default 100 m. */
+    private static final int[] RADII = {10, 20, 30, 40, 50, 75, 100, 150, 200, 250, 300, 400, 500};
+    private static final int DEFAULT_RADIUS_IDX = 6;
+    private static final int MIN_LIST = 3;
+    private static final int MAX_LIST_CAP = 50;
+    private TextView tvView;
+    private int radiusIdx = DEFAULT_RADIUS_IDX;
+    private int maxList = IderRanking.MAX_LIST;
+
+    private void loadViewPrefs() {
+        android.content.SharedPreferences p = getSharedPreferences(PREFS, MODE_PRIVATE);
+        radiusIdx = Math.max(0, Math.min(RADII.length - 1, p.getInt("radius_idx", DEFAULT_RADIUS_IDX)));
+        maxList = Math.max(MIN_LIST, Math.min(MAX_LIST_CAP, p.getInt("max_list", IderRanking.MAX_LIST)));
+        renderViewChip();
+    }
+
+    private void saveViewPrefs() {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putInt("radius_idx", radiusIdx).putInt("max_list", maxList).apply();
+    }
+
+    private int radiusMeters() {
+        return RADII[radiusIdx];
+    }
+
+    private String radiusLabel() {
+        int m = radiusMeters();
+        if (m <= 0) return "tanpa batas";
+        return m < 1000 ? m + " m" : IderRanking.formatDistance(m);
+    }
+
+    private void renderViewChip() {
+        int m = radiusMeters();
+        String r = m <= 0 ? "∞" : (m < 1000 ? m + " m" : IderRanking.formatDistance(m));
+        tvView.setText("📏 " + r + " · " + maxList + " ▾");
+    }
+
+    /** Popup "Tampilan Daftar": dua slider horizontal — langsung diterapkan & disimpan saat digeser. */
+    private void showViewPopup() {
+        int pad = Math.round(20 * getResources().getDisplayMetrics().density);
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        box.setPadding(pad, pad / 2, pad, 0);
+
+        final TextView lblR = new TextView(this);
+        lblR.setTextColor(0xFF212121);
+        lblR.setTextSize(15f);
+        box.addView(lblR);
+        android.widget.SeekBar sbR = new android.widget.SeekBar(this);
+        sbR.setMax(RADII.length - 1);
+        sbR.setProgress(radiusIdx);
+        box.addView(sbR);
+        TextView hintR = new TextView(this);
+        hintR.setText("Hanya pelanggan dalam jarak ini (10–500 m) yang tampil di daftar.");
+        hintR.setTextColor(0xFF455A64);
+        hintR.setTextSize(12f);
+        box.addView(hintR);
+
+        final TextView lblN = new TextView(this);
+        lblN.setTextColor(0xFF212121);
+        lblN.setTextSize(15f);
+        lblN.setPadding(0, pad, 0, 0);
+        box.addView(lblN);
+        android.widget.SeekBar sbN = new android.widget.SeekBar(this);
+        sbN.setMax(MAX_LIST_CAP - MIN_LIST);
+        sbN.setProgress(maxList - MIN_LIST);
+        box.addView(sbN);
+
+        Runnable labels = () -> {
+            lblR.setText("📏 Radius: " + radiusLabel());
+            lblN.setText("🔢 Maks jumlah daftar: " + maxList + " pelanggan");
+        };
+        labels.run();
+        android.widget.SeekBar.OnSeekBarChangeListener l = new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(android.widget.SeekBar sb, int progress, boolean fromUser) {
+                if (sb == sbR) radiusIdx = progress;
+                else maxList = MIN_LIST + progress;
+                labels.run();
+                renderViewChip();
+                saveViewPrefs();
+                pushRadius();
+                rerank(true);
+                renderEmpty();
+            }
+
+            @Override
+            public void onStartTrackingTouch(android.widget.SeekBar sb) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(android.widget.SeekBar sb) {
+            }
+        };
+        sbR.setOnSeekBarChangeListener(l);
+        sbN.setOnSeekBarChangeListener(l);
+
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Tampilan Daftar")
+                .setView(box)
+                .setPositiveButton("Selesai", null)
+                .setNeutralButton("Bawaan", (d, w) -> {
+                    radiusIdx = DEFAULT_RADIUS_IDX;
+                    maxList = IderRanking.MAX_LIST;
+                    renderViewChip();
+                    saveViewPrefs();
+                    pushRadius();
+                    rerank(true);
+                    renderEmpty();
+                })
+                .show();
+    }
+
+    /** Lingkaran radius di sekitar posisi saya pada peta (0 = tanpa batas → disembunyikan). */
+    private void pushRadius() {
+        if (pageReady && web != null) web.evaluateJavascript("setRadius(" + radiusMeters() + ")", null);
+    }
+
     /** Saat diam tak ada fix baru (minDistance) → tetap cek berkala supaya daftar tak tertinggal. */
     private final Runnable ticker = new Runnable() {
         @Override
@@ -153,6 +273,9 @@ public class IderModeActivity extends AppCompatActivity {
         web = findViewById(R.id.webIder);
         findViewById(R.id.btnIderExit).setOnClickListener(v -> finish());
         tvStatus.setOnClickListener(v -> onStatusTapped());
+        tvView = findViewById(R.id.tvIderView);
+        loadViewPrefs();
+        tvView.setOnClickListener(v -> showViewPopup());
 
         adapter = new IderAdapter();
         rv.setLayoutManager(new LinearLayoutManager(this));
@@ -169,6 +292,7 @@ public class IderModeActivity extends AppCompatActivity {
                 pageReady = true;
                 pushMe();
                 if (!Float.isNaN(compassDeg)) sendHeading(compassDeg);
+                pushRadius();
                 if (!Double.isNaN(rankedLat)) rerank(true);
             }
         });
@@ -259,25 +383,50 @@ public class IderModeActivity extends AppCompatActivity {
             }
             g.add(c);
         }
+        Map<Long, CustomerDao.ReorderStats> stats = dao.getReorderStats();
+        java.text.SimpleDateFormat ts = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
         List<IderRanking.Person> out = new ArrayList<>();
         for (Map.Entry<String, List<Customer>> e : groups.entrySet()) {
             List<Customer> copies = e.getValue();
             Customer rep = copies.get(0);
             long last = Long.MIN_VALUE;
+            // Prediksi order kembali — model Follow Up (CustomerDao.followUpReorderDay) per ORANG:
+            // galon = Σ agregat efektif tiap salinan (MAX lokal/server, cermin VisitListActivity),
+            // beli pertama = paling awal (lokal/server), galon hari terakhir = dari transaksi LOKAL terbaru.
+            int galon = 0;
+            String first = null;
+            String localLast = null;
+            double lastQty = 0;
             for (Customer c : copies) {
                 if (!rep.isMine() && c.isMine()) rep = c;   // utamakan salinan milik perangkat ini
                 long l = Math.max(CustomerDao.parseMillisOrMin(c.getLocalLastJual()),
                         Math.max(CustomerDao.parseMillisOrMin(c.getSrvLastJual()),
                                 CustomerDao.parseMillisOrMin(c.getHandedOverAt())));
                 if (l > last) last = l;
+                galon += c.effectiveOrdered();
+                CustomerDao.ReorderStats s = stats.get(c.getId());
+                String f = s != null ? s.firstJual : null;
+                String sf = c.getSrvFirstJual();
+                if (sf != null && sf.length() >= 10 && CustomerDao.parseMillisOrMin(sf) != Long.MIN_VALUE) {
+                    String sfLocal = ts.format(new java.util.Date(CustomerDao.parseMillisOrMin(sf)));
+                    if (f == null || sfLocal.compareTo(f) < 0) f = sfLocal;
+                }
+                if (f != null && (first == null || f.compareTo(first) < 0)) first = f;
+                if (s != null && s.lastJual != null && (localLast == null || s.lastJual.compareTo(localLast) > 0)) {
+                    localLast = s.lastJual;
+                    lastQty = s.lastDayQty;
+                }
             }
+            String reorderDay = last != Long.MIN_VALUE
+                    ? CustomerDao.followUpReorderDay(galon, first, ts.format(new java.util.Date(last)), lastQty)
+                    : null;
             // Titik milik wakil dulu, lalu titik salinan lain yang belum ada (koordinat 5 desimal).
             List<IderRanking.Spot> spots = new ArrayList<>();
             Set<String> seen = new HashSet<>();
             addSpots(rep, spots, seen);
             for (Customer c : copies) if (c != rep) addSpots(c, spots, seen);
             if (spots.isEmpty()) continue;
-            out.add(new IderRanking.Person(e.getKey(), rep.getId(), rep.getName(), last, spots));
+            out.add(new IderRanking.Person(e.getKey(), rep.getId(), rep.getName(), last, spots, reorderDay));
         }
         return out;
     }
@@ -285,12 +434,36 @@ public class IderModeActivity extends AppCompatActivity {
     private static void addSpots(Customer c, List<IderRanking.Spot> spots, Set<String> seen) {
         List<Customer.Location> locs = c.getLocations();
         if (locs == null) return;   // DAO sudah mensintesis "Kediaman" dari koordinat lama bila perlu
-        for (Customer.Location l : locs) {
+        for (int i = 0; i < locs.size(); i++) {
+            Customer.Location l = locs.get(i);
             if (l == null || (l.lat == 0 && l.lng == 0)) continue;   // (0,0) = belum diisi
             if (seen.add(MapThumbs.key(l.lat, l.lng))) {
-                spots.add(new IderRanking.Spot(l.name, l.lat, l.lng, c.getId()));
+                spots.add(new IderRanking.Spot(l.name, l.lat, l.lng, c.getId(), photoOf(c, l, i == 0)));
             }
         }
+    }
+
+    /**
+     * Foto lokasi untuk kartu — aturan sama dengan kartu "Kirim ke" Transaksi Baru: foto lokasi itu,
+     * lalu (lokasi UTAMA saja) foto rumah pelanggan; berkas lokal hanya bila benar-benar ada.
+     */
+    private static String photoOf(Customer c, Customer.Location l, boolean primary) {
+        String p = l.photo != null ? l.photo.trim() : "";
+        if (p.isEmpty() && l.photos != null && !l.photos.isEmpty() && l.photos.get(0) != null) {
+            p = l.photos.get(0).trim();
+        }
+        if (!p.isEmpty() && (isUrl(p) || new java.io.File(p).exists())) return p;
+        if (primary) {
+            String path = c.getPhotoPath();
+            if (path != null && !path.isEmpty() && new java.io.File(path).exists()) return path;
+            String url = c.getPhotoUrl();
+            if (url != null && isUrl(url.trim())) return url.trim();
+        }
+        return null;
+    }
+
+    private static boolean isUrl(String s) {
+        return s.startsWith("http://") || s.startsWith("https://");
     }
 
     /**
@@ -310,7 +483,7 @@ public class IderModeActivity extends AppCompatActivity {
         rankedLat = lat;
         rankedLng = lng;
         rankedAt = now;
-        List<IderRanking.Ranked> top = IderRanking.nearest(people, lat, lng, IderRanking.MAX_LIST);
+        List<IderRanking.Ranked> top = IderRanking.nearest(people, lat, lng, maxList, radiusMeters());
         List<Row> rows = new ArrayList<>(top.size());
         for (int i = 0; i < top.size(); i++) rows.add(new Row(top.get(i), i + 1));
         shown = rows;
@@ -348,7 +521,7 @@ public class IderModeActivity extends AppCompatActivity {
         if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             startLocation();
         } else {
-            Toast.makeText(this, "Izin lokasi ditolak — Modus Ider tak bisa mengurutkan pelanggan terdekat.",
+            Toast.makeText(this, "Izin lokasi ditolak — Mode Keliling tak bisa mengurutkan pelanggan terdekat.",
                     Toast.LENGTH_LONG).show();
         }
         renderStatus();
@@ -560,20 +733,20 @@ public class IderModeActivity extends AppCompatActivity {
 
     private void renderStatus() {
         String s;
+        // Ringkas: duduk sebaris dengan judul "Mode Keliling".
         if (!hasLocationPermission()) {
-            s = "⚠️ Izin lokasi belum diberikan — ketuk di sini";
+            s = "⚠️ Izin lokasi";
         } else if (!providerEnabled()) {
-            s = "⚠️ GPS mati — ketuk untuk menyalakan Lokasi";
+            s = "⚠️ GPS mati";
         } else if (lastFix == null) {
-            s = "📡 Mencari posisi GPS…";
+            s = "📡 Mencari…";
         } else {
             StringBuilder b = new StringBuilder("📡 ");
-            b.append(LocationManager.GPS_PROVIDER.equals(lastFix.getProvider()) ? "GPS" : "Jaringan");
-            if (lastFix.hasAccuracy()) b.append(" ±").append(Math.round(lastFix.getAccuracy())).append(" m");
+            if (!LocationManager.GPS_PROVIDER.equals(lastFix.getProvider())) b.append("Jaringan ");
+            b.append(lastFix.hasAccuracy() ? "±" + Math.round(lastFix.getAccuracy()) + " m" : "aktif");
             if (lastFix.hasSpeed() && lastFix.getSpeed() >= 0.5f) {
-                b.append(" · ").append(Math.round(lastFix.getSpeed() * 3.6f)).append(" km/jam");
+                b.append(" · ").append(Math.round(lastFix.getSpeed() * 3.6f)).append(" km/j");
             }
-            if (dataLoaded) b.append(" · ").append(people.size()).append(" pelanggan berkoordinat");
             s = b.toString();
         }
         tvStatus.setText(s);
@@ -584,13 +757,15 @@ public class IderModeActivity extends AppCompatActivity {
         if (!dataLoaded) {
             msg = "⏳ Memuat pelanggan…";
         } else if (people.isEmpty()) {
-            msg = "Belum ada pelanggan berkoordinat.\nIsi koordinat lokasi pelanggan supaya muncul di Modus Ider.";
+            msg = "Belum ada pelanggan berkoordinat.\nIsi koordinat lokasi pelanggan supaya muncul di Mode Keliling.";
         } else if (!hasLocationPermission()) {
-            msg = "Modus Ider butuh izin lokasi untuk mengurutkan pelanggan terdekat.\nKetuk baris status di atas untuk mengizinkan.";
+            msg = "Mode Keliling butuh izin lokasi untuk mengurutkan pelanggan terdekat.\nKetuk status GPS di atas untuk mengizinkan.";
         } else if (lastFix == null) {
             msg = providerEnabled()
                     ? "📡 Menunggu posisi GPS…\nCari tempat terbuka supaya sinyal cepat didapat."
-                    : "GPS mati.\nKetuk baris status di atas untuk menyalakan Lokasi.";
+                    : "GPS mati.\nKetuk status GPS di atas untuk menyalakan Lokasi.";
+        } else if (!Double.isNaN(rankedLat) && shown.isEmpty()) {
+            msg = "Tidak ada pelanggan dalam radius " + radiusLabel() + ".\nKetuk 📏 di atas untuk memperbesar radius.";
         }
         tvEmpty.setVisibility(msg == null ? View.GONE : View.VISIBLE);
         if (msg != null) tvEmpty.setText(msg);
@@ -754,6 +929,16 @@ public class IderModeActivity extends AppCompatActivity {
                 + "    else{accCircle.setLatLng(ll);accCircle.setRadius(acc);}}\n"
                 + "  if(firstFix){firstFix=false;map.setView(ll,17,{animate:false});}\n"
                 + "  else if(follow){map.panTo(ll,{animate:true,duration:.6});}\n"
+                + "  drawRad();\n"
+                + "}\n"
+                // Lingkaran radius daftar (📏) mengikuti posisi saya.
+                + "var radC=null, radM=0;\n"
+                + "function setRadius(m){radM=m;drawRad();}\n"
+                + "function drawRad(){\n"
+                + "  if(!meMarker||radM<=0){if(radC){map.removeLayer(radC);radC=null;}return;}\n"
+                + "  var ll=meMarker.getLatLng();\n"
+                + "  if(!radC){radC=L.circle(ll,{radius:radM,color:'#BF360C',weight:2,dashArray:'6 6',fill:false,interactive:false}).addTo(map);}\n"
+                + "  else{radC.setLatLng(ll);radC.setRadius(radM);}\n"
                 + "}\n"
                 // Putaran kumulatif: 350°→10° berputar +20°, bukan mundur −340°.
                 + "function setHeading(h){\n"
@@ -825,6 +1010,8 @@ public class IderModeActivity extends AppCompatActivity {
         final String dist;
         final int rank;
         final long lastOrderMillis;
+        final String photo;
+        final String reorderDay;
 
         Row(IderRanking.Ranked r, int rank) {
             IderRanking.Spot s = r.spot();
@@ -839,11 +1026,14 @@ public class IderModeActivity extends AppCompatActivity {
             this.dist = IderRanking.formatDistance(r.meters);
             this.rank = rank;
             this.lastOrderMillis = r.person.lastOrderMillis;
+            this.photo = s.photo;
+            this.reorderDay = r.person.reorderDay;
         }
 
         boolean sameContent(Row o) {
             return rank == o.rank && dist.equals(o.dist) && pinKey.equals(o.pinKey) && ownerId == o.ownerId
-                    && name.equals(o.name) && lastOrderMillis == o.lastOrderMillis && spotCount == o.spotCount;
+                    && name.equals(o.name) && lastOrderMillis == o.lastOrderMillis && spotCount == o.spotCount
+                    && java.util.Objects.equals(photo, o.photo) && java.util.Objects.equals(reorderDay, o.reorderDay);
         }
     }
 
@@ -893,7 +1083,10 @@ public class IderModeActivity extends AppCompatActivity {
         final TextView dist;
         final TextView spot;
         final TextView buy;
+        final TextView reorder;
         Row row;
+        /** Sumber gambar yang sedang terpasang (foto / "map:lat,lng") — muat ulang hanya bila berganti. */
+        String boundImage;
 
         VH(View v) {
             super(v);
@@ -903,6 +1096,7 @@ public class IderModeActivity extends AppCompatActivity {
             dist = v.findViewById(R.id.tvIderDist);
             spot = v.findViewById(R.id.tvIderSpot);
             buy = v.findViewById(R.id.tvIderBuy);
+            reorder = v.findViewById(R.id.tvIderReorder);
             v.setOnClickListener(x -> {
                 if (row != null) focusOnMap(row);
             });
@@ -927,8 +1121,29 @@ public class IderModeActivity extends AppCompatActivity {
                     TimeZone.getDefault());
             buy.setText(b.text);
             styleBadge(buy, b.level);
-            // Miniatur hanya dimuat ulang bila titiknya berganti (jarak berubah tiap langkah).
-            if (!MapThumbs.key(r.lat, r.lng).equals(thumb.getTag())) MapThumbs.load(thumb, r.lat, r.lng);
+            IderRanking.BuyBadge ro = IderRanking.reorderBadge(r.reorderDay, System.currentTimeMillis(),
+                    TimeZone.getDefault());
+            if (ro != null) {
+                reorder.setText(ro.text);
+                styleBadge(reorder, ro.level);
+                reorder.setVisibility(View.VISIBLE);
+            } else {
+                reorder.setVisibility(View.GONE);
+            }
+            // Foto lokasi; tanpa foto → miniatur peta. Dimuat ulang hanya bila sumbernya berganti
+            // (bind dipanggil tiap jarak berubah).
+            String src = r.photo != null ? r.photo : "map:" + MapThumbs.key(r.lat, r.lng);
+            if (!src.equals(boundImage)) {
+                boundImage = src;
+                if (r.photo == null) {
+                    MapThumbs.load(thumb, r.lat, r.lng);
+                } else if (isUrl(r.photo)) {
+                    com.crowja.damiupos.util.BitmapUtils.loadIntoView(thumb, r.photo,
+                            "loc_" + Integer.toHexString(r.photo.hashCode()));
+                } else {
+                    com.crowja.damiupos.util.BitmapUtils.loadLocalIntoView(thumb, r.photo, 256, 256);
+                }
+            }
         }
     }
 

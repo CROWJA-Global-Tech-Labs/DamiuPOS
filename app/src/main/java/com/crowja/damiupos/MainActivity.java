@@ -757,7 +757,7 @@ public class MainActivity extends AppCompatActivity {
             wrapKunjungan.setVisibility(show && (isMarketing || isAdmin) ? View.VISIBLE : View.GONE);
         }
 
-        // Modus Ider: semua peran yang boleh membuat transaksi (bukan Viewer), termasuk HP satu-pengguna.
+        // Mode Keliling: semua peran yang boleh membuat transaksi (bukan Viewer), termasuk HP satu-pengguna.
         View boxModusIder = findViewById(R.id.boxModusIder);
         if (boxModusIder != null) boxModusIder.setVisibility(isViewer ? View.GONE : View.VISIBLE);
 

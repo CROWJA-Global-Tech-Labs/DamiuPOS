@@ -783,7 +783,7 @@
                 app:columnCount="2"
                 app:useDefaultMargins="false">
 
-                <!-- 🛵 Modus Ider — jualan keliling: 10 pelanggan terdekat + peta live, layar penuh.
+                <!-- 🛵 Mode Keliling — jualan keliling: 10 pelanggan terdekat + peta live, layar penuh.
                      Semua peran kecuali Viewer (tak boleh membuat transaksi). Putih/#BF360C = 5,6:1. -->
                 <FrameLayout
                     android:id="@+id/boxModusIder"
@@ -805,7 +805,7 @@
                         android:paddingEnd="6dp"
                         android:maxLines="1"
                         android:ellipsize="end"
-                        android:text="🛵 Modus Ider"
+                        android:text="🛵 Mode Keliling"
                         android:textAllCaps="false"
                         android:textColor="@color/white"
                         android:textSize="13sp"

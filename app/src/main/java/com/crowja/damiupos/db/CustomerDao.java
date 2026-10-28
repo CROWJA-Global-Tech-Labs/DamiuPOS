@@ -621,6 +621,53 @@ public class CustomerDao {
         return out;
     }
 
+    /** Bahan prediksi order kembali per pelanggan (transaksi JUAL LOKAL, pesanan TERTUNDA dikecualikan). */
+    public static final class ReorderStats {
+        public double galonJual;
+        public String firstJual;    // "yyyy-MM-dd HH:mm:ss" jam dinding lokal
+        public String lastJual;
+        public double lastDayQty;   // total galon pada HARI beli terakhir (cermin fu_last_qty Follow Up)
+    }
+
+    /**
+     * Mode Keliling: {@link ReorderStats} semua pelanggan dalam SATU pindaian transaksi JUAL, dilipat di
+     * Java (bukan subquery per pelanggan seperti Follow Up — daftar ini memuat seluruh cabang sekaligus).
+     * Tanggal ISO-UTC ("…Z") dinormalkan ke waktu lokal dulu (bug mixed-tz).
+     */
+    public java.util.Map<Long, ReorderStats> getReorderStats() {
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor cur = db.rawQuery("SELECT customer_id, jumlah_galon, "
+                + "(CASE WHEN tanggal LIKE '%Z' THEN COALESCE(datetime(tanggal,'localtime'), tanggal) ELSE tanggal END) AS tgl "
+                + "FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " "
+                + "WHERE type='JUAL' AND customer_id > 0 AND COALESCE(delivery_status,'')<>'TERTUNDA' "
+                + "AND tanggal IS NOT NULL", null);
+        java.util.Map<Long, ReorderStats> out = new java.util.HashMap<>();
+        while (cur.moveToNext()) {
+            String tgl = cur.getString(2);
+            if (tgl == null || tgl.length() < 10) continue;
+            long id = cur.getLong(0);
+            double qty = cur.getDouble(1);
+            ReorderStats s = out.get(id);
+            if (s == null) {
+                s = new ReorderStats();
+                out.put(id, s);
+            }
+            s.galonJual += qty;
+            if (s.firstJual == null || tgl.compareTo(s.firstJual) < 0) s.firstJual = tgl;
+            String day = tgl.substring(0, 10);
+            String lastDay = s.lastJual != null ? s.lastJual.substring(0, 10) : null;
+            if (lastDay == null || day.compareTo(lastDay) > 0) {
+                s.lastJual = tgl;
+                s.lastDayQty = qty;
+            } else if (day.equals(lastDay)) {
+                s.lastDayQty += qty;
+                if (tgl.compareTo(s.lastJual) > 0) s.lastJual = tgl;
+            }
+        }
+        cur.close();
+        return out;
+    }
+
     /** Tandai/batalkan "Sudah Dikunjungi" (Daftar Kunjungan). LOKAL perangkat ini saja —
      *  update polos TANPA syncUpdate (tidak menyentuh edited_at/synced → tak pernah di-push). */
     public int setVisited(long id, boolean visited) {

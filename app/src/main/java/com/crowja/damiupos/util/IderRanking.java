@@ -29,12 +29,19 @@ public final class IderRanking {
         public final double lat;
         public final double lng;
         public final long ownerId;
+        /** Foto lokasi (URL server atau path lokal), null = tak ada foto. */
+        public final String photo;
 
         public Spot(String name, double lat, double lng, long ownerId) {
+            this(name, lat, lng, ownerId, null);
+        }
+
+        public Spot(String name, double lat, double lng, long ownerId, String photo) {
             this.name = name;
             this.lat = lat;
             this.lng = lng;
             this.ownerId = ownerId;
+            this.photo = photo;
         }
     }
 
@@ -45,13 +52,21 @@ public final class IderRanking {
         public final String name;
         public final long lastOrderMillis;
         public final List<Spot> spots;
+        /** Prediksi order kembali "yyyy-MM-dd" (model Follow Up), null = belum terukur. */
+        public final String reorderDay;
 
         public Person(String key, long customerId, String name, long lastOrderMillis, List<Spot> spots) {
+            this(key, customerId, name, lastOrderMillis, spots, null);
+        }
+
+        public Person(String key, long customerId, String name, long lastOrderMillis, List<Spot> spots,
+                      String reorderDay) {
             this.key = key;
             this.customerId = customerId;
             this.name = name;
             this.lastOrderMillis = lastOrderMillis;
             this.spots = spots;
+            this.reorderDay = reorderDay;
         }
     }
 
@@ -101,6 +116,11 @@ public final class IderRanking {
      * supaya urutan tak "berkedip" saat dua pelanggan sama jauhnya. Orang tanpa titik dilewati.
      */
     public static List<Ranked> nearest(List<Person> people, double lat, double lng, int limit) {
+        return nearest(people, lat, lng, limit, 0);
+    }
+
+    /** Seperti {@link #nearest(List, double, double, int)}, hanya yang titik terdekatnya ≤ {@code maxMeters} (0 = tanpa batas). */
+    public static List<Ranked> nearest(List<Person> people, double lat, double lng, int limit, double maxMeters) {
         List<Ranked> all = new ArrayList<>(people.size());
         for (Person p : people) {
             int best = -1;
@@ -113,7 +133,7 @@ public final class IderRanking {
                     best = i;
                 }
             }
-            if (best >= 0) all.add(new Ranked(p, best, bestM));
+            if (best >= 0 && (maxMeters <= 0 || bestM <= maxMeters)) all.add(new Ranked(p, best, bestM));
         }
         Collections.sort(all, (a, b) -> {
             int c = Double.compare(a.meters, b.meters);
@@ -196,6 +216,30 @@ public final class IderRanking {
         }
         BuyLevel level = days <= 7 ? BuyLevel.FRESH : (days <= 30 ? BuyLevel.WARN : BuyLevel.STALE);
         return new BuyBadge(text, level);
+    }
+
+    /**
+     * Badge PREDIKSI ORDER KEMBALI (hari "yyyy-MM-dd" dari model Follow Up) — status cermin web
+     * (FollowUpDue::forecastStatus, SOON_DAYS=3): lewat = jatuh tempo (merah), ≤3 hari = segera
+     * (oranye), selebihnya terjadwal (hijau). null bila belum ada prediksi (sekali beli / tanpa data).
+     */
+    public static BuyBadge reorderBadge(String reorderDay, long nowMillis, TimeZone tz) {
+        if (reorderDay == null || reorderDay.length() < 10) return null;
+        Calendar c = Calendar.getInstance(tz, Locale.US);
+        c.clear();
+        try {
+            c.set(Integer.parseInt(reorderDay.substring(0, 4)), Integer.parseInt(reorderDay.substring(5, 7)) - 1,
+                    Integer.parseInt(reorderDay.substring(8, 10)), 12, 0, 0);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        long days = calendarDaysBetween(nowMillis, c.getTimeInMillis(), tz);
+        String date = c.get(Calendar.DAY_OF_MONTH) + " " + MONTHS[c.get(Calendar.MONTH)];
+        if (days < 0) return new BuyBadge("⏰ Jatuh tempo order · lewat " + (-days) + " hari", BuyLevel.STALE);
+        if (days == 0) return new BuyBadge("⌛ Prediksi order lagi hari ini", BuyLevel.WARN);
+        if (days == 1) return new BuyBadge("⌛ Prediksi order lagi besok", BuyLevel.WARN);
+        if (days <= 3) return new BuyBadge("⌛ Prediksi order lagi " + days + " hari · " + date, BuyLevel.WARN);
+        return new BuyBadge("📅 Prediksi order lagi " + days + " hari · " + date, BuyLevel.FRESH);
     }
 
     /** Selisih hari kalender (b − a) di zona {@code tz}, bebas efek jam/DST. */
