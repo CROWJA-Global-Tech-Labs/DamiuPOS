@@ -780,7 +780,8 @@ public class IderModeActivity extends AppCompatActivity {
                 .putExtra("type", Transaction.TYPE_JUAL)
                 .putExtra("customer_id", customerId)
                 .putExtra(TransactionActivity.EXTRA_DEST_LAT, lat)
-                .putExtra(TransactionActivity.EXTRA_DEST_LNG, lng));
+                .putExtra(TransactionActivity.EXTRA_DEST_LNG, lng)
+                .putExtra(TransactionActivity.EXTRA_ASSIGN_SELF, true));
     }
 
     /** Ketuk kartu → menu: riwayat transaksi, tunjukkan di peta, hapus pelanggan (Admin / HP owner). */
