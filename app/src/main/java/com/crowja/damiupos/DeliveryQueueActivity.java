@@ -985,9 +985,48 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                Toast.makeText(this, fe != null && !fe.isEmpty() ? fe : "Gagal memuat wilayah.", Toast.LENGTH_LONG).show();
                return;
             }
-            this.renderTakeQueueDialog(fz);
+            this.askAddOrReplaceThenTake(fz);
          });
       })).start();
+   }
+
+   /** Antrean Saya yang dilepas jadi Pesanan Terbuka SETELAH Ambil Antrean berhasil (pilihan "Ubah"); null = Tambahkan. */
+   @Nullable
+   private List<Transaction> releaseAfterTake = null;
+
+   /**
+    * Antrean Saya masih berisi order → tanya dulu: ➕ Tambahkan (antrean lama tetap) atau 🔄 Ubah (antrean lama
+    * dilepas jadi Pesanan Terbuka). Pelepasan baru dijalankan setelah pengambilan BERHASIL, jadi membatalkan dialog
+    * Ambil Antrean / gagal mengambil tak pernah mengosongkan antrean. Order yang sedang dijalankan di rit tak ikut dilepas.
+    */
+   private void askAddOrReplaceThenTake(JSONArray zones) {
+      this.releaseAfterTake = null;
+      if (this.takeForRun && this.isRunning()) {
+         this.renderTakeQueueDialog(zones);
+         return;
+      }
+      List<Transaction> scope = this.adapter != null && this.adapter.data != null ? this.adapter.data : new ArrayList<>();
+      java.util.Set<Long> running = new java.util.HashSet<>();
+      if (this.isRunning()) for (Transaction t : this.runStops()) running.add(t.getId());
+      List<Transaction> mine = new ArrayList<>();
+      for (Transaction t : scope) {
+         if (t != null && !running.contains(t.getId()) && "PENDING".equals(t.getDeliveryStatus())) mine.add(t);
+      }
+      if (mine.isEmpty()) {
+         this.renderTakeQueueDialog(zones);
+         return;
+      }
+      (new AlertDialog.Builder(this)).setTitle("Antrean Saya masih berisi " + mine.size() + " order")
+            .setMessage("Ambil antrean baru dengan cara apa?\n\n"
+                  + "➕ TAMBAHKAN — order baru ditambahkan, antrean saya tetap.\n"
+                  + "🔄 UBAH — setelah order baru berhasil diambil, antrean saya di bawah ini dilepas jadi PESANAN TERBUKA (perangkat mana pun bisa mengklaimnya).\n\n"
+                  + this.numberedNames(mine))
+            .setPositiveButton("➕ Tambahkan", (d, w) -> this.renderTakeQueueDialog(zones))
+            .setNeutralButton("🔄 Ubah", (d, w) -> {
+               this.releaseAfterTake = mine;
+               this.renderTakeQueueDialog(zones);
+            })
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
    }
 
    /**
@@ -1374,6 +1413,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private void runTakeQueue(JSONObject body) {
       final boolean forRun = body.optBoolean("_for_run", false);
       body.remove("_for_run");
+      // Pilihan "🔄 Ubah" — dipakai sekali untuk pengambilan ini saja.
+      final List<Transaction> toRelease = forRun ? null : this.releaseAfterTake;
+      this.releaseAfterTake = null;
       SyncSettings cfg = this.syncCfg();
       android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
       wait.setMessage("Mengambil antrean…");
@@ -1409,6 +1451,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.loadData();
             this.loadOtherDevices();
             this.loadTrips();
+            if (toRelease != null && !toRelease.isEmpty()) {
+               if (fok && !uuids.isEmpty()) {
+                  // 🔄 Ubah: antrean lama → Pesanan Terbuka (jalur Lepas massal yang sama, laporan per order).
+                  this.runBulkQueueAction(toRelease, null, null);
+               } else if (fok) {
+                  Toast.makeText(this, "Tidak ada order baru yang terambil — antrean lama tetap.", Toast.LENGTH_LONG).show();
+               }
+            }
          });
       })).start();
    }
