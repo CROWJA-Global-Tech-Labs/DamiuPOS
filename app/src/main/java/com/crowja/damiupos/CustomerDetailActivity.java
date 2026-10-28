@@ -1827,7 +1827,14 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 TextView nm = row.findViewById(R.id.tvLocName);
                 TextView utama = row.findViewById(R.id.tvLocUtama);
                 TextView wajib = row.findViewById(R.id.tvLocWajib);
-                nm.setText(l.name != null && !l.name.isEmpty() ? l.name : Customer.DEFAULT_LOCATION_NAME);
+                // Titik berwarna = warna pin lokasi ini di peta (urutan sama → warna sama).
+                String locName = l.name != null && !l.name.isEmpty() ? l.name : Customer.DEFAULT_LOCATION_NAME;
+                android.text.SpannableString sp = new android.text.SpannableString("● " + locName);
+                sp.setSpan(new android.text.style.ForegroundColorSpan(locationColor(i)), 0, 1,
+                        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                sp.setSpan(new android.text.style.RelativeSizeSpan(1.3f), 0, 1,
+                        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                nm.setText(sp);
                 utama.setVisibility(i == 0 && locs.size() > 1 ? View.VISIBLE : View.GONE);
                 // Badge ongkir tiap lokasi: tarif per galon / Wajib Ongkir (tarif belum diisi) / Gratis Ongkir -- dari TARIF lokasi
                 // (Customer.Location.ongkirBadgeText), bukan hanya flag lama yang tak lagi dikirim server.
@@ -1859,20 +1866,30 @@ public class CustomerDetailActivity extends AppCompatActivity {
         ws.setUserAgentString(MapTiles.userAgent());
         webMap.setOnClickListener(v -> findViewById(R.id.btnNavigate).performClick());
 
-        // Bangun marker semua lokasi + popup nama (+ Wajib Ongkir). fitBounds bila >1, else setView.
+        // Marker semua lokasi — pin tetes berwarna per lokasi (warna sama dengan titik di daftar) + popup nama
+        // (+ ongkir).
         StringBuilder markers = new StringBuilder();
         StringBuilder pts = new StringBuilder();
-        for (Customer.Location l : locs) {
+        for (int i = 0; i < locs.size(); i++) {
+            Customer.Location l = locs.get(i);
             String label = (l.name != null && !l.name.isEmpty() ? l.name : Customer.DEFAULT_LOCATION_NAME)
                     + (l.chargesOngkir() ? " " + l.ongkirBadgeText() : "");
+            String hex = String.format("#%06X", 0xFFFFFF & locationColor(i));
             markers.append("L.marker([").append(l.lat).append(',').append(l.lng)
-                    .append("]).addTo(map).bindPopup('").append(jsEscape(label)).append("');");
+                    .append("],{icon:pin('").append(hex).append("')}).addTo(map).bindPopup('")
+                    .append(jsEscape(label)).append("');");
             if (pts.length() > 0) pts.append(',');
             pts.append('[').append(l.lat).append(',').append(l.lng).append(']');
         }
-        String view = locs.size() > 1
-                ? "map.fitBounds([" + pts + "], {padding:[30,30], maxZoom:17});"
-                : "map.setView([" + primary.lat + "," + primary.lng + "], 16);";
+        // SEMUA lokasi dalam satu bingkai. fit() diulang setelah WebView benar-benar berukuran
+        // (invalidateSize): fitBounds yang jalan saat peta masih 0 px menghasilkan zoom salah sehingga
+        // hanya satu pin yang tampak (laporan 2026-10-28, pelanggan 2 lokasi).
+        String view = "var PTS=[" + pts + "];"
+                + "function fit(){map.invalidateSize();"
+                + "if(PTS.length>1){map.fitBounds(PTS,{paddingTopLeft:[28,48],paddingBottomRight:[28,22],maxZoom:17});}"
+                + "else{map.setView(PTS[0],16);}}"
+                + "fit();window.addEventListener('load',fit);window.addEventListener('resize',fit);"
+                + "[150,400,1000].forEach(function(t){setTimeout(fit,t);});";
 
         String html = "<!DOCTYPE html><html><head>"
                 + "<meta charset='utf-8'>"
@@ -1887,6 +1904,9 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 + " scrollWheelZoom:false, doubleClickZoom:false, touchZoom:false, boxZoom:false, keyboard:false});"
                 + "L.tileLayer('" + MapTiles.LEAFLET_URL + "', {subdomains:'" + MapTiles.SUBDOMAINS
                 + "', maxZoom:19, attribution:'" + MapTiles.ATTRIBUTION + "'}).addTo(map);"
+                + "function pin(c){return L.divIcon({className:'',iconSize:[28,38],iconAnchor:[14,38],popupAnchor:[0,-34],"
+                + "html:'<svg width=\"28\" height=\"38\" viewBox=\"0 0 28 38\"><path d=\"M14 1C6.8 1 1 6.8 1 14c0 9.6 13 23 13 23s13-13.4 13-23C27 6.8 21.2 1 14 1z\" "
+                + "fill=\"'+c+'\" stroke=\"#fff\" stroke-width=\"2\"/><circle cx=\"14\" cy=\"14\" r=\"5\" fill=\"#fff\"/></svg>'});}"
                 + markers
                 + view
                 + "</script></body></html>";
@@ -1912,6 +1932,16 @@ public class CustomerDetailActivity extends AppCompatActivity {
         } catch (Exception e) {
             Toast.makeText(this, "Aplikasi peta tidak tersedia", Toast.LENGTH_SHORT).show();
         }
+    }
+
+    /** Palet pin lokasi (urutan lokasi → warna); dipakai pin peta DAN titik di daftar lokasi. Semua ≥ 3:1
+     *  terhadap latar putih (syarat kontras elemen grafis). */
+    private static final int[] LOCATION_COLORS = {
+            0xFFE53935, 0xFF1E88E5, 0xFF43A047, 0xFFE65100, 0xFF8E24AA,
+            0xFF00838F, 0xFF6D4C41, 0xFFD81B60, 0xFF3949AB, 0xFF558B2F};
+
+    private static int locationColor(int index) {
+        return LOCATION_COLORS[index % LOCATION_COLORS.length];
     }
 
     /** Escape aman untuk string literal JavaScript (petik + backslash). */

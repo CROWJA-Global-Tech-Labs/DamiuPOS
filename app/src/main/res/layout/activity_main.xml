@@ -783,6 +783,39 @@
                 app:columnCount="2"
                 app:useDefaultMargins="false">
 
+                <!-- 🛵 Modus Ider — jualan keliling: 10 pelanggan terdekat + peta live, layar penuh.
+                     Semua peran kecuali Viewer (tak boleh membuat transaksi). Putih/#BF360C = 5,6:1. -->
+                <FrameLayout
+                    android:id="@+id/boxModusIder"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnModusIder"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="🛵 Modus Ider"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:backgroundTint="#BF360C"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
+                </FrameLayout>
+
                 <!-- Target Sales (d/h "Pencapaian Penjualan") — Admin & Marketing
                      (User.canViewSalesAchievement). Rekap penjualan per karyawan SE-CABANG,
                      dihitung di server, jadi angkanya sama persis dengan dashboard web. -->
