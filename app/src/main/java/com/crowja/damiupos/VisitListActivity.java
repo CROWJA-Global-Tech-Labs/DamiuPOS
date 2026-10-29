@@ -90,6 +90,13 @@ public class VisitListActivity extends AppCompatActivity {
 
     private final List<Entry> allEntries = new ArrayList<>();
 
+    /** Mode pilih banyak (tarik galon massal): kartu diketuk = centang, bukan dialog aksi. */
+    private boolean selecting;
+    /** Pilihan dikunci per ORANG (id baris wakil) — tahan terhadap filter/pencarian & muat ulang. */
+    private final java.util.LinkedHashSet<Long> selected = new java.util.LinkedHashSet<>();
+    private View barSelect;
+    private TextView tvSelectCount;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -132,6 +139,164 @@ public class VisitListActivity extends AppCompatActivity {
         // kalau daftar "paling lama tak order" suatu saat dihidupkan lagi sebagai tab terpisah.
         toggleThreshold.setVisibility(View.GONE);
         cbHideVisited.setVisibility(View.GONE);
+
+        barSelect = findViewById(R.id.barSelect);
+        tvSelectCount = findViewById(R.id.tvSelectCount);
+        findViewById(R.id.btnSelectAll).setOnClickListener(v -> selectAllVisible());
+        findViewById(R.id.btnSelectCancel).setOnClickListener(v -> setSelecting(false));
+        findViewById(R.id.btnSelectPull).setOnClickListener(v -> bulkPull());
+        getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (selecting) { setSelecting(false); return; }
+                setEnabled(false);
+                getOnBackPressedDispatcher().onBackPressed();
+            }
+        });
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        menu.add(0, 1, 0, "☑ Pilih banyak").setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
+        if (item.getItemId() == 1) {
+            setSelecting(!selecting);
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    // ----------------------------------------------------------------- pilih banyak → tarik galon
+
+    private void setSelecting(boolean on) {
+        selecting = on;
+        if (!on) selected.clear();
+        barSelect.setVisibility(on ? View.VISIBLE : View.GONE);
+        updateSelectBar();
+        adapter.notifyDataSetChanged();
+    }
+
+    private void toggleSelected(Entry e) {
+        long id = e.rep.getId();
+        if (!selected.remove(id)) selected.add(id);
+        updateSelectBar();
+    }
+
+    /** Pilih semua yang SEDANG tampil (ikut filter "Pelanggan Saya" + pencarian); ketuk lagi = kosongkan. */
+    private void selectAllVisible() {
+        List<Entry> shown = adapter.data;
+        boolean all = !shown.isEmpty();
+        for (Entry e : shown) if (!selected.contains(e.rep.getId())) { all = false; break; }
+        for (Entry e : shown) {
+            if (all) selected.remove(e.rep.getId());
+            else selected.add(e.rep.getId());
+        }
+        updateSelectBar();
+        adapter.notifyDataSetChanged();
+    }
+
+    private void updateSelectBar() {
+        if (tvSelectCount != null) tvSelectCount.setText(selected.size() + " dipilih");
+    }
+
+    /** Satu baris rencana tarik massal: pelanggan gabungan + jumlah yang akan ditarik. */
+    private static class PullPlan {
+        Customer cust;
+        int qty;
+        int promoRemaining;
+    }
+
+    /**
+     * Tarik galon MASSAL: tiap pelanggan terpilih dicatat Galon Kembali sebanyak galon yang SEDANG
+     * ia pinjam (saldo gabungan lintas perangkat, sama dengan default dialog Tarik Galon tunggal).
+     * Yang saldonya 0 dilewati — tak ada yang ditarik. Penghapusan pelanggan TIDAK ikut di sini:
+     * itu ireversibel dan tetap per pelanggan lewat dialog tunggal.
+     */
+    private void bulkPull() {
+        if (selected.isEmpty()) {
+            Toast.makeText(this, "Pilih minimal satu pelanggan dulu", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final List<Long> ids = new ArrayList<>(selected);
+        new Thread(() -> {
+            List<PullPlan> plans = new ArrayList<>();
+            List<String> skipped = new ArrayList<>();
+            for (long id : ids) {
+                Customer cust = customerDao.getByIdMerged(id);
+                if (cust == null) continue;
+                int saldo = Math.max(0, cust.getSaldoGalon());
+                if (saldo <= 0) { skipped.add(safe(cust.getName())); continue; }
+                PullPlan p = new PullPlan();
+                p.cust = cust;
+                p.qty = saldo;
+                p.promoRemaining = Math.max(0, customerDao.mergedPromoGalon(id) - customerDao.mergedPromoPulledGalon(id));
+                plans.add(p);
+            }
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                confirmBulkPull(plans, skipped);
+            });
+        }).start();
+    }
+
+    private void confirmBulkPull(List<PullPlan> plans, List<String> skipped) {
+        if (plans.isEmpty()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("📥 Tarik Galon")
+                    .setMessage("Tak ada galon yang tercatat dipinjam oleh " + skipped.size()
+                            + " pelanggan terpilih — tidak ada yang bisa ditarik.\n\nKalau di lapangan tetap ada "
+                            + "galon, tarik per pelanggan lewat dialog kartunya (jumlah bisa diisi sendiri).")
+                    .setPositiveButton("OK", null)
+                    .show();
+            return;
+        }
+        int total = 0;
+        StringBuilder msg = new StringBuilder();
+        for (PullPlan p : plans) {
+            total += p.qty;
+            msg.append("• ").append(safe(p.cust.getName())).append(" — ").append(p.qty).append(" galon\n");
+        }
+        msg.append("\nTotal ").append(total).append(" galon dari ").append(plans.size())
+                .append(" pelanggan, dicatat sebagai Galon Kembali (stok depot bertambah, galon dipinjam "
+                        + "pelanggan berkurang). Jatah promosi dipisah otomatis.");
+        if (!skipped.isEmpty()) {
+            msg.append("\n\nDilewati (tak ada galon dipinjam): ").append(android.text.TextUtils.join(", ", skipped));
+        }
+        final int fTotal = total;
+        new AlertDialog.Builder(this)
+                .setTitle("📥 Tarik " + total + " galon?")
+                .setMessage(msg)
+                .setPositiveButton("YA, TARIK " + total + " GALON", (d, w) -> runBulkPull(plans, fTotal))
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    private void runBulkPull(List<PullPlan> plans, int expected) {
+        final com.crowja.damiupos.db.TransactionDao tdao =
+                new com.crowja.damiupos.db.TransactionDao(DatabaseHelper.getInstance(this));
+        new Thread(() -> {
+            int galon = 0, people = 0;
+            List<String> failed = new ArrayList<>();
+            for (PullPlan p : plans) {
+                int w = TarikGalon.write(tdao, p.cust, p.qty, p.promoRemaining);
+                if (w > 0) { galon += w; people++; }
+                if (w < p.qty) failed.add(safe(p.cust.getName()));
+            }
+            com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+            final int fg = galon, fp = people;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                String m = "📥 " + fg + " galon ditarik dari " + fp + " pelanggan";
+                if (!failed.isEmpty()) m += ". Gagal tersimpan: " + android.text.TextUtils.join(", ", failed);
+                Toast.makeText(this, m, Toast.LENGTH_LONG).show();
+                setSelecting(false);
+                reload();
+            });
+        }).start();
     }
 
     @Override
@@ -384,7 +549,7 @@ public class VisitListActivity extends AppCompatActivity {
 
     private class VisitAdapter extends RecyclerView.Adapter<VisitAdapter.VH> {
 
-        private final List<Entry> data = new ArrayList<>();
+        final List<Entry> data = new ArrayList<>();
         private final SimpleDateFormat outFmt = new SimpleDateFormat("d MMM yyyy", new Locale("id", "ID"));
         private final SimpleDateFormat visitFmt = new SimpleDateFormat("d MMM HH:mm", new Locale("id", "ID"));
 
@@ -409,8 +574,18 @@ public class VisitListActivity extends AppCompatActivity {
             boolean never = e.lastOrderMillis == Long.MIN_VALUE;
 
             String name = c.getDisplayName();
-            h.tvInitial.setText(name != null && !name.isEmpty()
+            boolean checked = selecting && selected.contains(c.getId());
+            h.tvInitial.setText(checked ? "✓" : name != null && !name.isEmpty()
                     ? name.substring(0, 1).toUpperCase(Locale.ROOT) : "?");
+            // Tercentang: lingkaran hijau tua (putih di atas #2E7D32 = 5,1:1) + bingkai kartu.
+            h.tvInitial.setBackgroundTintList(checked
+                    ? android.content.res.ColorStateList.valueOf(0xFF2E7D32) : null);
+            if (h.itemView instanceof com.google.android.material.card.MaterialCardView) {
+                com.google.android.material.card.MaterialCardView card =
+                        (com.google.android.material.card.MaterialCardView) h.itemView;
+                card.setStrokeColor(0xFF2E7D32);
+                card.setStrokeWidth(checked ? Math.round(2 * getResources().getDisplayMetrics().density) : 0);
+            }
             h.tvName.setText(safe(name));
 
             StringBuilder sub = new StringBuilder();
@@ -466,7 +641,15 @@ public class VisitListActivity extends AppCompatActivity {
             // Tombol Peta/WA/Dikunjungi tak ada lagi di kartu (duplikat dialog aksi) — kartu
             // ditekan untuk membuka dialognya, tekan-lama tetap langsung ke Detail Pelanggan.
             h.itemView.setAlpha(1f);
-            h.itemView.setOnClickListener(v -> showActions(e));
+            h.itemView.setOnClickListener(v -> {
+                if (selecting) {
+                    toggleSelected(e);
+                    notifyItemChanged(h.getBindingAdapterPosition());
+                } else {
+                    showActions(e);
+                }
+            });
+            // Tekan-lama tetap Detail Pelanggan di kedua mode (kebiasaan staf); pilih banyak lewat menu.
             h.itemView.setOnLongClickListener(v -> {
                 startActivity(new Intent(VisitListActivity.this, CustomerDetailActivity.class)
                         .putExtra("customer_id", c.getId()));
