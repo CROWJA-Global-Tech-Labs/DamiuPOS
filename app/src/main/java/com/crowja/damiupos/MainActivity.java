@@ -357,6 +357,10 @@ public class MainActivity extends AppCompatActivity {
         if (btnPengaturanPerangkat != null) {
             btnPengaturanPerangkat.setOnClickListener(v -> startActivity(new Intent(this, DeviceAdminActivity.class)));
         }
+        View btnWhatsApp = findViewById(R.id.btnWhatsApp);
+        if (btnWhatsApp != null) {
+            btnWhatsApp.setOnClickListener(v -> startActivity(new Intent(this, WhatsAppMenuActivity.class)));
+        }
 
         // Channel pengingat jam kerja + izin notifikasi (Android 13+), sinkron berkala tetap
         // terpasang, dan cek versi baru saat dibuka — satu paket dengan layar Pengisian.
@@ -794,6 +798,11 @@ public class MainActivity extends AppCompatActivity {
         if (btnPengaturanPerangkat != null) {
             boolean enrolled = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled();
             btnPengaturanPerangkat.setVisibility(adminOnly && enrolled ? View.VISIBLE : View.GONE);
+        }
+        View btnWhatsApp = findViewById(R.id.btnWhatsApp);
+        if (btnWhatsApp != null) {
+            boolean enrolled = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled();
+            btnWhatsApp.setVisibility(adminOnly && enrolled ? View.VISIBLE : View.GONE);
         }
 
         if (!show) return;
