@@ -171,7 +171,14 @@
             android:name=".wa.WaAccountsConsoleActivity"
             android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden"
             android:windowSoftInputMode="adjustResize" />
-        <activity android:name=".wa.WaBroadcastActivity" />
+        <!-- configChanges: rotasi jangan membuat ulang layar Broadcast — daftar Pilihan Bebas/Per Produk yang
+             disusun hilang, dan hasil Kirim yang sedang berjalan tak pernah tampil (admin mengira gagal → blast dobel). -->
+        <activity
+            android:name=".wa.WaBroadcastActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".wa.WaBroadcastHistoryActivity" />
+        <activity android:name=".wa.WaBroadcastDetailActivity" />
         <activity android:name=".wa.WaSchedulesActivity" />
         <activity android:name=".wa.WaStatusActivity" />
         <activity android:name=".FollowUpMapActivity" />
