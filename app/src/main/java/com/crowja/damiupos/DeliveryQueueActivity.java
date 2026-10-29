@@ -5031,17 +5031,94 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    /** ▶ pada halaman trip: konfirmasi dua ketuk → server melepas & mengambil alih sekaligus. */
-   private void confirmStartTripKhusus() {
-      JSONObject t0 = this.currentTripPage();
-      if (t0 == null) return;
-      // Dialog MUATAN: jumlah galon per produk & jenis (bawaan semua), Ambil Galon Saja mengikuti badge jenis kartu trip.
-      JSONArray orders = t0.optJSONArray("orders");
-      List<Object[]> cands = new ArrayList<>();
-      for (int i = 0; orders != null && i < orders.length(); i++) {
-         JSONObject o = orders.optJSONObject(i);
-         if (o != null) cands.add(new Object[]{o, this.typedRows(o), o.optBoolean("pickup_only", false)});
+   /** Trip yang sedang dijalankan lewat ▶ (hasil "Pilih trip"); null = hanya trip halaman ini. */
+   private List<JSONObject> tripRunSel = null;
+
+   /** Trip untuk alur ▶ yang sedang berjalan — pilihan "Pilih trip" bila masih memuat trip halaman ini. */
+   private List<JSONObject> selTrips() {
+      JSONObject cur = this.currentTripPage();
+      List<JSONObject> out = new ArrayList<>();
+      if (this.tripRunSel != null && cur != null) {
+         for (JSONObject t : this.tripRunSel) {
+            if (t.optLong("id") == cur.optLong("id")) return new ArrayList<>(this.tripRunSel);
+         }
       }
-      this.askRunLoad("▶ Mulai Trip " + safe(t0.optString("name", "Trip")), cands, this.tripKindPickup,
+      if (cur != null) out.add(cur);
+      return out;
+   }
+
+   private static String tripNames(List<JSONObject> sel) {
+      StringBuilder sb = new StringBuilder();
+      for (JSONObject t : sel) {
+         if (sb.length() > 0) sb.append(" + ");
+         sb.append(safe(t.optString("name", "Trip")));
+      }
+      return sb.toString();
+   }
+
+   /** ▶ di halaman Trip Khusus: lebih dari satu trip → pilih dulu trip mana saja yang dijalankan bersamaan. */
+   private void confirmStartTripKhusus() {
+      JSONObject cur = this.currentTripPage();
+      if (cur == null) return;
+      if (this.tripPages.size() < 2) {
+         this.startTripLoad(java.util.Collections.singletonList(cur));
+         return;
+      }
+      final List<JSONObject> all = new ArrayList<>(this.tripPages);
+      final CharSequence[] labels = new CharSequence[all.size()];
+      final boolean[] checked = new boolean[all.size()];
+      for (int i = 0; i < all.size(); i++) {
+         JSONObject t = all.get(i);
+         JSONArray os = this.tripOrdersOfKind(t.optJSONArray("orders"));
+         labels[i] = safe(t.optString("name", "Trip")) + " · " + (os != null ? os.length() : 0) + " order"
+               + (t.optBoolean("runs_today") ? " · ✅ hari ini" : "");
+         checked[i] = t.optLong("id") == cur.optLong("id");
+      }
+      (new AlertDialog.Builder(this)).setTitle("▶ Pilih trip yang dijalankan")
+            .setMultiChoiceItems(labels, checked, (d, which, on) -> checked[which] = on)
+            .setPositiveButton("Lanjut", (d, w) -> {
+               List<JSONObject> sel = new ArrayList<>();
+               for (int i = 0; i < all.size(); i++) if (checked[i]) sel.add(all.get(i));
+               if (sel.isEmpty()) {
+                  Toast.makeText(this, "Pilih minimal satu trip.", Toast.LENGTH_SHORT).show();
+                  return;
+               }
+               // Trip halaman ini di depan (id utama di server); sisanya ikut bersamaan.
+               for (int i = 0; i < sel.size(); i++) {
+                  if (sel.get(i).optLong("id") == cur.optLong("id") && i > 0) {
+                     sel.add(0, sel.remove(i));
+                     break;
+                  }
+               }
+               if (sel.get(0).optLong("id") != cur.optLong("id")) {
+                  // Trip halaman ini tak dicentang → pindah ke halaman trip pertama yang dipilih.
+                  int idx = this.tripPages.indexOf(sel.get(0));
+                  if (idx >= 0) {
+                     this.strategyPage = idx + 1;
+                     this.renderStrategy(this.adapter != null ? this.adapter.data : null);
+                  }
+               }
+               this.startTripLoad(sel);
+            })
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
+   }
+
+   /** Dialog MUATAN untuk trip terpilih (order beberapa trip digabung, tanpa dobel). */
+   private void startTripLoad(List<JSONObject> sel) {
+      this.tripRunSel = new ArrayList<>(sel);
+      // Dialog MUATAN: jumlah galon per produk & jenis (bawaan semua), Ambil Galon Saja mengikuti badge jenis kartu trip.
+      List<Object[]> cands = new ArrayList<>();
+      java.util.Set<String> seen = new java.util.HashSet<>();
+      for (JSONObject t0 : sel) {
+         JSONArray orders = t0.optJSONArray("orders");
+         for (int i = 0; orders != null && i < orders.length(); i++) {
+            JSONObject o = orders.optJSONObject(i);
+            if (o != null && seen.add(o.optString("uuid"))) {
+               cands.add(new Object[]{o, this.typedRows(o), o.optBoolean("pickup_only", false)});
+            }
+         }
+      }
+      this.askRunLoad("▶ Mulai Trip " + tripNames(sel), cands, this.tripKindPickup,
             picked -> {
                boolean[] kinds = this.setTripPicked(picked);
                this.confirmStartTripKhusus(kinds[0], kinds[1]);
@@ -5071,8 +5148,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * (server keep_queue); GANTIKAN = alur Mulai Trip biasa (order di luar trip dilepas ke Pesanan Terbuka).
     */
    private void askTripAddOrReplace(boolean includeSales, boolean includePickup) {
-      JSONObject t = this.currentTripPage();
-      if (t == null) return;
+      List<JSONObject> sel = this.selTrips();
+      if (sel.isEmpty()) return;
+      JSONObject t = sel.get(0);
       SyncSettings cfg = this.syncCfg();
       if (!cfg.isEnrolled() || !cfg.isDeliveryDevice()) {
          this.confirmStartTripKhusus(includeSales, includePickup);   // pesan gerbangnya ada di sana
@@ -5097,8 +5175,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private java.util.Set<String> tripPickedUuids = null;
 
    private void confirmStartTripKhusus(boolean includeSales, boolean includePickup) {
-      JSONObject t = this.currentTripPage();
-      if (t == null) return;
+      List<JSONObject> sel = this.selTrips();
+      if (sel.isEmpty()) return;
+      JSONObject t = sel.get(0);
       SyncSettings cfg = this.syncCfg();
       if (!cfg.isEnrolled()) {
          Toast.makeText(this, "Perangkat belum terhubung ke server.", Toast.LENGTH_LONG).show();
@@ -5108,16 +5187,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          Toast.makeText(this, "Hanya perangkat delivery yang bisa menjalankan trip.", Toast.LENGTH_LONG).show();
          return;
       }
-      JSONArray orders = t.optJSONArray("orders");
       java.util.Set<String> inTrip = new java.util.HashSet<>();
       int take = 0;
-      for (int i = 0; orders != null && i < orders.length(); i++) {
-         JSONObject o = orders.optJSONObject(i);
-         if (o == null) continue;
-         inTrip.add(o.optString("uuid"));
-         boolean kindOk = o.optBoolean("pickup_only") ? includePickup : includeSales;
-         boolean pickedOk = this.tripPickedUuids == null || this.tripPickedUuids.contains(o.optString("uuid"));
-         if (kindOk && pickedOk && !"mine".equals(o.optString("source"))) take++;
+      for (JSONObject st : sel) {
+         JSONArray orders = st.optJSONArray("orders");
+         for (int i = 0; orders != null && i < orders.length(); i++) {
+            JSONObject o = orders.optJSONObject(i);
+            if (o == null || !inTrip.add(o.optString("uuid"))) continue;
+            boolean kindOk = o.optBoolean("pickup_only") ? includePickup : includeSales;
+            boolean pickedOk = this.tripPickedUuids == null || this.tripPickedUuids.contains(o.optString("uuid"));
+            if (kindOk && pickedOk && !"mine".equals(o.optString("source"))) take++;
+         }
       }
       int release = 0;
       if (this.adapter != null && this.adapter.data != null) {
@@ -5127,7 +5207,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (u == null || !inTrip.contains(u)) release++;
          }
       }
-      String name = safe(t.optString("name", "Trip"));
+      String name = tripNames(sel);
       String msg = "• Ambil alih " + take + " order (perangkat lain & Pesanan Terbuka) ke Antrean Saya."
             + "\n• Lepas sekitar " + release + " order Antrean Saya di luar trip menjadi Pesanan Terbuka (yang sedang diantar tidak dilepas)."
             + "\n\nKetuk \"Mulai\" dua kali untuk memastikan.";
@@ -5159,11 +5239,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private void runStartTripKhusus(android.app.Dialog dialog, long ruleId, boolean includeSales, boolean includePickup, boolean keepQueue) {
       SyncSettings cfg = this.syncCfg();
+      // Trip lain yang dijalankan bersamaan ("Pilih trip") — dibaca di UI thread sebelum ke latar.
+      final List<Long> also = new ArrayList<>();
+      for (JSONObject st : this.selTrips()) if (st.optLong("id") != ruleId) also.add(st.optLong("id"));
       new Thread(() -> {
          String msg;
          boolean ok = false;
          try {
-            JSONObject r = new SyncApi(cfg).startDeliveryTrip(ruleId, includeSales, includePickup, this.tripPickedUuids, keepQueue);
+            JSONObject r = new SyncApi(cfg).startDeliveryTrip(ruleId, includeSales, includePickup, this.tripPickedUuids, keepQueue, also);
             ok = true;
             msg = r.optString("message", "Trip dimulai.");
          } catch (SyncApi.SyncException se) {
