@@ -106,6 +106,22 @@
                 android:textSize="12sp"
                 android:textStyle="bold" />
 
+            <!-- 🚩 Termasuk Daftar Kunjungan Urgent. #B71C1C di atas #FFEBEE = 5,7:1. -->
+            <TextView
+                android:id="@+id/tvIderUrgent"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:paddingStart="8dp"
+                android:paddingTop="2dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="2dp"
+                android:text="🚩 Kunjungan Urgent"
+                android:textColor="#B71C1C"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
             <TextView
                 android:id="@+id/tvIderReorder"
                 android:layout_width="wrap_content"
@@ -120,21 +136,52 @@
                 android:visibility="gone" />
         </LinearLayout>
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnIderTrx"
+        <LinearLayout
             android:layout_width="68dp"
             android:layout_height="match_parent"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:minHeight="84dp"
-            android:paddingStart="0dp"
-            android:paddingEnd="0dp"
-            android:text="+TRX"
-            android:textAllCaps="false"
-            android:textColor="#FFFFFF"
-            android:textSize="15sp"
-            android:textStyle="bold"
-            app:backgroundTint="#2E7D32"
-            app:cornerRadius="10dp" />
+            android:orientation="vertical">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnIderTrx"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minHeight="52dp"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
+                android:text="+TRX"
+                android:textAllCaps="false"
+                android:textColor="#FFFFFF"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                app:backgroundTint="#2E7D32"
+                app:cornerRadius="10dp" />
+
+            <!-- Berkedip: pelanggan punya transaksi berjalan hari ini (Penjualan / Ambil Galon).
+                 Putih di atas #BF360C = 5,6:1. -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnIderToday"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
+                android:minHeight="40dp"
+                android:paddingStart="2dp"
+                android:paddingTop="2dp"
+                android:paddingEnd="2dp"
+                android:paddingBottom="2dp"
+                android:lineSpacingExtra="0dp"
+                android:maxLines="2"
+                android:textAllCaps="false"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                app:backgroundTint="#BF360C"
+                app:cornerRadius="10dp" />
+        </LinearLayout>
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>
