@@ -180,6 +180,17 @@
         <activity android:name=".wa.WaBroadcastHistoryActivity" />
         <activity android:name=".wa.WaBroadcastDetailActivity" />
         <activity android:name=".wa.WaSchedulesActivity" />
+        <activity android:name=".wa.WaScheduleDetailActivity" />
+        <!-- Form & peta Broadcast Terjadwal memegang draf panjang (penerima dari peta, wilayah otomatis) di memori:
+             configChanges supaya rotasi / mode gelap sistem tidak membuat ulang activity (draf hilang, form dimuat
+             ulang dari server). App light-only, jadi uiMode tak mengubah tampilan. -->
+        <activity
+            android:name=".wa.WaScheduleFormActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".wa.WaScheduleMapActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode" />
         <activity android:name=".wa.WaStatusActivity" />
         <activity android:name=".FollowUpMapActivity" />
         <activity android:name=".CustomerMapActivity" />
