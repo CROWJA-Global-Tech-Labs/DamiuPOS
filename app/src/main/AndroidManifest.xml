@@ -159,7 +159,11 @@
         <activity android:name=".DeviceAdminActivity" />
         <activity android:name=".WhatsAppMenuActivity" />
         <activity android:name=".wa.WaAccountsActivity" />
-        <activity android:name=".wa.WaBroadcastActivity" />
+        <activity
+            android:name=".wa.WaBroadcastActivity"
+            android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".wa.WaBroadcastHistoryActivity" />
+        <activity android:name=".wa.WaBroadcastDetailActivity" />
         <activity android:name=".wa.WaSchedulesActivity" />
         <activity android:name=".wa.WaStatusActivity" />
         <activity android:name=".FollowUpMapActivity" />

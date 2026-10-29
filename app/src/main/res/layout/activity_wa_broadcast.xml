@@ -1,0 +1,362 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 📣 Broadcast WhatsApp (Admin) — cermin halaman web /wa-broadcast: audiens → siapa saja → pesan → kirim.
+     Light-only: teks #212121 / #37474F / #455A64 di atas putih / #ECEFF1 ≥ 6:1. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#ECEFF1"
+    android:orientation="vertical">
+
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@color/primary"
+        app:navigationIcon="@drawable/ic_arrow_back"
+        app:title="📣 Broadcast WhatsApp"
+        app:titleTextColor="@color/white" />
+
+    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        android:id="@+id/swipe"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <ScrollView
+            android:id="@+id/scroll"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <!-- Memuat / galat (sebelum data pertama ada). -->
+                <LinearLayout
+                    android:id="@+id/boxState"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:paddingTop="48dp">
+
+                    <ProgressBar
+                        android:id="@+id/pbState"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+
+                    <TextView
+                        android:id="@+id/tvState"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:padding="16dp"
+                        android:text="Memuat…"
+                        android:textColor="#37474F"
+                        android:textSize="14sp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnRetry"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🔄 Coba lagi"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:visibility="gone"
+                        app:backgroundTint="@color/primary" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/form"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/tvIntro"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Kirim SATU pesan ke satu audiens pilihan — satu pesan per pelanggan, walau ia punya beberapa order aktif. Pilih audiensnya, lihat siapa saja yang terdampak, baru kirim."
+                        android:textColor="#37474F"
+                        android:textSize="12sp" />
+
+                    <TextView
+                        android:id="@+id/tvBridgeWarn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:background="#FFEBEE"
+                        android:padding="10dp"
+                        android:text="⚠️ FREZ WA Bridge belum diatur (menu WhatsApp → Akun WhatsApp) — broadcast belum bisa dikirim."
+                        android:textColor="#B71C1C"
+                        android:textSize="12sp"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/tvInfo"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:background="@drawable/bg_wa_broadcast_info"
+                        android:padding="10dp"
+                        android:text="Akun pengirim dipilih OTOMATIS per pelanggan supaya tak terdeteksi spam WhatsApp: (1) akun yang sedang menangani order pelanggan itu (bila audiensnya punya order), (2) kalau tak ada, akun cabang yang sudah pernah 2 arah dengan pelanggan itu, (3) kalau tak satupun, giliran round-robin di antara akun yang masih ada kuota proaktif hari ini. Yang tertahan jeda antar pesan WA diantre &amp; dikirim otomatis bertahap (Broadcast Terjadwal)."
+                        android:textColor="#5D4037"
+                        android:textSize="11sp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:text="Kirim ke"
+                        android:textColor="#212121"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <!-- Kartu audiens (2 kolom), dibangun di kode. -->
+                    <LinearLayout
+                        android:id="@+id/boxAudience"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:orientation="vertical" />
+
+                    <!-- Pratinjau audiens otomatis (antrean aktif / tertunda / kunjungan urgent). -->
+                    <LinearLayout
+                        android:id="@+id/panelPreview"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:background="@drawable/bg_wa_broadcast_card"
+                        android:orientation="vertical"
+                        android:padding="12dp">
+
+                        <TextView
+                            android:id="@+id/tvPreviewTitle"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:textColor="#212121"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+
+                        <LinearLayout
+                            android:id="@+id/listPreview"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:orientation="vertical" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnPreviewAll"
+                            style="@style/Widget.MaterialComponents.Button.TextButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textAllCaps="false"
+                            android:textColor="@color/primary"
+                            android:visibility="gone" />
+                    </LinearLayout>
+
+                    <!-- Pelanggan per Produk: produk + rentang waktu → daftar pembeli (bisa dikoreksi di bawah). -->
+                    <LinearLayout
+                        android:id="@+id/panelProduct"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:background="@drawable/bg_wa_broadcast_card"
+                        android:orientation="vertical"
+                        android:padding="12dp"
+                        android:visibility="gone">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="Pilih produk — pelanggan yang pernah memesannya akan dimasukkan ke daftar di bawah."
+                            android:textColor="#37474F"
+                            android:textSize="12sp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnPickProducts"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:text="📦 Pilih produk"
+                            android:textAllCaps="false"
+                            android:textColor="@color/primary" />
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Memesan dalam"
+                                android:textColor="#37474F"
+                                android:textSize="13sp" />
+
+                            <Spinner
+                                android:id="@+id/spDays"
+                                android:layout_width="0dp"
+                                android:layout_height="48dp"
+                                android:layout_marginStart="8dp"
+                                android:layout_weight="1" />
+                        </LinearLayout>
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnLoadBuyers"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="🔎 Tampilkan pelanggan"
+                            android:textAllCaps="false"
+                            android:textColor="@color/white"
+                            app:backgroundTint="#37474F" />
+
+                        <TextView
+                            android:id="@+id/tvProdStatus"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:textColor="#37474F"
+                            android:textSize="12sp"
+                            android:visibility="gone" />
+                    </LinearLayout>
+
+                    <!-- Pemilih pelanggan (Pilihan Bebas & koreksi Per Produk): cari = tambah, ✕ = buang. -->
+                    <LinearLayout
+                        android:id="@+id/panelPicker"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:background="@drawable/bg_wa_broadcast_card"
+                        android:orientation="vertical"
+                        android:padding="12dp"
+                        android:visibility="gone">
+
+                        <EditText
+                            android:id="@+id/etSearch"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_wa_broadcast_input"
+                            android:hint="🔍 Cari nama / nomor HP pelanggan…"
+                            android:imeOptions="actionSearch"
+                            android:inputType="text"
+                            android:maxLines="1"
+                            android:textColor="#212121"
+                            android:textColorHint="#616161"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:id="@+id/tvSearchStatus"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:paddingTop="4dp"
+                            android:textColor="#455A64"
+                            android:textSize="12sp"
+                            android:visibility="gone" />
+
+                        <LinearLayout
+                            android:id="@+id/listResults"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical" />
+
+                        <TextView
+                            android:id="@+id/tvSelectedTitle"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:textColor="#212121"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvSelectedEmpty"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:paddingTop="4dp"
+                            android:textColor="#455A64"
+                            android:textSize="12sp" />
+
+                        <LinearLayout
+                            android:id="@+id/listSelected"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnSelectedAll"
+                            style="@style/Widget.MaterialComponents.Button.TextButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textAllCaps="false"
+                            android:textColor="@color/primary"
+                            android:visibility="gone" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:text="Pesan"
+                        android:textColor="#212121"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <EditText
+                        android:id="@+id/etMessage"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:background="@drawable/bg_wa_broadcast_input"
+                        android:gravity="top|start"
+                        android:hint="Tulis pesan yang akan dikirim…"
+                        android:inputType="textMultiLine|textCapSentences"
+                        android:minLines="6"
+                        android:textColor="#212121"
+                        android:textColorHint="#616161"
+                        android:textSize="14sp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Tulis {nama} untuk menyisipkan nama pelanggan (kosong → &quot;Kak&quot;)."
+                            android:textColor="#455A64"
+                            android:textSize="11sp" />
+
+                        <TextView
+                            android:id="@+id/tvCounter"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:textColor="#455A64"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnSend"
+                        android:layout_width="match_parent"
+                        android:layout_height="56dp"
+                        android:layout_marginTop="14dp"
+                        android:layout_marginBottom="24dp"
+                        android:text="Kirim ke 0 Pelanggan"
+                        android:textAllCaps="false"
+                        android:textSize="15sp" />
+                </LinearLayout>
+            </LinearLayout>
+        </ScrollView>
+    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+</LinearLayout>
