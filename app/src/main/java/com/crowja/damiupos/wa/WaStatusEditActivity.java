@@ -59,6 +59,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Form tambah / ubah Status WhatsApp (Admin) — cermin form web /wa-status/create &amp; /edit: nama, perangkat/akun
@@ -117,8 +118,13 @@ public class WaStatusEditActivity extends AppCompatActivity {
     @Nullable private Picked newImage;
     private final List<Picked> newPhotos = new ArrayList<>();
     private final Set<String> removePaths = new HashSet<>();
-    /** Berkas lokal → token titipan server (dipakai ulang bila simpan pertama ditolak validasi). */
+    /** Berkas lokal → token titipan server (dipakai ulang bila simpan pertama ditolak validasi / tak terjawab). */
     private final Map<String, String> tokens = new HashMap<>();
+    /**
+     * Kunci idempotensi form ini (dibuat tiap form dimuat). "Posting sekarang" bisa lebih lama dari batas tunggu HP; bila
+     * balasan hilang lalu Simpan diketuk lagi, server menjawab hasil simpanan pertama — Status tak terposting dua kali.
+     */
+    private String clientKey = UUID.randomUUID().toString();
     private boolean closeTouched, closeAuto, suppressClose, saving;
 
     private static final class Picked {
@@ -196,6 +202,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
                 newImage = null;
                 newPhotos.clear();
                 removePaths.clear();
+                clientKey = UUID.randomUUID().toString();   // form baru (mis. dimuat ulang sesudah "Status berubah")
                 build();
                 tvState.setVisibility(View.GONE);
                 scroll.setVisibility(View.VISIBLE);
@@ -871,6 +878,9 @@ public class WaStatusEditActivity extends AppCompatActivity {
                 }
                 try {
                     got.add(prepare(u));
+                } catch (OutOfMemoryError e) {
+                    // Error (bukan Exception): tanpa ini thread latar ini mematikan aplikasi di HP bermemori kecil.
+                    err = "Foto terlalu besar untuk diproses di HP ini — pilih foto lain.";
                 } catch (Exception e) {
                     err = e.getMessage() != null ? e.getMessage() : "Foto tak bisa dibaca.";
                 }
@@ -923,7 +933,13 @@ public class WaStatusEditActivity extends AppCompatActivity {
         while (Math.max(o.outWidth, o.outHeight) / (sample * 2) >= MAX_SIDE) sample *= 2;
         BitmapFactory.Options d = new BitmapFactory.Options();
         d.inSampleSize = sample;
-        Bitmap bm = BitmapFactory.decodeFile(raw.getPath(), d);
+        Bitmap bm;
+        try {
+            bm = BitmapFactory.decodeFile(raw.getPath(), d);
+        } catch (OutOfMemoryError oom) {
+            d.inSampleSize = sample * 2;   // HP bermemori kecil: separuh resolusi (masih ≥ 1280 px sisi panjang)
+            bm = BitmapFactory.decodeFile(raw.getPath(), d);
+        }
         if (bm == null) {
             raw.delete();
             throw new IOException("Gambar tak bisa dibaca.");
@@ -1077,8 +1093,11 @@ public class WaStatusEditActivity extends AppCompatActivity {
     private void failed(Exception e) {
         String msg = WaAdmin.errorMessage(e);
         if (!(e instanceof SyncApi.SyncException)) {
-            tokens.clear();
-            alert("Gagal menyimpan", msg + "\n\nBila koneksi terputus saat menyimpan, periksa daftar Status dulu sebelum mencoba lagi.");
+            // Tak ada jawaban (putus / server masih memposting lebih lama dari batas tunggu HP): simpanan tadi mungkin sudah
+            // masuk. Kirim ulang aman — kunci form yang sama membuat server menjawab hasil simpanan itu, bukan memposting
+            // lagi; token foto disimpan karena kiriman ulang tak memakainya dua kali.
+            alert("Belum ada jawaban server", msg + "\n\nSimpanan tadi mungkin sudah masuk (posting bisa butuh waktu). Ketuk "
+                    + "simpan lagi untuk melihat hasilnya — Status tidak akan dibuat atau diposting dua kali.");
             return;
         }
         SyncApi.SyncException se = (SyncApi.SyncException) e;
@@ -1115,6 +1134,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
 
     private JSONObject body(String src, String when) throws Exception {
         JSONObject b = new JSONObject();
+        b.put("client_key", clientKey);
         b.put("name", etName.getText().toString().trim());
         b.put("source_type", src);
         b.put("when", when);

@@ -157,8 +157,8 @@ final class WaStatusUi {
                     bytes = readFile(new File(src));
                 }
                 if (bytes != null) bm = decodeSampled(bytes, sizePx);
-            } catch (Exception ignored) {
-                // gambar tak termuat → kotak kosong
+            } catch (Exception | OutOfMemoryError ignored) {
+                // gambar tak termuat → kotak kosong (OOM juga: Error di thread latar mematikan aplikasi)
             }
             final Bitmap fb = bm;
             MAIN.post(() -> {
