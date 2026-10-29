@@ -1,157 +1,220 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.coordinatorlayout.widget.CoordinatorLayout
+<!-- Daftar Pelanggan. Kepala (cari + chip filter + strip Baru/Diedit hari ini) dibuat RINGKAS dan ikut
+     tergulung hilang saat daftar digulir ke bawah, muncul lagi begitu digulir ke atas (scroll|enterAlways)
+     — toolbar tetap di tempat (di luar CoordinatorLayout) supaya mode pilih-banyak selalu terjangkau. -->
+<LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/grey_light">
+    android:background="@color/grey_light"
+    android:orientation="vertical">
 
-    <com.google.android.material.appbar.AppBarLayout
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbar"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content">
+        android:layout_height="?attr/actionBarSize"
+        android:background="@color/primary"
+        android:elevation="4dp"
+        android:titleTextColor="@color/white"
+        app:navigationIcon="@drawable/ic_arrow_back"
+        app:title="@string/pelanggan" />
 
-        <androidx.appcompat.widget.Toolbar
-            android:id="@+id/toolbar"
-            android:layout_width="match_parent"
-            android:layout_height="?attr/actionBarSize"
-            android:background="@color/primary"
-            android:titleTextColor="@color/white"
-            app:navigationIcon="@drawable/ic_arrow_back"
-            app:title="@string/pelanggan" />
-    </com.google.android.material.appbar.AppBarLayout>
-
-    <LinearLayout
+    <androidx.coordinatorlayout.widget.CoordinatorLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:orientation="vertical"
-        app:layout_behavior="@string/appbar_scrolling_view_behavior">
+        android:layout_height="0dp"
+        android:layout_weight="1">
 
-        <com.google.android.material.textfield.TextInputLayout
+        <com.google.android.material.appbar.AppBarLayout
+            android:id="@+id/appBarFilters"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_margin="16dp"
-            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-            app:boxCornerRadiusBottomEnd="12dp"
-            app:boxCornerRadiusBottomStart="12dp"
-            app:boxCornerRadiusTopEnd="12dp"
-            app:boxCornerRadiusTopStart="12dp"
-            app:startIconDrawable="@android:drawable/ic_menu_search">
+            android:background="@color/grey_light"
+            android:stateListAnimator="@null"
+            app:elevation="0dp"
+            app:liftOnScroll="false">
 
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/etSearch"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="@string/cari_pelanggan"
-                android:inputType="text"
-                android:maxLines="1" />
-        </com.google.android.material.textfield.TextInputLayout>
+                android:orientation="vertical"
+                android:paddingBottom="4dp"
+                app:layout_scrollFlags="scroll|enterAlways|snap">
 
-        <!-- Filter khusus karyawan marketing: default hanya pelanggan yang didaftarkan
-             HARI INI (visibility diatur dari CustomerListActivity). -->
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/cbHariIni"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
-            android:layout_marginTop="-8dp"
-            android:text="Hanya Pelanggan Hari Ini"
-            android:textSize="14sp"
-            android:visibility="gone" />
+                <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="16dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginEnd="16dp"
+                    app:boxBackgroundColor="@color/white"
+                    app:boxCornerRadiusBottomEnd="10dp"
+                    app:boxCornerRadiusBottomStart="10dp"
+                    app:boxCornerRadiusTopEnd="10dp"
+                    app:boxCornerRadiusTopStart="10dp"
+                    app:hintEnabled="false"
+                    app:startIconDrawable="@android:drawable/ic_menu_search">
 
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/cbSaya"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
-            android:layout_marginTop="-8dp"
-            android:text="Hanya Pelanggan Saya"
-            android:textSize="14sp" />
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etSearch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:hint="@string/cari_pelanggan"
+                        android:imeOptions="actionSearch"
+                        android:inputType="text"
+                        android:maxLines="1"
+                        android:paddingTop="10dp"
+                        android:paddingBottom="10dp"
+                        android:textSize="14sp" />
+                </com.google.android.material.textfield.TextInputLayout>
 
-        <!-- Filter: tampilkan hanya pelanggan BERMASALAH (issue aktif) untuk diperbaiki. -->
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/cbBermasalah"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
-            android:layout_marginTop="-8dp"
-            android:text="⚠️ Hanya Bermasalah"
-            android:textSize="14sp" />
+                <!-- Filter sebagai satu baris chip (dulu 2-4 baris centang + tombol tanggal selebar layar).
+                     Chip = CompoundButton: isChecked/setChecked/listener sama seperti MaterialCheckBox lama. -->
+                <HorizontalScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:clipToPadding="false"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:scrollbars="none">
 
-        <!-- Filter: hanya pelanggan yang WILAYAH-nya ditugaskan ke perangkat ini (peta persebaran). -->
-        <com.google.android.material.checkbox.MaterialCheckBox
-            android:id="@+id/cbWilayahSaya"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
-            android:layout_marginTop="-8dp"
-            android:visibility="gone"
-            android:text="🧭 Hanya Pelanggan Wilayah Saya"
-            android:textSize="14sp" />
+                    <com.google.android.material.chip.ChipGroup
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:chipSpacingHorizontal="6dp"
+                        app:singleLine="true">
 
-        <!-- Filter tanggal DITAMBAHKAN (created_at) — rentang tanggal pendaftaran pelanggan. -->
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnDateRange"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
-            android:layout_marginTop="4dp"
-            android:layout_marginBottom="4dp"
-            android:gravity="start|center_vertical"
-            android:text="Ditambahkan: Semua"
-            android:textAllCaps="false"
-            android:textSize="13sp"
-            app:icon="@android:drawable/ic_menu_my_calendar"
-            app:iconSize="18dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp" />
+                        <!-- Khusus karyawan marketing: default hanya pelanggan yang didaftarkan HARI INI
+                             (visibility diatur dari CustomerListActivity). -->
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/cbHariIni"
+                            style="@style/Widget.MaterialComponents.Chip.Filter"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="✨ Hari Ini"
+                            android:textColor="@color/cust_filter_chip_text"
+                            android:textSize="13sp"
+                            android:visibility="gone"
+                            app:checkedIconTint="@color/cust_filter_chip_text"
+                            app:chipBackgroundColor="@color/cust_filter_chip_bg"
+                            app:chipMinHeight="34dp"
+                            app:chipStrokeColor="@color/cust_filter_chip_stroke"
+                            app:chipStrokeWidth="1dp" />
 
-        <!-- Kartu "Baru / Diedit Hari Ini" (CustomerListActivity#renderTodayCards). -->
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/cbSaya"
+                            style="@style/Widget.MaterialComponents.Chip.Filter"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="📱 Pelanggan Saya"
+                            android:textColor="@color/cust_filter_chip_text"
+                            android:textSize="13sp"
+                            app:checkedIconTint="@color/cust_filter_chip_text"
+                            app:chipBackgroundColor="@color/cust_filter_chip_bg"
+                            app:chipMinHeight="34dp"
+                            app:chipStrokeColor="@color/cust_filter_chip_stroke"
+                            app:chipStrokeWidth="1dp" />
+
+                        <!-- Hanya pelanggan BERMASALAH (issue aktif) untuk diperbaiki. -->
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/cbBermasalah"
+                            style="@style/Widget.MaterialComponents.Chip.Filter"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="⚠️ Bermasalah"
+                            android:textColor="@color/cust_filter_chip_text"
+                            android:textSize="13sp"
+                            app:checkedIconTint="@color/cust_filter_chip_text"
+                            app:chipBackgroundColor="@color/cust_filter_chip_bg"
+                            app:chipMinHeight="34dp"
+                            app:chipStrokeColor="@color/cust_filter_chip_stroke"
+                            app:chipStrokeWidth="1dp" />
+
+                        <!-- Hanya pelanggan yang WILAYAH-nya ditugaskan ke perangkat ini (peta persebaran). -->
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/cbWilayahSaya"
+                            style="@style/Widget.MaterialComponents.Chip.Filter"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="🧭 Wilayah Saya"
+                            android:textColor="@color/cust_filter_chip_text"
+                            android:textSize="13sp"
+                            android:visibility="gone"
+                            app:checkedIconTint="@color/cust_filter_chip_text"
+                            app:chipBackgroundColor="@color/cust_filter_chip_bg"
+                            app:chipMinHeight="34dp"
+                            app:chipStrokeColor="@color/cust_filter_chip_stroke"
+                            app:chipStrokeWidth="1dp" />
+
+                        <!-- Filter tanggal DITAMBAHKAN (created_at). "Tercentang" = rentang aktif; status centang
+                             diatur kode (CustomerListActivity#renderDateChip), bukan oleh ketukan. -->
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/btnDateRange"
+                            style="@style/Widget.MaterialComponents.Chip.Filter"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="📅 Ditambahkan: Semua"
+                            android:textColor="@color/cust_filter_chip_text"
+                            android:textSize="13sp"
+                            app:checkedIconVisible="false"
+                            app:chipBackgroundColor="@color/cust_filter_chip_bg"
+                            app:chipMinHeight="34dp"
+                            app:chipStrokeColor="@color/cust_filter_chip_stroke"
+                            app:chipStrokeWidth="1dp" />
+                    </com.google.android.material.chip.ChipGroup>
+                </HorizontalScrollView>
+
+                <!-- Strip "Baru / Diedit hari ini" (CustomerListActivity#renderTodayCards). -->
+                <LinearLayout
+                    android:id="@+id/llTodayCards"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="16dp"
+                    android:layout_marginEnd="16dp"
+                    android:orientation="vertical"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </com.google.android.material.appbar.AppBarLayout>
+
         <LinearLayout
-            android:id="@+id/llTodayCards"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
+            android:layout_height="match_parent"
             android:orientation="vertical"
-            android:visibility="gone" />
+            app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/rvCustomers"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:clipToPadding="false"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
-            android:paddingBottom="80dp" />
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvCustomers"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:clipToPadding="false"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="80dp" />
 
-        <TextView
-            android:id="@+id/tvEmpty"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:gravity="center"
-            android:text="@string/belum_ada_pelanggan"
-            android:textColor="@color/grey_medium"
-            android:textSize="16sp"
-            android:visibility="gone" />
-    </LinearLayout>
+            <TextView
+                android:id="@+id/tvEmpty"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/belum_ada_pelanggan"
+                android:textColor="@color/grey_medium"
+                android:textSize="16sp"
+                android:visibility="gone" />
+        </LinearLayout>
 
-    <com.google.android.material.floatingactionbutton.FloatingActionButton
-        android:id="@+id/fabAdd"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|end"
-        android:layout_margin="16dp"
-        android:contentDescription="@string/tambah_pelanggan"
-        android:src="@android:drawable/ic_input_add"
-        app:tint="@color/white"
-        app:backgroundTint="@color/primary" />
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/fabAdd"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="16dp"
+            android:contentDescription="@string/tambah_pelanggan"
+            android:src="@android:drawable/ic_input_add"
+            app:backgroundTint="@color/primary"
+            app:tint="@color/white" />
 
-</androidx.coordinatorlayout.widget.CoordinatorLayout>
+    </androidx.coordinatorlayout.widget.CoordinatorLayout>
+</LinearLayout>

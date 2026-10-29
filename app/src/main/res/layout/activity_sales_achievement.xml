@@ -42,15 +42,29 @@
         android:paddingEnd="8dp"
         android:paddingBottom="8dp">
 
-        <TextView
+        <!-- Dropdown "Pilih Periode Cut-off": teksnya = rentang aktif + ▾; ketuk → daftar periode
+             cut-off dari server (SalesAchievementActivity#showCutoffPicker). -->
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/tvRange"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:ellipsize="end"
+            android:contentDescription="Pilih periode cut-off"
+            android:gravity="start|center_vertical"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
             android:maxLines="2"
-            android:textColor="@color/text_secondary"
-            android:textSize="12sp" />
+            android:minHeight="0dp"
+            android:paddingStart="10dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="6dp"
+            android:text="🗓 Periode  ▾"
+            android:textAllCaps="false"
+            android:textColor="#1E293B"
+            android:textSize="12sp"
+            app:strokeColor="#94A3B8" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnDevices"

@@ -678,14 +678,21 @@ public class SyncApi {
      * @param devices uuid perangkat dipisah koma; KOSONG = semua perangkat
      */
     public JSONObject salesAchievement(String preset, String start, String end, String devices) throws Exception {
-        okhttp3.HttpUrl built = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/sales/achievement")
+        return salesAchievement(preset, start, end, devices, null);
+    }
+
+    /** @param month periode cut-off pilihan dropdown ("YYYY-MM", nilai {@code cutoff_options} dari server);
+     *               null = pakai preset. Server memeriksanya SEBELUM preset (cermin "Pilih Bulan" web). */
+    public JSONObject salesAchievement(String preset, String start, String end, String devices,
+                                       String month) throws Exception {
+        okhttp3.HttpUrl.Builder hb = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/sales/achievement")
                 .newBuilder()
                 .addQueryParameter("preset", preset != null ? preset : "")
                 .addQueryParameter("start", start != null ? start : "")
                 .addQueryParameter("end", end != null ? end : "")
-                .addQueryParameter("devices", devices != null ? devices : "")
-                .build();
-        return get(built.toString(), cfg.getToken());
+                .addQueryParameter("devices", devices != null ? devices : "");
+        if (month != null && !month.isEmpty()) hb.addQueryParameter("month", month);
+        return get(hb.build().toString(), cfg.getToken());
     }
 
     /**
