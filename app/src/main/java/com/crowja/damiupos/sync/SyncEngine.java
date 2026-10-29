@@ -201,6 +201,9 @@ public class SyncEngine {
                     // menolak nilai ini dari push HP, jadi praktis pull-only walau ikut dataCols.
                     DatabaseHelper.COL_DELIVERY_PRIORITY_AT, DatabaseHelper.COL_DELIVERY_PRIORITY_REASON,
                     DatabaseHelper.COL_DELIVERY_PRIORITY_BY, DatabaseHelper.COL_DELIVERY_PRIORITY_LEVEL,
+                    // ⏰ Batas Antar + jam berangkat paling lambat — dihitung server (DeliveryDeadlines),
+                    // di-skip fillColumns saat push, jadi pull-only walau ikut dataCols.
+                    DatabaseHelper.COL_DELIVERY_DUE_AT, DatabaseHelper.COL_DELIVERY_DEPART_BY,
                     // "Pesanan Terbuka" (lelang) — server-authoritative (distempel storePending/
                     // resumeDueTertunda di web), pull-only walau ikut dataCols sama seperti prioritas.
                     DatabaseHelper.COL_DELIVERY_OPEN_DISPATCH_AT,
@@ -1234,6 +1237,7 @@ public class SyncEngine {
     private static final String K_REPULL_PRIORITY_LEVEL_V103 = "sync_repull_priority_level_v103";
     private static final String K_REPULL_AFFILIATE_PRICES_V104 = "sync_repull_affiliate_prices_v104";
     private static final String K_REPULL_GALON_TYPE_V105 = "sync_repull_galon_type_v105";
+    private static final String K_REPULL_DEADLINE_V106 = "sync_repull_deadline_v106";
 
     private int pull() throws Exception {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
@@ -1305,6 +1309,14 @@ public class SyncEngine {
             String back = SyncSettings.trxLookbackCursor(cfg.getCursor("transactions"), 7 * 24);
             if (back != null) cfg.setCursor("transactions", back);
             settingsDao.set(K_REPULL_GALON_TYPE_V105, "1");
+        }
+
+        // DB v106 (⏰ batas antar + jam berangkat paling lambat), SEKALI: APK lama membuang kolom
+        // delivery_due_at/delivery_depart_by dari pull. Mundurkan kursor transaksi 7 hari (pola v103).
+        if (!"1".equals(settingsDao.get(K_REPULL_DEADLINE_V106, "0"))) {
+            String back = SyncSettings.trxLookbackCursor(cfg.getCursor("transactions"), 7 * 24);
+            if (back != null) cfg.setCursor("transactions", back);
+            settingsDao.set(K_REPULL_DEADLINE_V106, "1");
         }
 
         int applied = 0;

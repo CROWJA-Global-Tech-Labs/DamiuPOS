@@ -4,6 +4,7 @@ import android.content.ContentValues;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 
+import com.crowja.damiupos.DeliveryPlanner;
 import com.crowja.damiupos.model.Attendance;
 import com.crowja.damiupos.model.Transaction;
 import com.crowja.damiupos.util.ReceiptNo;
@@ -722,6 +723,20 @@ public class TransactionDao {
     public List<Transaction> getDeliveryQueue() {
         List<Transaction> list = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
+        // ⏰ BATAS ANTAR AKTIF (cermin DeliveryPlanner.deadlineActive & Reports di web): bukan AMBIL GALON,
+        // batasnya HARI INI (tanggal lokal — server bisa mengirim ISO-UTC "…Z"), dan level ⚡ > 0
+        // (staf ⚡ Batal / turun ke 0 = keluar dari urutan batas antar, sama aturan TOP).
+        String dueLocal = Ts.localExpr("t." + DatabaseHelper.COL_DELIVERY_DUE_AT);
+        String dlActive = "COALESCE(t." + DatabaseHelper.COL_TYPE + ",'') <> '" + Transaction.TYPE_KEMBALI
+                + "' AND COALESCE(t." + DatabaseHelper.COL_DELIVERY_PRIORITY_LEVEL + ",0) > 0"
+                + " AND COALESCE(t." + DatabaseHelper.COL_DELIVERY_DUE_AT + ",'') <> ''"
+                + " AND date(" + dueLocal + ") = date('now','localtime')";
+        // Peringkat = jam berangkat paling lambat (lokal); belum dihitung server → batas − 35 menit
+        // (DL_DEFAULT_TRAVEL_MIN + DL_SERVICE_MIN + DL_BUFFER_MIN). Kecil = paling mendesak.
+        String dlRank = "COALESCE(NULLIF(" + Ts.localExpr("t." + DatabaseHelper.COL_DELIVERY_DEPART_BY)
+                + ",''), datetime(" + dueLocal + ",'-"
+                + (DeliveryPlanner.DL_DEFAULT_TRAVEL_MIN + DeliveryPlanner.DL_SERVICE_MIN
+                        + DeliveryPlanner.DL_BUFFER_MIN) + " minutes'))";
         String sql = "SELECT t.*, c." + DatabaseHelper.COL_NAME + " AS cust_name, "
                 + "c." + DatabaseHelper.COL_PHONE + " AS cust_phone, "
                 + "c." + DatabaseHelper.COL_ADDRESS + " AS cust_addr, "
@@ -741,7 +756,11 @@ public class TransactionDao {
                 + ") THEN 1 ELSE 0 END) AS cust_priority, "
                 // ⚡ Prioritas PENGIRIMAN ini saja (ditandai operator web) — turunan untuk ORDER BY.
                 + "(CASE WHEN t." + DatabaseHelper.COL_DELIVERY_PRIORITY_AT + " IS NOT NULL AND t."
-                + DatabaseHelper.COL_DELIVERY_PRIORITY_AT + " <> '' THEN 1 ELSE 0 END) AS ord_priority "
+                + DatabaseHelper.COL_DELIVERY_PRIORITY_AT + " <> '' THEN 1 ELSE 0 END) AS ord_priority, "
+                // ⏰ Batas antar aktif + peringkatnya (NULL bila tak aktif → tak mengganggu kunci lain).
+                + "(CASE WHEN " + dlActive + " THEN 1 ELSE 0 END) AS dl_active, "
+                + "(CASE WHEN " + dlActive + " THEN " + dlRank + " END) AS dl_rank, "
+                + "(CASE WHEN " + dlActive + " THEN " + dueLocal + " END) AS dl_due "
                 + "FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t "
                 + "LEFT JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c ON c."
                 + DatabaseHelper.COL_ID + " = t." + DatabaseHelper.COL_CUSTOMER_ID + " "
@@ -765,13 +784,15 @@ public class TransactionDao {
                 // Urutan antrian = PERSIS Reports::deliveryList di web (owner 2026-10-15: "yang benar
                 // urutan web"), dari kunci terkuat:
                 //  1) order "AMBIL GALON SAJA" (transaksi KEMBALI dijemput kurir) SELALU paling bawah;
-                //  2) ⭐ pelanggan prioritas — sengaja DI ATAS ⚡ (keputusan owner 2026-07-27);
-                //  3) ⚡ LEVEL prioritas order ("PRIORITAS ×N"), terbesar dulu (ord_priority hanya
+                //  2) ⏰ BATAS ANTAR aktif hari ini, jam berangkat paling lambat terdekat dulu (lalu
+                //     batasnya) — owner 2026-10-29 (kasus "Ayam Geprek Sawahan"), di atas ⭐ & ⚡;
+                //  3) ⭐ pelanggan prioritas — sengaja DI ATAS ⚡ (keputusan owner 2026-07-27);
+                //  4) ⚡ LEVEL prioritas order ("PRIORITAS ×N"), terbesar dulu (ord_priority hanya
                 //     cadangan selama level baris lama belum tertarik dari server);
-                //  4) di dalam tiap grup, FIFO (delivery_queued_at). Tanpa jarak GPS & tanpa kunci
+                //  5) di dalam tiap grup, FIFO (delivery_queued_at). Tanpa jarak GPS & tanpa kunci
                 //     "terlambat" — web tak memakainya, jadi HP pun tidak.
                 + "ORDER BY (CASE WHEN t." + DatabaseHelper.COL_TYPE + "='" + Transaction.TYPE_KEMBALI
-                + "' THEN 1 ELSE 0 END) ASC, cust_priority DESC, COALESCE(t."
+                + "' THEN 1 ELSE 0 END) ASC, dl_active DESC, dl_rank ASC, dl_due ASC, cust_priority DESC, COALESCE(t."
                 + DatabaseHelper.COL_DELIVERY_PRIORITY_LEVEL + ",0) DESC, ord_priority DESC, "
                 + Ts.localExpr("t." + DatabaseHelper.COL_DELIVERY_QUEUED_AT) + " ASC, t."
                 + DatabaseHelper.COL_TRX_ID + " ASC";
@@ -838,6 +859,9 @@ public class TransactionDao {
                 t.setPriorityLevel((int) getLong(c, DatabaseHelper.COL_DELIVERY_PRIORITY_LEVEL));
                 t.setOrderPriorityReason(getStr(c, DatabaseHelper.COL_DELIVERY_PRIORITY_REASON));
                 t.setOrderPriorityBy(getStr(c, DatabaseHelper.COL_DELIVERY_PRIORITY_BY));
+                // ⏰ Batas Antar + jam berangkat paling lambat (server-authoritative, apa adanya).
+                t.setDeliveryDueAt(getStr(c, DatabaseHelper.COL_DELIVERY_DUE_AT));
+                t.setDeliveryDepartBy(getStr(c, DatabaseHelper.COL_DELIVERY_DEPART_BY));
                 // Data pelanggan tujuan belum lengkap (foto ATAU koordinat) → kartu antrian ditandai ❗
                 // + berkedip. Umum / tanpa customer_id dikecualikan (memang tak berkoordinat/foto).
                 String custPhoto = getStr(c, "cust_photo");

@@ -4518,7 +4518,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             SyncSettings cfg = this.syncCfg();
             int maxLoad = cfg.getMaxLoad();
             double[] depot = branchCenter(cfg);
-            List<DeliveryPlanner.Trip> trips = DeliveryPlanner.plan(planned, maxLoad, depot[0], depot[1], 0);
+            long now = System.currentTimeMillis();
+            List<DeliveryPlanner.Trip> trips = DeliveryPlanner.plan(planned, maxLoad, depot[0], depot[1], 0, now);
             if (trips.isEmpty()) {
                card.setVisibility(8);
                this.stopStrategyBlink();
@@ -4538,6 +4539,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                } else if (first.overflow) {
                   muat = muat + "\n⚠️ Order ini sendiri melebihi muatan max.";
                }
+               muat = muat + deadlineRiskLines(trips, depot, now);
 
                ((TextView)this.findViewById(id.tvStrategySummary)).setText(muat);
                this.bindStrategyItemBadges(first);
@@ -5206,6 +5208,28 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return total;
    }
 
+   /**
+    * Baris peringatan ⏰ di ringkasan Strategi Pengiriman: rit 1 = rit terakhir yang aman untuk order
+    * ber-batas antar, atau order diperkirakan terlambat di ritnya — {@link DeliveryPlanner#deadlineRisks}
+    * dengan rit 1 berangkat setelah muat (sekarang + DL_LOAD_MIN). Kosong bila semua aman.
+    */
+   private static String deadlineRiskLines(List<DeliveryPlanner.Trip> trips, double[] depot, long now) {
+      StringBuilder sb = new StringBuilder();
+      long firstDepart = now + DeliveryPlanner.DL_LOAD_MIN * 60000L;
+      for (DeliveryPlanner.DeadlineRisk r : DeliveryPlanner.deadlineRisks(trips, depot[0], depot[1], firstDepart, now)) {
+         String name = safe(r.order.getCustomerName());
+         String due = hmMillis(r.dueMs);
+         if (DeliveryPlanner.RISK_LATE.equals(r.status)) {
+            sb.append("\n⚠️ ").append(name).append(" (batas ").append(due).append(") di rit ").append(r.trip)
+                  .append(" diperkirakan terlambat — bawa lebih awal.");
+         } else if (DeliveryPlanner.RISK_LAST_SAFE.equals(r.status) && r.trip == 1) {
+            sb.append("\n⏰ Rit 1 rit terakhir yang aman untuk ").append(name).append(" (batas ").append(due)
+                  .append(") — muat sekarang.");
+         }
+      }
+      return sb.toString();
+   }
+
    /** Baris badge rincian item rit berikutnya di kartu Strategi Pengiriman ("MIN ×10  BIO ×2"). */
    private void bindStrategyItemBadges(DeliveryPlanner.Trip trip) {
       View scroll = this.findViewById(id.strategyItemBadgesScroll);
@@ -5243,7 +5267,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
          TextView name = new TextView(this);
          name.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
-         name.setText((n + 1) + ". " + (DeliveryPlanner.isPriority(s) ? "⚡ " : "") + safe(s.getCustomerName())
+         name.setText((n + 1) + ". " + stopPrefix(s) + safe(s.getCustomerName())
                + (DeliveryPlanner.hasGeo(s) ? "" : " 📍❌"));
          name.setTextColor(textColor);
          name.setTextSize(13f);
@@ -5286,6 +5310,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return sb.toString();
    }
 
+   /** Awalan nama di daftar pemberhentian rit: "⏰10:00 " untuk order ber-Batas Antar aktif (menggantikan
+    *  "⚡ " — order itu memang selalu ⚡ juga), "⚡ " untuk prioritas lain, kosong untuk order biasa. */
+   private static String stopPrefix(Transaction s) {
+      if (DeliveryPlanner.deadlineActive(s, System.currentTimeMillis())) return "⏰" + Ts.hm(s.getDeliveryDueAt()) + " ";
+      return DeliveryPlanner.isPriority(s) ? "⚡ " : "";
+   }
+
    private String tripLines(DeliveryPlanner.Trip t, int max) {
       StringBuilder sb = new StringBuilder();
       int n = 0;
@@ -5300,7 +5331,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             sb.append('\n');
          }
 
-         sb.append(n + 1).append(". ").append(DeliveryPlanner.isPriority(s) ? "⚡ " : "").append(safe(s.getCustomerName())).append(DeliveryPlanner.hasGeo(s) ? "" : " \ud83d\udccd❌").append(" · ").append(DeliveryPlanner.isPickupOnly(s) ? "↩ ambil " : "").append(s.getJumlahGalon()).append(" gal");
+         sb.append(n + 1).append(". ").append(stopPrefix(s)).append(safe(s.getCustomerName())).append(DeliveryPlanner.hasGeo(s) ? "" : " \ud83d\udccd❌").append(" · ").append(DeliveryPlanner.isPickupOnly(s) ? "↩ ambil " : "").append(s.getJumlahGalon()).append(" gal");
          ++n;
       }
 
@@ -5532,6 +5563,36 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       box.setVisibility(View.VISIBLE);
    }
 
+   /** ⏰ Badge batas antar: merah bila ≤10 menit lagi (atau sudah lewat) jam berangkat paling lambat,
+    *  else kuning tua. Teks putih lewat chipTextColor — kontras ≥4,5:1 untuk keduanya. */
+   private static final int DEADLINE_CHIP_BG = 0xFF92400E;
+   private static final int DEADLINE_CHIP_URGENT_BG = 0xFFB71C1C;
+
+   /**
+    * Kapsul "⏰ 10:00 · brkt ≤09:31" kartu Antrian Saya bila order ber-Batas Antar aktif, else GONE (tiap
+    * bind menyetel visibilitas → aman untuk kartu daur ulang, juga saat tripSlugs kosong). Barisnya
+    * SENDIRI (tvDeadline), bukan chip di belakang kapsul produk: baris chip satu baris tanpa gulir, jadi
+    * chip paling belakang dipotong "…" — justru jam berangkatnya yang hilang.
+    */
+   private void bindDeadlineBadge(TextView tv, Transaction t) {
+      long now = System.currentTimeMillis();
+      if (!DeliveryPlanner.deadlineActive(t, now)) {
+         tv.setVisibility(View.GONE);
+         return;
+      }
+      long by = DeliveryPlanner.deadlineRankMillis(t);
+      int bg = now >= by - 10 * 60000L ? DEADLINE_CHIP_URGENT_BG : DEADLINE_CHIP_BG;
+      tv.setText("⏰ " + Ts.hm(t.getDeliveryDueAt()) + " · brkt ≤" + hmMillis(by));
+      tv.setTextColor(chipTextColor(bg));
+      tv.setBackgroundTintList(android.content.res.ColorStateList.valueOf(bg));
+      tv.setVisibility(View.VISIBLE);
+   }
+
+   /** Epoch ms → "HH:mm" waktu lokal. */
+   private static String hmMillis(long ms) {
+      return new SimpleDateFormat("HH:mm", Locale.US).format(new Date(ms));
+   }
+
    private void bindProductChips(LinearLayout box, Transaction t) {
       this.bindProductChipsBase(box, t);
       if (this.tripSlugs.isEmpty()) return;
@@ -5552,6 +5613,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                ++hidden;
             } else {
                TextView chip = this.chipAt(box, shown);
+               chip.setTag(null);   // bekas chip trip kartu daur ulang → jangan ikut disembunyikan appendTripChip
                int bg = (Integer) r[3];
                chip.setText(typedChipText(r, assumed));
                chip.setEllipsize(chip.getText() instanceof android.text.Spanned ? null : TruncateAt.END);
@@ -5564,6 +5626,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
          if (hidden > 0) {
             TextView more = this.chipAt(box, shown);
+            more.setTag(null);
             int bg = -6511697;
             more.setText("+" + hidden);
             more.setTextColor(chipTextColor(bg));
@@ -5743,7 +5806,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          row.setPadding(0, this.dp(3.0F), 0, this.dp(3.0F));
          TextView name = new TextView(this);
          name.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1.0F));
-         name.setText((i + 1) + ". " + (DeliveryPlanner.isPriority(t) ? "⚡ " : "") + safe(t.getCustomerName())
+         name.setText((i + 1) + ". " + stopPrefix(t) + safe(t.getCustomerName())
                + " (" + (isPickupOnly(t) ? "↩ ambil " : "") + t.getJumlahGalon() + " galon)");
          name.setTextSize(14.0F);
          name.setTextColor(textColor);
@@ -5782,7 +5845,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             sb.append('\n');
          }
 
-         sb.append(i + 1).append(". ").append(DeliveryPlanner.isPriority(s) ? "⚡ " : "").append(safe(s.getCustomerName())).append(" · ").append(isPickupOnly(s) ? "↩ ambil " : "").append(s.getJumlahGalon()).append(" gal");
+         sb.append(i + 1).append(". ").append(stopPrefix(s)).append(safe(s.getCustomerName())).append(" · ").append(isPickupOnly(s) ? "↩ ambil " : "").append(s.getJumlahGalon()).append(" gal");
       }
 
       return sb.toString();
@@ -6079,6 +6142,69 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * alarm; sisanya jalan. Tanpa sinyal / server gagal → jalan seperti biasa (tak menghalangi kerja).
     */
    private void doStartRuns(List<Transaction> list) {
+      if (list == null || list.isEmpty()) return;
+      // ⏰ Batas Antar: order lain yang HARUS ikut rit ini (kalau menunggu rit berikutnya terlambat) →
+      // tanya dulu. Kurir terpandu tak pernah ditahan dialog (rit 1 dimulai otomatis tiap render).
+      if (!this.guidedMode && this.warnDeadlinesBeforeRun(list)) return;
+      this.doStartRunsChecked(list);
+   }
+
+   /**
+    * Peringatan sebelum ▶ Jalankan (kasus "Ayam Geprek Sawahan" 2026-10-29: rit berangkat masih sisa slot,
+    * order ber-batas 10:00 tertinggal). Kandidat = order ber-Batas Antar aktif di Antrian Saya yang TIDAK
+    * ikut rit ini (bukan yang sedang diantar, bukan Pesanan Terbuka) dan jam berangkat paling lambatnya
+    * sebelum rit berikutnya bisa berangkat (sekarang + lama rit ini + muat). "BAWA SEKALIAN" langsung
+    * lanjut tanpa peringatan kedua; "Batal" membatalkan navigasi otomatis seperti jalur batal lain.
+    *
+    * @return true bila dialog ditampilkan (pemanggil berhenti; tombol dialog yang melanjutkan)
+    */
+   private boolean warnDeadlinesBeforeRun(List<Transaction> list) {
+      if (this.adapter == null || this.adapter.data == null) return false;
+      long now = System.currentTimeMillis();
+      double[] depot = branchCenter(this.syncCfg());
+      // Menit pecahan & rit berikutnya dibulatkan ke detik — rumus yang sama dengan deadlineRisks/web.
+      long back = now + Math.round(DeliveryPlanner.tripMinutes(list, depot[0], depot[1]) * 60.0) * 1000L;
+      long nextDepart = DeliveryPlanner.nextDepartMillis(now, list, depot[0], depot[1]);
+      // "▶ Jalankan & Navigasi" (offerNextRit) menstempel navAfterStartAt; doStartRunsNow hanya menavigasi
+      // bila stempel itu < 60 dtk. Dialog ini menunggu kurir (bisa sambil memuat galon tambahan) → stempel
+      // diperbarui saat ia melanjutkan, supaya navigasi yang diminta tak hilang diam-diam.
+      final boolean nav = this.navAfterStartAt != 0L && now - this.navAfterStartAt < 60000L;
+      HashSet<Long> inRun = new HashSet<>();
+      for (Transaction t : list) if (t != null) inRun.add(t.getId());
+      List<Transaction> cands = new ArrayList<>();
+      StringBuilder lines = new StringBuilder();
+      for (Transaction t : this.adapter.data) {
+         if (t == null || inRun.contains(t.getId()) || this.runningIds.contains(t.getId())
+               || t.isOpenDispatch() || t.hasPendingVoidRequest()) continue;
+         if (!DeliveryPlanner.deadlineActive(t, now)) continue;
+         long by = DeliveryPlanner.deadlineRankMillis(t);
+         if (by >= nextDepart) continue;
+         cands.add(t);
+         lines.append("• ").append(safe(t.getCustomerName())).append(" — batas ").append(Ts.hm(t.getDeliveryDueAt()))
+               .append(", berangkat paling lambat ").append(hmMillis(by)).append('\n');
+      }
+      if (cands.isEmpty()) return false;
+      List<Transaction> withDeadlines = new ArrayList<>(list);
+      withDeadlines.addAll(cands);
+      (new AlertDialog.Builder(this)).setCancelable(false).setIcon(17301543)
+            .setTitle("⏰ Batas Antar")
+            .setMessage(lines + "\nRit ini diperkirakan kembali ±" + hmMillis(back)
+                  + ". Kalau tidak dibawa sekarang, pesanan di atas terlambat.")
+            .setPositiveButton("BAWA SEKALIAN (" + cands.size() + ")", (d, w) -> {
+               if (nav) this.navAfterStartAt = System.currentTimeMillis();
+               this.doStartRunsChecked(withDeadlines);
+            })
+            .setNeutralButton("Jalankan tanpa", (d, w) -> {
+               if (nav) this.navAfterStartAt = System.currentTimeMillis();
+               this.doStartRunsChecked(list);
+            })
+            .setNegativeButton("Batal", (d, w) -> this.navAfterStartAt = 0L)
+            .show();
+      return true;
+   }
+
+   /** Lanjutan {@link #doStartRuns} setelah peringatan batas antar: cek status order di server, lalu jalan. */
+   private void doStartRunsChecked(List<Transaction> list) {
       if (list == null || list.isEmpty()) return;
       SyncSettings cfg = this.syncCfg();
       final Map<String, Transaction> byUuid = new LinkedHashMap<>();
@@ -13715,6 +13841,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             h.tvPriorityBig.setVisibility(8);
             h.tvPriorityBig.clearAnimation();
             h.tvPriorityBig.setAlpha(1.0F);
+            h.tvDeadline.setVisibility(8);
             h.tvNoFoto.setVisibility(8);
             h.tvNoLokasi.setVisibility(8);
             // Kartu VOID DIAJUKAN sengaja minimal (meta/umur juga disembunyikan) — dan holder daur
@@ -13764,6 +13891,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             meta.append(DeliveryQueueActivity.orderedSuffix(t) + sourceWaSuffix(t.getSourceWa()));
             h.tvMeta.setText(meta.toString());
             DeliveryQueueActivity.this.bindProductChips(h.productChips, t);
+            DeliveryQueueActivity.this.bindDeadlineBadge(h.tvDeadline, t);   // ⏰ batas antar, baris sendiri
             h.tvOngkir.setVisibility(t.getOngkir() > (double)0.0F ? 0 : 8);
             DeliveryQueueActivity.bindPickupOnlyBadge(h.tvPickupOnly, DeliveryQueueActivity.isPickupOnly(t));
             Customer cust = t.getCustomerId() > 0L ? DeliveryQueueActivity.this.customerDao.getById(t.getCustomerId()) : null;
@@ -13896,6 +14024,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          int blinkColor;
          TextView tvCustomer;
          TextView tvPriorityBig;
+         TextView tvDeadline;
          TextView tvMeta;
          TextView tvNoFoto;
          TextView tvNoLokasi;
@@ -13916,6 +14045,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.card = (MaterialCardView)v.findViewById(id.card);
             this.tvCustomer = (TextView)v.findViewById(id.tvCustomer);
             this.tvPriorityBig = (TextView)v.findViewById(id.tvPriorityBig);
+            this.tvDeadline = (TextView)v.findViewById(id.tvDeadline);
             this.tvMeta = (TextView)v.findViewById(id.tvMeta);
             this.tvNoFoto = (TextView)v.findViewById(id.tvNoFoto);
             this.tvNoLokasi = (TextView)v.findViewById(id.tvNoLokasi);
