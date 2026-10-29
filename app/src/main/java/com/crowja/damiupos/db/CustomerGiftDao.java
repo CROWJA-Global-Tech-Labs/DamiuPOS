@@ -126,6 +126,110 @@ public class CustomerGiftDao {
         return sb.append(')').toString();
     }
 
+    /** Satu baris gift untuk kelola (CRUD) di Detail Pelanggan — termasuk yang sudah diberikan. */
+    public static final class Row {
+        public long localId;
+        public String itemType, productUuid, itemName, reason, redeemedAt, redeemedBy, createdAt;
+        public int qty;
+
+        public boolean given() {
+            return redeemedAt != null && !redeemedAt.isEmpty();
+        }
+    }
+
+    /** Semua gift orang ini (lintas salinan), terbaru dulu. */
+    public List<Row> listForCustomer(long customerLocalId) {
+        List<Row> out = new ArrayList<>();
+        if (customerLocalId <= 0) return out;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        try (Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMER_GIFTS, new String[]{
+                        DatabaseHelper.COL_ID, DatabaseHelper.COL_GIFT_ITEM_TYPE, DatabaseHelper.COL_GIFT_PRODUCT_UUID,
+                        DatabaseHelper.COL_GIFT_ITEM_NAME, DatabaseHelper.COL_GIFT_QTY, DatabaseHelper.COL_GIFT_REASON,
+                        DatabaseHelper.COL_GIFT_REDEEMED_AT, DatabaseHelper.COL_GIFT_REDEEMED_BY, DatabaseHelper.COL_CREATED_AT},
+                inClause(personCustomerIds(db, customerLocalId)), null, null, null,
+                DatabaseHelper.COL_CREATED_AT + " DESC")) {
+            while (c.moveToNext()) {
+                Row r = new Row();
+                r.localId = c.getLong(0);
+                r.itemType = c.getString(1);
+                r.productUuid = c.getString(2);
+                r.itemName = c.getString(3);
+                r.qty = c.getInt(4);
+                r.reason = c.getString(5);
+                r.redeemedAt = c.getString(6);
+                r.redeemedBy = c.getString(7);
+                r.createdAt = c.getString(8);
+                out.add(r);
+            }
+        }
+        return out;
+    }
+
+    private static ContentValues giftValues(String itemType, String productUuid, String itemName, int qty, String reason) {
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_GIFT_ITEM_TYPE, "product".equals(itemType) ? "product" : "custom");
+        if ("product".equals(itemType)) v.put(DatabaseHelper.COL_GIFT_PRODUCT_UUID, productUuid);
+        else v.putNull(DatabaseHelper.COL_GIFT_PRODUCT_UUID);
+        v.put(DatabaseHelper.COL_GIFT_ITEM_NAME, itemName);
+        v.put(DatabaseHelper.COL_GIFT_QTY, Math.max(1, qty));
+        if (reason == null || reason.trim().isEmpty()) v.putNull(DatabaseHelper.COL_GIFT_REASON);
+        else v.put(DatabaseHelper.COL_GIFT_REASON, reason.trim());
+        return v;
+    }
+
+    /** Gift baru dari HP (admin) — di-push ke server lewat sync (branch-wide). */
+    public long create(long customerLocalId, String itemType, String productUuid, String itemName, int qty, String reason) {
+        String now = DatabaseHelper.nowIso();
+        ContentValues v = giftValues(itemType, productUuid, itemName, qty, reason);
+        v.put(DatabaseHelper.COL_GIFT_CUSTOMER_ID, customerLocalId);
+        v.put(DatabaseHelper.COL_CREATED_AT, now);
+        v.put(DatabaseHelper.COL_EDITED_AT, now);
+        v.put(DatabaseHelper.COL_SYNC_UUID, java.util.UUID.randomUUID().toString());
+        v.put(DatabaseHelper.COL_SYNCED, 0);
+        return dbHelper.getWritableDatabase().insert(DatabaseHelper.TABLE_CUSTOMER_GIFTS, null, v);
+    }
+
+    /** Ubah gift yang BELUM diberikan (cermin web: gift yang sudah diberikan tak bisa diubah). */
+    public boolean update(long giftLocalId, String itemType, String productUuid, String itemName, int qty, String reason) {
+        ContentValues v = giftValues(itemType, productUuid, itemName, qty, reason);
+        v.put(DatabaseHelper.COL_EDITED_AT, DatabaseHelper.nowIso());
+        v.put(DatabaseHelper.COL_SYNCED, 0);
+        return dbHelper.getWritableDatabase().update(DatabaseHelper.TABLE_CUSTOMER_GIFTS, v,
+                DatabaseHelper.COL_ID + "=? AND " + REDEEMED_EMPTY, new String[]{String.valueOf(giftLocalId)}) > 0;
+    }
+
+    /** Tandai sudah diberikan di luar transaksi (cermin web "Sudah Diberikan": tanpa struk). */
+    public boolean markGiven(long giftLocalId, String byName) {
+        String now = DatabaseHelper.nowIso();
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_GIFT_REDEEMED_AT, now);
+        v.put(DatabaseHelper.COL_GIFT_REDEEMED_BY, byName);
+        v.put(DatabaseHelper.COL_EDITED_AT, now);
+        v.put(DatabaseHelper.COL_SYNCED, 0);
+        return dbHelper.getWritableDatabase().update(DatabaseHelper.TABLE_CUSTOMER_GIFTS, v,
+                DatabaseHelper.COL_ID + "=? AND " + REDEEMED_EMPTY, new String[]{String.valueOf(giftLocalId)}) > 0;
+    }
+
+    /** Hapus gift + tombstone agar server & HP lain ikut menghapus. */
+    public boolean delete(long giftLocalId, String byName) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        String su = null;
+        try (Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMER_GIFTS, new String[]{DatabaseHelper.COL_SYNC_UUID},
+                DatabaseHelper.COL_ID + "=?", new String[]{String.valueOf(giftLocalId)}, null, null, null)) {
+            if (c.moveToFirst()) su = c.getString(0);
+        }
+        db.beginTransaction();
+        try {
+            int n = db.delete(DatabaseHelper.TABLE_CUSTOMER_GIFTS, DatabaseHelper.COL_ID + "=?",
+                    new String[]{String.valueOf(giftLocalId)});
+            if (n > 0 && su != null) dbHelper.insertTombstone(db, "customer_gifts", su, byName, null);
+            db.setTransactionSuccessful();
+            return n > 0;
+        } finally {
+            db.endTransaction();
+        }
+    }
+
     /** Gift yang masih pending (belum diberikan) untuk pelanggan ini (lintas salinan), urut waktu dibuat. */
     public List<Gift> pendingForCustomer(long customerLocalId) {
         List<Gift> out = new ArrayList<>();
