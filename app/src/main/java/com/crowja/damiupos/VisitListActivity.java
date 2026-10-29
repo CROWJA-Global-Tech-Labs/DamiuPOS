@@ -208,6 +208,10 @@ public class VisitListActivity extends AppCompatActivity {
         Customer cust;
         int qty;
         int promoRemaining;
+        /** Saldo pinjam 0 → jumlah diambil dari pinjaman terakhir ("tetap buatkan"). */
+        boolean fromLastBorrow;
+        /** Tak ada catatan pinjaman di HP ini → 1 galon perkiraan. */
+        boolean guessed;
     }
 
     /**
@@ -222,35 +226,65 @@ public class VisitListActivity extends AppCompatActivity {
             return;
         }
         final List<Long> ids = new ArrayList<>(selected);
+        // Semua salinan per orang (untuk pinjaman terakhir) — dari daftar yang sudah dimuat.
+        final Map<Long, List<Long>> rowsByRep = new java.util.HashMap<>();
+        for (Entry e : allEntries) rowsByRep.put(e.rep.getId(), new ArrayList<>(e.allRowIds));
         new Thread(() -> {
             List<PullPlan> plans = new ArrayList<>();
-            List<String> skipped = new ArrayList<>();
+            List<PullPlan> zero = new ArrayList<>();
             for (long id : ids) {
                 Customer cust = customerDao.getByIdMerged(id);
                 if (cust == null) continue;
                 int saldo = Math.max(0, cust.getSaldoGalon());
-                if (saldo <= 0) { skipped.add(safe(cust.getName())); continue; }
                 PullPlan p = new PullPlan();
                 p.cust = cust;
-                p.qty = saldo;
                 p.promoRemaining = Math.max(0, customerDao.mergedPromoGalon(id) - customerDao.mergedPromoPulledGalon(id));
-                plans.add(p);
+                if (saldo > 0) {
+                    p.qty = saldo;
+                    plans.add(p);
+                } else {
+                    // "Tetap buatkan": jumlah = pinjaman galon TERAKHIR orang ini; tanpa catatan → 1 galon.
+                    List<Long> rows = rowsByRep.get(id);
+                    int last = customerDao.lastBorrowQty(rows != null ? rows : java.util.Collections.singletonList(id));
+                    p.fromLastBorrow = true;
+                    p.guessed = last <= 0;
+                    p.qty = last > 0 ? last : 1;
+                    zero.add(p);
+                }
             }
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
-                confirmBulkPull(plans, skipped);
+                confirmBulkPull(plans, zero);
             });
         }).start();
     }
 
-    private void confirmBulkPull(List<PullPlan> plans, List<String> skipped) {
+    private static int sumQty(List<PullPlan> l) {
+        int t = 0;
+        for (PullPlan p : l) t += p.qty;
+        return t;
+    }
+
+    private static String planLine(PullPlan p) {
+        return "• " + safe(p.cust.getName()) + " — " + p.qty + " galon"
+                + (p.guessed ? " (perkiraan, tak ada catatan pinjam)" : p.fromLastBorrow ? " (pinjaman terakhir)" : "") + "\n";
+    }
+
+    /** @param zero pelanggan tanpa galon dipinjam tercatat — ditawarkan "Tetap buatkan" (jumlah pinjaman terakhir). */
+    private void confirmBulkPull(List<PullPlan> plans, List<PullPlan> zero) {
         if (plans.isEmpty()) {
+            if (zero.isEmpty()) return;
+            StringBuilder zm = new StringBuilder("Tak ada galon yang tercatat dipinjam oleh " + zero.size()
+                    + " pelanggan terpilih.\n\n\"Tetap buatkan\" membuat Galon Kembali sejumlah pinjaman galon "
+                    + "TERAKHIR tiap pelanggan:\n\n");
+            for (PullPlan p : zero) zm.append(planLine(p));
+            final int zt = sumQty(zero);
             new AlertDialog.Builder(this)
                     .setTitle("📥 Galon Kembali")
-                    .setMessage("Tak ada galon yang tercatat dipinjam oleh " + skipped.size()
-                            + " pelanggan terpilih — tidak ada yang bisa diambil.\n\nKalau di lapangan tetap ada "
-                            + "galon, catat per pelanggan lewat dialog kartunya (jumlah bisa diisi sendiri).")
-                    .setPositiveButton("OK", null)
+                    .setMessage(zm)
+                    .setPositiveButton("TETAP BUATKAN (" + zt + " galon)",
+                            (d, w) -> confirmBulkPull(new ArrayList<>(zero), new ArrayList<>()))
+                    .setNegativeButton("Batal", null)
                     .show();
             return;
         }
@@ -258,12 +292,16 @@ public class VisitListActivity extends AppCompatActivity {
         StringBuilder msg = new StringBuilder();
         for (PullPlan p : plans) {
             total += p.qty;
-            msg.append("• ").append(safe(p.cust.getName())).append(" — ").append(p.qty).append(" galon\n");
+            msg.append(planLine(p));
         }
         msg.append("\nTotal ").append(total).append(" galon dari ").append(plans.size())
                 .append(" pelanggan, dibuat sebagai transaksi Galon Kembali. Jatah promosi dipisah otomatis.");
-        if (!skipped.isEmpty()) {
-            msg.append("\n\nDilewati (tak ada galon dipinjam): ").append(android.text.TextUtils.join(", ", skipped));
+        if (!zero.isEmpty()) {
+            List<String> names = new ArrayList<>();
+            for (PullPlan p : zero) names.add(safe(p.cust.getName()));
+            msg.append("\n\nDilewati (tak ada galon dipinjam): ").append(android.text.TextUtils.join(", ", names))
+                    .append(". Ketuk \"Tetap buatkan\" untuk ikut membuatnya sejumlah pinjaman terakhir (+")
+                    .append(sumQty(zero)).append(" galon).");
         }
 
         // Penugasan: siapa yang mengambil galonnya. Daftar perangkat = roster cabang (/api/me), sama dengan
@@ -338,14 +376,21 @@ public class VisitListActivity extends AppCompatActivity {
         sv.addView(box);
 
         final int fTotal = total;
-        new AlertDialog.Builder(this)
+        AlertDialog.Builder b = new AlertDialog.Builder(this)
                 .setTitle("📥 Galon Kembali · " + total + " galon")
                 .setView(sv)
                 .setPositiveButton("BUAT GALON KEMBALI", (d, w) ->
                         runBulkPull(plans, fTotal, targets.get(sp.getSelectedItemPosition()),
                                 String.valueOf(sp.getSelectedItem())))
-                .setNegativeButton("Batal", null)
-                .show();
+                .setNegativeButton("Batal", null);
+        if (!zero.isEmpty()) {
+            b.setNeutralButton("Tetap buatkan", (d, w) -> {
+                List<PullPlan> all = new ArrayList<>(plans);
+                all.addAll(zero);
+                confirmBulkPull(all, new ArrayList<>());
+            });
+        }
+        b.show();
     }
 
     private void runBulkPull(List<PullPlan> plans, int expected, String assignTo, String assignLabel) {

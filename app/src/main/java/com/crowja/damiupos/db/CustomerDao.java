@@ -187,6 +187,32 @@ public class CustomerDao {
         }
     }
 
+    /**
+     * Jumlah galon PINJAMAN TERAKHIR (JUAL ber-galon pinjam paling baru, transaksi di HP ini) di antara
+     * baris-baris pelanggan {@code ids} (salinan satu orang). 0 = tak ada catatan di HP ini.
+     */
+    public int lastBorrowQty(java.util.Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) return 0;
+        StringBuilder in = new StringBuilder();
+        for (Long id : ids) {
+            if (id == null) continue;
+            if (in.length() > 0) in.append(',');
+            in.append(id.longValue());
+        }
+        if (in.length() == 0) return 0;
+        String ld = "(CASE WHEN tanggal LIKE '%Z' THEN datetime(tanggal,'localtime') ELSE tanggal END)";
+        String sql = "SELECT jumlah_galon FROM " + DatabaseHelper.TABLE_TRANSACTIONS
+                + " WHERE customer_id IN (" + in + ") AND type='JUAL' AND jumlah_galon > 0"
+                + " AND COALESCE(galon_ownership,'PINJAM')='PINJAM'"
+                + " AND COALESCE(delivery_status,'')<>'TERTUNDA'"
+                + " ORDER BY " + ld + " DESC LIMIT 1";
+        try (android.database.Cursor c = dbHelper.getReadableDatabase().rawQuery(sql, null)) {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
     /** id baris pelanggan yang masih menunggu kunjungan urgent (definisi sama dengan daftar & badge). */
     public java.util.Set<Long> getVisitUrgentIds() {
         java.util.Set<Long> out = new java.util.HashSet<>();
