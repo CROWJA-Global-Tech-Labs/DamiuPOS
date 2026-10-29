@@ -131,8 +131,10 @@ public class IderModeActivity extends AppCompatActivity {
 
     // ---- tampilan daftar (📏 di kepala): radius + jumlah maks, disimpan per HP ----
     private static final String PREFS = "mode_keliling";
-    /** Langkah slider radius 10–500 m. Default 100 m. */
-    private static final int[] RADII = {10, 20, 30, 40, 50, 75, 100, 150, 200, 250, 300, 400, 500};
+    /** Langkah slider radius 10–3000 m. Default 100 m. Langkah baru hanya DITAMBAH di belakang:
+     *  indeks tersimpan (prefs radius_idx) harus tetap berarti radius yang sama. */
+    private static final int[] RADII = {10, 20, 30, 40, 50, 75, 100, 150, 200, 250, 300, 400, 500,
+            600, 750, 1000, 1250, 1500, 2000, 2500, 3000};
     private static final int DEFAULT_RADIUS_IDX = 6;
     private static final int MIN_LIST = 3;
     private static final int MAX_LIST_CAP = 50;
@@ -185,7 +187,7 @@ public class IderModeActivity extends AppCompatActivity {
         sbR.setProgress(radiusIdx);
         box.addView(sbR);
         TextView hintR = new TextView(this);
-        hintR.setText("Hanya pelanggan dalam jarak ini (10–500 m) yang tampil di daftar.");
+        hintR.setText("Hanya pelanggan dalam jarak ini (10 m – 3 km) yang tampil di daftar.");
         hintR.setTextColor(0xFF455A64);
         hintR.setTextSize(12f);
         box.addView(hintR);
