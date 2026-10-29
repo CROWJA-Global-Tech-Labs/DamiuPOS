@@ -179,7 +179,11 @@
             android:windowSoftInputMode="adjustResize" />
         <activity android:name=".wa.WaBroadcastHistoryActivity" />
         <activity android:name=".wa.WaBroadcastDetailActivity" />
-        <activity android:name=".wa.WaSchedulesActivity" />
+        <!-- Daftar Broadcast Terjadwal & Status WA: rotasi jangan memuat ulang daftar (halaman termuat &
+             spanduk hasil aksi yang sedang berjalan hilang). -->
+        <activity
+            android:name=".wa.WaSchedulesActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode" />
         <activity android:name=".wa.WaScheduleDetailActivity" />
         <!-- Form & peta Broadcast Terjadwal memegang draf panjang (penerima dari peta, wilayah otomatis) di memori:
              configChanges supaya rotasi / mode gelap sistem tidak membuat ulang activity (draf hilang, form dimuat
@@ -191,7 +195,9 @@
         <activity
             android:name=".wa.WaScheduleMapActivity"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode" />
-        <activity android:name=".wa.WaStatusActivity" />
+        <activity
+            android:name=".wa.WaStatusActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode" />
         <activity
             android:name=".wa.WaStatusEditActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
