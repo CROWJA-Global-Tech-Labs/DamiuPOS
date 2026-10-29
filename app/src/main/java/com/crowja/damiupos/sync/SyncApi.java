@@ -621,8 +621,16 @@ public class SyncApi {
     /** @param keepQueue "➕ Tambahkan ke Antrean": order trip diambil alih tanpa melepas antrean HP ini. */
     public JSONObject startDeliveryTrip(long ruleId, boolean includeSales, boolean includePickup,
                                         @Nullable java.util.Collection<String> uuids, boolean keepQueue) throws Exception {
+        return startDeliveryTrip(ruleId, includeSales, includePickup, uuids, keepQueue, null);
+    }
+
+    /** @param alsoRules trip lain yang dijalankan BERSAMAAN ("Pilih trip"): order-nya ikut diambil alih & tak dilepas. */
+    public JSONObject startDeliveryTrip(long ruleId, boolean includeSales, boolean includePickup,
+                                        @Nullable java.util.Collection<String> uuids, boolean keepQueue,
+                                        @Nullable java.util.Collection<Long> alsoRules) throws Exception {
         JSONObject body = new JSONObject().put("include_sales", includeSales).put("include_pickup", includePickup);
         if (keepQueue) body.put("keep_queue", true);
+        if (alsoRules != null && !alsoRules.isEmpty()) body.put("also_rules", new org.json.JSONArray(alsoRules));
         if (uuids != null) body.put("uuids", new org.json.JSONArray(uuids));
         return post(cfg.getBaseUrl() + "/api/delivery/trips/" + ruleId + "/start", body, cfg.getToken());
     }
