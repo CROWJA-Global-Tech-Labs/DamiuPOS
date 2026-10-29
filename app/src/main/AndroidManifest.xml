@@ -192,6 +192,10 @@
             android:name=".wa.WaScheduleMapActivity"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode" />
         <activity android:name=".wa.WaStatusActivity" />
+        <activity
+            android:name=".wa.WaStatusEditActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:windowSoftInputMode="adjustResize" />
         <activity android:name=".FollowUpMapActivity" />
         <activity android:name=".CustomerMapActivity" />
         <!-- "Dashboard Web" Admin: seluruh dashboard web di WebView, sesi via link masuk sekali pakai.
