@@ -46,6 +46,19 @@ public final class VersionUpdater {
      *  supaya {@link #maybePrompt} dan {@link #maybePromptBlocked} tidak menumpuk dialog kedua
      *  saat keduanya dipicu berdekatan (mis. checkAndPrompt jalan lagi sebelum dialog ditutup). */
     private static AlertDialog activeDialog;
+    /** Activity pemilik {@link #activeDialog} — dialog di layar yang sudah ditinggal dipindah ke layar aktif. */
+    private static java.lang.ref.WeakReference<Activity> activeOwner = new java.lang.ref.WeakReference<>(null);
+
+    /**
+     * Tampilkan Pembaruan Wajib di activity yang SEDANG di depan (layar mana pun), bila perlu. Dipanggil
+     * tiap activity resume (DamiuApplication) dan setelah polling latar menemukan APK baru — dulu dialog
+     * hanya dicek saat beranda DIBUAT, jadi rilis baru selagi aplikasi hidup cuma jadi notifikasi.
+     */
+    public static void promptOnCurrent() {
+        com.crowja.damiupos.DamiuApplication app = com.crowja.damiupos.DamiuApplication.get();
+        Activity a = app != null ? app.getCurrentActivity() : null;
+        if (a != null) a.runOnUiThread(() -> maybePrompt(a));
+    }
 
     /** Background REST check → store the published APK → pre-download → prompt on the UI thread. */
     public static void checkAndPrompt(Activity activity) {
@@ -121,10 +134,28 @@ public final class VersionUpdater {
     /** Show the mandatory update dialog if an update is needed and not currently snoozed. */
     public static void maybePrompt(Activity activity) {
         if (activity.isFinishing() || activity.isDestroyed()) return;
-        if (activeDialog != null && activeDialog.isShowing()) return;   // sudah ada dialog tampil
+        if (activeDialog != null && activeDialog.isShowing()) {
+            if (activeOwner.get() == activity) return;   // sudah tampil di layar ini
+            try { activeDialog.dismiss(); } catch (Throwable ignored) {}   // pindahkan ke layar aktif
+            activeDialog = null;
+        }
         Context app = activity.getApplicationContext();
-        SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(app)));
-        if (!updateNeeded(app, cfg)) {
+        // Hash APK sendiri (tercache) + hash APK unduhan (~11 MB) dihitung di LATAR — dipanggil tiap resume.
+        new Thread(() -> {
+            SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(app)));
+            boolean needed = updateNeeded(app, cfg);
+            File apk = apkFile(app);
+            String have = needed ? sha256(apk) : null;
+            boolean ready = needed && apk.exists() && have != null && have.equalsIgnoreCase(cfg.getUpdateSha());
+            activity.runOnUiThread(() -> showPrompt(activity, cfg, needed, ready));
+        }, "upd-prompt").start();
+    }
+
+    private static void showPrompt(Activity activity, SyncSettings cfg, boolean needed, boolean ready) {
+        if (activity.isFinishing() || activity.isDestroyed()) return;
+        if (activeDialog != null && activeDialog.isShowing()) return;
+        Context app = activity.getApplicationContext();
+        if (!needed) {
             if (cfg.getUpdateBehindSince() != 0) cfg.setUpdateBehindSince(0);
             return;
         }
@@ -137,9 +168,6 @@ public final class VersionUpdater {
         boolean canSnooze = now - since < MAX_BEHIND_MS;
         if (canSnooze && now < cfg.getSnoozeUntil()) return;
 
-        File apk = apkFile(app);
-        String have = sha256(apk);
-        boolean ready = apk.exists() && have != null && have.equalsIgnoreCase(cfg.getUpdateSha());
         String msg = "Versi baru aplikasi wajib dipasang untuk melanjutkan."
                 + (ready ? "\nSudah terunduh & siap dipasang." : "")
                 + (canSnooze ? "" : "\n\nHP ini sudah tertinggal lebih dari 12 jam — tidak bisa ditunda lagi.");
@@ -151,6 +179,7 @@ public final class VersionUpdater {
                 .setPositiveButton("Update Sekarang", (d, w) -> updateNow(activity));
         if (canSnooze) b.setNegativeButton("Tunda 1 jam", (d, w) -> snooze(app));
         activeDialog = b.show();
+        activeOwner = new java.lang.ref.WeakReference<>(activity);
     }
 
     /** Aksi "Update Sekarang" yang bisa dipakai dialog mana pun: pasang APK yang sudah
