@@ -197,6 +197,16 @@ public class Transaction {
     public int getPriorityLevel() { return priorityLevel; }
     public void setPriorityLevel(int v) { this.priorityLevel = v; }
 
+    /** ⏰ Batas Antar aktif order ini (delivery_due_at) & jam BERANGKAT paling lambat dari cabang
+     *  (delivery_depart_by). Server-authoritative (pull-only) — HP tak pernah menulisnya. Bentuknya
+     *  campuran (lokal / ISO-UTC "…Z") → selalu urai lewat Ts.millis, jangan dibandingkan sebagai teks. */
+    private String deliveryDueAt;
+    private String deliveryDepartBy;
+    public String getDeliveryDueAt() { return deliveryDueAt; }
+    public void setDeliveryDueAt(String v) { this.deliveryDueAt = v; }
+    public String getDeliveryDepartBy() { return deliveryDepartBy; }
+    public void setDeliveryDepartBy(String v) { this.deliveryDepartBy = v; }
+
     public String getOrderPriorityAt() { return orderPriorityAt; }
     public void setOrderPriorityAt(String v) { this.orderPriorityAt = v; }
 

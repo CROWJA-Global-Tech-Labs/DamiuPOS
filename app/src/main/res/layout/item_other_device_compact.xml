@@ -77,6 +77,29 @@
                     android:textStyle="bold"
                     android:visibility="gone" />
 
+                <!-- Khusus Tab 1 "Antrian Saya": kapsul ⏰ Batas Antar aktif hari ini, "⏰ 10:00 · brkt ≤09:31"
+                     (jam berangkat paling lambat dari cabang) — lihat bindDeadlineBadge. BARIS SENDIRI, bukan
+                     kapsul di baris produk: baris itu satu baris tanpa gulir (berbagi dgn 🛵 Ongkir + kapsul
+                     produk + trip), jadi kapsul paling belakangnya terpotong "…" tepat di jam berangkatnya.
+                     Warna (merah / kuning tua) di-set dari kode. GONE default, Tab 2/3 tak pernah mengisinya. -->
+                <TextView
+                    android:id="@+id/tvDeadline"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:background="@drawable/bg_pending_badge"
+                    android:backgroundTint="#92400E"
+                    android:ellipsize="end"
+                    android:maxLines="2"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:paddingTop="3dp"
+                    android:paddingBottom="3dp"
+                    android:textColor="@color/white"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
                 <!-- Baris 2: [✗ FOTO / ✗ LOKASI badge merah bila belum lengkap, khusus Tab 1] · jarak ·
                      N galon. Kontras lebih tinggi dari label sekunder biasa (bold + warna teks utama,
                      bukan grey_medium) supaya gampang dipindai sekilas. -->

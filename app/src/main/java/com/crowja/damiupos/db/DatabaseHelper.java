@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 105;
+    private static final int DATABASE_VERSION = 106;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -396,6 +396,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     /** ⚡ LEVEL prioritas order ("PRIORITAS ×N" di web; +1 tiap ⚡ dipicu ulang). Server-authoritative,
      *  pull-only — kunci urut antrean SAMA dengan web (Reports::deliveryList). */
     public static final String COL_DELIVERY_PRIORITY_LEVEL = "delivery_priority_level";
+    /** ⏰ BATAS ANTAR aktif order (hari ini / hari lain; NULL = tak ada, di-✕, atau sudah basi) dan jam
+     *  BERANGKAT paling lambat dari cabang (batas − perjalanan − serah terima − cadangan). Dihitung &
+     *  dipelihara server (DeliveryDeadlines), pull-only, di-skip server saat push — HP TIDAK PERNAH
+     *  menulisnya. Isinya bisa lokal atau ISO-UTC "…Z": urai lewat Ts.millis / Ts.localExpr. */
+    public static final String COL_DELIVERY_DUE_AT = "delivery_due_at";
+    public static final String COL_DELIVERY_DEPART_BY = "delivery_depart_by";
 
     // Table settings
     public static final String TABLE_SETTINGS = "settings";
@@ -686,6 +692,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_DELIVERY_PRIORITY_REASON + " TEXT, " +
                     COL_DELIVERY_PRIORITY_BY + " TEXT, " +
                     COL_DELIVERY_PRIORITY_LEVEL + " INTEGER DEFAULT 0, " +
+                    COL_DELIVERY_DUE_AT + " TEXT, " +
+                    COL_DELIVERY_DEPART_BY + " TEXT, " +
                     COL_DELIVERY_OPEN_DISPATCH_AT + " TEXT, " +
                     COL_LAST_MANUAL_EDIT_AT + " TEXT, " +
                     COL_VOID_REQUEST_PENDING_AT + " TEXT, " +
@@ -1807,6 +1815,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             // reseller yang sudah ada di HP tetap tergerbang lewat penanda [ORDER RESELLER] di catatan
             // sampai pull berikutnya membawa flag-nya.
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_PROOF_REQUIRED + " INTEGER DEFAULT 0");
+        }
+        if (oldVersion < 106) {
+            // ⏰ Batas Antar + jam berangkat paling lambat (lihat COL_DELIVERY_DUE_AT). Aditif; baris lama
+            // terisi lewat tarik-ulang transaksi 7 hari sekali di SyncEngine.pull (kunci v106).
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_DUE_AT + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_DEPART_BY + " TEXT");
         }
         if (oldVersion < 105) {
             // Jenis galon pesanan (lihat COL_GALON_TYPE); baris lama terisi lewat tarik-ulang transaksi

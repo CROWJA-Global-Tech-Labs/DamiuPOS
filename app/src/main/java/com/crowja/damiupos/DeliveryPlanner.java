@@ -3,8 +3,11 @@ package com.crowja.damiupos;
 import com.crowja.damiupos.model.Transaction;
 
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * STRATEGI PENGIRIMAN (sisi HP) — memecah antrean perangkat ini menjadi RIT sesuai "Muatan Max".
@@ -13,6 +16,7 @@ import java.util.List;
  * cabang membawa galon kosong → muat lagi, sampai antrean habis. Satu rit = satu putaran.
  *
  * CERMIN PERSIS {@code App\Support\DeliveryPlan} di web — ubah keduanya bersamaan:
+ *   0. ⏰ Batas Antar aktif hari ini PALING DEPAN, jam berangkat paling lambat terdekat dulu.
  *   1. Prioritas (⚡ pengiriman / ⭐ pelanggan) selalu di rit paling awal.
  *   2. Urutan MANUAL (delivery_seq, disusun operator di web) dipatuhi & di depan.
  *   3. Sisanya ikut mode: terdekat (default) atau order pertama.
@@ -47,21 +51,48 @@ public final class DeliveryPlanner {
     public static final double AGE_BONUS_KM_PER_HOUR = 1.5;
     public static final double AGE_BONUS_MAX_KM = 8.0;
 
+    /**
+     * ⏰ BATAS ANTAR berbasis sisa waktu — konstanta IDENTIK dengan {@code App\Support\DeliveryPlan} di
+     * web (owner 2026-10-29, kasus "Ayam Geprek Sawahan"). Server menghitung delivery_depart_by
+     * (= batas − perjalanan cabang→tujuan − serah terima − cadangan); HP memakainya untuk urutan,
+     * badge, dan perkiraan jam berangkat tiap rit.
+     */
+    public static final double DL_SPEED_KMH = 20.0;        // kecepatan kurir (= OpsAssistant::DEFAULT_SPEED_KMH)
+    public static final double DL_ROAD_FACTOR = 1.3;       // garis lurus (haversine) → jarak jalan
+    public static final int DL_SERVICE_MIN = 5;            // serah terima per pemberhentian
+    public static final int DL_LOAD_MIN = 10;              // muat di cabang sebelum rit berangkat
+    public static final int DL_BUFFER_MIN = 15;            // cadangan aman
+    public static final int DL_DEFAULT_TRAVEL_MIN = 15;    // perjalanan bila cabang/tujuan tanpa koordinat
+    public static final int DL_MIN_TRAVEL_MIN = 3;         // batas bawah satu kaki cabang→pelanggan
+
+    /** Status risiko satu order ber-batas antar di sebuah rit — lihat {@link #deadlineRisks}. */
+    public static final String RISK_OK = "ok";
+    public static final String RISK_LAST_SAFE = "last_safe";
+    public static final String RISK_LATE = "late";
+
     /** Lama order menunggu di antrean, dalam JAM. 0 bila stempel tak ada/tak terbaca. */
     public static double waitedHours(Transaction t) {
+        return waitedHours(t, System.currentTimeMillis());
+    }
+
+    static double waitedHours(Transaction t, long nowMs) {
         String q = t == null ? null : t.getDeliveryQueuedAt();
         // Ts.millis, bukan TS.parse: delivery_queued_at berisi waktu LOKAL bila HP yang menulisnya
         // tapi ISO-UTC bila barisnya ditarik dari server. Mengurainya tanpa zona waktu membuat order
         // asal-web tampak 7 jam lebih tua dan mendapat potongan umur yang tak pernah ia usahakan.
         long ts = com.crowja.damiupos.util.Ts.millis(q);
         if (ts == Long.MAX_VALUE) return 0;
-        long ms = System.currentTimeMillis() - ts;
+        long ms = nowMs - ts;
         return ms <= 0 ? 0 : ms / 3600000.0;
     }
 
     /** Potongan jarak (km) yang didapat order karena sudah lama menunggu. */
     public static double ageBonusKm(Transaction t) {
-        return Math.min(AGE_BONUS_MAX_KM, waitedHours(t) * AGE_BONUS_KM_PER_HOUR);
+        return ageBonusKm(t, System.currentTimeMillis());
+    }
+
+    static double ageBonusKm(Transaction t, long nowMs) {
+        return Math.min(AGE_BONUS_MAX_KM, waitedHours(t, nowMs) * AGE_BONUS_KM_PER_HOUR);
     }
 
     /**
@@ -69,8 +100,149 @@ public final class DeliveryPlanner {
      * ({@code Double.MAX_VALUE}) dibiarkan apa adanya supaya tetap jatuh ke dasar grupnya.
      */
     public static double costKm(double rawKm, Transaction t) {
+        return costKm(rawKm, t, System.currentTimeMillis());
+    }
+
+    static double costKm(double rawKm, Transaction t, long nowMs) {
         if (rawKm == Double.MAX_VALUE) return rawKm;
-        return rawKm - ageBonusKm(t);
+        return rawKm - ageBonusKm(t, nowMs);
+    }
+
+    // ---- ⏰ Batas Antar (cermin DeliveryPlan di web) ----
+
+    /** Menit perjalanan satu kaki cabang→pelanggan dari jarak garis lurus (km): dikali faktor jalan,
+     *  dibulatkan ke atas, minimal {@link #DL_MIN_TRAVEL_MIN}. Cermin DeliveryPlan::travelMin. */
+    public static int travelMin(double km) {
+        return Math.max(DL_MIN_TRAVEL_MIN, (int) Math.ceil(km * DL_ROAD_FACTOR / DL_SPEED_KMH * 60.0));
+    }
+
+    /**
+     * Order ini ber-BATAS ANTAR AKTIF? Semua syarat (identik dengan web & ORDER BY TransactionDao):
+     * masih menunggu & bukan AMBIL GALON (KEMBALI tetap "selalu terakhir"); delivery_due_at terisi dan
+     * TANGGAL LOKAL-nya = hari ini; level ⚡ > 0 (staf ⚡ Batal / turun ke 0 = keluar, sama aturan TOP).
+     */
+    public static boolean deadlineActive(Transaction t, long nowMs) {
+        if (t == null || isPickupOnly(t) || t.getPriorityLevel() <= 0) return false;
+        String st = t.getDeliveryStatus();
+        if (st != null && !st.isEmpty() && !Transaction.DELIVERY_PENDING.equals(st)) return false;
+        long due = dueMillis(t);
+        if (due == Long.MAX_VALUE) return false;
+        // Hari via Calendar LOKAL: batas yang dikirim server sebagai ISO-UTC "…Z" (mis. 2026-10-29T17:30Z
+        // = 30 Okt 00:30 WIB) harus dinilai menurut tanggal di HP, bukan tanggal teksnya.
+        Calendar a = Calendar.getInstance();
+        a.setTimeInMillis(due);
+        Calendar b = Calendar.getInstance();
+        b.setTimeInMillis(nowMs);
+        return a.get(Calendar.YEAR) == b.get(Calendar.YEAR) && a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR);
+    }
+
+    /** Epoch delivery_due_at; {@link Long#MAX_VALUE} bila kosong/tak terurai. */
+    public static long dueMillis(Transaction t) {
+        return t == null ? Long.MAX_VALUE : com.crowja.damiupos.util.Ts.millis(t.getDeliveryDueAt());
+    }
+
+    /**
+     * Peringkat urgensi = epoch jam BERANGKAT paling lambat (delivery_depart_by); belum dihitung server →
+     * batas − ({@link #DL_DEFAULT_TRAVEL_MIN} + {@link #DL_SERVICE_MIN} + {@link #DL_BUFFER_MIN}) menit.
+     * Kecil = paling mendesak; tanpa batas = {@link Long#MAX_VALUE}.
+     */
+    public static long deadlineRankMillis(Transaction t) {
+        if (t == null) return Long.MAX_VALUE;
+        long by = com.crowja.damiupos.util.Ts.millis(t.getDeliveryDepartBy());
+        if (by != Long.MAX_VALUE) return by;
+        long due = dueMillis(t);
+        if (due == Long.MAX_VALUE) return Long.MAX_VALUE;
+        return due - (DL_DEFAULT_TRAVEL_MIN + DL_SERVICE_MIN + DL_BUFFER_MIN) * 60000L;
+    }
+
+    /**
+     * Lama satu rit dalam MENIT (pecahan, TIDAK dibulatkan): kaki cabang→p1→…→pn→cabang (haversine × faktor
+     * jalan ÷ kecepatan, tanpa batas bawah per kaki) + serah terima × jumlah pemberhentian. Pemberhentian
+     * tanpa koordinat — atau cabang tak diketahui (0,0) — dihitung {@link #DL_DEFAULT_TRAVEL_MIN} dan
+     * dilewati dari rantai. Cermin PERSIS DeliveryPlan::tripMinutes (float, menit per kaki dijumlah
+     * berurutan): membulatkan di sini membuat jam berangkat rit di HP bergeser ≤1 menit per rit dari web,
+     * dan status aman/terakhir/terlambat jadi berlawanan di dekat batas. Bulatkan hanya saat ditampilkan.
+     */
+    public static double tripMinutes(List<Transaction> stops, double depotLat, double depotLng) {
+        if (stops == null || stops.isEmpty()) return 0;
+        boolean depot = depotLat != 0 || depotLng != 0;
+        double min = 0;
+        double curLat = depotLat, curLng = depotLng;
+        boolean moved = false;
+        for (Transaction s : stops) {
+            if (s == null) continue;
+            if (!depot || !hasGeo(s)) {
+                min += DL_DEFAULT_TRAVEL_MIN;
+            } else {
+                min += legMin(curLat, curLng, lat(s), lng(s));
+                curLat = lat(s);
+                curLng = lng(s);
+                moved = true;
+            }
+            min += DL_SERVICE_MIN;
+        }
+        if (moved) min += legMin(curLat, curLng, depotLat, depotLng);
+        return min;
+    }
+
+    /** Menit satu kaki garis lurus × faktor jalan ÷ kecepatan (tanpa batas bawah) — DeliveryPlan::legMin. */
+    private static double legMin(double lat1, double lng1, double lat2, double lng2) {
+        return km(lat1, lng1, lat2, lng2) * DL_ROAD_FACTOR / DL_SPEED_KMH * 60;
+    }
+
+    /**
+     * Perkiraan rit BERIKUTNYA bisa berangkat bila rit {@code stops} berangkat {@code departMs}: + lama rit +
+     * muat ({@link #DL_LOAD_MIN}), dibulatkan ke DETIK — persis {@code DeliveryPlan::deadlineRisks}
+     * ({@code (int) round((tripMinutes + DL_LOAD_MIN) * 60)}).
+     */
+    public static long nextDepartMillis(long departMs, List<Transaction> stops, double depotLat, double depotLng) {
+        return departMs + Math.round((tripMinutes(stops, depotLat, depotLng) + DL_LOAD_MIN) * 60.0) * 1000L;
+    }
+
+    /** Risiko satu order ber-batas antar di rencana rit — hasil {@link #deadlineRisks}. */
+    public static class DeadlineRisk {
+        public final Transaction order;
+        public final int trip;            // nomor rit (Trip.n)
+        public final long departMs;       // perkiraan rit itu berangkat dari cabang
+        public final long departByMs;     // jam berangkat paling lambat order ini
+        public final long dueMs;          // batas antarnya
+        public final int level;           // level ⚡
+        public final String status;       // RISK_OK / RISK_LAST_SAFE / RISK_LATE
+
+        DeadlineRisk(Transaction order, int trip, long departMs, long departByMs, long dueMs, int level, String status) {
+            this.order = order;
+            this.trip = trip;
+            this.departMs = departMs;
+            this.departByMs = departByMs;
+            this.dueMs = dueMs;
+            this.level = level;
+            this.status = status;
+        }
+    }
+
+    /**
+     * Perkiraan jam berangkat tiap rit & risikonya untuk order ber-batas antar aktif. Rit 1 berangkat
+     * {@code firstDepartMs}; rit k+1 = {@link #nextDepartMillis} rit k (rit k+1 hipotetis tetap dihitung
+     * untuk rit terakhir). Per order aktif di rit k: {@link #RISK_LATE} bila rit k berangkat setelah jam
+     * berangkat paling lambatnya; else {@link #RISK_LAST_SAFE} bila rit k+1 sudah terlambat; else
+     * {@link #RISK_OK}. Cermin DeliveryPlan::deadlineRisks.
+     */
+    public static List<DeadlineRisk> deadlineRisks(List<Trip> trips, double depotLat, double depotLng,
+                                                   long firstDepartMs, long nowMs) {
+        List<DeadlineRisk> out = new ArrayList<>();
+        if (trips == null) return out;
+        long depart = firstDepartMs;
+        for (Trip trip : trips) {
+            long next = nextDepartMillis(depart, trip.stops, depotLat, depotLng);
+            for (Transaction s : trip.stops) {
+                if (!deadlineActive(s, nowMs)) continue;
+                long by = deadlineRankMillis(s);
+                String st = depart > by ? RISK_LATE : (next > by ? RISK_LAST_SAFE : RISK_OK);
+                out.add(new DeadlineRisk(s, trip.n, depart, by, dueMillis(s), s.getPriorityLevel(), st));
+            }
+            depart = next;
+        }
+        return out;
     }
 
     /** Satu rit: daftar pemberhentian + total galon yang dimuat. */
@@ -91,10 +263,17 @@ public final class DeliveryPlanner {
      */
     public static List<Trip> plan(List<Transaction> queue, int maxLoad,
                                   double depotLat, double depotLng, int mode) {
+        return plan(queue, maxLoad, depotLat, depotLng, mode, System.currentTimeMillis());
+    }
+
+    /** {@link #plan(List, int, double, double, int)} dengan "sekarang" eksplisit (hari batas antar &
+     *  potongan umur) — supaya hasilnya deterministik di tes. */
+    public static List<Trip> plan(List<Transaction> queue, int maxLoad,
+                                  double depotLat, double depotLng, int mode, long nowMs) {
         List<Trip> trips = new ArrayList<>();
         if (queue == null || queue.isEmpty()) return trips;
 
-        List<Transaction> ordered = sortStops(queue, depotLat, depotLng, mode);
+        List<Transaction> ordered = sortStops(queue, depotLat, depotLng, mode, nowMs);
 
         Trip cur = new Trip(1);
         for (Transaction t : ordered) {
@@ -139,7 +318,7 @@ public final class DeliveryPlanner {
                 while (j + 1 < s.size() && runKey(s.get(j + 1)) == runKey(s.get(i))) j++;
                 if (runKey(s.get(i)) == 0) {
                     // Kelompok prioritas TIDAK diurutkan ulang menurut jarak: urutannya = urutan
-                    // antrean web (⭐ → level ×N → FIFO), sudah disusun sortStops.
+                    // antrean web (⏰ batas antar → ⭐ → level ×N → FIFO), sudah disusun sortStops.
                     out.addAll(s.subList(i, j + 1));
                     cur = lastGeo(out, cur[0], cur[1]);
                     i = j + 1;
@@ -150,7 +329,7 @@ public final class DeliveryPlanner {
                 for (Transaction t : s.subList(i, j + 1)) (t.getDeliverySeq() > 0 ? manual : auto).add(t);
                 out.addAll(manual);
                 cur = lastGeo(out, cur[0], cur[1]);
-                out.addAll(nearestChain(auto, cur[0], cur[1], false));
+                out.addAll(nearestChain(auto, cur[0], cur[1], false, 0L));   // tanpa potongan umur → "sekarang" tak dipakai
                 cur = lastGeo(out, cur[0], cur[1]);
                 i = j + 1;
             }
@@ -159,13 +338,13 @@ public final class DeliveryPlanner {
         }
     }
 
-    /** Kelompok pemberhentian: 0 = ⚡/⭐ prioritas, 1 = biasa, 2 = AMBIL GALON SAJA. */
+    /** Kelompok pemberhentian: 0 = ⏰/⚡/⭐ prioritas, 1 = biasa, 2 = AMBIL GALON SAJA. */
     static int runKey(Transaction t) {
         return isPickupOnly(t) ? 2 : (isPriority(t) ? 0 : 1);
     }
 
     /** AMBIL GALON SAJA paling belakang; lalu prioritas; di dalam grup: manual, lalu mode. */
-    private static List<Transaction> sortStops(List<Transaction> queue, double dLat, double dLng, int mode) {
+    private static List<Transaction> sortStops(List<Transaction> queue, double dLat, double dLng, int mode, long nowMs) {
         // KEMBALI (jemput galon kosong) SELALU di belakang — mengalahkan prioritas & jarak,
         // persis aturan antrean: jangan menyerobot pelanggan yang menunggu air.
         List<Transaction> deliver = new ArrayList<>();
@@ -178,29 +357,44 @@ public final class DeliveryPlanner {
 
         // Rantai dilanjutkan dari pemberhentian TERAKHIR grup sebelumnya (kurir sudah di sana),
         // bukan diulang dari cabang — kalau diulang, rutenya zig-zag.
-        // Kelompok prioritas = urutan antrean WEB apa adanya (⭐ dulu, lalu level ⚡ ×N terbesar,
-        // lalu FIFO) — bukan jarak, bukan urutan manual/Refresh RIT. Owner 2026-10-15: kurir harus
+        // Kelompok prioritas = urutan antrean WEB apa adanya (⏰ batas antar aktif dulu, lalu ⭐, lalu
+        // level ⚡ ×N terbesar, lalu FIFO) — bukan jarak, bukan urutan manual/Refresh RIT. Owner 2026-10-15: kurir harus
         // mengantar "PRIORITAS ×7" sebelum "×1", persis urutan yang terlihat di web.
-        List<Transaction> prioOrdered = webPriorityOrder(prio);
+        List<Transaction> prioOrdered = webPriorityOrder(prio, nowMs);
         double[] seed = lastGeo(prioOrdered, dLat, dLng);
-        List<Transaction> restOrdered = orderGroup(rest, seed[0], seed[1], mode);
+        List<Transaction> restOrdered = orderGroup(rest, seed[0], seed[1], mode, nowMs);
         seed = lastGeo(restOrdered, seed[0], seed[1]);
 
         List<Transaction> out = new ArrayList<>(queue.size());
         out.addAll(prioOrdered);
         out.addAll(restOrdered);
-        out.addAll(orderGroup(pickups, seed[0], seed[1], mode));
+        out.addAll(orderGroup(pickups, seed[0], seed[1], mode, nowMs));
         return out;
     }
 
     /**
-     * ⭐ pelanggan prioritas › level ⚡ terbesar (cermin Reports::deliveryList) › di dalam satu tingkat:
-     * urutan rute (delivery_seq dari "Urutkan Rute Terpendek"/navigasi) › FIFO. Owner 2026-10-18: titik
-     * perjalanan wajib rute terpendek; antar level tetap mutlak. CERMIN DeliveryPlan::webPriorityOrder.
+     * ⏰ batas antar aktif (jam berangkat paling lambat terdekat, lalu batasnya) › ⭐ pelanggan prioritas ›
+     * level ⚡ terbesar (cermin Reports::deliveryList) › di dalam satu tingkat: urutan rute (delivery_seq
+     * dari "Urutkan Rute Terpendek"/navigasi) › FIFO. Owner 2026-10-18: titik perjalanan wajib rute
+     * terpendek; antar level tetap mutlak. Owner 2026-10-29: batas antar mengalahkan ⭐ & level — order
+     * ⚡×1 ber-batas 10:00 tak boleh lagi terkubur di bawah ⚡×3 yang sekadar lama. Peringkat batas antar
+     * ditaruh SEBELUM delivery_seq supaya urutan Refresh RIT yang basi tak mengalahkan urgensi.
+     * CERMIN DeliveryPlan::webPriorityOrder.
      */
-    static List<Transaction> webPriorityOrder(List<Transaction> group) {
+    static List<Transaction> webPriorityOrder(List<Transaction> group, long nowMs) {
         List<Transaction> out = new ArrayList<>(group);
+        // Peringkat dihitung SEKALI per order (mengurai stempel di dalam comparator = O(n log n) parse).
+        final Map<Transaction, long[]> dl = new IdentityHashMap<>();
+        for (Transaction t : out) {
+            dl.put(t, deadlineActive(t, nowMs) ? new long[]{deadlineRankMillis(t), dueMillis(t)} : null);
+        }
         Collections.sort(out, (a, b) -> {
+            long[] da = dl.get(a), db = dl.get(b);
+            if ((da != null) != (db != null)) return da != null ? -1 : 1;
+            if (da != null) {
+                if (da[0] != db[0]) return Long.compare(da[0], db[0]);
+                if (da[1] != db[1]) return Long.compare(da[1], db[1]);
+            }
             if (a.isCustomerPriority() != b.isCustomerPriority()) return a.isCustomerPriority() ? -1 : 1;
             if (a.getPriorityLevel() != b.getPriorityLevel()) return Integer.compare(b.getPriorityLevel(), a.getPriorityLevel());
             // (bendera ⚡ tanpa level TIDAK jadi kunci: web & tingkat rute server hanya memakai ⭐ + level)
@@ -225,7 +419,7 @@ public final class DeliveryPlanner {
         return new double[]{fbLat, fbLng};
     }
 
-    private static List<Transaction> orderGroup(List<Transaction> group, double dLat, double dLng, int mode) {
+    private static List<Transaction> orderGroup(List<Transaction> group, double dLat, double dLng, int mode, long nowMs) {
         if (group.size() <= 1) return group;
 
         List<Transaction> manual = new ArrayList<>();
@@ -239,7 +433,7 @@ public final class DeliveryPlanner {
             Collections.sort(auto, (a, b) -> safe(a.getDeliveryQueuedAt()).compareTo(safe(b.getDeliveryQueuedAt())));
             out.addAll(auto);
         } else {
-            out.addAll(nearestChain(auto, dLat, dLng, true));
+            out.addAll(nearestChain(auto, dLat, dLng, true, nowMs));
         }
         return out;
     }
@@ -247,7 +441,7 @@ public final class DeliveryPlanner {
     /** Rantai tetangga-terdekat dari cabang — "terdekat" diukur dengan {@link #costKm} (jarak
      *  dikurangi potongan umur), jadi order yang sudah lama menunggu ikut ditarik maju; pemberhentian
      *  tanpa koordinat ditaruh paling belakang. */
-    private static List<Transaction> nearestChain(List<Transaction> stops, double dLat, double dLng, boolean ageBonus) {
+    private static List<Transaction> nearestChain(List<Transaction> stops, double dLat, double dLng, boolean ageBonus, long nowMs) {
         List<Transaction> geo = new ArrayList<>();
         List<Transaction> noGeo = new ArrayList<>();
         for (Transaction t : stops) (hasGeo(t) ? geo : noGeo).add(t);
@@ -262,7 +456,7 @@ public final class DeliveryPlanner {
             double bestD = Double.MAX_VALUE;
             for (int i = 0; i < geo.size(); i++) {
                 double raw = km(curLat, curLng, lat(geo.get(i)), lng(geo.get(i)));
-                double d = ageBonus ? costKm(raw, geo.get(i)) : raw;
+                double d = ageBonus ? costKm(raw, geo.get(i), nowMs) : raw;
                 if (d < bestD) { bestD = d; best = i; }
             }
             Transaction next = geo.remove(best);
@@ -276,6 +470,8 @@ public final class DeliveryPlanner {
 
     // ---- helper: dipakai juga oleh kartu strategi di DeliveryQueueActivity ----
 
+    /** ⚡/⭐ prioritas — termasuk SEMUA order ⏰ batas antar aktif (syaratnya level > 0, lihat
+     *  {@link #deadlineActive}), jadi runKey 0: tak pernah diacak ulang menurut jarak di dalam rit. */
     public static boolean isPriority(Transaction t) {
         return t.isOrderPriority() || t.isCustomerPriority() || t.getPriorityLevel() > 0;
     }
