@@ -83,6 +83,10 @@ public class SalesAchievementActivity extends AppCompatActivity {
 
     private String preset = "cutoff";
     private String customStart, customEnd;
+    /** Periode cut-off pilihan dropdown ("YYYY-MM") selama preset = "month_pick"; selain itu null. */
+    private String pickedMonth;
+    /** Opsi dropdown {value "YYYY-MM", label rentang} dari server — terbaru (periode berjalan) dulu. */
+    private final List<String[]> cutoffOptions = new ArrayList<>();
     /** uuid perangkat terpilih; KOSONG = semua perangkat. */
     private final List<String> selectedDevices = new ArrayList<>();
     /** uuid → nama, dari server (dipakai label tombol + dialog pilih perangkat). */
@@ -123,6 +127,7 @@ public class SalesAchievementActivity extends AppCompatActivity {
         rv.setAdapter(adapter);
         swipe.setOnRefreshListener(() -> load(true));
         btnDevices.setOnClickListener(v -> showDevicePicker());
+        tvRange.setOnClickListener(v -> showCutoffPicker());
 
         buildPresetChips();
         load(true);
@@ -162,6 +167,7 @@ public class SalesAchievementActivity extends AppCompatActivity {
             c.setOnClickListener(v -> {
                 preset = (String) v.getTag();
                 customStart = customEnd = null;
+                pickedMonth = null;
                 load(true);
             });
             chips.addView(c);
@@ -187,6 +193,7 @@ public class SalesAchievementActivity extends AppCompatActivity {
                 customStart = start;
                 customEnd = String.format(Locale.US, "%04d-%02d-%02d", y2, m2 + 1, d2);
                 preset = "custom";
+                pickedMonth = null;
                 buildPresetChips();
                 load(true);
             }, y, m, d);
@@ -196,6 +203,49 @@ public class SalesAchievementActivity extends AppCompatActivity {
             end.getDatePicker().setMinDate(c2.getTimeInMillis());
             end.show();
         }, now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH))
+                .show();
+    }
+
+    /**
+     * Dropdown "🗓 Pilih Periode Cut-off" — periode cut-off bulan mana pun (daftar & label dari server,
+     * sama dengan "Pilih Bulan" di web). Dua teratas = preset chip "Periode Cut-off" & "Cut-off Lalu",
+     * jadi chip-nya ikut tercentang; sisanya dikirim sebagai ?month=YYYY-MM.
+     */
+    private void showCutoffPicker() {
+        if (cutoffOptions.isEmpty()) {
+            Toast.makeText(this, "Daftar periode belum termuat. Tarik untuk menyegarkan, lalu coba lagi.",
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final List<String[]> opts = new ArrayList<>(cutoffOptions);
+        final CharSequence[] labels = new CharSequence[opts.size()];
+        int checked = -1;
+        for (int i = 0; i < opts.size(); i++) {
+            labels[i] = opts.get(i)[1] + (i == 0 ? "  · berjalan" : (i == 1 ? "  · lalu" : ""));
+            if (("cutoff".equals(preset) && i == 0) || ("last_cutoff".equals(preset) && i == 1)
+                    || ("month_pick".equals(preset) && opts.get(i)[0].equals(pickedMonth))) {
+                checked = i;
+            }
+        }
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("🗓 Pilih Periode Cut-off")
+                .setSingleChoiceItems(labels, checked, (d, which) -> {
+                    d.dismiss();
+                    customStart = customEnd = null;
+                    if (which == 0) {
+                        preset = "cutoff";
+                        pickedMonth = null;
+                    } else if (which == 1) {
+                        preset = "last_cutoff";
+                        pickedMonth = null;
+                    } else {
+                        preset = "month_pick";
+                        pickedMonth = opts.get(which)[0];
+                    }
+                    buildPresetChips();
+                    load(true);
+                })
+                .setNegativeButton("Batal", null)
                 .show();
     }
 
@@ -252,13 +302,14 @@ public class SalesAchievementActivity extends AppCompatActivity {
         final String p = preset;
         final String s = customStart;
         final String e = customEnd;
+        final String mo = "month_pick".equals(preset) ? pickedMonth : null;
         final String devs = android.text.TextUtils.join(",", selectedDevices);
 
         new Thread(() -> {
             JSONObject res = null;
             String error = null;
             try {
-                res = new SyncApi(cfg).salesAchievement(p, s, e, devs);
+                res = new SyncApi(cfg).salesAchievement(p, s, e, devs, mo);
             } catch (Exception ex) {
                 error = "Gagal memuat pencapaian. Pastikan perangkat online lalu coba lagi.";
             }
@@ -290,7 +341,17 @@ public class SalesAchievementActivity extends AppCompatActivity {
     private void render(JSONObject res) {
         if (res == null) return;
 
-        tvRange.setText(res.optString("label", ""));
+        // Label rentang = tombol dropdown periode cut-off (▾).
+        tvRange.setText("🗓 " + res.optString("label", "") + "  ▾");
+        JSONArray opts = res.optJSONArray("cutoff_options");
+        if (opts != null) {
+            cutoffOptions.clear();
+            for (int i = 0; i < opts.length(); i++) {
+                JSONObject o = opts.optJSONObject(i);
+                if (o == null || o.optString("value", "").isEmpty()) continue;
+                cutoffOptions.add(new String[]{o.optString("value"), o.optString("label", o.optString("value"))});
+            }
+        }
 
         JSONObject t = res.optJSONObject("totals");
         int galon = t != null ? t.optInt("galon", 0) : 0;
