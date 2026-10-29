@@ -282,6 +282,7 @@ public class CustomerListActivity extends AppCompatActivity
             else if (todayOnly) list = customerDao.searchRegisteredToday(keyword, sortMode);
             else list = customerDao.search(keyword, sortMode);
         }
+        renderTodayCards(keyword.isEmpty() && !rangeActive && !todayOnly);
         // Dedup tampilan DULU: satukan salinan lintas-perangkat (nomor sama, atau nama bila tanpa
         // nomor) jadi satu baris + JUMLAHKAN agregatnya — wakil = salinan MILIK perangkat ini bila
         // ada. Merge sebelum filter "Hanya Pelanggan Saya" supaya total tidak under-report.
@@ -639,6 +640,104 @@ public class CustomerListActivity extends AppCompatActivity
                 Toast.makeText(this, "Permission kontak ditolak", Toast.LENGTH_SHORT).show();
             }
         }
+    }
+
+    /** Kartu sorotan seperti web: "Pelanggan Baru Hari Ini" (hijau) & "Diedit Hari Ini" (biru).
+     *  Hanya di tampilan default (tanpa cari / filter tanggal). Ketuk nama = buka detail. */
+    private void renderTodayCards(boolean show) {
+        android.widget.LinearLayout host = findViewById(R.id.llTodayCards);
+        if (host == null) return;
+        host.removeAllViews();
+        if (!show) { host.setVisibility(View.GONE); return; }
+        List<Customer> fresh = CustomerDao.dedupeForDisplay(customerDao.getRegisteredToday(sortMode));
+        java.util.Map<String, String> edited = customerDao.editedTodayKeys();
+        List<Customer> eds = new java.util.ArrayList<>();
+        java.util.Map<String, String> edTime = new java.util.HashMap<>();
+        if (!edited.isEmpty()) {
+            java.util.Map<String, Customer> byKey = new java.util.HashMap<>();
+            for (Customer c : CustomerDao.dedupeForDisplay(customerDao.getAll(sortMode))) byKey.put(CustomerDao.personKey(c), c);
+            java.util.Set<String> freshKeys = new java.util.HashSet<>();
+            for (Customer c : fresh) freshKeys.add(CustomerDao.personKey(c));
+            for (java.util.Map.Entry<String, String> e : edited.entrySet()) {
+                Customer c = byKey.get(e.getKey());
+                if (c == null || freshKeys.contains(e.getKey())) continue;
+                eds.add(c);
+                edTime.put(e.getKey(), e.getValue());
+            }
+        }
+        if (fresh.isEmpty() && eds.isEmpty()) { host.setVisibility(View.GONE); return; }
+        host.setVisibility(View.VISIBLE);
+        if (!fresh.isEmpty()) host.addView(todaySection(fresh.size() + " Pelanggan Baru Hari Ini",
+                0xFFECFDF5, 0xFFA7F3D0, 0xFF065F46, fresh, c -> todayTime(c.getCreatedAt())));
+        if (!eds.isEmpty()) host.addView(todaySection(eds.size() + " Pelanggan Diedit Hari Ini",
+                0xFFF0F9FF, 0xFFBAE6FD, 0xFF075985, eds, c -> "✏️ " + edTime.get(CustomerDao.personKey(c))));
+    }
+
+    private static String todayTime(String iso) {
+        if (iso == null || iso.length() < 16) return "";
+        if (iso.endsWith("Z")) {
+            try {
+                java.text.SimpleDateFormat in = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm", java.util.Locale.US);
+                in.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+                java.util.Date d = in.parse(iso.substring(0, 16));
+                return new java.text.SimpleDateFormat("HH:mm", java.util.Locale.US).format(d);
+            } catch (Exception ignored) {
+            }
+        }
+        return iso.substring(11, 16);
+    }
+
+    private View todaySection(String title, int bg, int stroke, int fg, List<Customer> list,
+                              java.util.function.Function<Customer, String> time) {
+        float dp = getResources().getDisplayMetrics().density;
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        int p = (int) (10 * dp);
+        box.setPadding(p, p, p, p);
+        android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
+        g.setColor(bg);
+        g.setStroke((int) dp, stroke);
+        g.setCornerRadius(10 * dp);
+        box.setBackground(g);
+        android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, (int) (6 * dp), 0, 0);
+        box.setLayoutParams(lp);
+        TextView h = new TextView(this);
+        h.setText("● " + title);
+        h.setTextColor(fg);
+        h.setTextSize(13);
+        h.setTypeface(h.getTypeface(), android.graphics.Typeface.BOLD);
+        box.addView(h);
+        android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
+        android.widget.LinearLayout row = new android.widget.LinearLayout(this);
+        row.setPadding(0, (int) (6 * dp), 0, 0);
+        for (Customer c : list) {
+            TextView t = new TextView(this);
+            boolean foto = (c.getPhotoUrl() != null && !c.getPhotoUrl().isEmpty())
+                    || (c.getPhotoPath() != null && !c.getPhotoPath().isEmpty());
+            boolean geo = c.getLatitude() != 0 || c.getLongitude() != 0;
+            String phone = c.getPhone() != null && !c.getPhone().isEmpty() ? c.getPhone() : "Tanpa nomor";
+            t.setText((c.getName() == null ? "" : c.getName()) + " " + (foto ? "📷" : "🚫📷") + (geo ? "📍" : "🚫📍")
+                    + "\n" + phone + " · " + time.apply(c));
+            t.setTextColor(0xFF1E293B);
+            t.setTextSize(12);
+            int q = (int) (8 * dp);
+            t.setPadding(q, q / 2, q, q / 2);
+            android.graphics.drawable.GradientDrawable cg = new android.graphics.drawable.GradientDrawable();
+            cg.setColor(0xFFFFFFFF);
+            cg.setStroke((int) dp, stroke);
+            cg.setCornerRadius(8 * dp);
+            t.setBackground(cg);
+            android.widget.LinearLayout.LayoutParams cl = new android.widget.LinearLayout.LayoutParams(-2, -2);
+            cl.setMargins(0, 0, (int) (6 * dp), 0);
+            t.setLayoutParams(cl);
+            t.setOnClickListener(v -> onCustomerClick(c));
+            row.addView(t);
+        }
+        hs.addView(row);
+        box.addView(hs);
+        return box;
     }
 
     @Override
