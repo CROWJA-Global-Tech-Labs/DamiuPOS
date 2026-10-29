@@ -246,10 +246,10 @@ public class VisitListActivity extends AppCompatActivity {
     private void confirmBulkPull(List<PullPlan> plans, List<String> skipped) {
         if (plans.isEmpty()) {
             new AlertDialog.Builder(this)
-                    .setTitle("📥 Tarik Galon")
+                    .setTitle("📥 Galon Kembali")
                     .setMessage("Tak ada galon yang tercatat dipinjam oleh " + skipped.size()
-                            + " pelanggan terpilih — tidak ada yang bisa ditarik.\n\nKalau di lapangan tetap ada "
-                            + "galon, tarik per pelanggan lewat dialog kartunya (jumlah bisa diisi sendiri).")
+                            + " pelanggan terpilih — tidak ada yang bisa diambil.\n\nKalau di lapangan tetap ada "
+                            + "galon, catat per pelanggan lewat dialog kartunya (jumlah bisa diisi sendiri).")
                     .setPositiveButton("OK", null)
                     .show();
             return;
@@ -261,28 +261,101 @@ public class VisitListActivity extends AppCompatActivity {
             msg.append("• ").append(safe(p.cust.getName())).append(" — ").append(p.qty).append(" galon\n");
         }
         msg.append("\nTotal ").append(total).append(" galon dari ").append(plans.size())
-                .append(" pelanggan, dicatat sebagai Galon Kembali (stok depot bertambah, galon dipinjam "
-                        + "pelanggan berkurang). Jatah promosi dipisah otomatis.");
+                .append(" pelanggan, dibuat sebagai transaksi Galon Kembali. Jatah promosi dipisah otomatis.");
         if (!skipped.isEmpty()) {
             msg.append("\n\nDilewati (tak ada galon dipinjam): ").append(android.text.TextUtils.join(", ", skipped));
         }
+
+        // Penugasan: siapa yang mengambil galonnya. Daftar perangkat = roster cabang (/api/me), sama dengan
+        // picker "Perangkat yang ditugaskan" di Transaksi Baru.
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+        String myUuid = cfg.getDeviceUuid();
+        final List<String> targets = new ArrayList<>();
+        List<String> labels = new ArrayList<>();
+        boolean enrolled = cfg.isEnrolled() && myUuid != null && !myUuid.isEmpty();
+        if (enrolled) {
+            targets.add(myUuid);
+            labels.add("🚚 Antrean perangkat ini (diambil nanti)");
+        }
+        targets.add(null);
+        labels.add("✅ Langsung tercatat (galon sudah di tangan)");
+        if (enrolled) {
+            try {
+                org.json.JSONArray arr = new org.json.JSONArray(cfg.getDeviceRoster());
+                for (int i = 0; i < arr.length(); i++) {
+                    org.json.JSONObject o = arr.optJSONObject(i);
+                    if (o == null) continue;
+                    String uuid = o.optString("uuid", "");
+                    if (uuid.isEmpty() || uuid.equals(myUuid)) continue;
+                    targets.add(uuid);
+                    labels.add("📱 " + o.optString("name", "Perangkat"));
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
+        int pad = Math.round(20 * getResources().getDisplayMetrics().density);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(pad, pad / 2, pad, 0);
+        TextView body = new TextView(this);
+        body.setText(msg);
+        body.setTextColor(0xFF212121);
+        body.setTextSize(14);
+        box.addView(body);
+        TextView lbl = new TextView(this);
+        lbl.setText("Ditugaskan ke");
+        lbl.setTextColor(0xFF455A64);
+        lbl.setTextSize(13);
+        lbl.setPadding(0, pad, 0, 4);
+        lbl.setTypeface(lbl.getTypeface(), android.graphics.Typeface.BOLD);
+        box.addView(lbl);
+        android.widget.Spinner sp = new android.widget.Spinner(this);
+        android.widget.ArrayAdapter<String> ad = new android.widget.ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, labels);
+        ad.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        sp.setAdapter(ad);
+        box.addView(sp);
+        TextView hint = new TextView(this);
+        hint.setTextColor(0xFF455A64);
+        hint.setTextSize(12);
+        hint.setPadding(0, 6, 0, 0);
+        box.addView(hint);
+        sp.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(android.widget.AdapterView<?> p, View v, int pos, long id) {
+                String t = targets.get(pos);
+                hint.setText(t == null
+                        ? "Dicatat selesai sekarang: stok depot bertambah, galon dipinjam pelanggan berkurang."
+                        : "Masuk antrean sebagai tugas 📥 AMBIL GALON — tercatat kembali saat kurir menyelesaikannya.");
+            }
+
+            @Override
+            public void onNothingSelected(android.widget.AdapterView<?> p) {
+            }
+        });
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        sv.addView(box);
+
         final int fTotal = total;
         new AlertDialog.Builder(this)
-                .setTitle("📥 Tarik " + total + " galon?")
-                .setMessage(msg)
-                .setPositiveButton("YA, TARIK " + total + " GALON", (d, w) -> runBulkPull(plans, fTotal))
+                .setTitle("📥 Galon Kembali · " + total + " galon")
+                .setView(sv)
+                .setPositiveButton("BUAT GALON KEMBALI", (d, w) ->
+                        runBulkPull(plans, fTotal, targets.get(sp.getSelectedItemPosition()),
+                                String.valueOf(sp.getSelectedItem())))
                 .setNegativeButton("Batal", null)
                 .show();
     }
 
-    private void runBulkPull(List<PullPlan> plans, int expected) {
+    private void runBulkPull(List<PullPlan> plans, int expected, String assignTo, String assignLabel) {
         final com.crowja.damiupos.db.TransactionDao tdao =
                 new com.crowja.damiupos.db.TransactionDao(DatabaseHelper.getInstance(this));
         new Thread(() -> {
             int galon = 0, people = 0;
             List<String> failed = new ArrayList<>();
             for (PullPlan p : plans) {
-                int w = TarikGalon.write(tdao, p.cust, p.qty, p.promoRemaining);
+                int w = TarikGalon.write(tdao, p.cust, p.qty, p.promoRemaining, assignTo);
                 if (w > 0) { galon += w; people++; }
                 if (w < p.qty) failed.add(safe(p.cust.getName()));
             }
@@ -290,7 +363,8 @@ public class VisitListActivity extends AppCompatActivity {
             final int fg = galon, fp = people;
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
-                String m = "📥 " + fg + " galon ditarik dari " + fp + " pelanggan";
+                String m = "📥 Galon Kembali " + fg + " galon dari " + fp + " pelanggan · "
+                        + (assignTo == null ? "langsung tercatat" : assignLabel.substring(assignLabel.indexOf(' ') + 1));
                 if (!failed.isEmpty()) m += ". Gagal tersimpan: " + android.text.TextUtils.join(", ", failed);
                 Toast.makeText(this, m, Toast.LENGTH_LONG).show();
                 setSelecting(false);
