@@ -35,6 +35,24 @@ final class WaScheduleDraft {
     int maxAutoAreas = 50;
     int maxDrawnVertices = 300;
     boolean dirty;
+    /** Muat pelanggan aturan wilayah yang sedang berjalan (form maupun peta) — lihat {@link WaScheduleLoads}. */
+    final WaScheduleLoads loads = new WaScheduleLoads();
+    /** Dipanggil (main thread) tiap hasil muat digabungkan; form memasangnya selama tampil supaya hitungannya segar. */
+    @Nullable Runnable onChange;
+
+    void changed() {
+        if (onChange != null) onChange.run();
+    }
+
+    /** Wilayah otomatis yang pelanggannya belum termuat dan tidak sedang dimuat (galat, atau peta ditutup duluan). */
+    List<JSONObject> unloadedAutoAreas() {
+        List<JSONObject> out = new ArrayList<>();
+        for (JSONObject a : autoAreas) {
+            String k = areaKey(a);
+            if (!areaCounts.containsKey(k) && !loads.loading(k)) out.add(a);
+        }
+        return out;
+    }
 
     /** Kunci unik aturan — sama dengan areaKey() di form web. */
     static String areaKey(JSONObject a) {

@@ -352,13 +352,15 @@ public class WaScheduleMapActivity extends AppCompatActivity {
         String desa = WaScheduleUi.str(p, "desa");
         final String label = "🗺️ " + (desa != null ? "Desa " + desa + ", " : "") + p.optString("kecamatan");
         tvNote.setText("Memuat pelanggan " + label + "…");
-        WaScheduleUi.call(this, () -> new JSONObject().put("rows", WaScheduleUi.areaCustomers(this, staffUuid, a)), r -> {
-            JSONArray rows = r.optJSONArray("rows");
-            int added = draft.addAll(rows);
-            draft.remember(a, rows);
-            tvNote.setText(WaScheduleUi.addedNote(label, rows != null ? rows.length() : 0, added, auto && draft.hasArea(a)));
+        // Draf diperbarui walau peta sudah ditutup ("Selesai" sebelum balasan tiba) — lihat WaScheduleUi.loadRule.
+        WaScheduleUi.loadRule(this, staffUuid, draft, a, false, (rows, added, err) -> {
+            if (rows == null) {
+                tvNote.setText(err != null ? err : "Gagal memuat pelanggan wilayah.");
+                return;
+            }
+            tvNote.setText(WaScheduleUi.addedNote(label, rows.length(), added, auto && draft.hasArea(a)));
             pushSel();
-        }, (msg, code) -> tvNote.setText(msg));
+        });
     }
 
     // ------------------------------------------------------------------ WebView
@@ -371,6 +373,13 @@ public class WaScheduleMapActivity extends AppCompatActivity {
         ws.setUserAgentString(MapTiles.userAgent());
         web.addJavascriptInterface(new Bridge(), "Android");
         web.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, android.webkit.WebResourceRequest request) {
+                // Jangan pernah pindah halaman (mis. tautan "Leaflet" di pojok atribusi): situs luar akan memegang
+                // jembatan Android.* — termasuk data('points') = nama, nomor & titik semua pelanggan — dan petanya hilang.
+                return true;
+            }
+
             @Override
             public void onPageFinished(WebView view, String url) {
                 pageReady = true;
@@ -553,7 +562,10 @@ public class WaScheduleMapActivity extends AppCompatActivity {
                 + "function setAutoFlag(b){AUTO_ON=!!b;}\n"
                 // ---- pilih area: seret kotak
                 + "var bs=null,br=null,cont=map.getContainer();\n"
-                + "function setBox(m){boxMode=m;cont.style.cursor=m?'crosshair':'';if(m){map.dragging.disable();map.closePopup();}else{map.dragging.enable();}}\n"
+                // touch-action none selama mode kotak: tanpa geser-peta Leaflet, kontainer jadi 'pan-x pan-y' dan
+                // browser mengambil alih seretan jari (pointercancel) — kotak tak pernah selesai di layar sentuh.
+                + "function setBox(m){boxMode=m;cont.style.cursor=m?'crosshair':'';cont.style.touchAction=m?'none':'';\n"
+                + "  if(m){map.dragging.disable();map.closePopup();}else{map.dragging.enable();}}\n"
                 + "cont.addEventListener('pointerdown',function(e){if(!boxMode||ED.active)return;bs=map.mouseEventToLatLng(e);\n"
                 + "  br=L.rectangle([bs,bs],{color:boxMode==='add'?'#059669':'#dc2626',weight:2,fillOpacity:.12,interactive:false}).addTo(map);\n"
                 + "  try{cont.setPointerCapture(e.pointerId);}catch(x){} e.preventDefault();e.stopPropagation();},true);\n"

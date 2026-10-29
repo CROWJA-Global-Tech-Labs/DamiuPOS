@@ -67,6 +67,7 @@ public class WaScheduleFormActivity extends AppCompatActivity {
     @Nullable private String repeatTime;
     private boolean loaded, saving, filling, textChanged;
     @Nullable private JSONArray areasCache, tripsCache;
+    @Nullable private AlertDialog confirmDialog;
     private final CheckBox[] dayBoxes = new CheckBox[7];
     private final Handler ui = new Handler(Looper.getMainLooper());
 
@@ -105,13 +106,27 @@ public class WaScheduleFormActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (loaded) renderSel();   // kembali dari peta: draf mungkin berubah
+        if (draft == null) return;   // gerbang menolak (activity sudah ditutup)
+        // Form yang TAMPIL pemilik draf bersama — form kedua (mis. "Buat Broadcast" diketuk dua kali) yang ditutup
+        // tak boleh membuat peta form ini kehilangan drafnya.
+        WaScheduleDraft.current = draft;
+        draft.onChange = this::renderSel;   // hasil muat wilayah dari peta yang tiba belakangan
+        if (loaded) {
+            renderSel();   // kembali dari peta: draf mungkin berubah
+            for (JSONObject a : draft.unloadedAutoAreas()) loadArea(a, false, WaScheduleDraft.areaLabel(a));
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (draft != null) draft.onChange = null;
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (WaScheduleDraft.current == draft) WaScheduleDraft.current = null;
+        if (draft != null && WaScheduleDraft.current == draft) WaScheduleDraft.current = null;
     }
 
     private void bindViews() {
@@ -246,19 +261,16 @@ public class WaScheduleFormActivity extends AppCompatActivity {
         for (JSONObject a : new ArrayList<>(draft.autoAreas)) loadArea(a, true, null);
     }
 
-    /** Muat pelanggan satu aturan wilayah → masuk daftar + jumlah di chip. */
+    /** Muat pelanggan satu aturan wilayah → masuk daftar + jumlah di chip (draf diperbarui oleh {@link WaScheduleUi#loadRule}). */
     private void loadArea(JSONObject a, boolean initial, @Nullable String noteLabel) {
-        WaScheduleUi.call(this, () -> new JSONObject().put("rows", WaScheduleUi.areaCustomers(this, staffUuid, a)), r -> {
-            JSONArray rows = r.optJSONArray("rows");
-            boolean prev = draft.dirty;
-            int added = draft.addAll(rows);
-            draft.remember(a, rows);
-            if (initial) draft.dirty = prev;
-            if (noteLabel != null) {
-                tvAreaNote.setText(WaScheduleUi.addedNote(noteLabel, rows != null ? rows.length() : 0, added, draft.hasArea(a)));
+        WaScheduleUi.loadRule(this, staffUuid, draft, a, initial, (rows, added, err) -> {
+            if (rows == null) {
+                tvAreaNote.setText(err != null ? err : "Gagal memuat pelanggan wilayah.");
+            } else if (noteLabel != null) {
+                tvAreaNote.setText(WaScheduleUi.addedNote(noteLabel, rows.length(), added, draft.hasArea(a)));
             }
             renderSel();
-        }, (msg, code) -> tvAreaNote.setText(msg));
+        });
     }
 
     // ------------------------------------------------------------------ tampilan
@@ -653,6 +665,20 @@ public class WaScheduleFormActivity extends AppCompatActivity {
 
     private void save(String action) {
         if (saving || !loaded) return;
+        if (confirmDialog != null && confirmDialog.isShowing()) return;   // ketuk ganda: satu konfirmasi saja
+        // Jangan kirim daftar penerima yang belum lengkap: server mencatat pelanggan wilayah otomatis yang tak ada di
+        // daftar sebagai "sengaja dikeluarkan" dan tak pernah mengirimi mereka.
+        List<JSONObject> unloaded = draft.unloadedAutoAreas();
+        String blocker = WaScheduleLoads.saveBlocker(draft.loads.busy(), unloaded.size());
+        if (blocker != null) {
+            for (JSONObject a : unloaded) loadArea(a, false, WaScheduleDraft.areaLabel(a));
+            if (!unloaded.isEmpty()) {
+                tvAreaNote.setText("Memuat ulang pelanggan wilayah otomatis… Bila disimpan sebelum termuat, mereka dianggap "
+                        + "dikeluarkan dan tidak akan dikirimi.");
+            }
+            Toast.makeText(this, blocker, Toast.LENGTH_LONG).show();
+            return;
+        }
         if (draft.sel.size() > MAX_RECIPIENTS) {
             Toast.makeText(this, "Penerima maksimal " + MAX_RECIPIENTS + " pelanggan.", Toast.LENGTH_LONG).show();
             return;
@@ -680,7 +706,7 @@ public class WaScheduleFormActivity extends AppCompatActivity {
         } else {
             when = sendAt != null ? WaScheduleText.display(sendAt) : "(waktu belum diisi)";
         }
-        new AlertDialog.Builder(this)
+        confirmDialog = new AlertDialog.Builder(this)
                 .setTitle("Jadwalkan broadcast?")
                 .setMessage("Pesan akan dikirim otomatis ke " + draft.sel.size() + " pelanggan"
                         + (draft.autoAreas.isEmpty() ? "" : " (+ pelanggan baru di " + draft.autoAreas.size() + " wilayah otomatis)")
@@ -709,6 +735,7 @@ public class WaScheduleFormActivity extends AppCompatActivity {
     }
 
     private void send(JSONObject body) {
+        if (saving) return;   // POST kedua = broadcast ganda (tiap pelanggan dikirimi dua kali)
         saving = true;
         btnSchedule.setEnabled(false);
         btnDraft.setEnabled(false);
@@ -732,6 +759,11 @@ public class WaScheduleFormActivity extends AppCompatActivity {
     }
 
     private void leave() {
+        if (saving) {
+            // Permintaan simpan sudah terkirim: "Buang" di sini tak membatalkan broadcast yang sedang dibuat server.
+            Toast.makeText(this, "Sedang menyimpan — tunggu sebentar.", Toast.LENGTH_SHORT).show();
+            return;
+        }
         if (loaded && (draft.dirty || textChanged)) {
             new AlertDialog.Builder(this)
                     .setTitle("Buang perubahan?")
