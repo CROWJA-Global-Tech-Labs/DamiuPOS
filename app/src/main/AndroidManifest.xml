@@ -159,6 +159,10 @@
         <activity android:name=".DeviceAdminActivity" />
         <activity android:name=".WhatsAppMenuActivity" />
         <activity android:name=".wa.WaAccountsActivity" />
+        <activity android:name=".wa.WaAccountsSettingsActivity" />
+        <activity
+            android:name=".wa.WaAccountsConsoleActivity"
+            android:windowSoftInputMode="adjustResize" />
         <activity android:name=".wa.WaBroadcastActivity" />
         <activity android:name=".wa.WaSchedulesActivity" />
         <activity android:name=".wa.WaStatusActivity" />
