@@ -1515,6 +1515,29 @@
                         app:backgroundTint="#37474F"
                         app:cornerRadius="14dp"
                         app:elevation="3dp" />
+
+                    <!-- 💬 WhatsApp — cermin grup menu web "WhatsApp" (Akun, Broadcast, Broadcast Terjadwal,
+                         Status). Khusus Admin (multi user + tersinkron). Putih di atas #1B7A43 = 5,5:1. -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnWhatsApp"
+                        android:layout_width="0dp"
+                        android:layout_height="64dp"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        android:minHeight="60dp"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="💬 WhatsApp"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:visibility="gone"
+                        app:backgroundTint="#1B7A43"
+                        app:cornerRadius="14dp"
+                        app:elevation="3dp" />
                 </LinearLayout>
             </LinearLayout>
 
