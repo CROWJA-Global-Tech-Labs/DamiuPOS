@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Kontras: #1E3A8A di atas #DBEAFE ~8.6:1; #334155 di atas putih ~10:1. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="#1E3A8A" android:state_checked="true" />
+    <item android:color="#334155" />
+</selector>

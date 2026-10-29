@@ -51,15 +51,15 @@ public class CustomerListActivity extends AppCompatActivity
     private Toolbar toolbar;
     /** Marketing: filter "Hanya Pelanggan Hari Ini" (default AKTIF) — fokus ke akuisisi
      *  hari berjalan; hilangkan centang untuk melihat semua pelanggan. */
-    private com.google.android.material.checkbox.MaterialCheckBox cbHariIni;
+    private com.google.android.material.chip.Chip cbHariIni;
     /** Filter "Hanya Pelanggan Saya" (semua role): pelanggan kini branch-wide (semua perangkat),
      *  centang ini untuk fokus ke pelanggan milik perangkat ini saja. Default tak dicentang. */
-    private com.google.android.material.checkbox.MaterialCheckBox cbSaya;
+    private com.google.android.material.chip.Chip cbSaya;
     /** Filter "Hanya Bermasalah" (semua role): tampilkan hanya pelanggan dengan issue aktif. */
-    private com.google.android.material.checkbox.MaterialCheckBox cbBermasalah;
+    private com.google.android.material.chip.Chip cbBermasalah;
     /** Filter "Hanya Pelanggan Wilayah Saya": pelanggan yang wilayah petanya ditugaskan ke perangkat
      *  ini (config wilayah dari web). Hanya tampil bila perangkat ini punya wilayah tertugas. */
-    private com.google.android.material.checkbox.MaterialCheckBox cbWilayahSaya;
+    private com.google.android.material.chip.Chip cbWilayahSaya;
     private boolean marketingUser = false;
     private boolean canDeleteCustomer = true;   // Admin/owner saja boleh hapus pelanggan dari HP
     /** "🔗 Gabungkan" (≥2 dipilih): lebur permanen lintas perangkat lewat server — setara
@@ -74,7 +74,9 @@ public class CustomerListActivity extends AppCompatActivity
      *  STATIC (in-memory, level proses): filter TETAP berlaku saat user berpindah-pindah activity
      *  lalu kembali ke daftar pelanggan, dan otomatis BERSIH saat aplikasi di-restart (proses mati).
      *  Sengaja TIDAK disimpan ke SharedPreferences/DB. Clear manual = pilih "Semua Tanggal (Clear)". */
-    private MaterialButton btnDateRange;
+    private com.google.android.material.chip.Chip btnDateRange;
+    /** Kepala daftar yang ikut tergulung (cari + chip filter + strip hari ini). */
+    private com.google.android.material.appbar.AppBarLayout appBarFilters;
     private static String createdFrom = null;   // yyyy-MM-dd (tanggal lokal)
     private static String createdTo = null;
     private static String createdLabel = "Semua";   // label tombol utk dipulihkan saat kembali
@@ -165,9 +167,11 @@ public class CustomerListActivity extends AppCompatActivity
 
         // Filter "Ditambahkan" — rentang tanggal pendaftaran pelanggan (untuk semua role).
         btnDateRange = findViewById(R.id.btnDateRange);
-        btnDateRange.setOnClickListener(v -> pickDateRange());
+        // Ketukan men-toggle centang chip → pulihkan dulu (centang = rentang aktif), baru buka pemilih.
+        btnDateRange.setOnClickListener(v -> { renderDateChip(); pickDateRange(); });
         // Pulihkan tampilan filter yang masih aktif (state static, bertahan lintas-activity).
-        btnDateRange.setText("Ditambahkan: " + createdLabel);
+        renderDateChip();
+        setupCollapsingHeader();
 
         etSearch.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -270,7 +274,7 @@ public class CustomerListActivity extends AppCompatActivity
         // Label selalu memuat jumlah pelanggan HARI INI (terlepas dari status centang),
         // supaya marketing tahu capaian akuisisi hari berjalan sekilas pandang.
         if (marketingUser && cbHariIni != null) {
-            cbHariIni.setText("Hanya Pelanggan Hari Ini (" + customerDao.countRegisteredToday() + ")");
+            cbHariIni.setText("✨ Hari Ini (" + customerDao.countRegisteredToday() + ")");
         }
         List<Customer> list;
         if (keyword.isEmpty()) {
@@ -346,6 +350,7 @@ public class CustomerListActivity extends AppCompatActivity
             tvEmpty.setVisibility(View.GONE);
             rvCustomers.setVisibility(View.VISIBLE);
         }
+        expandHeaderIfStuck();
     }
 
     @Override
@@ -553,7 +558,7 @@ public class CustomerListActivity extends AppCompatActivity
         createdFrom = from;
         createdTo = to;
         createdLabel = label;
-        btnDateRange.setText("Ditambahkan: " + label);
+        renderDateChip();
         // Memilih tanggal via tombol = mengambil alih filter created_at → matikan centang "Hari Ini"
         // (marketing) supaya tak saling menimpa, termasuk saat memilih "Semua" (lihat semua tanggal).
         // setChecked(false) sudah memicu reload (nilai rentang sudah di-set), jadi tak memuat dobel.
@@ -569,7 +574,46 @@ public class CustomerListActivity extends AppCompatActivity
         createdFrom = null;
         createdTo = null;
         createdLabel = "Semua";
-        if (btnDateRange != null) btnDateRange.setText("Ditambahkan: Semua");
+        renderDateChip();
+    }
+
+    /** Chip "📅 Ditambahkan": label rentang + tercentang (biru) selama rentang aktif. */
+    private void renderDateChip() {
+        if (btnDateRange == null) return;
+        btnDateRange.setText("📅 Ditambahkan: " + (createdLabel != null ? createdLabel : "Semua"));
+        btnDateRange.setChecked(createdFrom != null && createdTo != null);
+    }
+
+    /** Kepala daftar ikut tergulung bersama daftar, tapi tak bisa diseret sendiri — menyentuh kotak cari
+     *  atau menggeser chip tak boleh ikut menggulung kepala. */
+    private void setupCollapsingHeader() {
+        View v = findViewById(R.id.appBarFilters);
+        if (!(v instanceof com.google.android.material.appbar.AppBarLayout)) return;
+        appBarFilters = (com.google.android.material.appbar.AppBarLayout) v;
+        if (appBarFilters.getLayoutParams() instanceof androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams) {
+            com.google.android.material.appbar.AppBarLayout.Behavior b =
+                    new com.google.android.material.appbar.AppBarLayout.Behavior();
+            b.setDragCallback(new com.google.android.material.appbar.AppBarLayout.Behavior.DragCallback() {
+                @Override
+                public boolean canDrag(@NonNull com.google.android.material.appbar.AppBarLayout appBarLayout) {
+                    return false;
+                }
+            });
+            ((androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams) appBarFilters.getLayoutParams())
+                    .setBehavior(b);
+        }
+    }
+
+    /** Daftar yang kini tak bisa digulir (pendek/kosong) tak akan pernah memunculkan kepala yang sedang
+     *  tersembunyi → munculkan sendiri supaya cari & filter tetap terjangkau. */
+    private void expandHeaderIfStuck() {
+        if (appBarFilters == null || rvCustomers == null) return;
+        rvCustomers.post(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            if (!rvCustomers.canScrollVertically(1) && !rvCustomers.canScrollVertically(-1)) {
+                appBarFilters.setExpanded(true, true);
+            }
+        });
     }
 
     private String fmt(Calendar c) {
@@ -667,10 +711,11 @@ public class CustomerListActivity extends AppCompatActivity
         }
         if (fresh.isEmpty() && eds.isEmpty()) { host.setVisibility(View.GONE); return; }
         host.setVisibility(View.VISIBLE);
-        if (!fresh.isEmpty()) host.addView(todaySection(fresh.size() + " Pelanggan Baru Hari Ini",
-                0xFFECFDF5, 0xFFA7F3D0, 0xFF065F46, fresh, c -> todayTime(c.getCreatedAt())));
-        if (!eds.isEmpty()) host.addView(todaySection(eds.size() + " Pelanggan Diedit Hari Ini",
-                0xFFF0F9FF, 0xFFBAE6FD, 0xFF075985, eds, c -> "✏️ " + edTime.get(CustomerDao.personKey(c))));
+        if (!fresh.isEmpty()) host.addView(todayStrip("🆕 " + fresh.size(), "Pelanggan baru hari ini",
+                0xFFF0FDF4, 0xFFBBF7D0, 0xFFDCFCE7, 0xFF065F46, fresh, c -> todayTime(c.getCreatedAt())));
+        if (!eds.isEmpty()) host.addView(todayStrip("✏️ " + eds.size(), "Pelanggan diedit hari ini",
+                0xFFF0F9FF, 0xFFBAE6FD, 0xFFE0F2FE, 0xFF075985, eds,
+                c -> "✏️ " + edTime.get(CustomerDao.personKey(c))));
     }
 
     private static String todayTime(String iso) {
@@ -687,43 +732,74 @@ public class CustomerListActivity extends AppCompatActivity
         return iso.substring(11, 16);
     }
 
-    private View todaySection(String title, int bg, int stroke, int fg, List<Customer> list,
-                              java.util.function.Function<Customer, String> time) {
+    /**
+     * Satu strip ringkas: lencana kiri tetap (jumlah + "hari ini") + chip pelanggan yang digeser ke samping
+     * (nama + 📷/📍; baris 2: nomor · jam). Dulu judul makan satu baris sendiri + chip besar (±2× tingginya).
+     */
+    private View todayStrip(String count, String desc, int bg, int stroke, int badgeBg, int fg, List<Customer> list,
+                            java.util.function.Function<Customer, String> time) {
         float dp = getResources().getDisplayMetrics().density;
-        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
-        box.setOrientation(android.widget.LinearLayout.VERTICAL);
-        int p = (int) (10 * dp);
-        box.setPadding(p, p, p, p);
+        android.widget.LinearLayout strip = new android.widget.LinearLayout(this);
+        strip.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        strip.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        int p = (int) (4 * dp);
+        strip.setPadding(p, p, p, p);
         android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
         g.setColor(bg);
         g.setStroke((int) dp, stroke);
         g.setCornerRadius(10 * dp);
-        box.setBackground(g);
+        strip.setBackground(g);
         android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(0, (int) (6 * dp), 0, 0);
-        box.setLayoutParams(lp);
-        TextView h = new TextView(this);
-        h.setText("● " + title);
-        h.setTextColor(fg);
-        h.setTextSize(13);
-        h.setTypeface(h.getTypeface(), android.graphics.Typeface.BOLD);
-        box.addView(h);
+        lp.setMargins(0, (int) (4 * dp), 0, 0);
+        strip.setLayoutParams(lp);
+        strip.setContentDescription(desc);
+
+        TextView badge = new TextView(this);
+        android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder(count);
+        sb.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), 0, sb.length(), 0);
+        int sub = sb.length();
+        sb.append("\nhari ini");
+        sb.setSpan(new android.text.style.RelativeSizeSpan(0.78f), sub, sb.length(), 0);
+        badge.setText(sb);
+        badge.setTextColor(fg);
+        badge.setTextSize(14);
+        badge.setGravity(android.view.Gravity.CENTER);
+        badge.setMinWidth((int) (52 * dp));
+        int bh = (int) (6 * dp), bv = (int) (3 * dp);
+        badge.setPadding(bh, bv, bh, bv);
+        android.graphics.drawable.GradientDrawable gb = new android.graphics.drawable.GradientDrawable();
+        gb.setColor(badgeBg);
+        gb.setCornerRadius(8 * dp);
+        badge.setBackground(gb);
+        strip.addView(badge);
+
         android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
         hs.setHorizontalScrollBarEnabled(false);
+        android.widget.LinearLayout.LayoutParams hl = new android.widget.LinearLayout.LayoutParams(0, -2, 1f);
+        hl.setMargins((int) (6 * dp), 0, 0, 0);
+        hs.setLayoutParams(hl);
         android.widget.LinearLayout row = new android.widget.LinearLayout(this);
-        row.setPadding(0, (int) (6 * dp), 0, 0);
         for (Customer c : list) {
             TextView t = new TextView(this);
             boolean foto = (c.getPhotoUrl() != null && !c.getPhotoUrl().isEmpty())
                     || (c.getPhotoPath() != null && !c.getPhotoPath().isEmpty());
             boolean geo = c.getLatitude() != 0 || c.getLongitude() != 0;
             String phone = c.getPhone() != null && !c.getPhone().isEmpty() ? c.getPhone() : "Tanpa nomor";
-            t.setText((c.getName() == null ? "" : c.getName()) + " " + (foto ? "📷" : "🚫📷") + (geo ? "📍" : "🚫📍")
-                    + "\n" + phone + " · " + time.apply(c));
+            String name = c.getName() == null ? "" : c.getName().trim();
+            if (name.length() > 24) name = name.substring(0, 23) + "…";
+            android.text.SpannableStringBuilder ct = new android.text.SpannableStringBuilder(name);
+            ct.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), 0, ct.length(), 0);
+            ct.append(' ').append(foto ? "📷" : "🚫📷").append(geo ? "📍" : "🚫📍");
+            int meta = ct.length();
+            ct.append("\n").append(phone).append(" · ").append(time.apply(c));
+            ct.setSpan(new android.text.style.RelativeSizeSpan(0.92f), meta, ct.length(), 0);
+            ct.setSpan(new android.text.style.ForegroundColorSpan(0xFF475569), meta, ct.length(), 0);
+            t.setText(ct);
             t.setTextColor(0xFF1E293B);
             t.setTextSize(12);
-            int q = (int) (8 * dp);
-            t.setPadding(q, q / 2, q, q / 2);
+            t.setMaxLines(2);
+            int qh = (int) (8 * dp), qv = (int) (3 * dp);
+            t.setPadding(qh, qv, qh, qv);
             android.graphics.drawable.GradientDrawable cg = new android.graphics.drawable.GradientDrawable();
             cg.setColor(0xFFFFFFFF);
             cg.setStroke((int) dp, stroke);
@@ -736,8 +812,8 @@ public class CustomerListActivity extends AppCompatActivity
             row.addView(t);
         }
         hs.addView(row);
-        box.addView(hs);
-        return box;
+        strip.addView(hs);
+        return strip;
     }
 
     @Override
