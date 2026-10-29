@@ -187,6 +187,62 @@ public class CustomerDao {
         }
     }
 
+    /** id baris pelanggan yang masih menunggu kunjungan urgent (definisi sama dengan daftar & badge). */
+    public java.util.Set<Long> getVisitUrgentIds() {
+        java.util.Set<Long> out = new java.util.HashSet<>();
+        String sql = "SELECT " + DatabaseHelper.COL_ID + " FROM " + DatabaseHelper.TABLE_CUSTOMERS
+                + " WHERE " + WHERE_VISIT_URGENT;
+        try (android.database.Cursor c = dbHelper.getReadableDatabase().rawQuery(sql, null)) {
+            while (c.moveToNext()) out.add(c.getLong(0));
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
+    /** Satu transaksi "berjalan hari ini" untuk tombol kedip Mode Keliling. */
+    public static final class TodayTrx {
+        public long id;
+        public long customerId;
+        public String type;          // JUAL | KEMBALI
+        public int galon;
+        public String status;        // delivery_status (boleh null = tanpa antar)
+        public String time;          // HH:mm lokal
+    }
+
+    /**
+     * Transaksi pelanggan yang BERJALAN HARI INI di perangkat ini: tanggalnya hari ini (kalender lokal)
+     * ATAU pengantarannya masih PENDING. Tanggal ISO-UTC ("…Z", hasil sinkron) dinormalkan ke lokal dulu.
+     * Kunci = id baris pelanggan.
+     */
+    public Map<Long, java.util.List<TodayTrx>> getTodayTrx() {
+        Map<Long, java.util.List<TodayTrx>> out = new java.util.HashMap<>();
+        String ld = "(CASE WHEN t.tanggal LIKE '%Z' THEN datetime(t.tanggal,'localtime') ELSE t.tanggal END)";
+        String sql = "SELECT t." + DatabaseHelper.COL_TRX_ID + ", t.customer_id, t.type, t.jumlah_galon, t.delivery_status, "
+                + "strftime('%H:%M'," + ld + ") FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t"
+                + " WHERE t.customer_id IS NOT NULL AND t.type IN ('JUAL','KEMBALI')"
+                + " AND (date(" + ld + ") = date('now','localtime') OR COALESCE(t.delivery_status,'')='PENDING')"
+                + " ORDER BY " + ld;
+        try (android.database.Cursor c = dbHelper.getReadableDatabase().rawQuery(sql, null)) {
+            while (c.moveToNext()) {
+                TodayTrx t = new TodayTrx();
+                t.id = c.getLong(0);
+                t.customerId = c.getLong(1);
+                t.type = c.getString(2);
+                t.galon = c.getInt(3);
+                t.status = c.isNull(4) ? null : c.getString(4);
+                t.time = c.isNull(5) ? "" : c.getString(5);
+                java.util.List<TodayTrx> l = out.get(t.customerId);
+                if (l == null) {
+                    l = new java.util.ArrayList<>();
+                    out.put(t.customerId, l);
+                }
+                l.add(t);
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
     /** Semua pelanggan yang masih menunggu kunjungan urgent, yang terbaru ditandai lebih dulu. */
     public java.util.List<Customer> getVisitUrgent() {
         SQLiteDatabase db = dbHelper.getReadableDatabase();

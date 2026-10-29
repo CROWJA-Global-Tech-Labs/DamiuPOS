@@ -102,6 +102,14 @@ public class IderModeActivity extends AppCompatActivity {
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     private final List<IderRanking.Person> people = new ArrayList<>();
+    /** Tambahan per ORANG (kunci = Person.key): tanda kunjungan urgent, salinan, transaksi hari ini. */
+    private final Map<String, Extra> extras = new HashMap<>();
+
+    private static final class Extra {
+        boolean urgent;
+        final List<Long> rowIds = new ArrayList<>();
+        final List<CustomerDao.TodayTrx> today = new ArrayList<>();
+    }
     private boolean dataLoaded;
     private final AtomicInteger loadGen = new AtomicInteger();
     private boolean firstResume = true;
@@ -365,11 +373,14 @@ public class IderModeActivity extends AppCompatActivity {
     private void loadData() {
         final int gen = loadGen.incrementAndGet();
         new Thread(() -> {
-            List<IderRanking.Person> built = buildPeople();
+            Map<String, Extra> ex = new HashMap<>();
+            List<IderRanking.Person> built = buildPeople(ex);
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed() || gen != loadGen.get()) return;
                 people.clear();
                 people.addAll(built);
+                extras.clear();
+                extras.putAll(ex);
                 dataLoaded = true;
                 renderStatus();
                 rerank(true);
@@ -379,8 +390,10 @@ public class IderModeActivity extends AppCompatActivity {
     }
 
     /** Kandidat kunjungan digabung per ORANG — aturan wakil & "terakhir beli" sama dengan VisitListActivity. */
-    private List<IderRanking.Person> buildPeople() {
+    private List<IderRanking.Person> buildPeople(Map<String, Extra> extrasOut) {
         CustomerDao dao = new CustomerDao(DatabaseHelper.getInstance(this));
+        Set<Long> urgentIds = dao.getVisitUrgentIds();
+        Map<Long, List<CustomerDao.TodayTrx>> todayByCust = dao.getTodayTrx();
         Map<String, List<Customer>> groups = new LinkedHashMap<>();
         for (Customer c : dao.getVisitCandidates()) {
             String key = CustomerDao.dedupKey(c);
@@ -434,6 +447,14 @@ public class IderModeActivity extends AppCompatActivity {
             addSpots(rep, spots, seen);
             for (Customer c : copies) if (c != rep) addSpots(c, spots, seen);
             if (spots.isEmpty()) continue;
+            Extra x = new Extra();
+            for (Customer c : copies) {
+                x.rowIds.add(c.getId());
+                if (urgentIds.contains(c.getId())) x.urgent = true;
+                List<CustomerDao.TodayTrx> tl = todayByCust.get(c.getId());
+                if (tl != null) x.today.addAll(tl);
+            }
+            extrasOut.put(e.getKey(), x);
             out.add(new IderRanking.Person(e.getKey(), rep.getId(), rep.getName(), last, spots, reorderDay));
         }
         return out;
@@ -493,7 +514,7 @@ public class IderModeActivity extends AppCompatActivity {
         rankedAt = now;
         List<IderRanking.Ranked> top = IderRanking.nearest(people, lat, lng, maxList, radiusMeters());
         List<Row> rows = new ArrayList<>(top.size());
-        for (int i = 0; i < top.size(); i++) rows.add(new Row(top.get(i), i + 1));
+        for (int i = 0; i < top.size(); i++) rows.add(new Row(top.get(i), i + 1, extras.get(top.get(i).person.key)));
         shown = rows;
         adapter.submitList(rows);
         renderEmpty();
@@ -799,9 +820,16 @@ public class IderModeActivity extends AppCompatActivity {
         items.add("📜 Riwayat Transaksi");
         items.add("📍 Tunjukkan di Peta");
         if (canDelete) items.add("🗑️ Hapus Pelanggan");
+        if (r.urgent) items.add(0, "✅ Kunjungan Urgent Selesai");
+        final int off = r.urgent ? 1 : 0;
         new androidx.appcompat.app.AlertDialog.Builder(this)
                 .setTitle(r.name)
-                .setItems(items.toArray(new String[0]), (d, which) -> {
+                .setItems(items.toArray(new String[0]), (d, w) -> {
+                    if (r.urgent && w == 0) {
+                        markUrgentDone(r);
+                        return;
+                    }
+                    int which = w - off;
                     if (which == 0) {
                         // Popup "Histori Transaksi" Detail Pelanggan (server, semua perangkat).
                         startActivity(new Intent(this, CustomerDetailActivity.class)
@@ -812,6 +840,79 @@ public class IderModeActivity extends AppCompatActivity {
                     } else {
                         confirmDeleteCustomer(r);
                     }
+                })
+                .setNegativeButton("Tutup", null)
+                .show();
+    }
+
+    /**
+     * Selesaikan kunjungan urgent — aturan sama dengan Daftar Kunjungan Urgent: alasan WAJIB, ditulis ke
+     * SEMUA salinan orang ini (tanda bisa mendarat di salinan mana pun lewat sinkron), lalu tersinkron.
+     */
+    private void markUrgentDone(Row r) {
+        final android.widget.EditText et = new android.widget.EditText(this);
+        et.setHint("Alasan / hasil kunjungan (wajib)");
+        et.setMinLines(2);
+        et.setGravity(android.view.Gravity.TOP | android.view.Gravity.START);
+        android.widget.LinearLayout wrap = new android.widget.LinearLayout(this);
+        int pad = Math.round(20 * getResources().getDisplayMetrics().density);
+        wrap.setPadding(pad, 0, pad, 0);
+        wrap.addView(et, new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
+        androidx.appcompat.app.AlertDialog dlg = new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("✅ Kunjungan urgent selesai?")
+                .setMessage(r.name + " dikeluarkan dari Daftar Kunjungan Urgent. Alasannya tercatat di "
+                        + "Riwayat Perubahan pelanggan dan dikabarkan ke web.")
+                .setView(wrap)
+                .setPositiveButton("YA, SELESAI", null)
+                .setNegativeButton("Batal", null)
+                .create();
+        dlg.setOnShowListener(x -> dlg.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(v -> {
+                    String reason = et.getText() != null ? et.getText().toString().trim() : "";
+                    if (reason.isEmpty()) {
+                        et.setError("Alasan wajib diisi");
+                        return;
+                    }
+                    dlg.dismiss();
+                    final List<Long> ids = new ArrayList<>(r.rowIds.isEmpty()
+                            ? java.util.Collections.singletonList(r.customerId) : r.rowIds);
+                    new Thread(() -> {
+                        CustomerDao dao = new CustomerDao(DatabaseHelper.getInstance(this));
+                        for (long id : ids) dao.markVisitUrgentDone(id, reason);
+                        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                        runOnUiThread(() -> {
+                            if (isFinishing() || isDestroyed()) return;
+                            Toast.makeText(this, "✅ Kunjungan urgent " + r.name + " selesai", Toast.LENGTH_SHORT).show();
+                            loadData();
+                        });
+                    }).start();
+                }));
+        dlg.show();
+    }
+
+    /** Tombol kedip → daftar transaksi berjalan hari ini; ketuk Penjualan = buka struknya. */
+    private void showTodayTrx(Row r) {
+        if (r.today.isEmpty()) return;
+        String[] lines = new String[r.today.size()];
+        for (int i = 0; i < r.today.size(); i++) {
+            CustomerDao.TodayTrx t = r.today.get(i);
+            boolean ambil = Transaction.TYPE_KEMBALI.equals(t.type);
+            String st = Transaction.DELIVERY_PENDING.equals(t.status) ? " · 🚚 menunggu diantar"
+                    : Transaction.DELIVERY_DONE.equals(t.status) ? " · ✔ selesai"
+                    : Transaction.DELIVERY_TERTUNDA.equals(t.status) ? " · ⏸ tertunda" : "";
+            lines[i] = (ambil ? "📥 Ambil Galon" : "🧾 Penjualan") + " · " + t.galon + " galon"
+                    + (t.time.isEmpty() ? "" : " · " + t.time) + st;
+        }
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Transaksi hari ini — " + r.name)
+                .setItems(lines, (d, which) -> {
+                    CustomerDao.TodayTrx t = r.today.get(which);
+                    if (Transaction.TYPE_KEMBALI.equals(t.type)) {
+                        Toast.makeText(this, "Ambil galon " + t.galon + " galon tercatat.", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    startActivity(new Intent(this, ReceiptActivity.class).putExtra("transaction_id", t.id));
                 })
                 .setNegativeButton("Tutup", null)
                 .show();
@@ -1125,8 +1226,14 @@ public class IderModeActivity extends AppCompatActivity {
         final String reorderDay;
         /** Wakil orang ini (salinan milik perangkat bila ada) — untuk riwayat & hapus. */
         final long customerId;
+        final boolean urgent;
+        /** Semua salinan orang ini — menyelesaikan kunjungan urgent menulis ke semuanya. */
+        final List<Long> rowIds;
+        final List<CustomerDao.TodayTrx> today;
+        /** Label tombol kedip ("" = tak ada transaksi berjalan hari ini). */
+        final String todayLabel;
 
-        Row(IderRanking.Ranked r, int rank) {
+        Row(IderRanking.Ranked r, int rank, Extra x) {
             IderRanking.Spot s = r.spot();
             this.personKey = r.person.key;
             this.pinKey = pinKey(r.person, r.spotIndex);
@@ -1142,12 +1249,23 @@ public class IderModeActivity extends AppCompatActivity {
             this.photo = s.photo;
             this.reorderDay = r.person.reorderDay;
             this.customerId = r.person.customerId;
+            this.urgent = x != null && x.urgent;
+            this.rowIds = x != null ? x.rowIds : new ArrayList<>();
+            this.today = x != null ? x.today : new ArrayList<>();
+            boolean jual = false, ambil = false;
+            for (CustomerDao.TodayTrx t : today) {
+                if (Transaction.TYPE_KEMBALI.equals(t.type)) ambil = true;
+                else jual = true;
+            }
+            this.todayLabel = jual && ambil ? "Hari ini\nJual+Ambil" : jual ? "Hari ini\nPenjualan"
+                    : ambil ? "Hari ini\nAmbil Galon" : "";
         }
 
         boolean sameContent(Row o) {
             return rank == o.rank && dist.equals(o.dist) && pinKey.equals(o.pinKey) && ownerId == o.ownerId
                     && name.equals(o.name) && lastOrderMillis == o.lastOrderMillis && spotCount == o.spotCount
-                    && java.util.Objects.equals(photo, o.photo) && java.util.Objects.equals(reorderDay, o.reorderDay);
+                    && java.util.Objects.equals(photo, o.photo) && java.util.Objects.equals(reorderDay, o.reorderDay)
+                    && urgent == o.urgent && todayLabel.equals(o.todayLabel) && today.size() == o.today.size();
         }
     }
 
@@ -1198,6 +1316,9 @@ public class IderModeActivity extends AppCompatActivity {
         final TextView spot;
         final TextView buy;
         final TextView reorder;
+        final TextView urgent;
+        final View todayBtn;
+        android.animation.ObjectAnimator blink;
         Row row;
         /** Sumber gambar yang sedang terpasang (foto / "map:lat,lng") — muat ulang hanya bila berganti. */
         String boundImage;
@@ -1211,6 +1332,15 @@ public class IderModeActivity extends AppCompatActivity {
             spot = v.findViewById(R.id.tvIderSpot);
             buy = v.findViewById(R.id.tvIderBuy);
             reorder = v.findViewById(R.id.tvIderReorder);
+            urgent = v.findViewById(R.id.tvIderUrgent);
+            todayBtn = v.findViewById(R.id.btnIderToday);
+            todayBtn.setOnClickListener(x -> {
+                if (row != null) showTodayTrx(row);
+            });
+            GradientDrawable ub = new GradientDrawable();
+            ub.setColor(0xFFFFEBEE);
+            ub.setCornerRadius(10 * getResources().getDisplayMetrics().density);
+            urgent.setBackground(ub);
             v.setOnClickListener(x -> {
                 if (row != null) showCardMenu(row);
             });
@@ -1246,6 +1376,25 @@ public class IderModeActivity extends AppCompatActivity {
                 reorder.setVisibility(View.VISIBLE);
             } else {
                 reorder.setVisibility(View.GONE);
+            }
+            urgent.setVisibility(r.urgent ? View.VISIBLE : View.GONE);
+            if (r.todayLabel.isEmpty()) {
+                todayBtn.setVisibility(View.GONE);
+                if (blink != null) {
+                    blink.cancel();
+                    blink = null;
+                }
+                todayBtn.setAlpha(1f);
+            } else {
+                ((TextView) todayBtn).setText(r.todayLabel);
+                todayBtn.setVisibility(View.VISIBLE);
+                if (blink == null) {
+                    blink = android.animation.ObjectAnimator.ofFloat(todayBtn, "alpha", 1f, 0.35f);
+                    blink.setDuration(650);
+                    blink.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+                    blink.setRepeatMode(android.animation.ValueAnimator.REVERSE);
+                    blink.start();
+                }
             }
             // Foto lokasi; tanpa foto → miniatur peta. Dimuat ulang hanya bila sumbernya berganti
             // (bind dipanggil tiap jarak berubah).
