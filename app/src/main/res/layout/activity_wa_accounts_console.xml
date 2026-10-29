@@ -90,7 +90,7 @@
             android:inputType="phone"
             android:maxLines="1"
             android:textColor="#212121"
-            android:textColorHint="#546E7A"
+            android:textColorHint="#455A64"
             android:textSize="14sp" />
 
         <LinearLayout
@@ -111,7 +111,7 @@
                 android:maxLines="5"
                 android:minLines="1"
                 android:textColor="#212121"
-                android:textColorHint="#546E7A"
+                android:textColorHint="#455A64"
                 android:textSize="15sp" />
 
             <com.google.android.material.button.MaterialButton

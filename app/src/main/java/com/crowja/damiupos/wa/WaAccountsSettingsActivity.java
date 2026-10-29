@@ -320,8 +320,23 @@ public class WaAccountsSettingsActivity extends AppCompatActivity {
         if (c == null) return;
         LinearLayout card = WaAccountsUi.card(this);
         card.addView(title("⏱️ CRON Job"));
-        card.addView(WaAccountsUi.hint(this, "Follow-up & WA Perkenalan otomatis butuh scheduler Laravel dipanggil server tiap menit "
-                + "(Cron Jobs di hPanel/cPanel)."));
+        card.addView(WaAccountsUi.hint(this, "Follow-up & WA Perkenalan otomatis butuh scheduler Laravel dipanggil server tiap menit. "
+                + "Kalau hosting belum ada cron-nya, tambahkan di hPanel/cPanel (Cron Jobs) — jalan tiap menit:"));
+        String cmd = str(c, "command");
+        if (cmd != null) {
+            TextView line = WaAccountsUi.text(this, cmd, 11.5f, TEXT, false);
+            line.setTypeface(android.graphics.Typeface.MONOSPACE);
+            line.setTextIsSelectable(true);   // tekan lama → salin, untuk diteruskan ke pengelola hosting
+            line.setBackground(WaAccountsUi.rounded(this, 0xFFF5F7F8, WaAccountsUi.CARD_STROKE, 8));
+            int lp8 = WaAccountsUi.dp(this, 8);
+            line.setPadding(lp8, lp8, lp8, lp8);
+            LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            clp.topMargin = WaAccountsUi.dp(this, 6);
+            card.addView(line, clp);
+            card.addView(WaAccountsUi.hint(this, "Keluaran dicatat ke storage/logs/cron.log supaya galat cron terlihat. Kalau \"php\" di "
+                    + "hosting bukan PHP " + nz(str(c, "php_version")) + ", pakai jalur lengkap, mis. " + nz(str(c, "php_alt_path")) + "."));
+        }
         boolean tickStale = c.optBoolean("scheduler_stale", true);
         TextView tick = WaAccountsUi.text(this, "Scheduler (cron hosting) terakhir berdetak: " + nz(str(c, "scheduler_tick_ago")),
                 13f, tickStale ? RED_FG : GREEN_FG, true);
@@ -333,13 +348,16 @@ public class WaAccountsSettingsActivity extends AppCompatActivity {
         tlp.topMargin = WaAccountsUi.dp(this, 8);
         card.addView(tick, tlp);
         card.addView(WaAccountsUi.hint(this, tickStale
-                ? "Detak basi → cron hosting tidak memanggil schedule:run (baris cron salah/tidak ada, atau versi PHP-nya tidak cocok)."
-                : "Detak segar → cron hosting sehat. Bila \"terakhir jalan\" job di bawah tetap merah, kunci job macet."));
+                ? "Detak basi → cron hosting tidak memanggil schedule:run (baris cron salah/tidak ada, atau versi PHP-nya tidak cocok). "
+                        + "Lihat storage/logs/cron.log."
+                : "Detak segar → cron hosting sehat. Bila \"terakhir jalan\" job di bawah tetap merah, kunci job macet: jalankan "
+                        + "php artisan schedule:clear-cache."));
         cronRow(card, "wa:auto-followups terakhir jalan", str(c, "followups_last_run_ago"), c.optBoolean("followups_stale", true));
         cronRow(card, "wa:auto-intros terakhir jalan", str(c, "intros_last_run_ago"), c.optBoolean("intros_stale", true));
         cronRow(card, "Interval wa:auto-followups", str(c, "followups_interval"), null);
         cronRow(card, "Interval wa:auto-intros", str(c, "intros_interval"), null);
-        card.addView(WaAccountsUi.hint(this, "🔒 Interval berlaku global (semua cabang) dan hanya bisa diubah Owner di dashboard web."));
+        card.addView(WaAccountsUi.hint(this, "🔒 Interval berlaku global (semua cabang) dan hanya bisa diubah Owner di dashboard web. "
+                + "Kalau \"terakhir jalan\" merah (lebih lama dari interval + 5 menit / belum pernah), cron di server kemungkinan belum aktif."));
         formBox.addView(card);
     }
 

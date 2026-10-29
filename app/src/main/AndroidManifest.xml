@@ -158,10 +158,18 @@
         <activity android:name=".ScheduledOrderActivity" />
         <activity android:name=".DeviceAdminActivity" />
         <activity android:name=".WhatsAppMenuActivity" />
-        <activity android:name=".wa.WaAccountsActivity" />
-        <activity android:name=".wa.WaAccountsSettingsActivity" />
+        <!-- Akun WhatsApp: isi form & dialog dibangun di kode (tanpa id) — configChanges supaya rotasi /
+             layar terpisah tak membuang dialog Tambah/Ubah, form Auto-Send yang belum disimpan, atau
+             gelembung pesan uji di Console. -->
+        <activity
+            android:name=".wa.WaAccountsActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden" />
+        <activity
+            android:name=".wa.WaAccountsSettingsActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden" />
         <activity
             android:name=".wa.WaAccountsConsoleActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden"
             android:windowSoftInputMode="adjustResize" />
         <activity android:name=".wa.WaBroadcastActivity" />
         <activity android:name=".wa.WaSchedulesActivity" />

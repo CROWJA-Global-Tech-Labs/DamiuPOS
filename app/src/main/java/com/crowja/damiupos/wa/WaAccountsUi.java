@@ -20,7 +20,8 @@ import org.json.JSONObject;
  * {@link WaAccountsConsoleActivity}): panggilan API di latar + elemen tampilan kecil.
  *
  * <p>Palet light-only, semua pasangan teks/latar ≥ 4,5:1 (WCAG AA): teks utama #212121 dan sekunder #455A64
- * di atas putih (16:1 / 7,4:1) maupun #ECEFF1 (6,3:1 untuk sekunder); badge hijau #1B5E20/#E8F5E9 (8,9:1),
+ * di atas putih (16:1 / 7,2:1), #ECEFF1 (6,3:1 untuk sekunder) maupun latar EditText tema #D6DCE3 (hint
+ * #455A64 5,2:1); badge hijau #1B5E20/#E8F5E9 (8,9:1),
  * biru #0D47A1/#E3F2FD (7,6:1), kuning #7C4A00/#FFF8E1 (7:1), merah #B71C1C/#FFEBEE (5,8:1).
  */
 final class WaAccountsUi {
@@ -135,7 +136,9 @@ final class WaAccountsUi {
         e.setText(value != null ? value : "");
         e.setHint(hint);
         e.setTextColor(TEXT);
-        e.setHintTextColor(0xFF546E7A);   // 5,4:1 di atas putih
+        // Latar EditText dari tema (DAMIUEditText) = #D6DCE3, bukan putih: #546E7A cuma 3,9:1 di situ,
+        // #455A64 5,2:1 (teks #212121 11,7:1).
+        e.setHintTextColor(TEXT_2);
         e.setTextSize(14f);
         e.setInputType(inputType);
         if (maxLen > 0) e.setFilters(new InputFilter[]{new InputFilter.LengthFilter(maxLen)});
