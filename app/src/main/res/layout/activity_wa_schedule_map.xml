@@ -1,0 +1,278 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 🗺️ Pilih penerima Broadcast Terjadwal dari peta (Leaflet di WebView) — titik, kotak, batas wilayah,
+     gambar wilayah. Panel bawah putih: teks #212121/#455A64 (≥ 7:1), tombol berisi putih di atas warna ≥ 5:1. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/white"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.AppBarLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <androidx.appcompat.widget.Toolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            android:background="@color/primary"
+            android:theme="@style/DAMIUToolbarOverlay"
+            app:navigationIcon="@drawable/ic_arrow_back"
+            app:popupTheme="@style/ThemeOverlay.MaterialComponents.Light"
+            app:title="🗺️ Pilih dari peta"
+            app:titleTextColor="@color/white" />
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <WebView
+            android:id="@+id/web"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <TextView
+            android:id="@+id/tvMapState"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|center_horizontal"
+            android:layout_marginTop="8dp"
+            android:background="#FFFFFF"
+            android:elevation="4dp"
+            android:paddingStart="12dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="6dp"
+            android:text="Memuat titik pelanggan…"
+            android:textColor="#212121"
+            android:textSize="13sp" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@android:color/white"
+        android:elevation="8dp"
+        android:orientation="vertical"
+        android:paddingStart="10dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="10dp"
+        android:paddingBottom="8dp">
+
+        <TextView
+            android:id="@+id/tvMapCount"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="0 penerima dipilih"
+            android:textColor="#212121"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvMapNote"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Ketuk titik untuk menambah/mengeluarkan · ● hijau = sudah termasuk · ketuk wilayah untuk menambahkan isinya."
+            android:textColor="#455A64"
+            android:textSize="12sp" />
+
+        <CheckBox
+            android:id="@+id/cbMapAuto"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🔄 Otomatis — pelanggan BARU di wilayah yang ditambahkan ikut jadi penerima"
+            android:textColor="#212121"
+            android:textSize="13sp" />
+
+        <!-- Baris alat utama -->
+        <HorizontalScrollView
+            android:id="@+id/barTools"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btnBoxAdd"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="6dp"
+                    android:text="▭ Pilih area"
+                    android:textAllCaps="false"
+                    android:textColor="#1B5E20"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/btnBoxDel"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="6dp"
+                    android:text="▭ Keluarkan area"
+                    android:textAllCaps="false"
+                    android:textColor="#B71C1C"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/btnDraw"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="6dp"
+                    android:text="✏️ Gambar wilayah"
+                    android:textAllCaps="false"
+                    android:textColor="#6A1B9A"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/btnLevel"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🗺️ Batas: Desa"
+                    android:textAllCaps="false"
+                    android:textColor="#0D47A1"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <!-- Sedang menggambar -->
+        <LinearLayout
+            android:id="@+id/barDraw"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tvDrawHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Ketuk peta untuk menaruh titik batas (minimal 3)…"
+                android:textColor="#6A1B9A"
+                android:textSize="13sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btnDrawUndo"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp"
+                    android:layout_weight="1"
+                    android:text="↶ Titik terakhir"
+                    android:textAllCaps="false"
+                    android:textColor="#37474F"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/btnDrawDone"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_weight="1"
+                    android:backgroundTint="#6A1B9A"
+                    android:text="✓ Selesai"
+                    android:textAllCaps="false"
+                    android:textColor="@color/white"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/btnDrawCancel"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_weight="1"
+                    android:text="Batal"
+                    android:textAllCaps="false"
+                    android:textColor="#37474F"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Poligon selesai digambar -->
+        <LinearLayout
+            android:id="@+id/panelDraw"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#F3E5F5"
+            android:orientation="vertical"
+            android:padding="8dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tvDrawCount"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="✏️ Wilayah gambar — … pelanggan ber-nomor di dalamnya"
+                android:textColor="#4A148C"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Seret titik ■ untuk mengubah bentuk — jumlah dihitung ulang otomatis."
+                android:textColor="#4A148C"
+                android:textSize="12sp" />
+
+            <EditText
+                android:id="@+id/etDrawLabel"
+                style="@style/DAMIUEditText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:hint="Nama wilayah (mis. Perum Griya Asri)"
+                android:importantForAutofill="no"
+                android:inputType="textCapWords"
+                android:maxLength="60"
+                android:maxLines="1"
+                android:textSize="14sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btnDrawAdd"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp"
+                    android:layout_weight="2"
+                    android:backgroundTint="#6A1B9A"
+                    android:enabled="false"
+                    android:text="➕ Tambahkan"
+                    android:textAllCaps="false"
+                    android:textColor="@color/white"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/btnDrawDiscard"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:layout_weight="1"
+                    android:text="Buang"
+                    android:textAllCaps="false"
+                    android:textColor="#37474F"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>
