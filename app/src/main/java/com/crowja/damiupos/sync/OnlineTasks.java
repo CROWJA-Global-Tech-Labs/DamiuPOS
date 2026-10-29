@@ -202,6 +202,10 @@ public final class OnlineTasks {
         } catch (Throwable ignored) {}
         // Auto-download the published update (no-op once it's already downloaded).
         try { VersionUpdater.autoDownloadIfNeeded(ctx); } catch (Throwable ignored) {}
+        // Aplikasi sedang dibuka → dialog Pembaruan Wajib langsung di layar aktif (bukan hanya notifikasi).
+        try {
+            if (VersionUpdater.updateNeeded(ctx, cfg)) VersionUpdater.promptOnCurrent();
+        } catch (Throwable ignored) {}
     }
 
     /** /api/broadcasts?since=cursor → notify each new admin message, advance cursor. */
