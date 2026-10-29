@@ -160,4 +160,58 @@
             android:textColor="@color/text_secondary"
             android:visibility="gone" />
     </FrameLayout>
+
+    <!-- Bilah mode "Pilih banyak": tarik galon massal sesuai galon dipinjam tiap pelanggan.
+         Teks #212121 di atas putih; tombol putih di atas #2E7D32 = 5,1:1. -->
+    <LinearLayout
+        android:id="@+id/barSelect"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#FFFFFF"
+        android:elevation="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tvSelectCount"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="0 dipilih"
+            android:textColor="#212121"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSelectAll"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Semua"
+            android:textAllCaps="false"
+            android:textColor="#1565C0" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSelectCancel"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Batal"
+            android:textAllCaps="false"
+            android:textColor="#455A64" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSelectPull"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="📥 Tarik Galon"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFF"
+            app:backgroundTint="#2E7D32" />
+    </LinearLayout>
 </LinearLayout>

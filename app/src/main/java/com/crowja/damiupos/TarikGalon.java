@@ -273,16 +273,7 @@ public final class TarikGalon {
         new Thread(() -> {
             int promoPart = Math.max(0, Math.min(qty, promoRemaining));
             int plainPart = qty - promoPart;
-            int written = 0;
-
-            if (promoPart > 0) {
-                written += insert(tdao, cust, promoPart,
-                        MARKER_PROMO + " " + promoPart + " galon ditarik dari pelanggan promosi") ? promoPart : 0;
-            }
-            if (plainPart > 0) {
-                written += insert(tdao, cust, plainPart,
-                        MARKER + " " + plainPart + " galon ditarik dari pelanggan") ? plainPart : 0;
-            }
+            int written = write(tdao, cust, qty, promoRemaining);
 
             // qty 0 memang tak menulis transaksi apa pun — sah selama sekalian menghapus
             // pelanggan (satu-satunya alasan UI mengizinkan 0 lolos validasi di atas).
@@ -341,6 +332,26 @@ public final class TarikGalon {
                 if (onSaved != null) onSaved.run();
             });
         }).start();
+    }
+
+    /**
+     * Tulis penarikan {@code qty} galon untuk satu pelanggan (dipecah promo/biasa seperti dialog
+     * tunggal) → jumlah galon yang benar-benar tercatat. Dipakai juga oleh tarik massal Daftar
+     * Kunjungan. Jalankan di background thread.
+     */
+    static int write(TransactionDao tdao, Customer cust, int qty, int promoRemaining) {
+        int promoPart = Math.max(0, Math.min(qty, promoRemaining));
+        int plainPart = qty - promoPart;
+        int written = 0;
+        if (promoPart > 0) {
+            written += insert(tdao, cust, promoPart,
+                    MARKER_PROMO + " " + promoPart + " galon ditarik dari pelanggan promosi") ? promoPart : 0;
+        }
+        if (plainPart > 0) {
+            written += insert(tdao, cust, plainPart,
+                    MARKER + " " + plainPart + " galon ditarik dari pelanggan") ? plainPart : 0;
+        }
+        return written;
     }
 
     private static boolean insert(TransactionDao tdao, Customer cust, int qty, String note) {
