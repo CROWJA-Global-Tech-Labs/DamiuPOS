@@ -161,6 +161,11 @@
         <activity android:name=".wa.WaAccountsActivity" />
         <activity android:name=".wa.WaBroadcastActivity" />
         <activity android:name=".wa.WaSchedulesActivity" />
+        <activity android:name=".wa.WaScheduleDetailActivity" />
+        <activity
+            android:name=".wa.WaScheduleFormActivity"
+            android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".wa.WaScheduleMapActivity" />
         <activity android:name=".wa.WaStatusActivity" />
         <activity android:name=".FollowUpMapActivity" />
         <activity android:name=".CustomerMapActivity" />
