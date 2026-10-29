@@ -340,22 +340,36 @@ public final class TarikGalon {
      * Kunjungan. Jalankan di background thread.
      */
     static int write(TransactionDao tdao, Customer cust, int qty, int promoRemaining) {
+        return write(tdao, cust, qty, promoRemaining, null);
+    }
+
+    /**
+     * @param assignedDevice null = langsung tercatat (galon sudah di tangan). Terisi = tugas "AMBIL GALON"
+     *                       di antrean perangkat itu (boleh perangkat ini sendiri) — {@link TransactionDao#insert}
+     *                       mengantrikan KEMBALI yang ditugaskan sebagai PENDING.
+     */
+    static int write(TransactionDao tdao, Customer cust, int qty, int promoRemaining, String assignedDevice) {
         int promoPart = Math.max(0, Math.min(qty, promoRemaining));
         int plainPart = qty - promoPart;
         int written = 0;
         if (promoPart > 0) {
             written += insert(tdao, cust, promoPart,
-                    MARKER_PROMO + " " + promoPart + " galon ditarik dari pelanggan promosi") ? promoPart : 0;
+                    MARKER_PROMO + " " + promoPart + " galon ditarik dari pelanggan promosi", assignedDevice) ? promoPart : 0;
         }
         if (plainPart > 0) {
             written += insert(tdao, cust, plainPart,
-                    MARKER + " " + plainPart + " galon ditarik dari pelanggan") ? plainPart : 0;
+                    MARKER + " " + plainPart + " galon ditarik dari pelanggan", assignedDevice) ? plainPart : 0;
         }
         return written;
     }
 
     private static boolean insert(TransactionDao tdao, Customer cust, int qty, String note) {
+        return insert(tdao, cust, qty, note, null);
+    }
+
+    private static boolean insert(TransactionDao tdao, Customer cust, int qty, String note, String assignedDevice) {
         Transaction k = new Transaction();
+        if (assignedDevice != null && !assignedDevice.trim().isEmpty()) k.setAssignedDeviceUuid(assignedDevice.trim());
         k.setCustomerId(cust.getId());
         k.setType(Transaction.TYPE_KEMBALI);
         k.setJumlahGalon(qty);

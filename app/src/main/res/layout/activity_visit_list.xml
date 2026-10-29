@@ -209,7 +209,7 @@
             android:id="@+id/btnSelectPull"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="📥 Tarik Galon"
+            android:text="📥 Galon Kembali"
             android:textAllCaps="false"
             android:textColor="#FFFFFF"
             app:backgroundTint="#2E7D32" />
