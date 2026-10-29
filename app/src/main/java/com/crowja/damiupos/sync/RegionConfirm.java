@@ -23,12 +23,17 @@ public final class RegionConfirm {
     /** Tunggu jawaban maksimal ini — lewat itu dianggap Batal (jangan menggantung thread selamanya). */
     private static final long TIMEOUT_SECONDS = 120;
 
+    /** "Ya, lanjutkan semua" (pemindahan massal): popup berikutnya dilewati sampai waktu ini. */
+    private static volatile long yesAllUntil = 0;
+    private static final long YES_ALL_MS = 5 * 60 * 1000L;
+
     /**
      * @return true bila kurir memilih tetap lanjut. false bila Batal, tak ada layar di depan, atau dipanggil dari
      *         thread utama (tak boleh memblokir UI).
      */
     public static boolean ask(String message) {
         if (Looper.myLooper() == Looper.getMainLooper()) return false;
+        if (System.currentTimeMillis() < yesAllUntil) return true;
         DamiuApplication app = DamiuApplication.get();
         final Activity a = app != null ? app.getCurrentActivity() : null;
         if (a == null || a.isFinishing()) return false;
@@ -43,6 +48,11 @@ public final class RegionConfirm {
                                 ? "Order ini di luar wilayah perangkat. Tetap lanjutkan?" : message)
                         .setCancelable(false)
                         .setPositiveButton("Ya, lanjutkan", (d, w) -> { yes.set(true); latch.countDown(); })
+                        .setNeutralButton("Ya, lanjutkan semua", (d, w) -> {
+                            yesAllUntil = System.currentTimeMillis() + YES_ALL_MS;
+                            yes.set(true);
+                            latch.countDown();
+                        })
                         .setNegativeButton("Batal", (d, w) -> latch.countDown())
                         .show();
             } catch (Exception e) {

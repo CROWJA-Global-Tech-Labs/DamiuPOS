@@ -72,6 +72,10 @@ public class CustomerDetailActivity extends AppCompatActivity {
     private com.google.android.material.button.MaterialButton btnBayarHutang;
     private com.google.android.material.button.MaterialButton btnCatatHutang;
     private com.crowja.damiupos.db.CustomerDebtDao debtDao;
+    private com.crowja.damiupos.db.CustomerGiftDao giftDao;
+    private View cardGift;
+    private android.widget.LinearLayout llGifts;
+    private boolean canManageGift;
     private TextView tvEmptyHistory, tvHistoryHeader, tvHistoryNote, tvHistoryMore;
     private RecyclerView rvTransactions;
     private TransactionAdapter adapter;
@@ -141,6 +145,10 @@ public class CustomerDetailActivity extends AppCompatActivity {
         debtDao = new com.crowja.damiupos.db.CustomerDebtDao(DatabaseHelper.getInstance(this));
         btnBayarHutang.setOnClickListener(v -> showDebtDialog(false));
         btnCatatHutang.setOnClickListener(v -> showDebtDialog(true));
+        giftDao = new com.crowja.damiupos.db.CustomerGiftDao(DatabaseHelper.getInstance(this));
+        cardGift = findViewById(R.id.cardGift);
+        llGifts = findViewById(R.id.llGifts);
+        findViewById(R.id.btnAddGift).setOnClickListener(v -> showGiftDialog(null));
         tvEmptyHistory = findViewById(R.id.tvEmptyHistory);
         rvTransactions = findViewById(R.id.rvTransactions);
         cardDeliveryMetric = findViewById(R.id.cardDeliveryMetric);
@@ -154,6 +162,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
 
         User u = new UserDao(dbHelper).getById(settingsDao.getCurrentUserId());
         canSeeDeliveryMetric = u != null && (u.isAdmin() || u.isMarketing() || u.isSpv());
+        canManageGift = u != null && u.isAdmin();   // cermin web: gift dikelola owner/admin
+        findViewById(R.id.btnAddGift).setVisibility(canManageGift ? View.VISIBLE : View.GONE);
 
         adapter = new TransactionAdapter(false);
         adapter.setShowDeliveryMetric(canSeeDeliveryMetric);
@@ -678,6 +688,178 @@ public class CustomerDetailActivity extends AppCompatActivity {
         tvHutangRiwayat.setText(sb.toString());
     }
 
+    /** Kartu GIFT: daftar hadiah orang ini. Admin: tambah / ubah / tandai diberikan / hapus. */
+    private void renderGifts() {
+        java.util.List<com.crowja.damiupos.db.CustomerGiftDao.Row> rows = giftDao.listForCustomer(customerId);
+        cardGift.setVisibility(canManageGift || !rows.isEmpty() ? View.VISIBLE : View.GONE);
+        llGifts.removeAllViews();
+        int pad = (int) (6 * getResources().getDisplayMetrics().density);
+        if (rows.isEmpty()) {
+            TextView t = new TextView(this);
+            t.setText("Belum ada gift.");
+            t.setTextColor(0xFF78350F);
+            t.setTextSize(12);
+            llGifts.addView(t);
+            return;
+        }
+        for (com.crowja.damiupos.db.CustomerGiftDao.Row r : rows) {
+            TextView t = new TextView(this);
+            StringBuilder sb = new StringBuilder();
+            sb.append(r.given() ? "✓ " : "🎁 ").append(r.qty).append(" pcs ").append(r.itemName == null ? "" : r.itemName);
+            if (r.reason != null && !r.reason.isEmpty()) sb.append("\n   ").append(r.reason);
+            sb.append("\n   ").append(r.given()
+                    ? "Diberikan " + shortDate(r.redeemedAt) + (r.redeemedBy != null ? " · " + r.redeemedBy : "")
+                    : "Belum diberikan");
+            t.setText(sb);
+            t.setTextColor(r.given() ? 0xFF57534E : 0xFF78350F);
+            t.setTextSize(13);
+            t.setPadding(0, pad, 0, pad);
+            if (canManageGift) {
+                t.setBackgroundResource(android.R.drawable.list_selector_background);
+                t.setOnClickListener(v -> showGiftActions(r));
+            }
+            llGifts.addView(t);
+        }
+    }
+
+    private static String shortDate(String iso) {
+        if (iso == null) return "";
+        String s = iso.replace('T', ' ');
+        return s.length() >= 16 ? s.substring(0, 16) : s;
+    }
+
+    private String actorName() {
+        String by = settingsDao.getCurrentUserName();
+        return by == null || by.isEmpty() ? "(perangkat)" : by;
+    }
+
+    private void giftChanged(String msg) {
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+        loadData();
+    }
+
+    private void showGiftActions(com.crowja.damiupos.db.CustomerGiftDao.Row r) {
+        java.util.List<String> items = new java.util.ArrayList<>();
+        if (!r.given()) {
+            items.add("✏️ Ubah");
+            items.add("✅ Sudah Diberikan");
+        }
+        items.add("🗑 Hapus");
+        new AlertDialog.Builder(this)
+                .setTitle("🎁 " + r.qty + " pcs " + (r.itemName == null ? "" : r.itemName))
+                .setItems(items.toArray(new String[0]), (d, w) -> {
+                    String pick = items.get(w);
+                    if (pick.startsWith("✏️")) {
+                        showGiftDialog(r);
+                    } else if (pick.startsWith("✅")) {
+                        new AlertDialog.Builder(this)
+                                .setTitle("Tandai sudah diberikan?")
+                                .setMessage("Gift dicatat diberikan sekarang, tanpa struk transaksi.")
+                                .setNegativeButton("Batal", null)
+                                .setPositiveButton("Ya, sudah diberikan", (d2, w2) -> {
+                                    if (giftDao.markGiven(r.localId, actorName())) giftChanged("Gift ditandai diberikan");
+                                })
+                                .show();
+                    } else {
+                        new AlertDialog.Builder(this)
+                                .setTitle("Hapus gift?")
+                                .setMessage("Gift ini dihapus dari semua perangkat & web.")
+                                .setNegativeButton("Batal", null)
+                                .setPositiveButton("Hapus", (d2, w2) -> {
+                                    if (giftDao.delete(r.localId, actorName())) giftChanged("Gift dihapus");
+                                })
+                                .show();
+                    }
+                })
+                .show();
+    }
+
+    /** Dialog tambah ({@code edit} null) / ubah gift: produk atau item custom, jumlah, alasan. */
+    private void showGiftDialog(com.crowja.damiupos.db.CustomerGiftDao.Row edit) {
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        java.util.List<com.crowja.damiupos.model.Product> products =
+                new com.crowja.damiupos.db.ProductDao(DatabaseHelper.getInstance(this)).getAll();
+        java.util.List<String> labels = new java.util.ArrayList<>();
+        labels.add("✍️ Item custom (ketik sendiri)");
+        int sel = 0;
+        for (int i = 0; i < products.size(); i++) {
+            com.crowja.damiupos.model.Product p = products.get(i);
+            labels.add("📦 " + p.getName());
+            if (edit != null && "product".equals(edit.itemType) && edit.productUuid != null
+                    && edit.productUuid.equals(p.getUuid())) sel = i + 1;
+        }
+
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        box.setPadding(pad, pad / 2, pad, 0);
+        android.widget.Spinner sp = new android.widget.Spinner(this);
+        android.widget.ArrayAdapter<String> ad = new android.widget.ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, labels);
+        ad.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        sp.setAdapter(ad);
+        box.addView(sp);
+        final android.widget.EditText name = new android.widget.EditText(this);
+        name.setHint("Nama item (mis. Gelas Cantik)");
+        name.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        box.addView(name);
+        final android.widget.EditText qty = new android.widget.EditText(this);
+        qty.setHint("Jumlah");
+        qty.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        qty.setText(String.valueOf(edit != null ? edit.qty : 1));
+        box.addView(qty);
+        final android.widget.EditText reason = new android.widget.EditText(this);
+        reason.setHint("Alasan (opsional)");
+        reason.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        reason.setMaxLines(2);
+        if (edit != null && edit.reason != null) reason.setText(edit.reason);
+        box.addView(reason);
+        if (edit != null && sel == 0 && edit.itemName != null) name.setText(edit.itemName);
+        sp.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(android.widget.AdapterView<?> p, View v, int pos, long id) {
+                name.setVisibility(pos == 0 ? View.VISIBLE : View.GONE);
+            }
+
+            @Override
+            public void onNothingSelected(android.widget.AdapterView<?> p) {
+            }
+        });
+        sp.setSelection(sel);
+
+        new AlertDialog.Builder(this)
+                .setTitle(edit == null ? "🎁 Tambah Gift" : "🎁 Ubah Gift")
+                .setMessage("Gift diberikan sekali; diklaim transaksi penjualan berikutnya pelanggan ini.")
+                .setView(box)
+                .setNegativeButton("Batal", null)
+                .setPositiveButton("Simpan", (d, w) -> {
+                    int pos = sp.getSelectedItemPosition();
+                    String type = pos == 0 ? "custom" : "product";
+                    String pUuid = pos == 0 ? null : products.get(pos - 1).getUuid();
+                    String nm = pos == 0 ? name.getText().toString().trim() : products.get(pos - 1).getName();
+                    int q;
+                    try {
+                        q = Integer.parseInt(qty.getText().toString().trim());
+                    } catch (NumberFormatException ex) {
+                        q = 0;
+                    }
+                    if (nm == null || nm.isEmpty() || q <= 0) {
+                        Toast.makeText(this, "Nama item & jumlah wajib diisi", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    String rs = reason.getText().toString();
+                    if (edit == null) {
+                        if (giftDao.create(customerId, type, pUuid, nm, q, rs) > 0) giftChanged("Gift ditambahkan");
+                    } else if (giftDao.update(edit.localId, type, pUuid, nm, q, rs)) {
+                        giftChanged("Gift diubah");
+                    } else {
+                        Toast.makeText(this, "Gift sudah diberikan — tak bisa diubah", Toast.LENGTH_SHORT).show();
+                        loadData();
+                    }
+                })
+                .show();
+    }
+
     private String rupiah(double v) {
         return "Rp " + java.text.NumberFormat.getNumberInstance(new java.util.Locale("in", "ID"))
                 .format(Math.round(v));
@@ -825,6 +1007,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 .setText(canDeleteCustomer() ? "Galon Dipinjam  ✏️ Koreksi" : "Galon Dipinjam");
 
         renderHutang();
+        renderGifts();
 
         // Jumlah transaksi GABUNGAN (lintas perangkat) di header histori.
         int mergedTrx = customer.getTotalTransaksi();
