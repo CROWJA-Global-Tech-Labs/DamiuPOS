@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Kolom isian putih bergaris (pesan / cari pelanggan) layar 📣 Broadcast WhatsApp. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#FFFFFF" />
+    <stroke android:width="1dp" android:color="#78909C" />
+    <corners android:radius="8dp" />
+    <padding android:left="12dp" android:top="10dp" android:right="12dp" android:bottom="10dp" />
+</shape>

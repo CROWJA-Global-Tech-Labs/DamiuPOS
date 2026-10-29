@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Chip filter daftar Pelanggan: aktif = biru muda. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="#DBEAFE" android:state_checked="true" />
+    <item android:color="#FFFFFF" />
+</selector>

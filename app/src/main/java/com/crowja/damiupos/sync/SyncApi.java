@@ -678,14 +678,21 @@ public class SyncApi {
      * @param devices uuid perangkat dipisah koma; KOSONG = semua perangkat
      */
     public JSONObject salesAchievement(String preset, String start, String end, String devices) throws Exception {
-        okhttp3.HttpUrl built = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/sales/achievement")
+        return salesAchievement(preset, start, end, devices, null);
+    }
+
+    /** @param month periode cut-off pilihan dropdown ("YYYY-MM", nilai {@code cutoff_options} dari server);
+     *               null = pakai preset. Server memeriksanya SEBELUM preset (cermin "Pilih Bulan" web). */
+    public JSONObject salesAchievement(String preset, String start, String end, String devices,
+                                       String month) throws Exception {
+        okhttp3.HttpUrl.Builder hb = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/sales/achievement")
                 .newBuilder()
                 .addQueryParameter("preset", preset != null ? preset : "")
                 .addQueryParameter("start", start != null ? start : "")
                 .addQueryParameter("end", end != null ? end : "")
-                .addQueryParameter("devices", devices != null ? devices : "")
-                .build();
-        return get(built.toString(), cfg.getToken());
+                .addQueryParameter("devices", devices != null ? devices : "");
+        if (month != null && !month.isEmpty()) hb.addQueryParameter("month", month);
+        return get(hb.build().toString(), cfg.getToken());
     }
 
     /**
@@ -779,6 +786,52 @@ public class SyncApi {
         String path = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/admin/devices").newBuilder()
                 .addPathSegment(deviceUuid).addPathSegment(section).build().toString();
         return post(path, body, cfg.getToken(), staffUuid);
+    }
+
+    // ------------------------------------------------ WhatsApp Admin (/api/admin/wa/*)
+    // Cermin grup menu web "WhatsApp". Generik supaya tiap layar (wa.*Activity) memakai jalur sendiri
+    // tanpa menambah metode di sini. Semua membawa X-Staff-Uuid (staf Admin aktif cabang ini).
+
+    /** GET {@code /api/admin/wa/<path>} dengan query opsional (nilai null dilewati). */
+    public JSONObject adminWaGet(String path, @Nullable java.util.Map<String, String> query,
+                                 String staffUuid) throws Exception {
+        okhttp3.HttpUrl.Builder hb = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/admin/wa/" + path).newBuilder();
+        if (query != null) {
+            for (java.util.Map.Entry<String, String> e : query.entrySet()) {
+                if (e.getValue() != null) hb.addQueryParameter(e.getKey(), e.getValue());
+            }
+        }
+        return get(hb.build().toString(), cfg.getToken(), staffUuid);
+    }
+
+    /** POST JSON ke {@code /api/admin/wa/<path>} → {ok, message, …}; 4xx dilempar {@link SyncException}. */
+    public JSONObject adminWaPost(String path, JSONObject body, String staffUuid) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/admin/wa/" + path, body, cfg.getToken(), staffUuid);
+    }
+
+    /**
+     * POST multipart ke {@code /api/admin/wa/<path>}: field teks + berkas opsional (mis. foto Status WA).
+     * Nilai field null dilewati; {@code file} null = tanpa berkas.
+     */
+    public JSONObject adminWaUpload(String path, java.util.Map<String, String> fields,
+                                    @Nullable String fileField, @Nullable java.io.File file,
+                                    @Nullable String mime, String staffUuid) throws Exception {
+        MultipartBody.Builder mb = new MultipartBody.Builder().setType(MultipartBody.FORM);
+        for (java.util.Map.Entry<String, String> e : fields.entrySet()) {
+            if (e.getValue() != null) mb.addFormDataPart(e.getKey(), e.getValue());
+        }
+        if (file != null && fileField != null) {
+            mb.addFormDataPart(fileField, file.getName(), RequestBody.create(file,
+                    okhttp3.MediaType.parse(mime != null ? mime : "image/jpeg")));
+        }
+        Request.Builder b = new Request.Builder()
+                .url(cfg.getBaseUrl() + "/api/admin/wa/" + path)
+                .header("Accept", "application/json")
+                .post(mb.build());
+        String token = cfg.getToken();
+        if (token != null && !token.isEmpty()) b.header("Authorization", "Bearer " + token);
+        if (staffUuid != null && !staffUuid.isEmpty()) b.header("X-Staff-Uuid", staffUuid);
+        return execute(b.build());
     }
 
     // ------------------------------------------------ Pengisian Day-time (/api/fill/*)

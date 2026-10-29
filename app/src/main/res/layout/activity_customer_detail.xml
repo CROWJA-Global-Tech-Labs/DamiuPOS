@@ -331,11 +331,19 @@
             <!-- HUTANG pelanggan (piutang depot). Kartu hanya tampil bila ADA sisa hutang; tombol
                  "Catat Pembayaran" boleh ditekan siapa pun yang login (kurirlah yang menerima uangnya
                  di lapangan). Buku besar ada di CustomerDebtDao — sisa TIDAK pernah disimpan sbg kolom. -->
-            <com.google.android.material.card.MaterialCardView
-                android:id="@+id/cardHutang"
+            <!-- Hutang + Gift berdampingan (2 kolom) supaya hemat tempat; Gift gone → Hutang selebar penuh. -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
+                android:baselineAligned="false"
+                android:orientation="horizontal">
+
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardHutang"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
                 android:visibility="gone"
                 app:cardBackgroundColor="#FFF1F2"
                 app:cardCornerRadius="10dp"
@@ -386,14 +394,13 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:orientation="horizontal">
+                        android:orientation="vertical">
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/btnBayarHutang"
                             style="@style/Widget.MaterialComponents.Button"
-                            android:layout_width="0dp"
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
                             android:text="Catat Pembayaran"
                             android:textSize="13sp"
                             app:backgroundTint="#BE123C" />
@@ -401,9 +408,8 @@
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/btnCatatHutang"
                             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                            android:layout_width="wrap_content"
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginStart="8dp"
                             android:text="+ Hutang"
                             android:textColor="#9F1239"
                             android:textSize="13sp"
@@ -415,9 +421,10 @@
             <!-- Gift pelanggan (CustomerDetailActivity#renderGifts): admin kelola, lainnya lihat. -->
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/cardGift"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
                 android:visibility="gone"
                 app:cardBackgroundColor="#FFFBEB"
                 app:cardCornerRadius="10dp"
@@ -434,13 +441,11 @@
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal">
+                        android:orientation="vertical">
 
                         <TextView
-                            android:layout_width="0dp"
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
                             android:text="🎁 Gift Pelanggan"
                             android:textColor="#78350F"
                             android:textSize="13sp"
@@ -449,7 +454,8 @@
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/btnAddGift"
                             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                            android:layout_width="wrap_content"
+                            android:layout_width="match_parent"
+                            android:layout_marginTop="6dp"
                             android:layout_height="wrap_content"
                             android:text="+ Gift"
                             android:textColor="#78350F"
@@ -465,6 +471,7 @@
                         android:orientation="vertical" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
+            </LinearLayout>
 
             <!-- Rata-rata Waktu Pengiriman (delivery_queued_at → delivery_done_at) — HANYA admin/
                  marketing/spv (lihat CustomerDetailActivity#canSeeDeliveryMetric); kurir/staf biasa

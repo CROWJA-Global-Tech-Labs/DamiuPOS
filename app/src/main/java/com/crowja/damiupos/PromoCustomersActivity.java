@@ -258,21 +258,16 @@ public class PromoCustomersActivity extends AppCompatActivity {
             Toast.makeText(this, "Pelanggan belum memiliki nomor WhatsApp", Toast.LENGTH_SHORT).show();
             return;
         }
-        try {
-            Intent i = new Intent(Intent.ACTION_VIEW, uri);
+        final Uri chat = uri;
+        // HP dengan dua WhatsApp (WhatsApp + Business) → staf memilih dulu ("Buka dengan"),
+        // bukan lagi diam-diam WhatsApp biasa.
+        com.crowja.damiupos.wa.WaAppPicker.pick(this, pkg -> {
             try {
-                getPackageManager().getPackageInfo("com.whatsapp", 0);
-                i.setPackage("com.whatsapp");
-            } catch (Exception ignored) {
-                try {
-                    getPackageManager().getPackageInfo("com.whatsapp.w4b", 0);
-                    i.setPackage("com.whatsapp.w4b");
-                } catch (Exception ignored2) { }
+                com.crowja.damiupos.wa.WaAppPicker.startTargeted(this, new Intent(Intent.ACTION_VIEW, chat), pkg);
+            } catch (Exception e) {
+                Toast.makeText(this, "Tidak dapat membuka WhatsApp", Toast.LENGTH_SHORT).show();
             }
-            startActivity(i);
-        } catch (Exception e) {
-            Toast.makeText(this, "Tidak dapat membuka WhatsApp", Toast.LENGTH_SHORT).show();
-        }
+        });
     }
 
     @Override

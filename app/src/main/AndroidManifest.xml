@@ -157,6 +157,51 @@
             android:screenOrientation="portrait" />
         <activity android:name=".ScheduledOrderActivity" />
         <activity android:name=".DeviceAdminActivity" />
+        <activity android:name=".WhatsAppMenuActivity" />
+        <!-- Akun WhatsApp: isi form & dialog dibangun di kode (tanpa id) — configChanges supaya rotasi /
+             layar terpisah tak membuang dialog Tambah/Ubah, form Auto-Send yang belum disimpan, atau
+             gelembung pesan uji di Console. -->
+        <activity
+            android:name=".wa.WaAccountsActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden" />
+        <activity
+            android:name=".wa.WaAccountsSettingsActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden" />
+        <activity
+            android:name=".wa.WaAccountsConsoleActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden"
+            android:windowSoftInputMode="adjustResize" />
+        <!-- configChanges: rotasi jangan membuat ulang layar Broadcast — daftar Pilihan Bebas/Per Produk yang
+             disusun hilang, dan hasil Kirim yang sedang berjalan tak pernah tampil (admin mengira gagal → blast dobel). -->
+        <activity
+            android:name=".wa.WaBroadcastActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".wa.WaBroadcastHistoryActivity" />
+        <activity android:name=".wa.WaBroadcastDetailActivity" />
+        <!-- Daftar Broadcast Terjadwal & Status WA: rotasi jangan memuat ulang daftar (halaman termuat &
+             spanduk hasil aksi yang sedang berjalan hilang). -->
+        <activity
+            android:name=".wa.WaSchedulesActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode" />
+        <activity android:name=".wa.WaScheduleDetailActivity" />
+        <!-- Form & peta Broadcast Terjadwal memegang draf panjang (penerima dari peta, wilayah otomatis) di memori:
+             configChanges supaya rotasi / mode gelap sistem tidak membuat ulang activity (draf hilang, form dimuat
+             ulang dari server). App light-only, jadi uiMode tak mengubah tampilan. -->
+        <activity
+            android:name=".wa.WaScheduleFormActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".wa.WaScheduleMapActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode" />
+        <activity
+            android:name=".wa.WaStatusActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode" />
+        <activity
+            android:name=".wa.WaStatusEditActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:windowSoftInputMode="adjustResize" />
         <activity android:name=".FollowUpMapActivity" />
         <activity android:name=".CustomerMapActivity" />
         <!-- "Dashboard Web" Admin: seluruh dashboard web di WebView, sesi via link masuk sekali pakai.

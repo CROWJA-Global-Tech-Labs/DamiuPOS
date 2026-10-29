@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 
+import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 
@@ -92,18 +93,29 @@ public final class WaGateway {
     /**
      * Kirim pesan WA ke satu nomor dan kembalikan status akhirnya. Aman (dan WAJIB) dipanggil dari
      * thread background: memblokir sampai tombol Kirim ditekan atau permintaan kedaluwarsa.
+     * WhatsApp yang dipakai dipilih sendiri ({@link #installedWaPackage}) — untuk alur latar.
      *
      * @return salah satu {@link #SENT}, {@link #MANUAL}, {@link #NO_WHATSAPP}, {@link #INVALID},
      *         {@link #LAUNCH_FAILED}, atau hasil mentah dari {@link WaAutoSendService.Req#await()}
      *         ({@code expired} / {@code preempted} / {@code cancelled} / {@code service_stopped}).
      */
     public static String send(Context ctx, String phoneRaw, String text) {
+        return send(ctx, phoneRaw, text, null);
+    }
+
+    /**
+     * Seperti {@link #send(Context, String, String)}, tapi lewat WhatsApp {@code waPackage} — paket
+     * yang dipilih staf ({@link WaAppPicker#pick}) bila alurnya berawal dari ketukan di layar, supaya
+     * auto-kirim keluar dari nomor yang sama dengan pilihan staf. Null / tak terpasang → pilih sendiri.
+     */
+    public static String send(Context ctx, String phoneRaw, String text, @Nullable String waPackage) {
         String phone = normalize(phoneRaw);
         if (phone.length() < 8 || text == null || text.trim().isEmpty()) {
             notif(ctx, "Kirim WhatsApp gagal", "Nomor atau pesan tidak valid.", NOTIF_ID);
             return INVALID;
         }
-        String wa = installedWaPackage(ctx);
+        String wa = waPackage != null && WaAppPicker.installed(ctx).contains(waPackage)
+                ? waPackage : installedWaPackage(ctx);
         if (wa == null) {
             notif(ctx, "Kirim WhatsApp gagal",
                     "WhatsApp tidak terpasang di perangkat ini.", NOTIF_ID);

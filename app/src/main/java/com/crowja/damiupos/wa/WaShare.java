@@ -3,11 +3,11 @@ package com.crowja.damiupos.wa;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.net.Uri;
 import android.widget.Toast;
 
+import androidx.annotation.Nullable;
 import androidx.core.content.FileProvider;
 
 import java.io.File;
@@ -36,6 +36,9 @@ import java.util.List;
  *       TERSIMPAN di kontak HP ({@see WaContactEnsure}); tanpa itu ia jatuh ke pemilih kontak.</li>
  *   <li><b>Tanpa foto → wa.me.</b> Jalur teks-saja membuka chat pelanggan langsung, jadi tak ada
  *       gunanya memaksa jalur share.</li>
+ *   <li><b>WhatsApp mana, staf yang memilih.</b> HP dengan dua WhatsApp (WhatsApp + Business)
+ *       ditanya dulu lewat {@link WaAppPicker} ("Buka dengan") — karena itu peluncurannya ASINKRON:
+ *       WhatsApp baru terbuka setelah staf memilih, dan Batal berarti tak ada yang dibuka.</li>
  * </ul>
  *
  * <p>SENGAJA tidak memanggil {@code WaAutoSendService.arm()}: verifikasi tujuannya membaca kotak
@@ -51,7 +54,8 @@ public final class WaShare {
      * teks-saja bila fotonya tak ada/gagal dibaca atau nomornya tak bisa dijadikan jid.
      *
      * @param photoPath path file foto lokal; boleh null/kosong → teks saja
-     * @return true bila WhatsApp (atau chooser) berhasil dibuka
+     * @return true bila alurnya DIMULAI (WhatsApp/chooser dibuka, atau dialog "Buka dengan" tampil).
+     *         Gagal membuka sesudah staf memilih dikabarkan lewat toast, bukan lewat nilai ini.
      */
     public static boolean sendPhotoWithCaption(Activity act, String customerName, String phone,
                                                String photoPath, String text) {
@@ -80,7 +84,13 @@ public final class WaShare {
         send.putExtra("jid", jid);                    // ← lompati pemilih kontak, buka chat ini
         send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
-        String wa = pickWaPackage(act);
+        WaAppPicker.pick(act, wa -> launchShare(act, send, wa));
+        return true;
+    }
+
+    /** Luncurkan share foto ke WhatsApp {@code wa} (hasil {@link WaAppPicker}; null = tak ada
+     *  WhatsApp → chooser sistem). */
+    private static boolean launchShare(Activity act, Intent send, @Nullable String wa) {
         if (wa != null) {
             List<ComponentName> candidates = new ArrayList<>();
             for (String cls : new String[]{
@@ -128,33 +138,32 @@ public final class WaShare {
         }
     }
 
-    /** Buka chat pelanggan dgn pesan siap-kirim (tanpa lampiran) lewat wa.me. */
+    /**
+     * Buka chat pelanggan dgn pesan siap-kirim (tanpa lampiran) lewat wa.me, di WhatsApp yang dipilih
+     * staf ({@link WaAppPicker}).
+     *
+     * @return true bila alurnya DIMULAI (lihat {@link #sendPhotoWithCaption}).
+     */
     public static boolean openTextOnly(Activity act, String phone, String text) {
         String d = digits(phone);
         if (d.startsWith("0")) d = "62" + d.substring(1);
         else if (d.startsWith("8")) d = "62" + d;
-        try {
-            Intent i = new Intent(Intent.ACTION_VIEW,
-                    Uri.parse("https://wa.me/" + d + "?text=" + Uri.encode(text)));
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            act.startActivity(i);
-            return true;
-        } catch (Exception e) {
-            Toast.makeText(act, "Tidak dapat membuka WhatsApp", Toast.LENGTH_SHORT).show();
-            return false;
-        }
+        final Uri chat = Uri.parse("https://wa.me/" + d + "?text=" + Uri.encode(text));
+        WaAppPicker.pick(act, wa -> {
+            try {
+                Intent i = new Intent(Intent.ACTION_VIEW, chat);
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                WaAppPicker.startTargeted(act, i, wa);
+            } catch (Exception e) {
+                Toast.makeText(act, "Tidak dapat membuka WhatsApp", Toast.LENGTH_SHORT).show();
+            }
+        });
+        return true;
     }
 
     /** Nomor bisa dipakai WhatsApp? (minimal 9 digit) */
     public static boolean hasUsablePhone(String phone) {
         return digits(phone).length() >= 9;
-    }
-
-    public static String pickWaPackage(Activity act) {
-        PackageManager pm = act.getPackageManager();
-        try { pm.getPackageInfo("com.whatsapp", 0); return "com.whatsapp"; } catch (Exception ignored) {}
-        try { pm.getPackageInfo("com.whatsapp.w4b", 0); return "com.whatsapp.w4b"; } catch (Exception ignored) {}
-        return null;
     }
 
     /** Nomor → JID "62XXXXXXXXXX@s.whatsapp.net"; null bila terlalu pendek. */

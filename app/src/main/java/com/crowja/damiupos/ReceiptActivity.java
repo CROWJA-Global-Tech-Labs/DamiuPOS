@@ -222,7 +222,8 @@ public class ReceiptActivity extends AppCompatActivity {
                         // Server sudah/akan kirim otomatis begitu transaksi ini tersinkron — HP
                         // tak ikut kirim apa pun; "Selesai" tetap tombol biasa.
                     } else if (localAutoEligible && bridgeOk) {
-                        sendStrukWithTracking();
+                        // Otomatis saat struk terbuka (bukan ketukan staf) → tanpa dialog WhatsApp.
+                        sendStrukWithTracking(null, false);
                     } else {
                         manualSendOnDone[0] = true;
                         showDeferSendPrompt(hasTracking);
@@ -313,7 +314,11 @@ public class ReceiptActivity extends AppCompatActivity {
             Toast.makeText(this, "Gambar struk belum siap", Toast.LENGTH_SHORT).show();
             return;
         }
-        String waPackage = pickWaPackage();
+        // HP dengan dua WhatsApp (WhatsApp + Business) → staf memilih dulu ("Buka dengan").
+        com.crowja.damiupos.wa.WaAppPicker.pick(this, waPackage -> exportToWhatsApp(uri, waPackage));
+    }
+
+    private void exportToWhatsApp(Uri uri, String waPackage) {
         if (waPackage == null) {
             Toast.makeText(this, "WhatsApp tidak terpasang", Toast.LENGTH_SHORT).show();
             return;
@@ -2102,8 +2107,13 @@ public class ReceiptActivity extends AppCompatActivity {
                 () -> shareReceiptImageViaPhone(uri));
     }
 
-    /** Jalur HP lama tab "Gambar": share PNG struk langsung ke chat WhatsApp pelanggan (jid). */
+    /** Jalur HP lama tab "Gambar": share PNG struk langsung ke chat WhatsApp pelanggan (jid) — di
+     *  WhatsApp yang dipilih staf bila HP punya dua (WaAppPicker; Batal = tak dibagikan). */
     private void shareReceiptImageViaPhone(Uri uri) {
+        com.crowja.damiupos.wa.WaAppPicker.pick(this, wa -> shareReceiptImageViaPhone(uri, wa));
+    }
+
+    private void shareReceiptImageViaPhone(Uri uri, String wa) {
         Intent send = new Intent(Intent.ACTION_SEND);
         send.setType("image/png");
         send.putExtra(Intent.EXTRA_STREAM, uri);
@@ -2118,7 +2128,6 @@ public class ReceiptActivity extends AppCompatActivity {
         // yang "frozen" → WA cuma membuka Home & gambar tak terkirim (= "tidak bisa di-share").
         // Resolve komponen SEND WhatsApp lalu luncurkan langsung; kalau gagal / tak ada WA →
         // jatuh ke chooser sistem (bisa pilih app lain).
-        String wa = pickWaPackage();
         if (wa != null) {
             Intent probe = new Intent(Intent.ACTION_SEND).setType("image/png").setPackage(wa);
             android.content.pm.ResolveInfo info = getPackageManager().resolveActivity(probe, 0);
@@ -2209,15 +2218,6 @@ public class ReceiptActivity extends AppCompatActivity {
                     Toast.LENGTH_LONG).show();
             return null;
         }
-    }
-
-    private String pickWaPackage() {
-        android.content.pm.PackageManager pm = getPackageManager();
-        try { pm.getPackageInfo("com.whatsapp", 0); return "com.whatsapp"; }
-        catch (Exception ignored) {}
-        try { pm.getPackageInfo("com.whatsapp.w4b", 0); return "com.whatsapp.w4b"; }
-        catch (Exception ignored) {}
-        return null;
     }
 
     /**
@@ -2782,19 +2782,26 @@ public class ReceiptActivity extends AppCompatActivity {
      * Fallback: chooser sistem. Dipanggil dari tombol akhir struk penjualan.
      */
     private void sendStrukWithTracking() {
-        sendStrukWithTracking(null);
+        sendStrukWithTracking(null, true);
+    }
+
+    private void sendStrukWithTracking(@androidx.annotation.Nullable Runnable after) {
+        sendStrukWithTracking(after, true);
     }
 
     /**
      * @param after dijalankan sesudah pengiriman selesai diputuskan (terkirim via Bridge, atau jalur
      *              HP sudah dijalankan) — dipakai tombol akhir untuk menutup layar. Boleh null.
+     * @param userTap true = staf menekan tombol: bila jatuh ke WhatsApp HP, HP dengan dua WhatsApp
+     *              ditanya dulu ("Buka dengan"; Batal = tetap di layar struk, {@code after} tak
+     *              jalan). false = auto-kirim saat struk terbuka: tanpa dialog, WhatsApp bawaan.
      */
-    private void sendStrukWithTracking(@androidx.annotation.Nullable Runnable after) {
+    private void sendStrukWithTracking(@androidx.annotation.Nullable Runnable after, boolean userTap) {
         // Tunggu keputusan kampanye dari server bila fetch-nya masih jalan — pesan yang TERKIRIM ke
         // pelanggan tak boleh memakai cermin lokal hanya karena staf menekan Kirim beberapa ratus
         // milidetik lebih cepat. Tidak memblokir: aksinya diantrekan lalu dijalankan ulang.
         if (!serverCampaignsSettled) {
-            withServerCampaigns(() -> sendStrukWithTracking(after));
+            withServerCampaigns(() -> sendStrukWithTracking(after, userTap));
             return;
         }
         String caption = composeTrackingCaption(getIntent().getStringExtra(EXTRA_CUSTOMER_NAME));
@@ -2806,8 +2813,18 @@ public class ReceiptActivity extends AppCompatActivity {
         com.crowja.damiupos.wa.WaBridgeSend.sendOrFallback(this, strukMsg(phone, caption),
                 after,
                 () -> {
-                    sendStrukWithTrackingViaPhone(caption, phone);
-                    if (after != null) after.run();
+                    if (!userTap) {
+                        sendStrukWithTrackingViaPhone(caption, phone,
+                                com.crowja.damiupos.wa.WaAppPicker.preferred(this));
+                        if (after != null) after.run();
+                        return;
+                    }
+                    // Layar baru ditutup ({@code after}) SESUDAH staf memilih WhatsApp — menutup lebih
+                    // awal membuat dialog pilihannya ikut hilang dan WhatsApp tak pernah terbuka.
+                    com.crowja.damiupos.wa.WaAppPicker.pick(this, wa -> {
+                        sendStrukWithTrackingViaPhone(caption, phone, wa);
+                        if (after != null) after.run();
+                    });
                 });
     }
 
@@ -2827,8 +2844,9 @@ public class ReceiptActivity extends AppCompatActivity {
     }
 
     /** Jalur HP lama (sebelum WA Bridge): gateway Aksesibilitas bila diaktifkan dashboard, lalu
-     *  intent WhatsApp manual — dipakai sebagai jatuhan saat kirim lewat Bridge gagal. */
-    private void sendStrukWithTrackingViaPhone(String caption, String phone) {
+     *  intent WhatsApp manual — dipakai sebagai jatuhan saat kirim lewat Bridge gagal.
+     *  @param waPackage WhatsApp yang dipakai keduanya (WaAppPicker); null = tak ada WhatsApp. */
+    private void sendStrukWithTrackingViaPhone(String caption, String phone, String waPackage) {
         // Dashboard bisa mematikan pratinjau teks & meminta gateway auto-kirim langsung — tapi
         // cuma kalau bridge WA server benar-benar terhubung (lihat checkWaBridge). Kalau bridge
         // putus, atau gateway gagal/tak tersedia, alur intent manual di bawah tetap jalan sebagai
@@ -2837,26 +2855,25 @@ public class ReceiptActivity extends AppCompatActivity {
         if (autoSettings.isAutoSendStrukWa() && phone != null && !phone.trim().isEmpty()) {
             checkWaBridge(bridgeOk -> {
                 if (!bridgeOk) {
-                    sendStrukWithTrackingManual(caption);
+                    sendStrukWithTrackingManual(caption, waPackage);
                     return;
                 }
                 new Thread(() -> {
-                    String outcome = com.crowja.damiupos.wa.WaGateway.send(getApplicationContext(), phone, caption);
+                    String outcome = com.crowja.damiupos.wa.WaGateway.send(getApplicationContext(), phone, caption, waPackage);
                     if (!com.crowja.damiupos.wa.WaGateway.SENT.equals(outcome)) {
-                        runOnUiThread(() -> sendStrukWithTrackingManual(caption));
+                        runOnUiThread(() -> sendStrukWithTrackingManual(caption, waPackage));
                     }
                 }).start();
             });
             return;
         }
-        sendStrukWithTrackingManual(caption);
+        sendStrukWithTrackingManual(caption, waPackage);
     }
 
     /** Alur manual (intent WhatsApp langsung/chooser) — dipakai sebagai jalur utama saat auto-kirim
-     *  dashboard mati, dan sebagai jatuhan saat auto-kirim gagal/tak terkonfirmasi. */
-    private void sendStrukWithTrackingManual(String caption) {
-        String waPackage = pickWaPackage();
-
+     *  dashboard mati, dan sebagai jatuhan saat auto-kirim gagal/tak terkonfirmasi.
+     *  @param waPackage WhatsApp tujuan (WaAppPicker); null = tak ada WhatsApp → chooser sistem. */
+    private void sendStrukWithTrackingManual(String caption, String waPackage) {
         Intent send = new Intent(Intent.ACTION_SEND);
         send.setType("text/plain");
         send.putExtra(Intent.EXTRA_TEXT, caption);
