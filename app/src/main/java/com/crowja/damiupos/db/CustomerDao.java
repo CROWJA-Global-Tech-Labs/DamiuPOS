@@ -1228,6 +1228,31 @@ public class CustomerDao {
         return search(keyword, sortMode, false, false, from, to);
     }
 
+    /** Kunci orang (phoneKey, atau "id:"+_id bila tanpa nomor) → jam edit, untuk pelanggan yang DATANYA
+     *  diubah hari ini (edited_at lokal hari ini) tapi tidak didaftarkan hari ini. Cermin kartu web. */
+    public java.util.Map<String, String> editedTodayKeys() {
+        java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
+        String ed = "(CASE WHEN c.edited_at LIKE '%Z' THEN datetime(c.edited_at,'localtime') ELSE replace(c.edited_at,'T',' ') END)";
+        try (Cursor c = dbHelper.getReadableDatabase().rawQuery("SELECT c._id, c.phone, " + ed + " FROM customers c WHERE "
+                + NOT_HANDED_OVER_HERE + " AND date(" + ed + ") = date('now','localtime') AND NOT ("
+                + REGISTERED_TODAY_LOCAL + ") ORDER BY " + ed + " DESC", null)) {
+            while (c.moveToNext()) {
+                String k = phoneKey(c.getString(1));
+                if (k == null) k = "id:" + c.getLong(0);
+                String t = c.getString(2);
+                if (!out.containsKey(k)) out.put(k, t != null && t.length() >= 16 ? t.substring(11, 16) : "");
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
+    /** Kunci orang yang sama dengan {@link #editedTodayKeys}. */
+    public static String personKey(Customer c) {
+        String k = phoneKey(c.getPhone());
+        return k != null ? k : "id:" + c.getId();
+    }
+
     /** Jumlah pelanggan terdaftar hari ini (lokal) — untuk label "Hanya Pelanggan Hari Ini (N)". */
     public int countRegisteredToday() {
         SQLiteDatabase db = dbHelper.getReadableDatabase();

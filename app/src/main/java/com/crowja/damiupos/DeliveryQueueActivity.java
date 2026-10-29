@@ -5513,11 +5513,18 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    /** Tambahkan badge slug trip di belakang chip produk (bila order di wilayah Aturan Trip). */
    private void appendTripChip(LinearLayout box, String uuid) {
+      // Kartu didaur ulang: chip trip dari bind sebelumnya masih terlihat → badge dobel. Sembunyikan dulu.
+      for (int i = 0; i < box.getChildCount(); i++) {
+         View ch = box.getChildAt(i);
+         if ("trip".equals(ch.getTag())) { ch.setVisibility(View.GONE); ch.setTag(null); }
+      }
       String slug = uuid != null ? this.tripSlugs.get(uuid) : null;
       if (slug == null || slug.isEmpty()) return;
       int shown = 0;
       for (int i = 0; i < box.getChildCount(); i++) if (box.getChildAt(i).getVisibility() == View.VISIBLE) shown = i + 1;
+      for (int i = shown; i < box.getChildCount(); i++) box.getChildAt(i).setVisibility(View.GONE);
       TextView chip = this.chipAt(box, shown);
+      chip.setTag("trip");
       chip.setText("🗓 " + slug);
       chip.setTextColor(chipTextColor(TRIP_CHIP_BG));
       ((GradientDrawable) chip.getBackground()).setColor(TRIP_CHIP_BG);
@@ -5571,6 +5578,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
          box.setVisibility(shown > 0 ? 0 : 8);
       } else {
+         // Tanpa item (mis. Ambil Galon): chip sisa kartu daur ulang ikut disembunyikan.
+         for (int i = 0; i < box.getChildCount(); i++) box.getChildAt(i).setVisibility(8);
          box.setVisibility(8);
       }
    }
