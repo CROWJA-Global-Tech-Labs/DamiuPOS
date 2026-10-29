@@ -7818,19 +7818,23 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    /** Jalur HP lama "TUNDA & BERITAHU PELANGGAN" — dipakai saat kirim lewat WA Bridge gagal. */
    private void sendLateNoticeViaPhone(String phone, String msg) {
-      // Dashboard bisa meminta auto-kirim langsung (tanpa membuka intent WhatsApp ke staf lebih
-      // dulu). Gagal/tak terkonfirmasi → jatuh ke intent manual lama seperti sebelum flag ini ada.
-      SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
-      if (autoSettings.isAutoSendOrderHoldWa()) {
-         new Thread(() -> {
-            String outcome = com.crowja.damiupos.wa.WaGateway.send(getApplicationContext(), phone, msg);
-            if (!com.crowja.damiupos.wa.WaGateway.SENT.equals(outcome)) {
-               runOnUiThread(() -> this.openWhatsApp(phone, msg));
-            }
-         }).start();
-         return;
-      }
-      this.openWhatsApp(phone, msg);
+      // Staf yang menekan tombolnya → HP dengan dua WhatsApp ditanya dulu ("Buka dengan"). Paket
+      // yang sama dipakai auto-kirim MAUPUN jatuhan manualnya, jadi staf tak ditanya dua kali.
+      com.crowja.damiupos.wa.WaAppPicker.pick(this, pkg -> {
+         // Dashboard bisa meminta auto-kirim langsung (tanpa membuka intent WhatsApp ke staf lebih
+         // dulu). Gagal/tak terkonfirmasi → jatuh ke intent manual lama seperti sebelum flag ini ada.
+         SettingsDao autoSettings = new SettingsDao(DatabaseHelper.getInstance(this));
+         if (autoSettings.isAutoSendOrderHoldWa()) {
+            new Thread(() -> {
+               String outcome = com.crowja.damiupos.wa.WaGateway.send(getApplicationContext(), phone, msg, pkg);
+               if (!com.crowja.damiupos.wa.WaGateway.SENT.equals(outcome)) {
+                  runOnUiThread(() -> openWhatsAppVia(this, phone, msg, pkg));
+               }
+            }).start();
+            return;
+         }
+         openWhatsAppVia(this, phone, msg, pkg);
+      });
    }
 
    private void scrollToOrder(Transaction t) {
@@ -9315,40 +9319,28 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          Toast.makeText(ctx, "Pelanggan ini tidak punya nomor WA.", Toast.LENGTH_SHORT).show();
          return;
       }
-      String normalized = phone.replaceAll("[^0-9]", "");
+      // HP dengan LEBIH DARI SATU WhatsApp (WhatsApp + WhatsApp Business) → tanya mau lewat yang
+      // mana ("Buka dengan"); nomor pengirim ke pelanggan bisa beda, jadi jangan dipilihkan diam-diam.
+      com.crowja.damiupos.wa.WaAppPicker.pick(ctx, pkg -> openWhatsAppVia(ctx, phone, msg, pkg));
+   }
+
+   /** Buka chat WA lewat WhatsApp yang SUDAH dipilih ({@code pkg} dari WaAppPicker; null = tak ada
+    *  WhatsApp → biarkan sistem yang menangani wa.me). */
+   static void openWhatsAppVia(android.content.Context ctx, String phone, String msg, String pkg) {
+      String normalized = phone == null ? "" : phone.replaceAll("[^0-9]", "");
       if (normalized.startsWith("0")) {
          normalized = "62" + normalized.substring(1);
       } else if (!normalized.startsWith("62")) {
          normalized = "62" + normalized;
       }
-
-      final Uri uri = Uri.parse("https://wa.me/" + normalized + "?text=" + Uri.encode(msg == null ? "" : msg));
-      // HP dengan LEBIH DARI SATU WhatsApp (WhatsApp + WhatsApp Business) → tanya mau lewat yang
-      // mana; nomor pengirim ke pelanggan bisa beda, jadi jangan dipilihkan diam-diam.
-      final List<String[]> apps = new ArrayList<>();
-      for (String[] a : new String[][]{{"com.whatsapp", "WhatsApp"}, {"com.whatsapp.w4b", "WhatsApp Business"}}) {
-         try {
-            ctx.getPackageManager().getPackageInfo(a[0], 0);
-            apps.add(a);
-         } catch (Exception ignored) {
-         }
-      }
-      if (apps.size() > 1 && ctx instanceof android.app.Activity) {
-         String[] labels = new String[apps.size()];
-         for (int k = 0; k < apps.size(); k++) labels[k] = apps.get(k)[1];
-         (new AlertDialog.Builder(ctx)).setTitle("Kirim lewat WhatsApp yang mana?")
-               .setItems(labels, (d, which) -> launchWa(ctx, uri, apps.get(which)[0]))
-               .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
-         return;
-      }
-      launchWa(ctx, uri, apps.isEmpty() ? null : apps.get(0)[0]);
+      launchWa(ctx, Uri.parse("https://wa.me/" + normalized + "?text=" + Uri.encode(msg == null ? "" : msg)), pkg);
    }
 
    private static void launchWa(android.content.Context ctx, Uri uri, String pkg) {
       try {
          Intent i = new Intent("android.intent.action.VIEW", uri);
-         if (pkg != null) i.setPackage(pkg);
-         ctx.startActivity(i);
+         if (com.crowja.damiupos.wa.WaAppPicker.activityOf(ctx) == null) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+         com.crowja.damiupos.wa.WaAppPicker.startTargeted(ctx, i, pkg);
       } catch (Exception e) {
          Toast.makeText(ctx, "Tidak dapat membuka WhatsApp", 0).show();
       }

@@ -335,16 +335,18 @@ public class OrderInboxActivity extends AppCompatActivity {
     private void launchWaChatManual(OrderInbox o, String normalizedPhone, String template) {
         String url = "https://wa.me/" + normalizedPhone
                 + "?text=" + Uri.encode(template);
-        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-        String pkg = pickInstalledWaPackage();
-        if (pkg != null) i.setPackage(pkg);
-        try {
-            startActivity(i);
-            markReplied(o);
-        } catch (Exception e) {
-            Toast.makeText(this, "Gagal buka chat WA: " + e.getMessage(),
-                    Toast.LENGTH_LONG).show();
-        }
+        final Uri chat = Uri.parse(url);
+        // HP dengan dua WhatsApp (WhatsApp + Business) → staf memilih dulu ("Buka dengan");
+        // Batal = chat tak dibuka & belum ditandai dibalas.
+        com.crowja.damiupos.wa.WaAppPicker.pick(this, pkg -> {
+            try {
+                com.crowja.damiupos.wa.WaAppPicker.startTargeted(this, new Intent(Intent.ACTION_VIEW, chat), pkg);
+                markReplied(o);
+            } catch (Exception e) {
+                Toast.makeText(this, "Gagal buka chat WA: " + e.getMessage(),
+                        Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
     /** Format nomor untuk display: kelompokkan supaya mudah dibaca user. */
@@ -421,22 +423,21 @@ public class OrderInboxActivity extends AppCompatActivity {
         o.setCustomerId(customerId);
     }
 
-    /** Buka WA main app + toast paste manual. Last-resort fallback. */
+    /** Buka WA main app + toast paste manual. Last-resort fallback. HP dengan dua WhatsApp → staf
+     *  memilih dulu yang mana ("Buka dengan"). */
     private void openWhatsAppMainFallback() {
-        Intent main = null;
-        String pkg = pickInstalledWaPackage();
-        if (pkg != null) {
-            main = getPackageManager().getLaunchIntentForPackage(pkg);
-        }
-        if (main != null) {
-            try {
-                startActivity(main);
-            } catch (Exception ignored) {}
-        } else {
-            Toast.makeText(this,
-                    "WhatsApp tidak terinstal. Balasan disalin ke clipboard.",
-                    Toast.LENGTH_LONG).show();
-        }
+        com.crowja.damiupos.wa.WaAppPicker.pick(this, pkg -> {
+            Intent main = pkg != null ? getPackageManager().getLaunchIntentForPackage(pkg) : null;
+            if (main != null) {
+                try {
+                    startActivity(main);
+                } catch (Exception ignored) {}
+            } else {
+                Toast.makeText(this,
+                        "WhatsApp tidak terinstal. Balasan disalin ke clipboard.",
+                        Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
     /** Tandai item sudah dibalas → unlock tombol "Buat Trx + Selesai". */
@@ -627,17 +628,6 @@ public class OrderInboxActivity extends AppCompatActivity {
         if (d.startsWith("0")) d = "62" + d.substring(1);
         else if (!d.startsWith("62")) d = "62" + d;
         return d;
-    }
-
-    /** Cari package WhatsApp / WA Business yang terinstal. Null kalau tidak ada. */
-    private String pickInstalledWaPackage() {
-        for (String pkg : new String[]{"com.whatsapp", "com.whatsapp.w4b"}) {
-            try {
-                getPackageManager().getPackageInfo(pkg, 0);
-                return pkg;
-            } catch (Exception ignored) {}
-        }
-        return null;
     }
 
     /**
