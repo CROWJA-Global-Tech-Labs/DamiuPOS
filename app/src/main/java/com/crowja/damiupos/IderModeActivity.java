@@ -170,6 +170,7 @@ public class IderModeActivity extends AppCompatActivity {
 
     /** Popup "Tampilan Daftar": dua slider horizontal — langsung diterapkan & disimpan saat digeser. */
     private void showViewPopup() {
+        fitRadius();   // popup radius dibuka: lingkaran radius pas satu frame peta
         int pad = Math.round(20 * getResources().getDisplayMetrics().density);
         android.widget.LinearLayout box = new android.widget.LinearLayout(this);
         box.setOrientation(android.widget.LinearLayout.VERTICAL);
@@ -212,7 +213,7 @@ public class IderModeActivity extends AppCompatActivity {
                 labels.run();
                 renderViewChip();
                 saveViewPrefs();
-                pushRadius();
+                if (sb == sbR) fitRadius(); else pushRadius();
                 rerank(true);
                 renderEmpty();
             }
@@ -237,7 +238,7 @@ public class IderModeActivity extends AppCompatActivity {
                     maxList = IderRanking.MAX_LIST;
                     renderViewChip();
                     saveViewPrefs();
-                    pushRadius();
+                    fitRadius();
                     rerank(true);
                     renderEmpty();
                 })
@@ -247,6 +248,11 @@ public class IderModeActivity extends AppCompatActivity {
     /** Lingkaran radius di sekitar posisi saya pada peta (0 = tanpa batas → disembunyikan). */
     private void pushRadius() {
         if (pageReady && web != null) web.evaluateJavascript("setRadius(" + radiusMeters() + ")", null);
+    }
+
+    /** Pasang radius lalu zoom peta agar lingkarannya pas satu frame (saat popup radius dibuka/diubah). */
+    private void fitRadius() {
+        if (pageReady && web != null) web.evaluateJavascript("setRadius(" + radiusMeters() + ");fitRad(true)", null);
     }
 
     /** Saat diam tak ada fix baru (minDistance) → tetap cek berkala supaya daftar tak tertinggal. */
@@ -1027,13 +1033,16 @@ public class IderModeActivity extends AppCompatActivity {
                 + "  else meMarker.setLatLng(ll);\n"
                 + "  if(acc>0){if(!accCircle){accCircle=L.circle(ll,{radius:acc,color:'#1E88E5',weight:1,fillColor:'#1E88E5',fillOpacity:.08,interactive:false}).addTo(map);}\n"
                 + "    else{accCircle.setLatLng(ll);accCircle.setRadius(acc);}}\n"
-                + "  if(firstFix){firstFix=false;map.setView(ll,17,{animate:false});}\n"
+                + "  if(firstFix){firstFix=false;map.setView(ll,17,{animate:false});drawRad();fitRad(false);}\n"
                 + "  else if(follow){map.panTo(ll,{animate:true,duration:.6});}\n"
                 + "  drawRad();\n"
                 + "}\n"
                 // Lingkaran radius daftar (📏) mengikuti posisi saya.
                 + "var radC=null, radM=0;\n"
                 + "function setRadius(m){radM=m;drawRad();}\n"
+                // Lingkaran radius pas satu frame peta (zoom in/out otomatis) + kembali mengikuti posisi saya.
+                + "function fitRad(anim){if(!radC)return;follow=true;document.getElementById('follow').style.display='none';\n"
+                + "  map.fitBounds(radC.getBounds(),{padding:[14,14],animate:anim!==false});}\n"
                 + "function drawRad(){\n"
                 + "  if(!meMarker||radM<=0){if(radC){map.removeLayer(radC);radC=null;}return;}\n"
                 + "  var ll=meMarker.getLatLng();\n"
@@ -1049,7 +1058,7 @@ public class IderModeActivity extends AppCompatActivity {
                 + "function showFollow(){document.getElementById('follow').style.display='block';}\n"
                 + "function followMe(){follow=true;document.getElementById('follow').style.display='none';\n"
                 + "  var prev=focusKey;focusKey=null;if(prev&&pins[prev]){pins[prev].setIcon(pinIcon(pins[prev]._p));}\n"
-                + "  map.closePopup();if(meMarker){map.setView(meMarker.getLatLng(),Math.max(map.getZoom(),16));}}\n"
+                + "  map.closePopup();if(radC){fitRad(true);}else if(meMarker){map.setView(meMarker.getLatLng(),Math.max(map.getZoom(),16));}}\n"
                 + "map.on('dragstart',function(){follow=false;showFollow();});\n"
                 + "function pinIcon(p){\n"
                 + "  if(p.r>0) return L.divIcon({className:'',html:'<div class=\"rk'+(p.k===focusKey?' on':'')+'\">'+p.r+'</div>',iconSize:[26,26],iconAnchor:[13,13],popupAnchor:[0,-12]});\n"
