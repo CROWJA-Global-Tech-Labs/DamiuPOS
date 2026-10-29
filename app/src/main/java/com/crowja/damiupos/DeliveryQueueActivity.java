@@ -9291,16 +9291,23 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       // miliknya justru BERTAMBAH ketika tak ada yang dikembalikan — itu yang paling perlu jelas.
       int kembali = this.dao.getReturnedGalonForSale(t.getCustomerId(), t.getTanggal());
       sb.append("\nGalon kosong kami terima: ").append(kembali).append(" galon");
-      if (kembali <= 0) {
-         sb.append("\n(belum ada galon kosong yang kami terima pada pengiriman ini)");
-      }
 
-      sb.append("\nNominal pesanan ini: Rp").append(nf.format(Math.round(t.getTotalHarga())));
-      double sisa = t.getCustomerId() > 0L
-            ? (new CustomerDebtDao(DatabaseHelper.getInstance(this))).balanceFor(t.getCustomerId())
-            : (double)0.0F;
-      if (sisa > (double)0.0F) {
-         sb.append("\nTotal yang bisa dibayarkan nanti: Rp").append(nf.format(Math.round(sisa)));
+      long pesanan = Math.round(t.getTotalHarga());
+      sb.append("\nNominal pesanan ini: Rp").append(nf.format(pesanan));
+      // Total HANYA dicantumkan bila ada sisa SEBELUM pesanan ini, dan selalu dengan rinciannya supaya
+      // pelanggan bisa mencocokkan sendiri. Angka buku besar HP bisa tertinggal dari server (pembayaran
+      // lama belum tersinkron, atau hutang pesanan ini belum tercatat lokal) sehingga "total" bisa
+      // LEBIH KECIL dari nominal pesanan ini — kasus Mbak Mega 29 Okt 2026: nominal Rp12.000 tetapi
+      // "total tagihan Rp6.000". Total ≤ nominal pesanan berarti angkanya tak bisa dipercaya → tak dicetak.
+      CustomerDebtDao debts = new CustomerDebtDao(DatabaseHelper.getInstance(this));
+      long sisa = t.getCustomerId() > 0L ? Math.round(debts.balanceFor(t.getCustomerId())) : 0L;
+      if (sisa > pesanan) {
+         sb.append("\nSisa pembayaran sebelumnya: Rp").append(nf.format(sisa - pesanan));
+         java.util.List<String> asal = debts.originReceiptsFor(t.getCustomerId(), 1);
+         if (!asal.isEmpty() && !asal.get(0).equals(rno)) {
+            sb.append(" (dari transaksi ").append(asal.get(0)).append(")");
+         }
+         sb.append("\nTotal yang bisa dibayarkan nanti: Rp").append(nf.format(sisa));
       }
 
       sb.append("\n\nPembayarannya bisa sekalian di pesanan berikutnya, tidak perlu repot. ")
