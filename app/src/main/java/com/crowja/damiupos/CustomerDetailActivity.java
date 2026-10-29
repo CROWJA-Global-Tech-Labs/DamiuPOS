@@ -2165,17 +2165,20 @@ public class CustomerDetailActivity extends AppCompatActivity {
             phone = "62" + phone;
         }
 
-        try {
-            Intent intent = new Intent(Intent.ACTION_VIEW);
-            intent.setData(Uri.parse("https://wa.me/" + phone));
-            startActivity(intent);
-            // Tercatat sebagai follow-up (sama seperti tombol "Follow Up WA" di daftar/peta Follow
-            // Up) — supaya "kapan terakhir di-follow-up" di web ikut ter-update walau staf chat
-            // langsung dari sini, bukan dari menu Follow Up. Lihat WhatsAppFollowUp.
-            customerDao.markFollowedUp(customerId);
-        } catch (Exception e) {
-            Toast.makeText(this, R.string.wa_tidak_tersedia, Toast.LENGTH_SHORT).show();
-        }
+        final Uri chat = Uri.parse("https://wa.me/" + phone);
+        // HP dengan dua WhatsApp (WhatsApp + Business) → staf memilih dulu ("Buka dengan").
+        com.crowja.damiupos.wa.WaAppPicker.pick(this, pkg -> {
+            try {
+                com.crowja.damiupos.wa.WaAppPicker.startTargeted(this,
+                        new Intent(Intent.ACTION_VIEW, chat), pkg);
+                // Tercatat sebagai follow-up (sama seperti tombol "Follow Up WA" di daftar/peta Follow
+                // Up) — supaya "kapan terakhir di-follow-up" di web ikut ter-update walau staf chat
+                // langsung dari sini, bukan dari menu Follow Up. Lihat WhatsAppFollowUp.
+                customerDao.markFollowedUp(customerId);
+            } catch (Exception e) {
+                Toast.makeText(this, R.string.wa_tidak_tersedia, Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     private void confirmDelete() {

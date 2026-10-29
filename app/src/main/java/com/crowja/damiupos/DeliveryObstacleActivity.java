@@ -28,6 +28,7 @@ import com.crowja.damiupos.db.DeliveryObstacleDao;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.model.Customer;
 import com.crowja.damiupos.util.BitmapUtils;
+import com.crowja.damiupos.wa.WaAppPicker;
 import com.google.android.material.textfield.TextInputEditText;
 
 import org.json.JSONObject;
@@ -103,6 +104,9 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
     private boolean awaitingWaReturn = false;
     /** Activity benar-benar sempat ke BELAKANG (WhatsApp betul-betul mengambil layar). */
     private boolean wentToBackground = false;
+    /** WhatsApp pilihan staf untuk SATU putaran "Beritahu Konsumen" ({@link WaAppPicker}) — ditanya
+     *  sekali di awal, bukan per pelanggan. null = tak ada WhatsApp (jalur lama: chooser / wa.me). */
+    private String notifyWaPackage = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -411,8 +415,16 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
             return;
         }
         checkWaBridge(bridgeOk -> {
-            if (bridgeOk) autoNotifyAll(targets);
-            else showNotifyDialog(targets);
+            if (!bridgeOk) {
+                showNotifyDialog(targets);
+                return;
+            }
+            // Auto-kirim tetap MEMBUKA WhatsApp di HP ini → HP dengan dua WhatsApp ditanya dulu
+            // (sekali untuk seluruh putaran). Batal → tawaran kirim manual biasa.
+            WaAppPicker.pick(this, pkg -> {
+                notifyWaPackage = pkg;
+                autoNotifyAll(targets);
+            }, () -> showNotifyDialog(targets));
         });
     }
 
@@ -455,11 +467,16 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
                                 Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS,
                         }, REQ_PERM_CONTACTS);
                     }
-                    notifyQueue = targets;
-                    notifyIndex = 0;
-                    notifySent = 0;
-                    notifyRunning = true;
-                    stepNotify();
+                    // WhatsApp mana yang dipakai — ditanya SEKALI untuk seluruh putaran (HP dengan dua
+                    // WhatsApp). Batal → kembali ke tawaran ini (Mulai lagi / Nanti Saja).
+                    WaAppPicker.pick(this, pkg -> {
+                        notifyWaPackage = pkg;
+                        notifyQueue = targets;
+                        notifyIndex = 0;
+                        notifySent = 0;
+                        notifyRunning = true;
+                        stepNotify();
+                    }, () -> showNotifyDialog(targets));
                 })
                 .setNegativeButton("Nanti Saja", (d, w) -> {
                     if (bridgeSent > 0) {
@@ -484,11 +501,12 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
      */
     private void autoNotifyAll(List<Customer> targets) {
         String text = obstacleText();
+        final String wa = notifyWaPackage;   // pilihan staf (WaAppPicker) — dipakai SEMUA kiriman
         new Thread(() -> {
             int sent = 0;
             List<Customer> failed = new ArrayList<>();
             for (Customer c : targets) {
-                String outcome = com.crowja.damiupos.wa.WaGateway.send(getApplicationContext(), c.getPhone(), text);
+                String outcome = com.crowja.damiupos.wa.WaGateway.send(getApplicationContext(), c.getPhone(), text, wa);
                 if (com.crowja.damiupos.wa.WaGateway.SENT.equals(outcome)) sent++;
                 else failed.add(c);
             }
@@ -652,7 +670,7 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
         send.putExtra("jid", jid);                    // ← lompati pemilih kontak, buka chat ini
         send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
-        String wa = pickWaPackage();
+        String wa = notifyWa();
         if (wa != null) {
             // SENGAJA TIDAK memanggil WaAutoSendService.arm(): verifikasi tujuannya hanya berlaku
             // untuk pesan TEKS (membaca kotak ketik chat). Pada layar pratinjau media verifikasi itu
@@ -723,7 +741,7 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
             Intent i = new Intent(Intent.ACTION_VIEW,
                     Uri.parse("https://wa.me/" + d + "?text=" + Uri.encode(text)));
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(i);
+            WaAppPicker.startTargeted(this, i, notifyWa());
             return true;
         } catch (Exception e) {
             Toast.makeText(this, "Tidak dapat membuka WhatsApp", Toast.LENGTH_SHORT).show();
@@ -731,11 +749,9 @@ public class DeliveryObstacleActivity extends AppCompatActivity {
         }
     }
 
-    private String pickWaPackage() {
-        android.content.pm.PackageManager pm = getPackageManager();
-        try { pm.getPackageInfo("com.whatsapp", 0); return "com.whatsapp"; } catch (Exception ignored) {}
-        try { pm.getPackageInfo("com.whatsapp.w4b", 0); return "com.whatsapp.w4b"; } catch (Exception ignored) {}
-        return null;
+    /** WhatsApp untuk putaran ini: pilihan staf di awal putaran; belum ada → WhatsApp bawaan. */
+    private String notifyWa() {
+        return notifyWaPackage != null ? notifyWaPackage : WaAppPicker.preferred(this);
     }
 
     /** Nomor → JID "62XXXXXXXXXX@s.whatsapp.net" (cermin ReceiptActivity.waJid). */

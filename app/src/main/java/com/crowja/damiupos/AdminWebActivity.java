@@ -404,7 +404,12 @@ public class AdminWebActivity extends AppCompatActivity {
                 }
                 return false;
             }
-            // wa.me / api.whatsapp.com / maps / situs lain → di luar aplikasi.
+            // wa.me / api.whatsapp.com → WhatsApp pilihan staf (HP bisa punya dua WhatsApp).
+            if (com.crowja.damiupos.wa.WaAppPicker.isWhatsAppLink(u)) {
+                openWhatsAppLink(u);
+                return true;
+            }
+            // maps / situs lain → di luar aplikasi.
             openExternal(new Intent(Intent.ACTION_VIEW, u));
             return true;
         }
@@ -425,6 +430,10 @@ public class AdminWebActivity extends AppCompatActivity {
         if ("javascript".equals(scheme) || "about".equals(scheme) || "blob".equals(scheme) || "data".equals(scheme)) {
             return false;
         }
+        if (com.crowja.damiupos.wa.WaAppPicker.isWhatsAppLink(u)) {   // whatsapp://send?…
+            openWhatsAppLink(u);
+            return true;
+        }
         openExternal(new Intent(Intent.ACTION_VIEW, u));
         return true;
     }
@@ -435,6 +444,18 @@ public class AdminWebActivity extends AppCompatActivity {
         } catch (ActivityNotFoundException e) {
             Toast.makeText(this, "Tidak ada aplikasi untuk membuka tautan ini.", Toast.LENGTH_SHORT).show();
         }
+    }
+
+    /** Tautan chat WhatsApp dari dashboard → HP dengan dua WhatsApp (WhatsApp + Business) memilih
+     *  dulu ("Buka dengan"), bukan diam-diam aplikasi bawaan sistem. */
+    private void openWhatsAppLink(Uri u) {
+        com.crowja.damiupos.wa.WaAppPicker.pick(this, pkg -> {
+            try {
+                com.crowja.damiupos.wa.WaAppPicker.startTargeted(this, new Intent(Intent.ACTION_VIEW, u), pkg);
+            } catch (Exception e) {
+                Toast.makeText(this, "Tidak ada aplikasi untuk membuka tautan ini.", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     // ---------------------------------------------------------------- hasil (file picker, izin)

@@ -160,28 +160,23 @@ public final class WhatsAppFollowUp {
                 () -> openManual(ctx, c, customerDao, markFollowedUp, finalNormalized, finalMsg));
     }
 
-    /** Jalur manual lama: buka chat wa.me dengan pesan terisi (staf menekan Kirim sendiri). */
+    /** Jalur manual lama: buka chat wa.me dengan pesan terisi (staf menekan Kirim sendiri). HP
+     *  dengan dua WhatsApp (WhatsApp + Business) → staf memilih dulu ("Buka dengan"); Batal = chat
+     *  tak dibuka dan TIDAK dicatat sebagai follow-up. */
     private static void openManual(Context ctx, Customer c, CustomerDao customerDao,
                                    boolean markFollowedUp, String normalized, String msg) {
-        try {
-            Intent i = new Intent(Intent.ACTION_VIEW,
-                    Uri.parse("https://wa.me/" + normalized + "?text=" + Uri.encode(msg)));
+        final Uri chat = Uri.parse("https://wa.me/" + normalized + "?text=" + Uri.encode(msg));
+        com.crowja.damiupos.wa.WaAppPicker.pick(ctx, pkg -> {
             try {
-                ctx.getPackageManager().getPackageInfo("com.whatsapp", 0);
-                i.setPackage("com.whatsapp");
-            } catch (Exception ignored) {
-                try {
-                    ctx.getPackageManager().getPackageInfo("com.whatsapp.w4b", 0);
-                    i.setPackage("com.whatsapp.w4b");
-                } catch (Exception ignored2) {}
+                Intent i = new Intent(Intent.ACTION_VIEW, chat);
+                if (!(ctx instanceof Activity)) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                com.crowja.damiupos.wa.WaAppPicker.startTargeted(ctx, i, pkg);
+                // Catat: pelanggan ini di-follow-up hari ini (untuk laporan harian).
+                if (markFollowedUp) customerDao.markFollowedUp(c.getId());
+            } catch (Exception e) {
+                Toast.makeText(ctx, "Tidak dapat membuka WhatsApp", Toast.LENGTH_SHORT).show();
             }
-            if (!(ctx instanceof Activity)) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            ctx.startActivity(i);
-            // Catat: pelanggan ini di-follow-up hari ini (untuk laporan harian).
-            if (markFollowedUp) customerDao.markFollowedUp(c.getId());
-        } catch (Exception e) {
-            Toast.makeText(ctx, "Tidak dapat membuka WhatsApp", Toast.LENGTH_SHORT).show();
-        }
+        });
     }
 
     /** "hari ini" bila sekarang masih sebelum jam tutup operasional (HH:mm), else "besok".

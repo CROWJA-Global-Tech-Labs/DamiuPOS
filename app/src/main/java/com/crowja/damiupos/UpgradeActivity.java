@@ -195,13 +195,16 @@ public class UpgradeActivity extends AppCompatActivity implements BillingManager
     private void openWhatsAppSupport() {
         String waNumber = BuildConfig.PRO_SUPPORT_WA;
         String text = "Halo, saya pengguna DAMIU POS Pro";
-        try {
-            Uri uri = Uri.parse("https://wa.me/" + waNumber + "?text="
-                    + Uri.encode(text));
-            startActivity(new Intent(Intent.ACTION_VIEW, uri));
-        } catch (Exception e) {
-            Toast.makeText(this, "Tidak dapat membuka WhatsApp", Toast.LENGTH_SHORT).show();
-        }
+        final Uri uri = Uri.parse("https://wa.me/" + waNumber + "?text="
+                + Uri.encode(text));
+        // HP dengan dua WhatsApp (WhatsApp + Business) → staf memilih dulu ("Buka dengan").
+        com.crowja.damiupos.wa.WaAppPicker.pick(this, pkg -> {
+            try {
+                com.crowja.damiupos.wa.WaAppPicker.startTargeted(this, new Intent(Intent.ACTION_VIEW, uri), pkg);
+            } catch (Exception e) {
+                Toast.makeText(this, "Tidak dapat membuka WhatsApp", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     private static String formatDuration(long secs) {

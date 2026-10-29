@@ -281,11 +281,15 @@ public class IntroWaActivity extends AppCompatActivity {
             Toast.makeText(this, "Pelanggan ini belum punya nomor HP", Toast.LENGTH_SHORT).show();
             return;
         }
-        try {
-            startActivity(new Intent(Intent.ACTION_VIEW, uri));
-        } catch (Exception e) {
-            Toast.makeText(this, "WhatsApp tidak ditemukan", Toast.LENGTH_SHORT).show();
-        }
+        final Uri chat = uri;
+        // HP dengan dua WhatsApp (WhatsApp + Business) → staf memilih dulu ("Buka dengan").
+        com.crowja.damiupos.wa.WaAppPicker.pick(this, pkg -> {
+            try {
+                com.crowja.damiupos.wa.WaAppPicker.startTargeted(this, new Intent(Intent.ACTION_VIEW, chat), pkg);
+            } catch (Exception e) {
+                Toast.makeText(this, "WhatsApp tidak ditemukan", Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 
     /** "menunggu N hari" dari tanggal promo (atau tanggal daftar) - alasan urutan daftar. */
