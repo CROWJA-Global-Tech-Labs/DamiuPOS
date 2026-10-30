@@ -96,6 +96,20 @@ public class TransactionActivity extends AppCompatActivity {
     /** Penugasan default = "Perangkat ini" (tanpa auto-route wilayah/override). Mode Keliling: kurir
      *  sedang di depan pelanggan, jadi pesanannya untuk perangkat ini. Pilihan manual tetap bisa. */
     public static final String EXTRA_ASSIGN_SELF = "assign_self";
+    /** "Selesai → lanjut berlangganan → Buatkan pesanan sekarang" (Antrian Delivery): tugas Galon Kembali
+     *  ber-id ini DIBATALKAN begitu penjualan barunya tersimpan. */
+    public static final String EXTRA_CANCEL_PICKUP_ID = "cancel_pickup_trx_id";
+    private boolean pickupCancelled = false;
+
+    /** Batalkan tugas Galon Kembali asal (sekali) — hanya bila masih KEMBALI yang menunggu diambil. */
+    private void maybeCancelPickup() {
+        long pid = getIntent().getLongExtra(EXTRA_CANCEL_PICKUP_ID, -1);
+        if (pid <= 0 || pickupCancelled) return;
+        Transaction p = transactionDao.getById(pid);
+        if (p == null || !Transaction.TYPE_KEMBALI.equals(p.getType())
+                || !Transaction.DELIVERY_PENDING.equals(p.getDeliveryStatus())) return;
+        pickupCancelled = transactionDao.delete(pid) > 0;
+    }
     public static final String EXTRA_PROMOSI = "promosi_mode";
     public static final String EXTRA_PROMOSI_CUSTOMER_ID = "promosi_customer_id";
     /** Penanda catatan untuk promosi GRATIS (membedakan dari penjualan biasa). */
@@ -4526,6 +4540,7 @@ public class TransactionActivity extends AppCompatActivity {
             // Leg gagal tertulis → batalkan SELURUH checkout (pemanggil me-rollback transaksi DB).
             throw new IllegalStateException("Leg " + ctx.seq + "/" + ctx.size + " gagal disimpan");
         }
+        if (isJual && newTrxId > 0) maybeCancelPickup();
 
         // Galon kembali (tukar botol) dipasangkan SETELAH JUAL-nya tersimpan, lewat
         // applyReturnedGalon → syncPairedReturn, supaya baris KEMBALI mewarisi tanggal JUAL PERSIS.

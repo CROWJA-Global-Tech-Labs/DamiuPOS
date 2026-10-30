@@ -500,6 +500,18 @@ public class SyncApi {
      * Balas {@code {"text":"...", "link":"https://wa.me/..."}}. {@code promoDate} opsional (tanggal
      * akuisisi promo dari kohort, dipakai token {tanggal}); null → server pakai tanggal dibuatnya.
      */
+    /**
+     * Selesai tugas Galon Kembali → "pelanggan berhenti berlangganan": berhenti langganan (sama dgn web —
+     * keluar dari Follow Up, Pesanan Terjadwal dijeda, aktif lagi bila ia pesan lagi) + kunjungan urgent
+     * selesai. Balas {ok, already, urgent_done, message}.
+     */
+    public JSONObject stopSubscription(String customerUuid, @Nullable String reason, @Nullable String staffUuid) throws Exception {
+        JSONObject body = new JSONObject();
+        if (reason != null && !reason.trim().isEmpty()) body.put("reason", reason.trim());
+        return post(cfg.getBaseUrl() + "/api/customers/" + android.net.Uri.encode(customerUuid) + "/stop-subscription",
+                body, cfg.getToken(), staffUuid);
+    }
+
     public JSONObject introWa(String customerUuid, @Nullable String promoDate) throws Exception {
         String url = cfg.getBaseUrl() + "/api/customers/" + customerUuid + "/intro-wa";
         if (promoDate != null && !promoDate.isEmpty()) {

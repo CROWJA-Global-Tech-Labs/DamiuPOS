@@ -8102,7 +8102,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          msg = msg + "\n\nAlokasi Poin: " + (staffName != null && !staffName.isEmpty() ? staffName : "kamu") + " (" + t.getJumlahGalon() + " galon)";
       }
 
-      AlertDialog.Builder b = (new AlertDialog.Builder(this)).setTitle(isPickup ? "Tandai Selesai (Pickup)" : "Tandai Selesai").setMessage(msg).setPositiveButton("Selesai", (d, w) -> this.confirmReturnedGalonThenComplete(t, revokeCredit)).setNegativeButton("Batal", (DialogInterface.OnClickListener)null);
+      // Galon Kembali (bukan kunjungan): Selesai → pelanggan lanjut / berhenti berlangganan (askPickupOutcome).
+      boolean pickupOutcome = isPickup && !t.isVisitTask();
+      AlertDialog.Builder b = (new AlertDialog.Builder(this)).setTitle(isPickup ? "Tandai Selesai (Pickup)" : "Tandai Selesai").setMessage(msg)
+            .setPositiveButton("Selesai", (d, w) -> {
+               if (pickupOutcome) this.askPickupOutcome(t, revokeCredit);
+               else this.confirmReturnedGalonThenComplete(t, revokeCredit);
+            }).setNegativeButton("Batal", (DialogInterface.OnClickListener)null);
       if (!isPickup) {
          // "Ubah…" = dialog ✏️ Ubah Pesanan yang sama dengan menu kartu (produk, harga, ongkir, galon kembali,
          // alasan). Setelah tersimpan, data dimuat ulang lalu konfirmasi Selesai dibuka lagi dengan isi terbaru.
@@ -8229,6 +8235,153 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          });
       });
       dlg.show();
+   }
+
+   /**
+    * Selesai tugas Galon Kembali — dua opsi:
+    * <ul>
+    *   <li>🔁 Lanjut berlangganan → 🛒 Buatkan pesanan sekarang (Transaksi Baru; tugas ini dibatalkan begitu
+    *       penjualannya tersimpan) ATAU ⏳ Pesan nanti (isi galon aktual yang kembali, lalu Selesai);</li>
+    *   <li>🛑 Berhenti berlangganan → isi galon aktual, Selesai, lalu pelanggan ditandai berhenti
+    *       langganan di server (keluar dari Follow Up & Kunjungan Urgent).</li>
+    * </ul>
+    */
+   private void askPickupOutcome(Transaction t, boolean revokeCredit) {
+      String[] items = {"🔁 Pelanggan lanjut berlangganan", "🛑 Pelanggan berhenti berlangganan"};
+      (new AlertDialog.Builder(this)).setTitle("✅ Selesai — " + safe(t.getCustomerName()))
+            .setItems(items, (d, which) -> {
+               if (which == 0) this.askContinueOrder(t, revokeCredit);
+               else this.askActualPickup(t, revokeCredit, true);
+            })
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
+   }
+
+   private void askContinueOrder(Transaction t, boolean revokeCredit) {
+      String[] items = {"🛒 Buatkan pesanan sekarang", "⏳ Pelanggan akan memesan nanti"};
+      (new AlertDialog.Builder(this)).setTitle("🔁 Lanjut berlangganan")
+            .setItems(items, (d, which) -> {
+               if (which == 0) {
+                  // Transaksi Baru untuk pelanggan ini; tugas Galon Kembali dibatalkan saat penjualannya tersimpan.
+                  Intent i = new Intent(this, TransactionActivity.class);
+                  i.putExtra("type", "JUAL");
+                  i.putExtra("customer_id", t.getCustomerId());
+                  i.putExtra(TransactionActivity.EXTRA_ASSIGN_SELF, true);
+                  i.putExtra(TransactionActivity.EXTRA_CANCEL_PICKUP_ID, t.getId());
+                  this.startActivity(i);
+                  Toast.makeText(this, "Tugas galon kembali dibatalkan otomatis begitu pesanan baru disimpan.",
+                        Toast.LENGTH_LONG).show();
+               } else {
+                  this.askActualPickup(t, revokeCredit, false);
+               }
+            })
+            .setNegativeButton("Kembali", (d, w) -> this.askPickupOutcome(t, revokeCredit)).show();
+   }
+
+   /** Isi galon AKTUAL yang kembali (bawaan = jumlah tugas), dua ketukan, lalu Selesai (+ berhenti langganan). */
+   private void askActualPickup(Transaction t, boolean revokeCredit, boolean stop) {
+      float density = this.getResources().getDisplayMetrics().density;
+      int pad = (int) (20.0F * density);
+      int gap = (int) (8.0F * density);
+      final int seeded = Math.max(0, t.getJumlahGalon());
+      EditText qtyIn = new EditText(this);
+      qtyIn.setInputType(2);
+      qtyIn.setText(String.valueOf(seeded));
+      qtyIn.setSelection(qtyIn.getText().length());
+      qtyIn.setHint("Jumlah galon kosong yang kembali");
+      TextView hint = new TextView(this);
+      hint.setText(stop
+            ? "Pelanggan akan ditandai BERHENTI BERLANGGANAN: keluar dari Follow Up & Kunjungan Urgent. Aktif lagi otomatis bila ia pesan lagi."
+            : "Terisi dari tugas. Ubah bila galon yang benar-benar kembali berbeda.");
+      hint.setTextSize(12.0F);
+      hint.setTextColor(0xFF455A64);
+      hint.setPadding(0, gap, 0, 0);
+      LinearLayout box = new LinearLayout(this);
+      box.setOrientation(LinearLayout.VERTICAL);
+      box.setPadding(pad, gap, pad, 0);
+      box.addView(qtyIn);
+      box.addView(hint);
+      AlertDialog dlg = (new AlertDialog.Builder(this))
+            .setTitle(stop ? "🛑 Berhenti berlangganan" : "↩ Galon kembali aktual")
+            .setMessage("Berapa galon KOSONG yang kembali dari \"" + safe(t.getCustomerName()) + "\"?")
+            .setView(box)
+            .setPositiveButton("KONFIRMASI", (DialogInterface.OnClickListener) null)
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null)
+            .create();
+      dlg.setOnShowListener((shown) -> {
+         android.widget.Button ok = dlg.getButton(-1);
+         boolean[] armed = new boolean[1];
+         qtyIn.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void afterTextChanged(Editable e) {
+               if (armed[0]) {
+                  armed[0] = false;
+                  ok.setText("KONFIRMASI");
+               }
+            }
+         });
+         ok.setOnClickListener((btn) -> {
+            int qty;
+            try {
+               qty = Integer.parseInt(qtyIn.getText().toString().trim());
+            } catch (Exception ex) {
+               qtyIn.setError("Angka tidak valid");
+               return;
+            }
+            if (qty < 0) {
+               qtyIn.setError("Tidak boleh minus");
+               return;
+            }
+            if (!armed[0]) {
+               armed[0] = true;
+               ok.setText("YAKIN? KETUK LAGI");
+               return;
+            }
+            if (qty != seeded) this.dao.setPickupQty(t.getId(), qty);
+            dlg.dismiss();
+            if (stop) this.stopSubscriptionAsync(t);
+            Transaction fresh = this.dao.getById(t.getId());
+            this.doComplete(fresh != null ? fresh : t, revokeCredit);
+         });
+      });
+      dlg.show();
+   }
+
+   /** Tandai pelanggan berhenti berlangganan di server (latar). Kunjungan urgent lokal ikut diselesaikan. */
+   private void stopSubscriptionAsync(Transaction t) {
+      final long custId = t.getCustomerId();
+      final String name = safe(t.getCustomerName());
+      com.crowja.damiupos.db.CustomerDao cdao = new com.crowja.damiupos.db.CustomerDao(DatabaseHelper.getInstance(this));
+      final String uuid = custId > 0 ? cdao.getSyncUuidById(custId) : null;
+      if (custId > 0) cdao.markVisitUrgentDone(custId, "Berhenti berlangganan");
+      SyncSettings cfg = this.syncCfg();
+      if (uuid == null || uuid.isEmpty() || !cfg.isEnrolled()) {
+         Toast.makeText(this, "Pelanggan belum tersinkron — tandai berhenti berlangganan dari dashboard web.", Toast.LENGTH_LONG).show();
+         return;
+      }
+      final String staff = com.crowja.damiupos.sync.LocationReporter.currentStaffUuid(this);
+      new Thread(() -> {
+         String msg;
+         try {
+            JSONObject r = new SyncApi(cfg).stopSubscription(uuid, "Berhenti berlangganan (galon diambil kurir)", staff);
+            msg = r.optString("message", "\"" + name + "\" ditandai berhenti berlangganan.");
+         } catch (SyncApi.SyncException se) {
+            String m = se.serverMessage();
+            msg = "Gagal menandai berhenti berlangganan" + (m != null && !m.isEmpty() ? ": " + m : " (kode " + se.code + ")") + ".";
+         } catch (Exception e) {
+            msg = "Gagal menandai berhenti berlangganan — periksa koneksi, lalu tandai dari dashboard web.";
+         }
+         final String fMsg = msg;
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            Toast.makeText(this, fMsg, Toast.LENGTH_LONG).show();
+            com.crowja.damiupos.sync.SyncScheduler.syncNow(this.getApplicationContext());
+         });
+      }).start();
    }
 
    private static final String[] KASBON_REASON_PRESETS = {
