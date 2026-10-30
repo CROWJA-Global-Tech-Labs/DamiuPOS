@@ -1210,6 +1210,17 @@ public class TransactionDao {
         }
     }
 
+    /** Jumlah galon AKTUAL yang kembali pada tugas Galon Kembali (KEMBALI) — diisi kurir saat Selesai. */
+    public void setPickupQty(long id, int qty) {
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_JUMLAH_GALON, Math.max(0, qty));
+        v.put(DatabaseHelper.COL_EDITED_AT, DatabaseHelper.nowIso());
+        v.put(DatabaseHelper.COL_SYNCED, 0);
+        dbHelper.getWritableDatabase().update(DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=? AND " + DatabaseHelper.COL_TYPE + "='" + Transaction.TYPE_KEMBALI + "'",
+                new String[]{String.valueOf(id)});
+    }
+
     public int delete(long id) {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
         String trxUuid = getSyncUuidById(id);
