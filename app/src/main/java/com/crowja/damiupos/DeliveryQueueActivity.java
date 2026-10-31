@@ -1361,7 +1361,30 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          cb.setChecked(true);
          cb.setPadding(0, this.dp(4f), 0, this.dp(4f));
          cb.setOnCheckedChangeListener((b, on) -> upd[0].run());
-         box.addView(cb);
+         // 🖼 Foto rumah/lokasi tujuan (server: photo_url) — lihat dulu sebelum mengambil order.
+         String photo = strJson(c, "photo_url");
+         if (photo != null && !photo.isEmpty() && !"null".equals(photo)) {
+            LinearLayout line = new LinearLayout(this);
+            line.setOrientation(LinearLayout.HORIZONTAL);
+            line.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            cb.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
+            line.addView(cb);
+            TextView btn = new TextView(this);
+            btn.setText("🖼 Foto");
+            btn.setTextSize(12f);
+            btn.setTextColor(0xFF0D47A1);
+            btn.setPadding(this.dp(10f), this.dp(8f), this.dp(10f), this.dp(8f));
+            android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+            bg.setColor(0xFFE3F2FD);
+            bg.setCornerRadius(this.dp(8f));
+            btn.setBackground(bg);
+            btn.setContentDescription("Lihat foto " + safe(c.optString("name")));
+            btn.setOnClickListener((v) -> this.previewRemotePhoto(photo, c.optString("uuid")));
+            line.addView(btn);
+            box.addView(line);
+         } else {
+            box.addView(cb);
+         }
          boxes.add(cb);
          rows.add(c);
       }
@@ -2337,6 +2360,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    protected void onResume() {
       super.onResume();
       if (this.applyGuidedToggle()) return;
+      if (this.dataGateTrxId > 0L) this.findViewById(android.R.id.content).post(this::resumeDataGate);
       SettingsDao lateCfg = new SettingsDao(DatabaseHelper.getInstance(this));
       lateMs = (long)lateCfg.getDeliveryMaxAgeMinutes() * 60000L;
       this.revokeLateCredit = lateCfg.isRevokeCreditLateEnabled();
@@ -7799,9 +7823,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (!noPhoto && !noCoord) {
                this.complete(t, false);
             } else {
-               boolean revoke = (new SettingsDao(DatabaseHelper.getInstance(this))).isRevokeCreditIncompleteEnabled();
-               if (revoke) {
-                  this.showIncompleteCreditGateThenComplete(t, c, noPhoto, noCoord);
+               // WAJIB (sejak 1.4.257, tanpa melihat setelan): lengkapi foto/lokasi sekarang, atau selesai TANPA POIN.
+               boolean mandatory = true;
+               if (mandatory) {
+                  this.showMandatoryDataGate(t, c, noPhoto, noCoord);
                } else {
                   StringBuilder missing = new StringBuilder();
                   if (noPhoto) {
@@ -7819,6 +7844,92 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
       } else {
          this.complete(t, false);
+      }
+   }
+
+   /** Order yang menunggu staf melengkapi foto/lokasi pelanggan (form dibuka dari gerbang) — dicek lagi di onResume. */
+   private long dataGateTrxId = 0L;
+
+   /**
+    * Gerbang WAJIB saat Selesai: pelanggan tanpa FOTO dan/atau LOKASI. Tombol langsung membuka kamera
+    * foto+koordinat / GPS di form pelanggan; kembali ke sini → dicek ulang dan, bila lengkap, Selesai berlanjut
+    * dengan poin normal. "Tetap selesai" (dua ketukan) = order selesai TANPA POIN GALON (markDelivered revoke).
+    */
+   private void showMandatoryDataGate(Transaction t, Customer c, boolean noPhoto, boolean noCoord) {
+      StringBuilder missing = new StringBuilder();
+      if (noPhoto) missing.append("• Belum ada FOTO rumah\n");
+      if (noCoord) missing.append("• LOKASI (koordinat) belum ditandai\n");
+      this.playIncompleteAlertSound();
+      int pad = this.dp(20f);
+      LinearLayout box = new LinearLayout(this);
+      box.setOrientation(LinearLayout.VERTICAL);
+      box.setPadding(pad, this.dp(8f), pad, 0);
+      TextView msg = new TextView(this);
+      msg.setText("Pelanggan \"" + safe(c.getName()) + "\" belum lengkap:\n\n" + missing
+            + "\nWAJIB dilengkapi sekarang. Kalau tetap diselesaikan tanpa melengkapi, POIN GALON order ini TIDAK dikreditkan.");
+      msg.setTextColor(0xFF212121);
+      msg.setTextSize(14f);
+      box.addView(msg);
+      final AlertDialog[] holder = new AlertDialog[1];
+      java.util.function.BiFunction<String, Integer, android.widget.Button> mk = (label, color) -> {
+         android.widget.Button b = new android.widget.Button(this);
+         b.setText(label);
+         b.setAllCaps(false);
+         b.setTextColor(0xFFFFFFFF);
+         b.setBackgroundTintList(android.content.res.ColorStateList.valueOf(color));
+         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+         lp.topMargin = this.dp(8f);
+         b.setLayoutParams(lp);
+         box.addView(b);
+         return b;
+      };
+      String quick = noPhoto ? CustomerFormActivity.QUICK_PHOTO_COORD : CustomerFormActivity.QUICK_LOCATION;
+      mk.apply(noPhoto ? "📷 Foto rumah + lokasi sekarang" : "📍 Tandai lokasi sekarang", 0xFF1565C0).setOnClickListener((v) -> {
+         if (holder[0] != null) holder[0].dismiss();
+         this.dataGateTrxId = t.getId();
+         this.startActivity(new Intent(this, CustomerFormActivity.class).putExtra("customer_id", c.getId())
+               .putExtra(CustomerFormActivity.EXTRA_QUICK_CAPTURE, quick));
+      });
+      if ((new SettingsDao(DatabaseHelper.getInstance(this))).isRevokeCreditIncompleteEnabled()) {
+         mk.apply("✅ Sudah diperbaiki (ajukan ke owner)…", 0xFF2E7D32).setOnClickListener((v) -> {
+            if (holder[0] != null) holder[0].dismiss();
+            IssueResolveDialog.show(this, c, "delivery_incomplete", () -> this.doComplete(t, true));
+         });
+      }
+      android.widget.Button noPoin = mk.apply("Tetap selesai TANPA POIN", 0xFFB71C1C);
+      final boolean[] armed = {false};
+      noPoin.setOnClickListener((v) -> {
+         if (!armed[0]) {
+            armed[0] = true;
+            noPoin.setText("Yakin? Poin galon TIDAK dikreditkan — ketuk lagi");
+            return;
+         }
+         if (holder[0] != null) holder[0].dismiss();
+         this.complete(t, true);
+      });
+      ScrollView sv = new ScrollView(this);
+      sv.addView(box);
+      holder[0] = (new AlertDialog.Builder(this)).setIcon(17301543).setTitle("⚠️ Wajib Lengkapi Data Pelanggan")
+            .setView(sv).setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
+   }
+
+   /** Kembali dari form pelanggan yang dibuka gerbang wajib → cek ulang; lengkap = lanjut Selesai normal. */
+   private void resumeDataGate() {
+      long id = this.dataGateTrxId;
+      if (id <= 0L) return;
+      this.dataGateTrxId = 0L;
+      Transaction t = this.dao.getById(id);
+      if (t == null || (t.getDeliveryStatus() != null && !Transaction.DELIVERY_PENDING.equals(t.getDeliveryStatus()))) return;
+      if (this.adapter != null && this.adapter.data != null) {
+         for (Transaction q : this.adapter.data) if (q != null && q.getId() == id) t = q;
+      }
+      Customer c = t.getCustomerId() > 0L ? this.customerDao.getById(t.getCustomerId()) : null;
+      if (c == null) return;
+      if (c.hasPhoto() && c.hasCoordinates()) {
+         Toast.makeText(this, "✓ Data pelanggan lengkap — lanjut Selesai.", Toast.LENGTH_SHORT).show();
+         this.complete(t, false);
+      } else {
+         this.showMandatoryDataGate(t, c, !c.hasPhoto(), !c.hasCoordinates());
       }
    }
 
@@ -13218,6 +13329,20 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                   hidePhoto.run();   // gambar rusak/tak bisa di-decode: jalur ketiga, mudah terlewat
                }
             }
+         });
+      })).start();
+   }
+
+   /** Unduh (cache) lalu tampilkan layar penuh foto dari server — tombol 🖼 di "Cek Order yang Diambil". */
+   private void previewRemotePhoto(String url, String key) {
+      Toast.makeText(this, "Memuat foto…", Toast.LENGTH_SHORT).show();
+      String name = "take_" + Integer.toHexString(String.valueOf(key).hashCode()) + "_" + Integer.toHexString(url.hashCode()) + ".jpg";
+      (new Thread(() -> {
+         File f = BitmapUtils.downloadToCache(this.getApplicationContext(), url, name);
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            if (f == null) Toast.makeText(this, "Foto tidak dapat dimuat — periksa koneksi.", Toast.LENGTH_SHORT).show();
+            else this.showFullScreenPhotoQueue(f.getAbsolutePath());
          });
       })).start();
    }
