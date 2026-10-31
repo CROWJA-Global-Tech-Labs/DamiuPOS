@@ -64,6 +64,11 @@ public class CustomerFormActivity extends AppCompatActivity {
 
     /** Prefill mode buat-baru (caller: bubble "+ Trx" saat pelanggan chat WA belum terdaftar). */
     public static final String EXTRA_PREFILL_NAME = "prefill_name";
+    /** Dibuka dari gerbang "Wajib Lengkapi Data" saat Selesai di Antrian Delivery: langsung jalankan
+     *  {@link #QUICK_PHOTO_COORD} (kamera foto rumah + koordinat) atau {@link #QUICK_LOCATION} (GPS lokasi utama). */
+    public static final String EXTRA_QUICK_CAPTURE = "quick_capture";
+    public static final String QUICK_PHOTO_COORD = "photo_coord";
+    public static final String QUICK_LOCATION = "location";
     public static final String EXTRA_PREFILL_PHONE = "prefill_phone";
 
     /** Id pelanggan yang baru di-insert, dipakai untuk setResult */
@@ -366,6 +371,20 @@ public class CustomerFormActivity extends AppCompatActivity {
         // alih-alih melanjutkan input duplikat.
         if (editId == -1) {
             showPhoneGateDialog(getIntent().getStringExtra(EXTRA_PREFILL_PHONE));
+        }
+
+        // Gerbang "Wajib Lengkapi Data" (Antrian Delivery): langsung buka kamera/GPS — staf tinggal SIMPAN.
+        String quick = getIntent().getStringExtra(EXTRA_QUICK_CAPTURE);
+        if (editId != -1 && savedInstanceState == null && quick != null) {
+            findViewById(R.id.btnSimpan).post(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (QUICK_PHOTO_COORD.equals(quick)) {
+                    takePhotoAndCoordinate();
+                } else if (QUICK_LOCATION.equals(quick) && !locationRows.isEmpty()) {
+                    getLocation(locationRows.get(0));
+                }
+                Toast.makeText(this, "Setelah foto/lokasi terisi, ketuk SIMPAN.", Toast.LENGTH_LONG).show();
+            });
         }
     }
 
