@@ -146,7 +146,9 @@ public final class DeliveryVoidDialog {
         root.setPadding(pad, dp(act, 8), pad, dp(act, 4));
 
         final TextView hint = new TextView(act);
-        hint.setText("Jelaskan alasan membatalkan pesanan \"" + safe(t.getCustomerName()) + "\" ("
+        String again = t.hasPendingVoidRequest()
+                ? "Pengajuan void sebelumnya belum diputuskan; pengajuan ini menggantikannya.\n\n" : "";
+        hint.setText(again + "Jelaskan alasan membatalkan pesanan \"" + safe(t.getCustomerName()) + "\" ("
                 + t.getJumlahGalon() + " galon). Permintaan dikirim ke email super admin; pesanan "
                 + "dibatalkan SETELAH disetujui, lalu hilang dari antrian saat sinkron.");
         hint.setTextSize(13f);
@@ -234,6 +236,8 @@ public final class DeliveryVoidDialog {
                 if (fOk != null) {
                     Toast.makeText(act, fOk, Toast.LENGTH_LONG).show();
                     dialog.dismiss();
+                    // Auto-accept membatalkan seketika — tarik sekarang supaya order lenyap dari antrean.
+                    SyncScheduler.syncNow(act.getApplicationContext());
                 } else {
                     Toast.makeText(act, fErr, Toast.LENGTH_LONG).show();
                     pos.setEnabled(true);
