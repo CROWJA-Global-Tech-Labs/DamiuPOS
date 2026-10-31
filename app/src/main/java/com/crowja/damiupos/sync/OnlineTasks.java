@@ -159,6 +159,26 @@ public final class OnlineTasks {
             // Sengaja TANPA r.has(): kunci absen (server lama/di-rollback) = MATI, bukan "biarkan".
             cfg.setCheckoutMultiEnabled(SyncSettings.parseCheckoutMultiEnabled(r.opt("checkout_multi_enabled")));
             cfg.setCheckoutMultiBlocker(SyncSettings.parseCheckoutMultiBlocker(r.opt("checkout_multi_blocker")));
+            // 📥 Peringatan Galon Kembali di sekitar rute (sakelar + radius per perangkat, halaman Perangkat).
+            // Kunci absen (server lama) → nilai tersimpan dipertahankan (bawaan aktif, 50 m).
+            boolean pickupChanged = false;
+            if (r.has("pickup_alert_enabled")) {
+                boolean on = com.crowja.damiupos.util.PickupNearbyLogic.parseBool(
+                        r.opt("pickup_alert_enabled"), cfg.isPickupAlertEnabled());
+                if (on != cfg.isPickupAlertEnabled()) {
+                    cfg.setPickupAlertEnabled(on);
+                    pickupChanged = true;
+                }
+            }
+            if (r.has("pickup_alert_radius_m")) {
+                int rad = com.crowja.damiupos.util.PickupNearbyLogic.parseRadius(
+                        r.opt("pickup_alert_radius_m"), cfg.getPickupAlertRadiusM());
+                if (rad != cfg.getPickupAlertRadiusM()) {
+                    cfg.setPickupAlertRadiusM(rad);
+                    pickupChanged = true;
+                }
+            }
+            if (pickupChanged) com.crowja.damiupos.PickupNearbyMonitor.recheck();
             // Paket PANTUN follow-up: dicek bareng /me (tiap 15 menit) tapi hanya benar-benar
             // diunduh saat versinya berubah — praktis sekali saja lalu diam. Sengaja TIDAK lewat
             // pipa sinkron: korpusnya 10.000 baris identik untuk semua cabang (lihat docblock

@@ -33,6 +33,7 @@ import com.crowja.damiupos.sync.LocationReporter;
 import com.crowja.damiupos.sync.SyncApi;
 import com.crowja.damiupos.sync.SyncSettings;
 import com.crowja.damiupos.util.DeviceAdminRules;
+import com.crowja.damiupos.util.PickupNearbyLogic;
 import com.crowja.damiupos.util.Ts;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.switchmaterial.SwitchMaterial;
@@ -612,6 +613,55 @@ public class DeviceAdminActivity extends AppCompatActivity {
                 isDelivery || guided);
         addFlag(s, uuid, d, "delivery_proof_required", "📸 Wajib foto bukti antar", null, true);
         addFlag(s, uuid, d, "claim_requires_approval", "✋ Ambil alih pesanan butuh persetujuan", null, true);
+        addPickupAlert(s, uuid, d);
+    }
+
+    /**
+     * 📥 Peringatan Galon Kembali di sekitar rute (bawaan AKTIF, radius 50 m) — bagian "flags" yang sama:
+     * sakelar tersimpan saat digeser, radius lewat tombolnya sendiri. Server lama (kunci absen) → nonaktif.
+     */
+    private void addPickupAlert(LinearLayout s, String uuid, JSONObject d) {
+        boolean known = d.has("pickup_alert_enabled");
+        SwitchMaterial sw = switchView("📥 Peringatan Galon Kembali di sekitar rute",
+                !known || d.optBoolean("pickup_alert_enabled", true));
+        sw.setEnabled(known);
+        s.addView(sw);
+        s.addView(hint(known
+                ? "Saat rit berjalan / navigasi, HP berbunyi bila lewat dekat pelanggan yang punya tugas galon kembali. Dilewati tanpa diambil → tercatat di Jurnal Pesanan."
+                : "Server belum mendukung pengaturan ini — perbarui server dulu."));
+        sw.setOnCheckedChangeListener((CompoundButton b, boolean on) -> {
+            if (suppressSwitch) return;
+            try {
+                save(uuid, "flags", new JSONObject().put("pickup_alert_enabled", on), sw, () -> {
+                    suppressSwitch = true;
+                    sw.setChecked(!on);
+                    suppressSwitch = false;
+                });
+            } catch (Exception ignored) {
+            }
+        });
+        if (!known) return;
+        s.addView(label("Radius peringatan (meter, 10–500)"));
+        int cur = d.isNull("pickup_alert_radius_m") ? PickupNearbyLogic.DEFAULT_RADIUS_M
+                : d.optInt("pickup_alert_radius_m", PickupNearbyLogic.DEFAULT_RADIUS_M);
+        EditText etRadius = edit(String.valueOf(PickupNearbyLogic.clampRadius(cur)), "50", InputType.TYPE_CLASS_NUMBER);
+        etRadius.setFilters(new InputFilter[]{new InputFilter.LengthFilter(3)});
+        s.addView(etRadius);
+        MaterialButton btn = button("💾 Simpan Radius", C_PRIMARY);
+        btn.setOnClickListener(v -> {
+            Integer r = DeviceAdminRules.pickupRadius(etRadius.getText().toString());
+            if (r == null) {
+                etRadius.setError("Radius harus angka bulat 10–500 meter");
+                etRadius.requestFocus();
+                return;
+            }
+            try {
+                save(uuid, "flags", new JSONObject().put("pickup_alert_radius_m", r), btn, null);
+            } catch (Exception e) {
+                toast("Gagal menyusun data: " + e.getMessage());
+            }
+        });
+        s.addView(btn, topMargin(matchWrap(), 8));
     }
 
     private void addFlag(LinearLayout s, String uuid, JSONObject d, String key, String title,
