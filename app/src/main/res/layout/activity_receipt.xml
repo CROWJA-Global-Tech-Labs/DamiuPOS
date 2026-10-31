@@ -109,6 +109,17 @@
         android:elevation="8dp">
 
         <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnProof"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="🧾 Lihat Bukti Bayar"
+            android:textAllCaps="false"
+            android:visibility="gone"
+            app:cornerRadius="10dp" />
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnPrint"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
