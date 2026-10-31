@@ -94,6 +94,8 @@ public class TertundaRowsTest {
         assertEquals("QRIS", x.paymentMethod);
         assertEquals("Rumah", x.destName);
         assertTrue(x.chatSession);
+        assertTrue(x.orderChatAvailable());
+        assertFalse(x.complained);                 // kunci absen → false
         assertFalse(x.mine);
         assertFalse(x.inProgress);
         assertFalse(x.voidPending);
@@ -125,6 +127,21 @@ public class TertundaRowsTest {
         assertEquals("", x.dueAtLocal);
         assertEquals("", x.tertundaReason);
         assertEquals("", x.deviceGroupLabel);
+    }
+
+    @Test public void complainedFlagAndOrderChatEntry() {
+        Result r = TertundaRows.parse(body(
+                "{\"uuid\":\"a\",\"type\":\"JUAL\",\"customer_uuid\":\"c-1\",\"chat_session\":false,\"complained\":true}",
+                "{\"uuid\":\"b\",\"type\":\"JUAL\",\"customer_uuid\":null,\"chat_session\":false}",
+                "{\"uuid\":\"c\",\"type\":\"KEMBALI\",\"customer_uuid\":\"c-2\",\"chat_session\":false}",
+                "{\"uuid\":\"d\",\"type\":\"KEMBALI\",\"customer_uuid\":\"c-3\",\"chat_session\":true}"));
+        Row jualCust = r.rows.get(0);
+        assertTrue(jualCust.complained);
+        assertTrue(jualCust.orderChatAvailable());    // tanpa sesi: server membukanya on-demand
+        assertFalse(r.rows.get(1).complained);
+        assertFalse(r.rows.get(1).orderChatAvailable());   // Umum tanpa sesi
+        assertFalse(r.rows.get(2).orderChatAvailable());   // ambil galon saja tanpa sesi
+        assertTrue(r.rows.get(3).orderChatAvailable());    // sesi yang sudah ada selalu dibuka
     }
 
     @Test public void isoUtcResumeFallbackIsConvertedToLocalNotTruncated() {
