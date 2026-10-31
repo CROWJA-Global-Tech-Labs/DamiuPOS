@@ -50,6 +50,18 @@ public final class DeviceAdminRules {
         }
     }
 
+    /**
+     * Radius 📥 Peringatan Galon Kembali (meter) dari isian: bilangan bulat 10–500 (sama dengan validasi
+     * server, flags pickup_alert_radius_m). Kosong / bukan angka bulat / di luar rentang → {@code null} (tolak).
+     */
+    public static Integer pickupRadius(String raw) {
+        if (raw == null) return null;
+        String s = raw.trim();
+        if (!s.matches("[0-9]{1,4}")) return null;
+        int v = Integer.parseInt(s);
+        return v >= PickupNearbyLogic.MIN_RADIUS_M && v <= PickupNearbyLogic.MAX_RADIUS_M ? v : null;
+    }
+
     /** Kode struk: huruf/angka saja, kapital, maks 3. "" = otomatis (3 huruf pertama nama). */
     public static String receiptCode(String raw) {
         if (raw == null) return "";

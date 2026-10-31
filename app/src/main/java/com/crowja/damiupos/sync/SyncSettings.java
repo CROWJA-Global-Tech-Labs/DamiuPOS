@@ -92,6 +92,10 @@ public class SyncSettings {
      *  app_settings tersinkron), jadi tak pernah terdorong balik ke server. */
     private static final String K_CHECKOUT_MULTI = "sync_checkout_multi_enabled";
     private static final String K_CHECKOUT_MULTI_BLOCKER = "sync_checkout_multi_blocker";
+    /** 📥 "Peringatan Galon Kembali di sekitar rute" per perangkat (halaman Perangkat → /api/me
+     *  pickup_alert_enabled / pickup_alert_radius_m). Kunci LOKAL; bawaan AKTIF, 50 m. */
+    private static final String K_PICKUP_ALERT = "sync_pickup_alert_enabled";
+    private static final String K_PICKUP_ALERT_RADIUS = "sync_pickup_alert_radius_m";
 
     // Track this device's staff location while clocked in (default on when enrolled).
     private static final String K_LOC_ENABLED = "sync_loc_enabled";
@@ -182,6 +186,24 @@ public class SyncSettings {
     public void setGuidedDeliveryDevice(boolean v) { settings.set(K_GUIDED_DELIVERY, v ? "1" : "0"); }
     public boolean isDeviceProofRequired()         { return "1".equals(settings.get(K_DEVICE_PROOF_REQUIRED, "0")); }
     public void setDeviceProofRequired(boolean v)  { settings.set(K_DEVICE_PROOF_REQUIRED, v ? "1" : "0"); }
+
+    /** 📥 Peringatan Galon Kembali di sekitar rute aktif di HP ini? Bawaan AKTIF (belum pernah diatur). */
+    public boolean isPickupAlertEnabled()         { return !"0".equals(settings.get(K_PICKUP_ALERT, "1")); }
+    public void setPickupAlertEnabled(boolean v)  { settings.set(K_PICKUP_ALERT, v ? "1" : "0"); }
+
+    /** Radius peringatan galon kembali (meter), dibatasi 10–500; bawaan 50. */
+    public int getPickupAlertRadiusM() {
+        try {
+            return com.crowja.damiupos.util.PickupNearbyLogic.clampRadius(Integer.parseInt(
+                    settings.get(K_PICKUP_ALERT_RADIUS, String.valueOf(com.crowja.damiupos.util.PickupNearbyLogic.DEFAULT_RADIUS_M)).trim()));
+        } catch (Exception e) {
+            return com.crowja.damiupos.util.PickupNearbyLogic.DEFAULT_RADIUS_M;
+        }
+    }
+
+    public void setPickupAlertRadiusM(int v) {
+        settings.set(K_PICKUP_ALERT_RADIUS, String.valueOf(com.crowja.damiupos.util.PickupNearbyLogic.clampRadius(v)));
+    }
 
     /**
      * 🧺 HP ini boleh MEMBUAT checkout multi-lokasi? Keputusan SERVER lewat /api/me — setelan dashboard

@@ -103,6 +103,7 @@ import com.crowja.damiupos.util.BitmapUtils;
 import com.crowja.damiupos.util.CompassArrowView;
 import com.crowja.damiupos.util.DeliveryNavLogic;
 import com.crowja.damiupos.util.DeliveryProofPolicy;
+import com.crowja.damiupos.util.PickupNearbyLogic;
 import com.crowja.damiupos.util.TertundaRows;
 import com.crowja.damiupos.util.Ts;
 import com.crowja.damiupos.wa.WaContactEnsure;
@@ -144,10 +145,28 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    public static final String EXTRA_FOCUS_TRX_ID = "focus_trx_id";
    /** Dari panel navigasi "✅ Selesai": jalankan alur penyelesaian order ini, lalu lanjut ke titik berikutnya. */
    public static final String EXTRA_COMPLETE_TRX_ID = "complete_trx_id";
+   /** 📥 "Ambil" dari peringatan Galon Kembali di sekitar rute (notifikasi PickupNearbyMonitor / pita panel
+    *  navigasi): order KEMBALI ini langsung masuk alur Selesai pickup (klaim/ambil alih dulu bila bukan milik HP ini). */
+   public static final String EXTRA_NEARBY_PICKUP_UUID = "nearby_pickup_uuid";
+   /** {@code mine} | {@code open} | {@code other} (PickupNearbyLogic.SRC_*) — sumber saat diperingatkan. */
+   public static final String EXTRA_NEARBY_PICKUP_SOURCE = "nearby_pickup_source";
+   public static final String EXTRA_NEARBY_PICKUP_LOCAL_ID = "nearby_pickup_local_id";
+   /** Pemegang order menurut server (routed_uuid) — penjaga basi Ambil Alih order perangkat lain. */
+   public static final String EXTRA_NEARBY_PICKUP_EXPECTED = "nearby_pickup_expected_device";
+   public static final String EXTRA_NEARBY_PICKUP_NAME = "nearby_pickup_name";
+   /** Dari pita panel navigasi: setelah Selesai, navigasi rit lanjut ke titik berikutnya (alur per titik). */
+   public static final String EXTRA_NEARBY_PICKUP_FROM_NAV = "nearby_pickup_from_nav";
    /** Navigasi PER TITIK (wizard) sedang dipakai: tiap Selesai → susun ulang sisa rute → navigasi titik berikutnya. */
    private boolean wizardActive = false;
    private boolean wizardAdvancePending = false;
    private long pendingCompleteTrxId = -1L;
+   /** Ekstra "📥 Ambil" galon kembali yang menunggu diproses di onResume (setelah loadData). */
+   private Bundle pendingNearbyPickup;
+   /** Order KEMBALI yang Selesai-nya dari "📥 Ambil": konfirmasi umum dilewati → langsung askPickupOutcome. */
+   private long directPickupTrxId = -1L;
+   /** Penahan ketukan ganda "📥 Ambil" (kunci + waktu). */
+   private String lastNearbyKey;
+   private long lastNearbyAt;
    /** Order yang Selesai-nya dipicu panel navigasi — penyelesaiannya melanjutkan ke titik berikutnya. */
    private long wizardCompleteId = -1L;
    private static final String KEY_WIZARD_SKIPS = "wizard_skip_ids";
@@ -413,6 +432,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (savedInstanceState == null && this.getIntent() != null) {
          this.pendingFocusTrxId = this.getIntent().getLongExtra(EXTRA_FOCUS_TRX_ID, -1L);
          this.pendingCompleteTrxId = this.getIntent().getLongExtra(EXTRA_COMPLETE_TRX_ID, -1L);
+         this.pendingNearbyPickup = nearbyPickupExtras(this.getIntent());
       }
       if (savedInstanceState != null) {
          this.pendingProofTrxId = savedInstanceState.getLong("proof_trx_id", -1L);
@@ -2370,6 +2390,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.loadData();
       this.openPendingFocus();
       this.openPendingComplete();
+      this.openPendingNearbyPickup();
       this.loadOtherDevices();
       this.loadTrips();
       this.tick.postDelayed(this.ticker, 1000L);
@@ -5806,6 +5827,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private void persistRunning() {
       (new SettingsDao(DatabaseHelper.getInstance(this))).setDeliveryRunningTrxIds(this.runningIds);
+      PickupNearbyMonitor.recheck();   // rit mulai/berubah/selesai → peringatan galon kembali aktif/berhenti
    }
 
    private void clearRunning() {
@@ -7893,7 +7915,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if ((new SettingsDao(DatabaseHelper.getInstance(this))).isRevokeCreditIncompleteEnabled()) {
          mk.apply("✅ Sudah diperbaiki (ajukan ke owner)…", 0xFF2E7D32).setOnClickListener((v) -> {
             if (holder[0] != null) holder[0].dismiss();
-            IssueResolveDialog.show(this, c, "delivery_incomplete", () -> this.doComplete(t, true));
+            IssueResolveDialog.show(this, c, "delivery_incomplete", () -> this.completeAfterResolve(t, true));
          });
       }
       android.widget.Button noPoin = mk.apply("Tetap selesai TANPA POIN", 0xFFB71C1C);
@@ -8180,7 +8202,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       String note = c.getIssueNote() != null && !c.getIssueNote().isEmpty() ? "\nCatatan pelapor: " + c.getIssueNote() + "\n" : "";
       this.playIncompleteAlertSound();
-      (new AlertDialog.Builder(this)).setIcon(17301543).setTitle("⚠️ Pelanggan Bermasalah — Perbaiki Dulu").setMessage("Detail pelanggan \"" + c.getName() + "\" ditandai BERMASALAH dan belum diperbaiki:\n\n" + cats + note + "\nPerbaiki dulu, lalu tandai \"sudah diperbaiki\" (butuh persetujuan owner) sebelum menyelesaikan delivery ini.").setPositiveButton("Sudah Diperbaiki…", (d, w) -> IssueResolveDialog.show(this, c, "delivery", () -> this.doComplete(t, false))).setNeutralButton("Perbaiki Data", (d, w) -> this.startActivity((new Intent(this, CustomerFormActivity.class)).putExtra("customer_id", c.getId()))).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).show();
+      (new AlertDialog.Builder(this)).setIcon(17301543).setTitle("⚠️ Pelanggan Bermasalah — Perbaiki Dulu").setMessage("Detail pelanggan \"" + c.getName() + "\" ditandai BERMASALAH dan belum diperbaiki:\n\n" + cats + note + "\nPerbaiki dulu, lalu tandai \"sudah diperbaiki\" (butuh persetujuan owner) sebelum menyelesaikan delivery ini.").setPositiveButton("Sudah Diperbaiki…", (d, w) -> IssueResolveDialog.show(this, c, "delivery", () -> this.completeAfterResolve(t, false))).setNeutralButton("Perbaiki Data", (d, w) -> this.startActivity((new Intent(this, CustomerFormActivity.class)).putExtra("customer_id", c.getId()))).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).show();
    }
 
    /**
@@ -8200,6 +8222,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private void completeConfirm(Transaction t, boolean revokeCredit) {
+      // 📥 "Ambil" dari peringatan Galon Kembali di sekitar rute: konfirmasi umum "Tandai Selesai (Pickup)"
+      // dilewati — langsung dialog hasil pickup (lanjut / berhenti berlangganan + galon aktual).
+      if (t != null && t.getId() == this.directPickupTrxId) {
+         this.directPickupTrxId = -1L;
+         if ("KEMBALI".equals(t.getType()) && !t.isVisitTask()) {
+            this.askPickupOutcome(t, revokeCredit);
+            return;
+         }
+      }
       long ms = elapsedMillis(t.getDeliveryQueuedAt());
       boolean isPickup = "KEMBALI".equals(t.getType());
       String msg = (isPickup ? "Galon kembali dari \"" + safe(t.getCustomerName()) + "\" sudah diambil (pickup)?" : "Order \"" + safe(t.getCustomerName()) + "\" sudah selesai diantar?") + "\n\nLama proses: " + formatDuration(ms);
@@ -9565,6 +9596,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
       long done = intent != null ? intent.getLongExtra(EXTRA_COMPLETE_TRX_ID, -1L) : -1L;
       if (done > 0L) this.pendingCompleteTrxId = done;
+      Bundle nearby = nearbyPickupExtras(intent);
+      if (nearby != null) this.pendingNearbyPickup = nearby;   // diproses di onResume berikutnya
    }
 
    /**
@@ -9691,6 +9724,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       boolean fromPanel = t.getId() == this.wizardCompleteId;
       if (fromPanel) this.wizardCompleteId = -1L;
       forgetWizardSkip(this, t.getId());
+      PickupNearbyMonitor.recheck();   // order selesai → peringatan galon kembalinya (bila ada) ditutup segera
       if (!this.guidedMode && this.wizardActive && (fromPanel || NavigationPipActivity.isLive())) {
          // Navigasi per titik: lanjut ke titik berikutnya begitu layar ini kembali bebas (dialog/WA
          // penyelesaian yang mungkin masih menyusul ditunggu lewat fokus jendela).
@@ -9977,6 +10011,232 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       } else {
          Toast.makeText(this, "Order itu sudah tidak ada di antrean.", Toast.LENGTH_LONG).show();
       }
+   }
+
+   // ============================ 📥 Galon Kembali di sekitar rute (PickupNearbyMonitor) ============================
+
+   /** Ekstra "📥 Ambil" dari Intent; null bila bukan dari peringatan galon kembali (atau dibuka ulang dari Recents). */
+   @Nullable
+   private static Bundle nearbyPickupExtras(@Nullable Intent intent) {
+      if (intent == null || (intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) return null;
+      String uuid = intent.getStringExtra(EXTRA_NEARBY_PICKUP_UUID);
+      uuid = uuid != null ? uuid.trim() : "";
+      long localId = intent.getLongExtra(EXTRA_NEARBY_PICKUP_LOCAL_ID, 0L);
+      if (uuid.isEmpty() && localId <= 0L) return null;
+      Bundle b = new Bundle();
+      b.putString(EXTRA_NEARBY_PICKUP_UUID, uuid);
+      b.putLong(EXTRA_NEARBY_PICKUP_LOCAL_ID, localId);
+      b.putString(EXTRA_NEARBY_PICKUP_SOURCE, intent.getStringExtra(EXTRA_NEARBY_PICKUP_SOURCE));
+      b.putString(EXTRA_NEARBY_PICKUP_EXPECTED, intent.getStringExtra(EXTRA_NEARBY_PICKUP_EXPECTED));
+      b.putString(EXTRA_NEARBY_PICKUP_NAME, intent.getStringExtra(EXTRA_NEARBY_PICKUP_NAME));
+      b.putBoolean(EXTRA_NEARBY_PICKUP_FROM_NAV, intent.getBooleanExtra(EXTRA_NEARBY_PICKUP_FROM_NAV, false));
+      return b;
+   }
+
+   /**
+    * "📥 Ambil" galon kembali (owner 2026-10-31: "sediakan dialog jumlah aktual galon kembali dan selesai, pakai
+    * flow selesai pesan lagi / berhenti berlangganan"). Semua jalur berakhir di askPickupOutcome:
+    * <ul>
+    *   <li>Antrean Saya → gerbang data wajib yang SAMA dengan Selesai biasa (maybeWarnIncompleteThenComplete),
+    *       lalu langsung dialog hasil pickup (konfirmasi umum "Tandai Selesai (Pickup)" dilewati);</li>
+    *   <li>Pesanan Terbuka → klaim (claimOpenDispatch, tanpa menjalankan rit) → alur Antrean Saya;</li>
+    *   <li>perangkat lain → Ambil Alih lewat endpoint klaim yang sama (butuh persetujuan = berhenti di situ) →
+    *       tunggu order tersinkron ke Antrean Saya → alur Antrean Saya.</li>
+    * </ul>
+    */
+   private void openPendingNearbyPickup() {
+      Bundle b = this.pendingNearbyPickup;
+      if (b == null) return;
+      this.pendingNearbyPickup = null;
+      String uuid = b.getString(EXTRA_NEARBY_PICKUP_UUID, "");
+      long localId = b.getLong(EXTRA_NEARBY_PICKUP_LOCAL_ID, 0L);
+      String source = b.getString(EXTRA_NEARBY_PICKUP_SOURCE);
+      String name = b.getString(EXTRA_NEARBY_PICKUP_NAME);
+      boolean fromNav = b.getBoolean(EXTRA_NEARBY_PICKUP_FROM_NAV, false);
+      String key = PickupNearbyLogic.keyFor(uuid, localId);
+      long now = System.currentTimeMillis();
+      if (key.equals(this.lastNearbyKey) && now - this.lastNearbyAt < 5000L) return;   // ketukan ganda
+      this.lastNearbyKey = key;
+      this.lastNearbyAt = now;
+      // Alurnya dimulai = ditindaklanjuti: tak dilaporkan "terlewat", peringatannya ditutup (+ jeda 20 menit).
+      PickupNearbyMonitor.markActed(this, key);
+
+      long id = !uuid.isEmpty() ? this.dao.getIdBySyncUuid(uuid) : -1L;
+      if (id <= 0L) id = localId;
+      Transaction mine = id > 0L ? this.findQueueTrx(id) : null;
+      if (mine == null && !uuid.isEmpty()) mine = findQueuedMine(this.dao, uuid);
+      if (mine != null) {
+         this.startNearbyPickupMine(mine, fromNav);
+         return;
+      }
+      final Transaction open = id > 0L && this.openDispatchAdapter != null ? findById(this.openDispatchAdapter.rawData, id) : null;
+      if (open != null) {
+         final long openId = open.getId();
+         this.claimOpenDispatch(open, false, () -> {
+            Transaction row = this.findQueueTrx(openId);
+            this.startNearbyPickupMine(row != null ? row : open, fromNav);
+         });
+         return;
+      }
+      if (!uuid.isEmpty() && !PickupNearbyLogic.SRC_MINE.equals(source)) {
+         // Perangkat lain, atau Pesanan Terbuka yang belum tertarik ke HP ini (tanpa pemilik → expected kosong).
+         String expected = PickupNearbyLogic.SRC_OPEN.equals(source) ? "" : b.getString(EXTRA_NEARBY_PICKUP_EXPECTED, "");
+         this.claimForNearbyPickup(uuid, expected, fromNav);
+         return;
+      }
+      Toast.makeText(this, "Tugas galon kembali \"" + (name != null && !name.trim().isEmpty() ? name.trim() : "Pelanggan")
+            + "\" sudah tidak ada di antrean — mungkin sudah diambil atau selesai.", 1).show();
+   }
+
+   /** Order KEMBALI milik HP ini: gerbang data wajib yang sama, lalu langsung dialog hasil pickup (askPickupOutcome). */
+   private void startNearbyPickupMine(Transaction t, boolean fromNav) {
+      if (t == null) return;
+      if (!"KEMBALI".equals(t.getType()) || t.isVisitTask()) {
+         this.maybeWarnIncompleteThenComplete(t);   // jaga-jaga: yang diperingatkan hanya galon kembali
+         return;
+      }
+      if (fromNav && this.isRunning() && !this.guidedMode) {
+         // Dari pita panel navigasi saat rit berjalan: setelah Selesai, navigasi lanjut ke titik rit
+         // berikutnya — alur per titik yang sama dengan tombol "✅ Selesai" panel.
+         this.wizardActive = true;
+         this.wizardCompleteId = t.getId();
+      }
+      if (this.tabs != null && this.activeTab != TAB_MINE) {
+         TabLayout.Tab mineTab = this.tabs.getTabAt(TAB_MINE);
+         if (mineTab != null) this.tabs.selectTab(mineTab);
+      }
+      this.scrollToOrder(t);
+      this.directPickupTrxId = t.getId();
+      this.maybeWarnIncompleteThenComplete(t);
+   }
+
+   /** Selesai sesudah "Sudah diperbaiki…" (IssueResolveDialog): "📥 Ambil" galon kembali tetap lewat dialog hasil pickup. */
+   private void completeAfterResolve(Transaction t, boolean revokeCredit) {
+      if (t != null && t.getId() == this.directPickupTrxId && "KEMBALI".equals(t.getType()) && !t.isVisitTask()) {
+         this.directPickupTrxId = -1L;
+         this.askPickupOutcome(t, revokeCredit);
+      } else {
+         this.doComplete(t, revokeCredit);
+      }
+   }
+
+   /**
+    * "📥 Ambil" untuk order PERANGKAT LAIN (atau Pesanan Terbuka yang belum ada di HP ini): Ambil Alih lewat
+    * endpoint klaim yang SAMA dengan kartu Perangkat Lain (penjaga basi expected_device_uuid, popup di luar
+    * wilayah, "butuh persetujuan" pemilik antrean = pesan server lalu berhenti), lalu sinkron dan tunggu
+    * (cek DB lokal tiap ±1 dtk, maks ±15 dtk) sampai order tampil di Antrean Saya → alur Selesai pickup.
+    */
+   private void claimForNearbyPickup(String uuid, String expected, boolean fromNav) {
+      SyncSettings cfg = this.syncCfg();
+      if (!cfg.isEnrolled()) {
+         Toast.makeText(this, "Perangkat belum terhubung ke server.", 1).show();
+         return;
+      }
+      if (ClaimRequests.blocks(uuid)) {
+         // Sudah minta persetujuan pemilik antrean (≤1 jam lalu) — jangan kirim ulang.
+         Toast.makeText(this, ClaimRequests.blockedToast(uuid), 1).show();
+         return;
+      }
+      final ProgressDialog wait = new ProgressDialog(this);
+      wait.setMessage("Mengambil alih…");
+      wait.setCancelable(false);
+      wait.show();
+      final Context app = this.getApplicationContext();
+      final TransactionDao tdao = this.dao;
+      (new Thread(() -> {
+         String err = null;
+         boolean approval = false;
+         try {
+            JSONObject body = new JSONObject();
+            body.put("transaction_uuid", uuid);
+            body.put("expected_device_uuid", expected != null ? expected : "");
+            (new SyncApi(cfg)).claimDelivery(body);
+         } catch (SyncApi.SyncException se) {
+            approval = ClaimRequests.isNeedsApproval(se);
+            err = se.serverMessage();
+            if (err == null) err = "Gagal mengambil alih (kode " + se.code + ").";
+         } catch (Exception e) {
+            err = "Gagal mengambil alih — periksa koneksi internet.";
+         }
+         Transaction got = null;
+         if (err == null) {
+            // Baris yang sudah ada di HP (order asal HP ini yang dirute ke perangkat lain) → tandai milik sendiri
+            // sekarang (cache optimistik, sama dengan klaim Pesanan Terbuka); sisanya menunggu tarikan sinkron.
+            long lid = tdao.getIdBySyncUuid(uuid);
+            if (lid > 0L) tdao.markClaimedLocally(lid, cfg.getDeviceUuid());
+            got = findQueuedMine(tdao, uuid);
+            Thread pull = startPullNow(app);
+            long pullAt = System.currentTimeMillis();
+            long deadline = pullAt + 15000L;
+            while (got == null && System.currentTimeMillis() < deadline) {
+               try {
+                  Thread.sleep(1000L);
+               } catch (InterruptedException ie) {
+                  break;
+               }
+               got = findQueuedMine(tdao, uuid);
+               if (got == null && !pull.isAlive() && System.currentTimeMillis() - pullAt >= 4000L) {
+                  pull = startPullNow(app);   // tarikan berikutnya — server bisa telat sesaat
+                  pullAt = System.currentTimeMillis();
+               }
+            }
+         }
+         final String errF = err;
+         final boolean approvalF = approval;
+         final Transaction gotF = got;
+         this.runOnUiThread(() -> {
+            try {
+               wait.dismiss();
+            } catch (Throwable ignored) {
+            }
+            if (this.isFinishing() || this.isDestroyed()) return;
+            if (errF != null) {
+               if (approvalF) {
+                  // Pemilik antrean wajib menyetujui — permintaan sudah terkirim (ClaimRequests mencatatnya).
+                  (new AlertDialog.Builder(this)).setTitle("⏳ Menunggu Persetujuan").setMessage(errF)
+                        .setPositiveButton("OK", (DialogInterface.OnClickListener) null).show();
+                  if (this.otherDevicesAdapter != null) this.otherDevicesAdapter.notifyDataSetChanged();
+               } else {
+                  Toast.makeText(this, errF, 1).show();
+               }
+               if (this.activeTab == TAB_OTHER) this.loadOtherDevices();
+               return;
+            }
+            this.loadData();
+            if (this.activeTab == TAB_OTHER) this.loadOtherDevices();
+            if (gotF == null) {
+               Toast.makeText(this, "Diambil alih — selesaikan dari Antrian Saya setelah sinkron.", 1).show();
+               return;
+            }
+            Transaction row = this.findQueueTrx(gotF.getId());
+            this.startNearbyPickupMine(row != null ? row : gotF, fromNav);
+         });
+      })).start();
+   }
+
+   /** Sinkron SEKARANG di thread sendiri (SyncEngine berkunci global — aman berbarengan dengan poll latar). */
+   private static Thread startPullNow(Context app) {
+      Thread th = new Thread(() -> {
+         try {
+            new com.crowja.damiupos.sync.SyncEngine(app).sync();
+         } catch (Throwable ignored) {
+         }
+      });
+      th.start();
+      return th;
+   }
+
+   /** Order KEMBALI {@code uuid} sudah ada di Antrean Saya (bukan Pesanan Terbuka)? Aman di thread latar. */
+   @Nullable
+   private static Transaction findQueuedMine(TransactionDao dao, String uuid) {
+      if (uuid == null || uuid.isEmpty()) return null;
+      long id = dao.getIdBySyncUuid(uuid);
+      if (id <= 0L) return null;
+      for (Transaction q : dao.getDeliveryQueue()) {
+         if (q.isOpenDispatch() || !"KEMBALI".equals(q.getType())) continue;
+         if (q.getId() == id || uuid.equals(dao.getSyncUuidById(q.getId()))) return q;
+      }
+      return null;
    }
 
    @Override
@@ -13723,6 +13983,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private void claimOpenDispatch(Transaction t, boolean thenRun) {
+      this.claimOpenDispatch(t, thenRun, null);
+   }
+
+   /** @param onClaimed (opsional) dijalankan di thread UI setelah klaim sukses dan order sudah milik HP ini secara lokal. */
+   private void claimOpenDispatch(Transaction t, boolean thenRun, @Nullable Runnable onClaimed) {
       SyncSettings cfg = this.syncCfg();
       if (!cfg.isEnrolled()) {
          Toast.makeText(this, "Perangkat belum terhubung ke server.", 1).show();
@@ -13769,6 +14034,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                         this.loadData();
                         if (thenRun) {
                            this.doStartRun(t);
+                        }
+                        if (onClaimed != null) {
+                           onClaimed.run();
                         }
                      } else {
                         Toast.makeText(this, errMsgF, 1).show();

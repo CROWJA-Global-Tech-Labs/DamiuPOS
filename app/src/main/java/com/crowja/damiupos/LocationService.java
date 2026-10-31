@@ -77,6 +77,8 @@ public class LocationService extends Service {
     private volatile long lastReconnectSyncMs = 0;
     /** True while a dedicated high-frequency GPS request is subscribed (delivery in progress). */
     private volatile boolean fastGpsOn = false;
+    /** 📥 Peringatan Galon Kembali di sekitar rute — GPS akurasi tinggi SENDIRI, hanya selama rit/navigasi. */
+    private PickupNearbyMonitor pickupMonitor;
 
     /** Start/continue the shift service in WORKING mode (GPS + polling). */
     public static void start(Context ctx) {
@@ -194,6 +196,9 @@ public class LocationService extends Service {
         super.onCreate();
         fused = LocationServices.getFusedLocationProviderClient(this);
         registerReconnectSync();
+        try {
+            pickupMonitor = new PickupNearbyMonitor(this);
+        } catch (Throwable ignored) {}
     }
 
     /** Kick a sync as soon as the device (re)gains internet, so a sale recorded offline uploads
@@ -354,6 +359,10 @@ public class LocationService extends Service {
                     stopSelf();
                     return;
                 }
+                // 📥 Galon kembali di sekitar rute: aktif hanya selama rit berjalan / panel navigasi hidup
+                // (dinilai tiap poll; navigasi & rit juga memicu PickupNearbyMonitor.recheck langsung).
+                PickupNearbyMonitor pm = pickupMonitor;
+                if (pm != null) pm.evaluate();
                 new SyncEngine(app).sync();
                 OnlineTasks.tick(app);   // config (/me heartbeat), version, broadcasts, commands
 
@@ -404,6 +413,10 @@ public class LocationService extends Service {
         if (poller != null) {
             try { poller.shutdownNow(); } catch (Exception ignored) {}
             poller = null;
+        }
+        if (pickupMonitor != null) {
+            try { pickupMonitor.shutdown(); } catch (Exception ignored) {}
+            pickupMonitor = null;
         }
         super.onDestroy();
     }

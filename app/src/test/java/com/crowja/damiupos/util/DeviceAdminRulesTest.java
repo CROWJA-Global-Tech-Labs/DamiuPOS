@@ -35,6 +35,20 @@ public class DeviceAdminRulesTest {
     }
 
     @Test
+    public void pickupRadiusAcceptsWholeMeters10To500() {
+        assertNull(DeviceAdminRules.pickupRadius(null));
+        assertNull(DeviceAdminRules.pickupRadius(""));
+        assertNull(DeviceAdminRules.pickupRadius("abc"));
+        assertNull(DeviceAdminRules.pickupRadius("9"));
+        assertNull(DeviceAdminRules.pickupRadius("501"));
+        assertNull(DeviceAdminRules.pickupRadius("-50"));
+        assertNull(DeviceAdminRules.pickupRadius("50.5"));
+        assertEquals(Integer.valueOf(10), DeviceAdminRules.pickupRadius("10"));
+        assertEquals(Integer.valueOf(50), DeviceAdminRules.pickupRadius(" 50 "));
+        assertEquals(Integer.valueOf(500), DeviceAdminRules.pickupRadius("500"));
+    }
+
+    @Test
     public void receiptCodeIsUpperAlnumMaxThree() {
         assertEquals("", DeviceAdminRules.receiptCode(null));
         assertEquals("", DeviceAdminRules.receiptCode("  "));

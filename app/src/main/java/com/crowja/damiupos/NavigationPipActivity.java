@@ -49,6 +49,7 @@ import com.crowja.damiupos.util.DeliveryNavLogic;
 import com.crowja.damiupos.util.DeliveryNavLogic.DoorMoney;
 import com.crowja.damiupos.util.DeliveryNavLogic.PayKind;
 import com.crowja.damiupos.util.DeliveryNavLogic.StopState;
+import com.crowja.damiupos.util.PickupNearbyLogic;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -124,6 +125,21 @@ public class NavigationPipActivity extends AppCompatActivity {
         return a != null && !a.isFinishing() && !a.isDestroyed();
     }
 
+    /**
+     * Id lokal perhentian yang sedang dipantau panel ini (rit / satu order). PickupNearbyMonitor tak
+     * memperingatkan "galon kembali di sekitar rute" untuk tujuan navigasi itu sendiri. Thread mana pun.
+     */
+    private static volatile Set<Long> sLiveIds = Collections.emptySet();
+
+    static Set<Long> liveTargetIds() {
+        return isLive() ? sLiveIds : Collections.<Long>emptySet();
+    }
+
+    /** 📥 Pita "Galon kembali dekat" berkedip: dua oranye, teks putih tebal — kontras 5,2:1 dan 7,3:1. */
+    private static final int PICKUP_BG = 0xFFC2410C;
+    private static final int PICKUP_BG_DARK = 0xFF9A3412;
+    private static final long PICKUP_BLINK_MS = 600L;
+
     // ---- keadaan (thread UI) ----
     /** Id lokal order rit menurut URUTAN rit; order yang masuk rit belakangan ditambahkan di ekor. */
     private final List<Long> ids = new ArrayList<>();
@@ -180,6 +196,19 @@ public class NavigationPipActivity extends AppCompatActivity {
     private long splitAttemptAt = 0L;
     /** Tampilan FOTO sedang menampilkan peta karena lokasi belum punya foto. */
     private boolean photoShowingMap = false;
+    /** 📥 Pita peringatan galon kembali di sekitar rute (PickupNearbyMonitor); ketuk = "📥 Ambil". */
+    private TextView tvPickupNearby;
+    private boolean pickupBlinkDark;
+    private final Runnable pickupListener = this::renderPickupBanner;
+    private final Runnable pickupBlink = new Runnable() {
+        @Override
+        public void run() {
+            if (tvPickupNearby == null || tvPickupNearby.getVisibility() != View.VISIBLE) return;
+            pickupBlinkDark = !pickupBlinkDark;
+            tvPickupNearby.setBackgroundColor(pickupBlinkDark ? PICKUP_BG_DARK : PICKUP_BG);
+            ui.postDelayed(this, PICKUP_BLINK_MS);
+        }
+    };
 
     private final Runnable refreshTick = new Runnable() {
         @Override
@@ -398,10 +427,14 @@ public class NavigationPipActivity extends AppCompatActivity {
         setContentView(R.layout.activity_navigation_pip);
         bindViews();
         sLive = new WeakReference<>(this);
+        // 📥 Pita galon kembali di sekitar rute mengikuti peringatan PickupNearbyMonitor.
+        PickupNearbyMonitor.setUiListener(pickupListener);
         io = Executors.newSingleThreadExecutor();
         // Dibuat ulang: pakai sasaran TERAKHIR (retargetPinned/onNewIntent), bukan Intent peluncuran awal.
         boolean restored = savedInstanceState != null && savedInstanceState.containsKey(EXTRA_TRX_IDS);
         readIntent(restored ? new Intent().putExtras(savedInstanceState) : getIntent());
+        // Navigasi mulai → monitor aktif (setelah tujuan panel ini terbit — tak diperingatkan untuk dirinya).
+        PickupNearbyMonitor.recheck();
         // Dibuat ULANG (proses dibunuh saat melayang): kurir sudah di Maps — jangan dibuka lagi.
         pendingLaunch = savedInstanceState == null;
 
@@ -471,6 +504,8 @@ public class NavigationPipActivity extends AppCompatActivity {
         super.onStart();
         ui.removeCallbacks(refreshTick);
         ui.postDelayed(refreshTick, REFRESH_MS);
+        renderPickupBanner();
+        restartPickupBlink();
     }
 
     @Override
@@ -489,11 +524,15 @@ public class NavigationPipActivity extends AppCompatActivity {
         // Saat melayang activity hanya PAUSED (tetap terlihat) — onStop berarti benar-benar tak
         // terlihat, jadi penyegaran berkala boleh berhenti.
         ui.removeCallbacks(refreshTick);
+        ui.removeCallbacks(pickupBlink);
     }
 
     @Override
     protected void onDestroy() {
         if (sLive != null && sLive.get() == this) sLive = null;
+        PickupNearbyMonitor.clearUiListener(pickupListener);
+        if (sLive == null) sLiveIds = Collections.emptySet();
+        PickupNearbyMonitor.recheck();   // navigasi selesai → monitor berhenti bila tak ada rit berjalan
         ui.removeCallbacksAndMessages(null);
         try {
             unregisterReceiver(receiver);
@@ -549,6 +588,14 @@ public class NavigationPipActivity extends AppCompatActivity {
         launchMapsUrl = intent != null ? intent.getStringExtra(EXTRA_MAPS_URL) : null;
         fallbackLat = intent != null ? intent.getDoubleExtra(EXTRA_LAT, 0.0) : 0.0;
         fallbackLng = intent != null ? intent.getDoubleExtra(EXTRA_LNG, 0.0) : 0.0;
+        publishLiveIds();
+    }
+
+    private void publishLiveIds() {
+        Set<Long> now = Collections.unmodifiableSet(new java.util.HashSet<>(ids));
+        if (now.equals(sLiveIds)) return;
+        sLiveIds = now;
+        PickupNearbyMonitor.recheck();   // tujuan navigasi berubah → kandidat lokal disaring ulang
     }
 
     private void scheduleLaunch(long delayMs) {
@@ -984,6 +1031,8 @@ public class NavigationPipActivity extends AppCompatActivity {
         tvFullNext = findViewById(R.id.tvFullNext);
         tvFullNoGeo = findViewById(R.id.tvFullNoGeo);
         tvPipHint = findViewById(R.id.tvPipHint);
+        tvPickupNearby = findViewById(R.id.tvPickupNearby);
+        if (tvPickupNearby != null) tvPickupNearby.setOnClickListener(v -> onPickupBannerTap());
         btnLanjut.setOnClickListener(v -> continueNavigation());
         View btnSelesaiTitik = findViewById(R.id.btnSelesaiTitik);
         if (btnSelesaiTitik != null) btnSelesaiTitik.setOnClickListener(v -> completeActiveStop());
@@ -1035,6 +1084,93 @@ public class NavigationPipActivity extends AppCompatActivity {
                     ? "Jendela melayang tidak bisa dibuka saat ini. Ringkasan perhentian tetap ada di layar ini."
                     : pipHintText(this));
         }
+        renderPickupBanner();
+    }
+
+    // =====================================================================================
+    // 📥 Galon kembali di sekitar rute (PickupNearbyMonitor)
+    // =====================================================================================
+
+    /**
+     * Pita oranye BERKEDIP di atas wujud mana pun (melayang / layar terbagi / layar penuh) selama ada
+     * peringatan galon kembali: "📥 Galon kembali dekat: {nama} · {d} m". Ringkas (22 dp saat melayang),
+     * isi panel turun setinggi pita supaya tak ada yang tertutup (✕/⇆ layar terbagi, judul layar penuh).
+     */
+    private void renderPickupBanner() {
+        if (tvPickupNearby == null || isDestroyed()) return;
+        PickupNearbyLogic.Alert a = PickupNearbyMonitor.currentAlert();
+        boolean inPip;
+        try {
+            inPip = isInPictureInPictureMode();
+        } catch (RuntimeException e) {
+            inPip = false;
+        }
+        int h = 0;
+        if (a != null) {
+            h = Math.round((inPip ? 22 : 44) * getResources().getDisplayMetrics().density);
+            tvPickupNearby.setText(PickupNearbyLogic.bannerText(a.cand.name, a.distanceM));
+            tvPickupNearby.setContentDescription("Galon kembali dekat: " + a.cand.name + ". Ketuk untuk mengambil.");
+            android.view.ViewGroup.LayoutParams lp = tvPickupNearby.getLayoutParams();
+            if (lp != null && lp.height != h) {
+                lp.height = h;
+                tvPickupNearby.setLayoutParams(lp);
+            }
+            if (tvPickupNearby.getVisibility() != View.VISIBLE) {
+                tvPickupNearby.setVisibility(View.VISIBLE);
+                restartPickupBlink();
+            }
+        } else if (tvPickupNearby.getVisibility() != View.GONE) {
+            tvPickupNearby.setVisibility(View.GONE);
+            ui.removeCallbacks(pickupBlink);
+        }
+        for (View v : new View[]{pipCompact, pipMedia, fullRoot}) {
+            if (v == null || !(v.getLayoutParams() instanceof android.view.ViewGroup.MarginLayoutParams)) continue;
+            android.view.ViewGroup.MarginLayoutParams mlp = (android.view.ViewGroup.MarginLayoutParams) v.getLayoutParams();
+            if (mlp.topMargin != h) {
+                mlp.topMargin = h;
+                v.setLayoutParams(mlp);
+            }
+        }
+    }
+
+    private void restartPickupBlink() {
+        ui.removeCallbacks(pickupBlink);
+        if (tvPickupNearby == null || tvPickupNearby.getVisibility() != View.VISIBLE) return;
+        pickupBlinkDark = false;
+        tvPickupNearby.setBackgroundColor(PICKUP_BG);
+        ui.postDelayed(pickupBlink, PICKUP_BLINK_MS);
+    }
+
+    /**
+     * Ketuk pita = "📥 Ambil": antrean dibuka layar penuh dengan alur Selesai pickup. Sama seperti
+     * "✅ Selesai" panel: layar terbagi ditutup DULU (antrean tak boleh ikut masuk ke panel), lalu antrean.
+     */
+    private void onPickupBannerTap() {
+        PickupNearbyLogic.Alert a = PickupNearbyMonitor.currentAlert();
+        if (a == null) {
+            renderPickupBanner();
+            return;
+        }
+        PickupNearbyMonitor.markActed(this, a.cand.key);
+        final Intent q = PickupNearbyMonitor.ambilIntent(this, a.cand, true);
+        final Context app = getApplicationContext();
+        leaving = true;
+        disableAutoEnter();
+        if (isSplitScreen()) {
+            finishAndRemoveTask();
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                try {
+                    app.startActivity(q);
+                } catch (Exception ignored) {
+                }
+            }, 350L);
+            return;
+        }
+        try {
+            startActivity(q);
+        } catch (Exception ignored) {
+        }
+        finishAndRemoveTask();
     }
 
     private void apply(Snapshot s) {
@@ -1042,6 +1178,7 @@ public class NavigationPipActivity extends AppCompatActivity {
         for (Long id : s.order) {
             if (!ids.contains(id)) ids.add(id);
         }
+        publishLiveIds();
         render(s);
         if (s.active == null) {
             if (!finishScheduled) {

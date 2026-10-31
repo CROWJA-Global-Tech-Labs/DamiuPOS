@@ -347,6 +347,12 @@
             android:name=".sync.ServiceRestartReceiver"
             android:exported="false" />
 
+        <!-- 📥 Aksi "Nanti" pada peringatan Galon Kembali di sekitar rute (siaran eksplisit dari
+             notifikasi sendiri). Penerima manifest supaya peringatan tetap bisa ditutup walau proses mati. -->
+        <receiver
+            android:name=".PickupNearbyMonitor$LaterReceiver"
+            android:exported="false" />
+
         <!-- Re-arm pengingat jam kerja setelah perangkat reboot. -->
         <receiver
             android:name=".BootReceiver"

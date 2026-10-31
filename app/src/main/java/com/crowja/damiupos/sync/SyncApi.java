@@ -683,6 +683,17 @@ public class SyncApi {
     }
 
     /**
+     * 📥 Galon kembali DILEWATI tanpa diambil (PickupNearbyMonitor): server menulis SATU baris
+     * 📜 Jurnal Pesanan "⚠️ Dilewati {perangkat} dalam jarak {d} m — galon kembali tidak diambil".
+     * Idempoten per (perangkat, uuid) 30 menit → {@code {ok:true, duplicate:true}}. 404/422 = order bukan
+     * KEMBALI PENDING cabang ini lagi (sudah diambil / dibatalkan) — tak perlu diulang.
+     */
+    public JSONObject pickupPassed(String uuid, int distanceM) throws Exception {
+        JSONObject body = new JSONObject().put("uuid", uuid).put("distance_m", Math.max(0, distanceM));
+        return post(cfg.getBaseUrl() + "/api/delivery/pickup-passed", body, cfg.getToken());
+    }
+
+    /**
      * "Pencapaian Penjualan" (layar marketing/admin) — rekap penjualan per KARYAWAN se-cabang,
      * dihitung DI SERVER. Transaksi device-isolated di lapisan sync (HP hanya memegang barisnya
      * sendiri), jadi angka se-cabang mustahil dihitung dari DB lokal; ini panggilan on-demand
