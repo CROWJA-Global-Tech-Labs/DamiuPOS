@@ -1666,6 +1666,19 @@ public class CustomerDetailActivity extends AppCompatActivity {
             jl.setPadding(dp(22), dp(12), dp(22), dp(4));
             jl.setOnClickListener(v -> showOrderJournal(trxUuid));
             col.addView(jl);
+            // Pesanan yang ditangani agen AI: potongan chat WA-nya (layar Chat Pesanan yang sama dgn Antrian).
+            if (t.optBoolean("chat_session", false)) {
+                android.widget.TextView ch = new android.widget.TextView(this);
+                ch.setText("💬 Riwayat Chat Pesanan →");
+                ch.setTextSize(15);
+                ch.setTextColor(0xFF1565C0);
+                ch.setPadding(dp(22), dp(8), dp(22), dp(4));
+                ch.setOnClickListener(v -> startActivity(new android.content.Intent(this, ChatLogActivity.class)
+                        .putExtra(ChatLogActivity.EXTRA_MODE, ChatLogActivity.MODE_ORDER)
+                        .putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, trxUuid)
+                        .putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, currentCustomer != null ? currentCustomer.getName() : "")));
+                col.addView(ch);
+            }
         }
         sv.addView(col);
         final long localId = transactionDao.getIdBySyncUuid(str(t, "uuid"));
