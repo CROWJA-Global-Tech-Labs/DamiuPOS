@@ -93,6 +93,8 @@ public final class TertundaRows {
         public final boolean inProgress;
         public final boolean voidPending;
         public final boolean chatSession;
+        /** 😠 Pelanggan pernah komplain soal order ini via WhatsApp (ditandai Agen AI). */
+        public final boolean complained;
         public final boolean pickupOnly;
 
         Row(JsonObject o) {
@@ -133,7 +135,13 @@ public final class TertundaRows {
             this.inProgress = bool(o, "in_progress");
             this.voidPending = bool(o, "void_pending");
             this.chatSession = bool(o, "chat_session");
+            this.complained = bool(o, "complained");
             this.pickupOnly = bool(o, "pickup_only") || "KEMBALI".equals(this.type);
+        }
+
+        /** "💬 Chat Pesanan" ditawarkan — aturannya di {@link OrderChatEntry}. */
+        public boolean orderChatAvailable() {
+            return OrderChatEntry.available(chatSession, type, pickupOnly, customerUuid);
         }
 
         /** Sudah di antrean perangkat {@code deviceUuid} DAN dirutekan ke sana — "📥 Lanjutkan &amp;

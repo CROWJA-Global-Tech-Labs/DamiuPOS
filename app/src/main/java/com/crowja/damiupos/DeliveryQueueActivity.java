@@ -103,6 +103,7 @@ import com.crowja.damiupos.util.BitmapUtils;
 import com.crowja.damiupos.util.CompassArrowView;
 import com.crowja.damiupos.util.DeliveryNavLogic;
 import com.crowja.damiupos.util.DeliveryProofPolicy;
+import com.crowja.damiupos.util.OrderChatEntry;
 import com.crowja.damiupos.util.PickupNearbyLogic;
 import com.crowja.damiupos.util.TertundaRows;
 import com.crowja.damiupos.util.Ts;
@@ -3431,11 +3432,20 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       PopupMenu menu = new PopupMenu(this, anchor);
       menu.getMenu().add(0, 1, 0, "\ud83d\udc64 Detail Pelanggan");
       menu.getMenu().add(0, 2, 1, "\ud83d\udd52 Jadwalkan Ulang");
-      if (q.optBoolean("chat_session", false)) {
+      // 💬 Chat Pesanan — seperti Antrian Saya: setiap order jual berpelanggan (server membuka chat-nya saat
+      // pertama dibuka), bukan hanya yang sesinya sudah ada.
+      if (OrderChatEntry.available(q.optBoolean("chat_session", false), null,
+            q.optBoolean("pickup_only", false), strJson(q, "customer_uuid"))) {
          menu.getMenu().add(0, 3, 2, "\ud83d\udcac Chat Pesanan");
+      }
+      if (q.optBoolean("complained", false)) {
+         menu.getMenu().add(0, 7, 2, "\ud83d\ude20 Lihat Chat Komplain");
       }
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
+            case 7:
+               this.openComplaintChatUuid(q.optString("uuid", ""), q.optString("name", ""));
+               return true;
             case 1:
                this.openOtherDeviceCustomerDetail(q);
                return true;
@@ -10636,14 +10646,18 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    /** Buka viewer log percakapan WA komplain (badge KOMPLAIN) untuk order ini. */
    private void openChatLog(Transaction t) {
-      String uuid = this.dao.getSyncUuidById(t.getId());
+      this.openComplaintChatUuid(this.dao.getSyncUuidById(t.getId()), safe(t.getCustomerName()));
+   }
+
+   /** Sama dengan openChatLog, untuk kartu dari server (Perangkat Lain, Tertunda) — hanya punya uuid. */
+   private void openComplaintChatUuid(String uuid, String customerName) {
       if (uuid == null || uuid.isEmpty()) {
          Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
          return;
       }
       Intent i = new Intent(this, ChatLogActivity.class);
       i.putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid);
-      i.putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, safe(t.getCustomerName()));
+      i.putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, customerName);
       this.startActivity(i);
    }
 
@@ -11155,10 +11169,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          card.addView(tvReason);
       }
 
+      GridLayout actions = new GridLayout(this);
+      actions.setColumnCount(2);
+      actions.setPadding(0, this.dp(8f), 0, 0);
       if (!viewer) {
-         GridLayout actions = new GridLayout(this);
-         actions.setColumnCount(2);
-         actions.setPadding(0, this.dp(8f), 0, 0);
          Button btnReschedule = new Button(this);
          btnReschedule.setText("🕒 Jadwalkan Ulang");
          btnReschedule.setAllCaps(false);
@@ -11176,8 +11190,31 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             btnClaim.setOnClickListener((v) -> this.confirmResumeClaimTertunda(s, reload));
             this.addGridAction(actions, btnClaim);
          }
-         card.addView(actions);
       }
+      // 💬 Chat Pesanan & 😠 Chat Komplain — baca chat boleh untuk Viewer juga (server yang menolak kirim).
+      boolean chatOk = s != null ? !s.uuid.isEmpty() && s.orderChatAvailable()
+            : t.hasChatSession() || ("JUAL".equals(t.getType()) && t.getCustomerId() > 0L);
+      if (chatOk) {
+         Button btnChat = new Button(this);
+         btnChat.setText("💬 Chat Pesanan");
+         btnChat.setAllCaps(false);
+         btnChat.setOnClickListener((v) -> {
+            if (s != null) this.openOrderChatUuid(s.uuid, custName);
+            else this.openOrderChat(t);
+         });
+         this.addGridAction(actions, btnChat);
+      }
+      if (s != null ? s.complained && !s.uuid.isEmpty() : t.isComplained()) {
+         Button btnKomplain = new Button(this);
+         btnKomplain.setText("😠 Chat Komplain");
+         btnKomplain.setAllCaps(false);
+         btnKomplain.setOnClickListener((v) -> {
+            if (s != null) this.openComplaintChatUuid(s.uuid, custName);
+            else this.openChatLog(t);
+         });
+         this.addGridAction(actions, btnKomplain);
+      }
+      if (actions.getChildCount() > 0) card.addView(actions);
 
       card.setOnClickListener((v) -> {
          if (t != null) {
@@ -11309,7 +11346,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.addGridAction(actionsGrid, btnCustomer);
          }
       }
-      if (s.chatSession && !s.uuid.isEmpty()) {
+      if (!s.uuid.isEmpty() && s.orderChatAvailable()) {
          Button btnChat = new Button(this);
          btnChat.setText("💬 Chat Pesanan");
          btnChat.setAllCaps(false);
@@ -11318,6 +11355,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.openOrderChatUuid(s.uuid, s.name);
          });
          this.addGridAction(actionsGrid, btnChat);
+      }
+      if (s.complained && !s.uuid.isEmpty()) {
+         Button btnKomplain = new Button(this);
+         btnKomplain.setText("😠 Chat Komplain");
+         btnKomplain.setAllCaps(false);
+         btnKomplain.setOnClickListener((v) -> {
+            dialog.dismiss();
+            this.openComplaintChatUuid(s.uuid, s.name);
+         });
+         this.addGridAction(actionsGrid, btnKomplain);
       }
       if (actionsGrid.getChildCount() > 0) {
          body.addView(actionsGrid);
