@@ -10593,6 +10593,18 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.showQueuePreview(t);
       });
       this.addGridAction(actionsGrid, btnPreview);
+      if (voidPending && this.currentUserCanRequestTrxChange()) {
+         // Pengajuan yang tak kunjung diputuskan (email terlewat, link kedaluwarsa, auto-accept baru
+         // dinyalakan) tak boleh mengunci order: server menggantikan pengajuan lama dengan yang baru.
+         Button btnVoidAgain = new Button(this);
+         btnVoidAgain.setText("\ud83d\uddd1\ufe0f Ajukan Ulang Void");
+         btnVoidAgain.setAllCaps(false);
+         btnVoidAgain.setOnClickListener((v) -> {
+            dialog.dismiss();
+            DeliveryVoidDialog.show(this, t);
+         });
+         this.addGridAction(actionsGrid, btnVoidAgain);
+      }
       if (this.currentUserCanRequestTrxChange() && !voidPending) {
          Button btnUbah = new Button(this);
          btnUbah.setText("✏️ Ubah");
