@@ -366,6 +366,27 @@ public class SyncApi {
     }
 
     /**
+     * 🛣️ Kirim Sejalur — RENCANA (tanpa menulis apa pun): order yang satu jalan dari depot ke titik
+     * terjauh {@code target_uuid} sampai {@code max_galon} penuh. Body {@code {target_uuid, max_galon,
+     * lat?, lng?, include_pickup, include_other}} → {@code {ok,message,origin,distance_method,max_galon,
+     * galon,over_capacity,route_km,orders[],alternates[],server_time}} (orders urutan rute, target
+     * terakhir). 422 target tak bisa dipakai / depot belum diatur, 429 terlalu sering.
+     */
+    public JSONObject sejalurPlan(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/sejalur/plan", body, cfg.getToken());
+    }
+
+    /**
+     * 🛣️ Kirim Sejalur — MULAI: server mengambil alih order non-milik-sendiri lalu menulis delivery_seq
+     * 1..k (target terakhir). Body {@code {target_uuid, uuids[] urutan rute, lat?, lng?}} →
+     * {@code {ok,message,rit_uuids[],claimed[],skipped[{uuid,name,reason}],galon,target_held}};
+     * 422 {@code {ok:false,message,skipped[]}} bila tak satu pun bisa dipegang.
+     */
+    public JSONObject sejalurStart(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/sejalur/start", body, cfg.getToken());
+    }
+
+    /**
      * Paket PANTUN follow-up (sebagian korpus, bukan 10.000) untuk dipakai LURING oleh HP.
      * {@code have} = cap versi yang sedang dipegang perangkat; bila sama, server menjawab
      * {@code {"version":…,"unchanged":true}} TANPA isi sehingga pemeriksaan rutin nyaris gratis.

@@ -50,6 +50,14 @@
         android:title="📥 Ambil Antrean"
         app:showAsAction="never" />
 
+    <!-- 🛣️ Kirim Sejalur: pilih satu order sebagai titik TERJAUH (daftar/peta), isi galon yang dibawa,
+         server memilih antrean yang satu jalan sampai muatan penuh → rit langsung jalan
+         (DeliveryQueueActivity.startKirimSejalur / SejalurFlow). Gate tab 0 + HP delivery. -->
+    <item
+        android:id="@+id/action_kirim_sejalur"
+        android:title="🛣️ Kirim Sejalur"
+        app:showAsAction="never" />
+
     <item
         android:id="@+id/action_pending_queue"
         android:title="⏸ Antrean Tertunda"
