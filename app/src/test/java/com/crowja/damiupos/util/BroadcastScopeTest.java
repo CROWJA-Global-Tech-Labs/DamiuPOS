@@ -57,12 +57,93 @@ public class BroadcastScopeTest {
     public void mergeKeepsOrderDropsBlankAndDedupesByUuidWithMineFirst() {
         List<Item> mine = Arrays.asList(item("a", 0, "c1"), item("", 0, "c9"), item("b", 0, "c2"));
         List<Item> other = Arrays.asList(item("b", 1, "c2"), item("c", 1, "c3"), item("c", 1, "c3"));
-        List<Item> open = Arrays.asList(item("c", 2, "c3"), item("d", 2, null), null);
+        List<Item> open = Arrays.asList(item("c", 2, "c3"), item("d", 2, "c4"), null);
         List<Item> m = BroadcastScope.merge(mine, other, open);
         assertEquals(Arrays.asList("a", "b", "c", "d"), uuidsOf(m));
         assertEquals(BroadcastScope.MINE, m.get(1).source);   // b: Antrian Saya menang atas Perangkat Lain
         assertEquals(BroadcastScope.OTHER, m.get(2).source);  // c: Perangkat Lain menang atas Terbuka
         assertArrayEquals(new int[]{2, 1, 1}, BroadcastScope.countBySource(m));
+    }
+
+    @Test
+    public void mergeDropsOrdersWithoutCustomerFromEverySource() {
+        // Order "Umum"/tanpa pelanggan dilewati server (whereNotNull customer_uuid) → jangan tampil,
+        // tercentang, atau terhitung "N pelanggan" — sama untuk Antrian Saya, Perangkat Lain, Terbuka.
+        List<Item> mine = Arrays.asList(item("a", 0, "c1"), item("u1", 0, null), item("u2", 0, "  "));
+        List<Item> other = Arrays.asList(item("b", 1, "c2"), item("u3", 1, ""));
+        List<Item> open = Arrays.asList(item("u4", 2, null), item("c", 2, "c3"));
+        List<Item> m = BroadcastScope.merge(mine, other, open);
+        assertEquals(Arrays.asList("a", "b", "c"), uuidsOf(m));
+        assertEquals(3, BroadcastScope.customerCount(m));
+        assertFalse(item("x", 0, null).hasCustomer());
+        assertTrue(item("x", 0, "c9").hasCustomer());
+        // Mode pilih: order terpilih tanpa pelanggan → tak ada di daftar, jadi terlapor "dilewati".
+        List<String> picked = Arrays.asList("a", "u1", "u4");
+        assertEquals(Arrays.asList("a"), uuidsOf(BroadcastScope.restrict(m, picked)));
+    }
+
+    @Test
+    public void visibleSelectedFollowsTabFilterAndDropsStaleSelections() {
+        // 12 dipilih ("Semua"), lalu dicari → hanya b & d tampil: broadcast = b, d (bukan 12).
+        List<String> visible = Arrays.asList("b", "d", "e");
+        Set<String> selected = new LinkedHashSet<>(Arrays.asList("a", "d", "b", "gone", "c"));
+        assertEquals(Arrays.asList("b", "d"), BroadcastScope.visibleSelected(visible, selected));
+        assertEquals(2, BroadcastScope.visibleSelected(visible, selected).size());
+        // Urutan = urutan daftar tab; blank/null/dobel diabaikan.
+        assertEquals(Arrays.asList("d", "b"),
+                BroadcastScope.visibleSelected(Arrays.asList("d", null, "", "b", "d"), selected));
+        assertTrue(BroadcastScope.visibleSelected(visible, Collections.<String>emptySet()).isEmpty());
+        assertTrue(BroadcastScope.visibleSelected(null, selected).isEmpty());
+        assertTrue(BroadcastScope.visibleSelected(visible, null).isEmpty());
+    }
+
+    @Test
+    public void markNewKeepsLateRowsUncheckedAfterClearAll() {
+        Set<String> known = new HashSet<>();
+        Set<String> unchecked = new HashSet<>();
+        List<Item> first = Arrays.asList(item("a", 0, "c1"), item("b", 0, "c2"));
+        assertEquals(2, BroadcastScope.markNew(first, known, unchecked, true));
+        assertTrue(unchecked.isEmpty());
+        // "☐ Kosongkan" lalu centang a saja; antrean Perangkat Lain tiba belakangan.
+        unchecked.add("b");
+        List<Item> reloaded = Arrays.asList(item("a", 0, "c1"), item("b", 0, "c2"),
+                item("x", 1, "c3"), item("y", 1, "c4"));
+        assertEquals(2, BroadcastScope.markNew(reloaded, known, unchecked, false));
+        assertEquals(new HashSet<>(Arrays.asList("b", "x", "y")), unchecked);
+        assertEquals(Arrays.asList("a"), uuidsOf(BroadcastScope.picked(reloaded, src(0, 1, 2), sel(), null, unchecked)));
+        // Sudah dikenal → tak diubah lagi; tanpa "Kosongkan" baris baru tercentang seperti biasa.
+        assertEquals(0, BroadcastScope.markNew(reloaded, known, unchecked, false));
+        Set<String> none = new HashSet<>();
+        BroadcastScope.markNew(Collections.singletonList(item("z", 2, "c5")), known, none, true);
+        assertTrue(none.isEmpty());
+    }
+
+    @Test
+    public void otherQueueLoadsOnlyWhenThatSourceIsTickedAndNotLoaded() {
+        // Dibuka dari Antrian Saya: Perangkat Lain tak dicentang → tak ada panggilan jaringan.
+        assertFalse(BroadcastScope.needsOtherLoad(false, false, false, src(BroadcastScope.MINE)));
+        assertTrue(BroadcastScope.needsOtherLoad(false, false, false, src(BroadcastScope.MINE, BroadcastScope.OTHER)));
+        // Sudah dimuat (walau kosong), sedang memuat, atau mode pilih → tidak.
+        assertFalse(BroadcastScope.needsOtherLoad(false, true, false, src(BroadcastScope.OTHER)));
+        assertFalse(BroadcastScope.needsOtherLoad(false, false, true, src(BroadcastScope.OTHER)));
+        assertFalse(BroadcastScope.needsOtherLoad(true, false, false, src(BroadcastScope.OTHER)));
+        assertFalse(BroadcastScope.needsOtherLoad(false, false, false, null));
+    }
+
+    @Test
+    public void sourceCountTextShowsSpinnerBlankOrNumber() {
+        assertEquals("⏳", BroadcastScope.sourceCountText(5, true, true));
+        assertEquals("", BroadcastScope.sourceCountText(0, false, false));
+        assertEquals("0", BroadcastScope.sourceCountText(0, false, true));
+        assertEquals("12", BroadcastScope.sourceCountText(12, false, true));
+    }
+
+    @Test
+    public void itemCarriesPrecomputedChipsUntouched() {
+        Object chips = new Object();
+        Item it = new Item("a", 0, "c1", "x", "", null, null, null, chips);
+        assertTrue(it.chips == chips);
+        assertNull(item("b", 0, "c2").chips);
     }
 
     @Test

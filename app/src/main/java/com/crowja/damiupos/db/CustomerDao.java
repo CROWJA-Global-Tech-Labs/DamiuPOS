@@ -2445,6 +2445,35 @@ public class CustomerDao {
         return uuid;
     }
 
+    /** sync_uuid banyak pelanggan sekaligus (id lokal → uuid; yang tak ada / tanpa uuid tak dimuat) —
+     *  satu kueri per 500 id, bukan satu per baris (dialog Broadcast WA Masalah). */
+    public Map<Long, String> getSyncUuidsByIds(java.util.Collection<Long> ids) {
+        Map<Long, String> out = new HashMap<>();
+        if (ids == null || ids.isEmpty()) return out;
+        List<Long> list = new ArrayList<>(new java.util.LinkedHashSet<>(ids));
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        for (int i = 0; i < list.size(); i += 500) {
+            List<Long> chunk = list.subList(i, Math.min(list.size(), i + 500));
+            StringBuilder ph = new StringBuilder();
+            String[] args = new String[chunk.size()];
+            for (int j = 0; j < chunk.size(); j++) {
+                if (j > 0) ph.append(',');
+                ph.append('?');
+                args[j] = String.valueOf(chunk.get(j));
+            }
+            Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMERS, new String[]{DatabaseHelper.COL_ID, DatabaseHelper.COL_SYNC_UUID},
+                    DatabaseHelper.COL_ID + " IN (" + ph + ")", args, null, null, null);
+            try {
+                while (c.moveToNext()) {
+                    if (!c.isNull(1)) out.put(c.getLong(0), c.getString(1));
+                }
+            } finally {
+                c.close();
+            }
+        }
+        return out;
+    }
+
     /** id lokal pelanggan untuk sebuah sync_uuid (resolusi tautan reseller → afiliasi). -1 bila tak ada. */
     public long getIdBySyncUuid(String uuid) {
         if (uuid == null || uuid.isEmpty()) return -1;

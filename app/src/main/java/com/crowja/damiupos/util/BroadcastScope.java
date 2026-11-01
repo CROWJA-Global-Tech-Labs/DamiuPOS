@@ -48,9 +48,16 @@ public final class BroadcastScope {
         public final Set<String> slugs;
         /** Objek asal (Transaction / JSONObject) untuk menggambar kapsul — tak dipakai logika ini. */
         public final Object ref;
+        /** Baris kapsul siap gambar (hasil parse sekali di Host) — tak dipakai logika ini; boleh null. */
+        public final Object chips;
 
         public Item(String uuid, int source, String customerKey, String label, String badge,
                     List<String[]> rows, Collection<String> extraSlugs, Object ref) {
+            this(uuid, source, customerKey, label, badge, rows, extraSlugs, ref, null);
+        }
+
+        public Item(String uuid, int source, String customerKey, String label, String badge,
+                    List<String[]> rows, Collection<String> extraSlugs, Object ref, Object chips) {
             this.uuid = uuid == null ? "" : uuid.trim();
             this.source = source;
             this.customerKey = customerKey == null ? "" : customerKey.trim();
@@ -66,6 +73,12 @@ public final class BroadcastScope {
             }
             this.slugs = s;
             this.ref = ref;
+            this.chips = chips;
+        }
+
+        /** Server hanya mengirimi order berpelanggan ({@code whereNotNull('customer_uuid')}). */
+        public boolean hasCustomer() {
+            return !this.customerKey.isEmpty();
         }
     }
 
@@ -85,7 +98,8 @@ public final class BroadcastScope {
     }
 
     /**
-     * Gabung ketiga sumber; uuid kosong dibuang, uuid kembar dipakai SEKALI dengan urutan prioritas
+     * Gabung ketiga sumber; uuid kosong dan order TANPA PELANGGAN dibuang (server melewatinya, jadi
+     * jangan ikut tercentang/dihitung), uuid kembar dipakai SEKALI dengan urutan prioritas
      * Antrian Saya → Perangkat Lain → Pesanan Terbuka (data lokal milik HP ini paling dipercaya, lalu
      * pandangan server yang lebih segar daripada salinan Terbuka lokal).
      */
@@ -101,7 +115,7 @@ public final class BroadcastScope {
     private static void addAll(List<Item> out, Set<String> seen, List<Item> src) {
         if (src == null) return;
         for (Item it : src) {
-            if (it == null || it.uuid.isEmpty() || !seen.add(it.uuid)) continue;
+            if (it == null || it.uuid.isEmpty() || !it.hasCustomer() || !seen.add(it.uuid)) continue;
             out.add(it);
         }
     }
@@ -113,6 +127,54 @@ public final class BroadcastScope {
         Set<String> want = new HashSet<>(uuids);
         for (Item it : items) if (want.contains(it.uuid)) out.add(it);
         return out;
+    }
+
+    /**
+     * uuid order mode-pilih yang dikenai aksi: yang TAMPIL di tab (hasil cari/filter, urutan daftar) DAN
+     * dipilih — aturan yang sama dengan Ambil Alih/Lepas/Void, sehingga pilihan yang tersaring atau sudah
+     * keluar dari daftar (basi) tak ikut dikirimi.
+     */
+    public static List<String> visibleSelected(List<String> visibleUuids, Collection<String> selected) {
+        List<String> out = new ArrayList<>();
+        if (visibleUuids == null || selected == null || selected.isEmpty()) return out;
+        Set<String> seen = new HashSet<>();
+        for (String u : visibleUuids) {
+            if (u == null || u.trim().isEmpty() || !selected.contains(u) || !seen.add(u)) continue;
+            out.add(u);
+        }
+        return out;
+    }
+
+    /**
+     * Daftar disusun ulang (mis. antrean Perangkat Lain baru termuat): uuid yang BELUM PERNAH tampil
+     * dicatat di {@code known}; bila {@code newChecked} false (sesudah "☐ Kosongkan") ia langsung masuk
+     * {@code unchecked} — baris yang datang belakangan tak boleh diam-diam ikut terkirim.
+     *
+     * @return jumlah uuid baru
+     */
+    public static int markNew(List<Item> items, Set<String> known, Set<String> unchecked, boolean newChecked) {
+        int n = 0;
+        if (items == null || known == null) return 0;
+        for (Item it : items) {
+            if (it == null || !known.add(it.uuid)) continue;
+            n++;
+            if (!newChecked && unchecked != null) unchecked.add(it.uuid);
+        }
+        return n;
+    }
+
+    /**
+     * Antrean Perangkat Lain dimuat dari server HANYA bila sumber itu dicentang dan belum ada datanya
+     * (bukan sekadar "kosong" — antrean yang memang kosong tak diambil ulang tiap dialog dibuka).
+     */
+    public static boolean needsOtherLoad(boolean scoped, boolean otherLoaded, boolean loading, Set<Integer> sources) {
+        return !scoped && !otherLoaded && !loading && sources != null && sources.contains(OTHER);
+    }
+
+    /** Teks hitungan di kotak sumber: "⏳" saat memuat, "" bila belum dimuat, selain itu angkanya. */
+    public static String sourceCountText(int n, boolean loading, boolean loaded) {
+        if (loading) return "⏳";
+        return loaded ? String.valueOf(n) : "";
     }
 
     /** Jumlah order per sumber (indeks MINE/OTHER/OPEN). */

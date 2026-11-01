@@ -52,11 +52,12 @@ final class DeliveryBroadcastDialog {
 
     /** Jembatan ke helper kartu {@link DeliveryQueueActivity} (data tab, kapsul produk, filter). */
     interface Host {
-        /** Order satu sumber ({@link BroadcastScope#MINE}/{@code OTHER}/{@code OPEN}); yang tak bisa dikirimi sudah dibuang. */
+        /** Order satu sumber ({@link BroadcastScope#MINE}/{@code OTHER}/{@code OPEN}); yang tak bisa dikirimi
+         *  (tanpa uuid / tanpa pelanggan) sudah dibuang. {@link Item#chips} = baris kapsul siap gambar. */
         List<Item> broadcastItems(int source);
 
-        /** Antrean Perangkat Lain belum ada di HP (belum dimuat / memang kosong). */
-        boolean otherQueueEmpty();
+        /** Antrean Perangkat Lain di HP berasal dari muat server yang BERHASIL (boleh kosong). */
+        boolean otherQueueLoaded();
 
         /** Muat ulang antrean Perangkat Lain; {@code done(ok)} dipanggil di UI thread. */
         void reloadOtherQueue(Consumer<Boolean> done);
@@ -99,16 +100,23 @@ final class DeliveryBroadcastDialog {
     private final Set<Integer> sources = new HashSet<>();
     private final Set<String> sel = new LinkedHashSet<>();
     private final Set<String> unchecked = new HashSet<>();
+    /** uuid yang pernah ada di daftar dialog ini — baris yang datang belakangan dikenali lewat ini. */
+    private final Set<String> known = new HashSet<>();
     private final Map<String, View> rowByUuid = new HashMap<>();
     private final Map<String, CheckBox> boxByUuid = new HashMap<>();
     private final List<View> mineBadges = new ArrayList<>();
+    /** Wadah baris per sumber (urutan MINE, OTHER, OPEN); diisi saat sumbernya pertama kali dicentang. */
+    private final LinearLayout[] groups = new LinearLayout[BroadcastScope.SOURCE_COUNT];
+    private final Set<Integer> built = new HashSet<>();
 
     private AlertDialog dlg;
     private LinearLayout list;
     private TextView count, capWarn, empty, statusText;
     private View statusRow, spinner;
     private final CheckBox[] srcBoxes = new CheckBox[BroadcastScope.SOURCE_COUNT];
-    private boolean loadingOther, loadFailed, syncing, confirming, sent;
+    private boolean loadingOther, loadFailed, otherLoaded, syncing, confirming, sent;
+    /** Aksi massal terakhir = "☐ Kosongkan" → baris yang tiba sesudahnya ikut tak tercentang. */
+    private boolean clearedAll;
 
     private DeliveryBroadcastDialog(Activity act, Host host, int activeTab, Collection<String> onlyUuids, Runnable onSent) {
         this.act = act;
@@ -144,8 +152,10 @@ final class DeliveryBroadcastDialog {
 
     private void open() {
         this.items = this.collect();
-        boolean needOther = !this.scoped() && this.host.otherQueueEmpty();
-        if (this.items.isEmpty() && !needOther) {
+        // Mode pilih berasal dari daftar tab yang sudah ada → tak perlu memuat apa pun.
+        this.otherLoaded = this.scoped() || this.host.otherQueueLoaded();
+        BroadcastScope.markNew(this.items, this.known, this.unchecked, true);
+        if (this.items.isEmpty() && this.otherLoaded) {
             toast(this.act, this.scoped()
                     ? "Order terpilih belum tersinkron atau tanpa pelanggan — tak ada yang bisa dikirimi."
                     : "Antrean kosong (atau belum tersinkron) — tak ada pelanggan untuk dikirimi.");
@@ -195,8 +205,10 @@ final class DeliveryBroadcastDialog {
             sl.setTextColor(textColor);
             sl.setPadding(0, dp(10), 0, 0);
             box.addView(sl);
-            LinearLayout srcRow = new LinearLayout(this.act);
-            srcRow.setOrientation(LinearLayout.HORIZONTAL);
+            // Bertumpuk (bukan satu baris geser): di HP 360dp ketiga sumber harus terlihat semua,
+            // termasuk saat yang tercentang hanya "Pesanan Terbuka".
+            LinearLayout srcCol = new LinearLayout(this.act);
+            srcCol.setOrientation(LinearLayout.VERTICAL);
             for (int s = 0; s < BroadcastScope.SOURCE_COUNT; s++) {
                 final int src = s;
                 MaterialCheckBox cb = new MaterialCheckBox(this.act);
@@ -209,12 +221,13 @@ final class DeliveryBroadcastDialog {
                 cb.setOnCheckedChangeListener((b, on) -> {
                     if (on) this.sources.add(src);
                     else this.sources.remove(src);
+                    this.maybeLoadOther();
                     this.refilter();
                 });
                 this.srcBoxes[s] = cb;
-                srcRow.addView(cb);
+                srcCol.addView(cb, new LinearLayout.LayoutParams(-1, -2));
             }
-            box.addView(hscroll(this.act, srcRow));
+            box.addView(srcCol);
         } else {
             TextView sc = new TextView(this.act);
             int skipped = Math.max(0, new HashSet<>(this.onlyUuids).size() - this.items.size());
@@ -306,7 +319,7 @@ final class DeliveryBroadcastDialog {
         this.dlg.setOnShowListener(di -> this.dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> this.confirmSend(msg)));
         this.dlg.setOnDismissListener(di -> this.host.releaseProductFilter(this.sel));
         this.dlg.show();
-        if (needOther) this.loadOther();
+        this.maybeLoadOther();
     }
 
     /** Kapsul kecil dibungkus bidang sentuh ≥ 48dp (tampilan kapsul tetap; TalkBack membaca teks kapsul). */
@@ -350,13 +363,32 @@ final class DeliveryBroadcastDialog {
         return t;
     }
 
+    /** Susun ulang wadah per sumber; baris digambar malas oleh {@link #ensureRows()} (sumber yang dicentang saja). */
     private void renderRows() {
         this.list.removeAllViews();
         this.rowByUuid.clear();
         this.boxByUuid.clear();
         this.mineBadges.clear();
+        this.built.clear();
+        for (int s = 0; s < BroadcastScope.SOURCE_COUNT; s++) {
+            LinearLayout g = new LinearLayout(this.act);
+            g.setOrientation(LinearLayout.VERTICAL);
+            this.groups[s] = g;
+            this.list.addView(g);
+        }
+        this.ensureRows();
+    }
+
+    /** Baris sumber yang dicentang tapi belum digambar — dari Antrian Saya tak perlu membangun ratusan baris
+     *  Perangkat Lain di UI thread kecuali sumber itu memang dipilih. */
+    private void ensureRows() {
+        if (this.list == null) return;
+        Set<Integer> todo = new HashSet<>(this.sources);
+        todo.removeAll(this.built);
+        if (todo.isEmpty()) return;
         int textColor = ContextCompat.getColor(this.act, R.color.text_primary);
         for (Item it : this.items) {
+            if (!todo.contains(it.source) || it.source < 0 || it.source >= BroadcastScope.SOURCE_COUNT) continue;
             LinearLayout row = new LinearLayout(this.act);
             row.setOrientation(LinearLayout.VERTICAL);
             row.setPadding(0, dp(2), 0, dp(4));
@@ -387,12 +419,14 @@ final class DeliveryBroadcastDialog {
             if (badges.getChildCount() > 0) row.addView(hscroll(this.act, badges));
             this.rowByUuid.put(it.uuid, row);
             this.boxByUuid.put(it.uuid, cb);
-            this.list.addView(row);
+            this.groups[it.source].addView(row);
         }
+        this.built.addAll(todo);
     }
 
     private void refilter() {
         if (this.list == null) return;
+        this.ensureRows();
         Map<String, Set<String>> typeSel = this.host.productTypeFilter(this.sel);
         int shown = 0;
         for (Item it : this.items) {
@@ -404,7 +438,12 @@ final class DeliveryBroadcastDialog {
         // Badge "📱 Saya" hanya berguna bila sumber dicampur.
         int mix = this.sources.size() > 1 ? View.VISIBLE : View.GONE;
         for (View b : this.mineBadges) b.setVisibility(mix);
-        this.empty.setVisibility(shown == 0 && !this.loadingOther ? View.VISIBLE : View.GONE);
+        boolean otherOn = this.sources.contains(BroadcastScope.OTHER);
+        this.empty.setVisibility(shown == 0 && !(this.loadingOther && otherOn) ? View.VISIBLE : View.GONE);
+        // Status muat/gagal Perangkat Lain hanya relevan selama sumber itu dicentang.
+        if (this.statusRow != null) {
+            this.statusRow.setVisibility(otherOn && (this.loadingOther || this.loadFailed) ? View.VISIBLE : View.GONE);
+        }
         this.updateSourceLabels();
         this.recount();
     }
@@ -422,9 +461,11 @@ final class DeliveryBroadcastDialog {
         this.capWarn.setVisibility(w != null ? View.VISIBLE : View.GONE);
     }
 
-    /** ☑ Semua = centang baris yang TAMPIL (hasil filter); ☐ Kosongkan = lepas semua. */
+    /** ☑ Semua = centang baris yang TAMPIL (hasil filter); ☐ Kosongkan = lepas semua, termasuk baris yang
+     *  baru tiba sesudahnya (antrean Perangkat Lain yang masih dimuat) sampai ☑ Semua ditekan lagi. */
     private void setVisibleChecked(boolean on) {
         Map<String, Set<String>> typeSel = this.host.productTypeFilter(this.sel);
+        this.clearedAll = !on;
         this.syncing = true;
         for (Item it : this.items) {
             if (on && !BroadcastScope.visible(it, this.sources, this.sel, typeSel)) continue;
@@ -442,16 +483,37 @@ final class DeliveryBroadcastDialog {
         for (int s = 0; s < BroadcastScope.SOURCE_COUNT; s++) {
             CheckBox cb = this.srcBoxes[s];
             if (cb == null) continue;
-            String c = s == BroadcastScope.OTHER && this.loadingOther ? "⏳" : String.valueOf(n[s]);
-            cb.setText(SOURCE_LABELS[s] + " (" + c + ")");
+            boolean other = s == BroadcastScope.OTHER;
+            String c = BroadcastScope.sourceCountText(n[s], other && this.loadingOther, !other || this.otherLoaded);
+            cb.setText(c.isEmpty() ? SOURCE_LABELS[s] : SOURCE_LABELS[s] + " (" + c + ")");
         }
+    }
+
+    /** Muat antrean Perangkat Lain hanya bila sumber itu dicentang dan datanya belum ada di HP. */
+    private void maybeLoadOther() {
+        if (this.dlg == null || this.statusRow == null) return;
+        if (!BroadcastScope.needsOtherLoad(this.scoped(), this.otherLoaded, this.loadingOther, this.sources)) return;
+        if (this.host.otherQueueLoaded()) {
+            // Layar antrean keburu memuatnya selama dialog terbuka → pakai itu, tanpa panggilan jaringan.
+            this.otherLoaded = true;
+            this.loadFailed = false;
+            this.reloadItems();
+            return;
+        }
+        this.loadOther();
+    }
+
+    /** Susun ulang daftar dari data tab terbaru; baris baru ikut keadaan aksi massal terakhir. */
+    private void reloadItems() {
+        this.items = this.collect();
+        BroadcastScope.markNew(this.items, this.known, this.unchecked, !this.clearedAll);
+        this.renderRows();
     }
 
     /** Antrean Perangkat Lain belum ada → muat dulu (indikator), lalu daftar disusun ulang. */
     private void loadOther() {
         this.loadingOther = true;
         this.loadFailed = false;
-        this.statusRow.setVisibility(View.VISIBLE);
         this.spinner.setVisibility(View.VISIBLE);
         this.statusText.setText("Memuat antrean perangkat lain…");
         this.refilter();
@@ -459,9 +521,9 @@ final class DeliveryBroadcastDialog {
             this.loadingOther = false;
             if (this.dlg == null || !this.dlg.isShowing()) return;
             if (Boolean.TRUE.equals(ok)) {
-                this.statusRow.setVisibility(View.GONE);
-                this.items = this.collect();
-                this.renderRows();
+                this.otherLoaded = true;
+                // Baris yang baru tiba ikut keadaan aksi massal terakhir (tak tercentang sesudah Kosongkan).
+                this.reloadItems();
             } else {
                 this.loadFailed = true;
                 this.spinner.setVisibility(View.GONE);

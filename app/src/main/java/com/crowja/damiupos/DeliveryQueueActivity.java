@@ -1654,29 +1654,48 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       DeliveryBroadcastDialog.show(this, this.broadcastHost(), this.activeTab, null, null);
    }
 
-   /** "Aksi ⋮" mode pilih Perangkat Lain / Pesanan Terbuka → dialog berisi PERSIS order terpilih (tercentang). */
-   private void showBroadcastMasalahSelected(boolean open) {
-      java.util.Set<String> uuids = new java.util.LinkedHashSet<>();
+   /**
+    * uuid order mode-pilih untuk broadcast: yang TAMPIL di tab (hasil cari/filter) DAN dipilih — aturan
+    * yang sama dengan Void/Lepas/Ambil Alih di menu yang sama, jadi pilihan yang tersaring atau sudah
+    * keluar dari daftar sesudah disegarkan tak ikut dikirimi. Perangkat Lain: order 🚚 sedang diantar
+    * ikut (broadcast "Terlambat" justru untuk mereka), walau tak ikut aksi pindah antrean.
+    */
+   private List<String> selectedBroadcastUuids(boolean open) {
+      List<String> visible = new ArrayList<>();
+      Set<String> selected = new HashSet<>();
       if (open) {
-         for (Transaction t : this.openDispatchAdapter.rawData) {
+         if (this.openDispatchAdapter == null) return visible;
+         for (Transaction t : this.openDispatchAdapter.data) {
             if (t == null || !this.claimSelectedOpen.contains(t.getId())) continue;
             String u = this.trxUuid(t);
-            if (u != null && !u.isEmpty()) uuids.add(u);
+            if (u != null && !u.isEmpty()) {
+               visible.add(u);
+               selected.add(u);
+            }
          }
       } else {
-         uuids.addAll(this.claimSelectedOther);
+         if (this.otherDevicesAdapter == null) return visible;
+         for (JSONObject o : this.otherDevicesAdapter.data) visible.add(o.optString("uuid", ""));
+         selected.addAll(this.claimSelectedOther);
       }
-      if (uuids.isEmpty()) {
+      return com.crowja.damiupos.util.BroadcastScope.visibleSelected(visible, selected);
+   }
+
+   /** "Aksi ⋮" mode pilih Perangkat Lain / Pesanan Terbuka → dialog berisi PERSIS {@code uuids} (tercentang). */
+   private void showBroadcastMasalahSelected(boolean open, List<String> uuids) {
+      if (uuids == null || uuids.isEmpty()) {
          Toast.makeText(this, "Belum ada order yang dipilih.", Toast.LENGTH_SHORT).show();
          return;
       }
       DeliveryBroadcastDialog.show(this, this.broadcastHost(), open ? 2 : 1, uuids, () -> this.exitClaimSelect(open));
    }
 
-   /** Menu "Aksi ⋮" mode pilih: item 📢 dengan listener sendiri (didahulukan Android atas listener menu). */
-   private void addBroadcastSelectionItem(PopupMenu menu, boolean open, int n) {
-      menu.getMenu().add(0, 951, 50, "📢 Broadcast WA Masalah ke " + n + " order").setOnMenuItemClickListener((mi) -> {
-         this.showBroadcastMasalahSelected(open);
+   /** Menu "Aksi ⋮" mode pilih: item 📢 dengan listener sendiri (didahulukan Android atas listener menu).
+    *  Angka di label = isi dialog (himpunan yang sama, {@link #selectedBroadcastUuids}). */
+   private void addBroadcastSelectionItem(PopupMenu menu, boolean open, List<String> uuids) {
+      if (uuids == null || uuids.isEmpty()) return;
+      menu.getMenu().add(0, 951, 50, "📢 Broadcast WA Masalah ke " + uuids.size() + " order").setOnMenuItemClickListener((mi) -> {
+         this.showBroadcastMasalahSelected(open, uuids);
          return true;
       });
    }
@@ -1690,8 +1709,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             String cust = strJson(o, "customer_uuid");
             // Tanpa pelanggan → server melewatinya (whereNotNull customer_uuid); jangan ikut dihitung.
             if (uuid.isEmpty() || cust.isEmpty()) continue;
+            // Diparse SEKALI: dipakai filter (rows) sekaligus kapsul (chips) — bukan dua kali per baris.
+            List<Object[]> typed = this.typedRows(o);
             List<String[]> rows = new ArrayList<>();
-            for (Object[] r : this.typedRows(o)) rows.add(new String[]{(String) r[0], (String) r[1]});
+            for (Object[] r : typed) rows.add(new String[]{(String) r[0], (String) r[1]});
             List<String> slugs = new ArrayList<>();
             JSONArray arr = o.optJSONArray("item_slugs");
             for (int i = 0; arr != null && i < arr.length(); i++) {
@@ -1702,7 +1723,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             String label = (o.optBoolean("order_priority", false) ? "⚡ " : "") + strJson(o, "name")
                   + (o.optBoolean("pickup_only", false) ? "  ↩ ambil galon" : "") + (isBeingDelivered(o) ? "  🚚 diantar" : "");
             out.add(new com.crowja.damiupos.util.BroadcastScope.Item(uuid, source, cust, label,
-                  "📱 " + (dev.isEmpty() ? "Perangkat lain" : dev), rows, slugs, o));
+                  "📱 " + (dev.isEmpty() ? "Perangkat lain" : dev), rows, slugs, o, typed));
          }
          return out;
       }
@@ -1710,16 +1731,24 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       List<Transaction> src = mine ? (this.adapter != null ? this.adapter.data : null)
             : (this.openDispatchAdapter != null ? this.openDispatchAdapter.rawData : null);
       if (src == null) return out;
+      // sync_uuid pelanggan dalam SATU kueri (bukan satu per baris di UI thread).
+      Set<Long> custIds = new HashSet<>();
+      for (Transaction t : src) if (t != null && t.getCustomerId() > 0) custIds.add(t.getCustomerId());
+      Map<Long, String> custUuid = this.customerDao.getSyncUuidsByIds(custIds);
       for (Transaction t : src) {
          if (t == null || (mine && t.isOpenDispatch())) continue;
+         String cust = t.getCustomerId() > 0 ? custUuid.get(t.getCustomerId()) : null;
+         // Order "Umum"/tanpa pelanggan → server melewatinya (whereNotNull customer_uuid): jangan ikut
+         // tampil, tercentang, atau terhitung "N pelanggan" — sama dengan sumber Perangkat Lain.
+         if (cust == null || cust.trim().isEmpty()) continue;
          String uuid = this.trxUuid(t);
          if (uuid == null || uuid.isEmpty()) continue;
+         List<Object[]> typed = this.typedRows(t);
          List<String[]> rows = new ArrayList<>();
-         for (Object[] r : this.typedRows(t)) rows.add(new String[]{(String) r[0], (String) r[1]});
-         String cust = t.getCustomerId() > 0 ? this.customerDao.getSyncUuidById(t.getCustomerId()) : null;
+         for (Object[] r : typed) rows.add(new String[]{(String) r[0], (String) r[1]});
          String label = (DeliveryPlanner.isPriority(t) ? "⚡ " : "") + safe(t.getCustomerName())
                + (t.isVisitTask() ? "  📞 kunjungan" : DeliveryPlanner.isPickupOnly(t) ? "  ↩ ambil galon" : "");
-         out.add(new com.crowja.damiupos.util.BroadcastScope.Item(uuid, source, cust, label, mine ? "" : "🎲 Terbuka", rows, null, t));
+         out.add(new com.crowja.damiupos.util.BroadcastScope.Item(uuid, source, cust, label, mine ? "" : "🎲 Terbuka", rows, null, t, typed));
       }
       return out;
    }
@@ -1730,8 +1759,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             return DeliveryQueueActivity.this.broadcastItems(source);
          }
 
-         public boolean otherQueueEmpty() {
-            return DeliveryQueueActivity.this.otherDevicesAdapter == null || DeliveryQueueActivity.this.otherDevicesAdapter.rawCount() == 0;
+         public boolean otherQueueLoaded() {
+            return DeliveryQueueActivity.this.otherDevicesAdapter != null && DeliveryQueueActivity.this.otherQueueLoaded;
          }
 
          public void reloadOtherQueue(java.util.function.Consumer<Boolean> done) {
@@ -1750,16 +1779,18 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             DeliveryQueueActivity.this.slugTypeSel.remove(sel);
          }
 
+         @SuppressWarnings("unchecked")
          public void addProductChips(LinearLayout into, com.crowja.damiupos.util.BroadcastScope.Item it) {
-            List<Object[]> rows;
+            // Baris kapsul sudah diparse di broadcastItems (Item.chips); parse ulang hanya bila tak ada.
+            List<Object[]> rows = it.chips instanceof List ? (List<Object[]>) it.chips : null;
             boolean assumed;
             if (it.ref instanceof Transaction) {
                Transaction t = (Transaction) it.ref;
-               rows = DeliveryQueueActivity.this.typedRows(t);
+               if (rows == null) rows = DeliveryQueueActivity.this.typedRows(t);
                assumed = galonAssumed(t.getGalonTypeSource());
             } else if (it.ref instanceof JSONObject) {
                JSONObject o = (JSONObject) it.ref;
-               rows = DeliveryQueueActivity.this.typedRows(o);
+               if (rows == null) rows = DeliveryQueueActivity.this.typedRows(o);
                assumed = galonAssumed(strJson(o, "galon_type_source"));
             } else {
                return;
@@ -2561,6 +2592,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.loadOtherDevices(null);
    }
 
+   /** Isi antrean Perangkat Lain sekarang = hasil muat server yang BERHASIL (kosong pun sah) — dialog
+    *  broadcast tak perlu memuatnya ulang. Muat gagal mengosongkan daftar → false lagi. */
+   private boolean otherQueueLoaded;
+
    /** @param after dipanggil di UI thread sesudah data tiba ({@code true} = berhasil); tak dipanggil bila belum terhubung. */
    private void loadOtherDevices(java.util.function.Consumer<Boolean> after) {
       SyncSettings cfg = this.syncCfg();
@@ -2618,6 +2653,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.runOnUiThread(() -> {
                if (!this.isFinishing() && !this.isDestroyed()) {
                   this.otherDevicesAdapter.setData(queueF);
+                  this.otherQueueLoaded = !failedF;
                   // Slug trip baru tiba → kartu Antrian Saya & Pesanan Terbuka ikut memasang badgenya.
                   if (this.adapter != null) this.adapter.notifyDataSetChanged();
                   if (this.openDispatchAdapter != null) this.openDispatchAdapter.notifyDataSetChanged();
@@ -3683,6 +3719,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       String dev = q.optString("device_group_label", "");
       String by = !dev.isEmpty() && !"null".equals(dev) ? " oleh " + dev : "";
       Toast.makeText(this, "🚚 Sedang diantar" + by + " — tidak bisa diambil alih.", Toast.LENGTH_LONG).show();
+   }
+
+   /** Kartu 🚚 sedang diantar masuk pilihan Perangkat Lain: hanya untuk 📢 Broadcast WA Masalah. */
+   private void toastDeliveringBroadcastOnly(JSONObject q) {
+      String dev = q.optString("device_group_label", "");
+      String by = !dev.isEmpty() && !"null".equals(dev) ? " oleh " + dev : "";
+      Toast.makeText(this, "🚚 Sedang diantar" + by + " — hanya ikut 📢 Broadcast WA, tidak ikut Ambil Alih/Lepas/Alihkan.",
+            Toast.LENGTH_SHORT).show();
    }
 
    private void confirmTakeOverOtherDevices(JSONObject q) {
@@ -14152,9 +14196,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          } else {
             this.claimSelectedOther.clear();
             if (on && this.otherDevicesAdapter != null) {
+               // 🚚 Sedang diantar ikut terpilih (untuk 📢 Broadcast); Ambil Alih/Lepas/Alihkan/Void melewatinya.
                for (JSONObject o : this.otherDevicesAdapter.data) {
                   String u = o.optString("uuid", "");
-                  if (!u.isEmpty() && !isBeingDelivered(o)) this.claimSelectedOther.add(u);
+                  if (!u.isEmpty()) this.claimSelectedOther.add(u);
                }
             }
             if (this.otherDevicesAdapter != null) this.otherDevicesAdapter.notifyDataSetChanged();
@@ -14208,21 +14253,27 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       // Snapshot pemilik SAAT INI per order: klaim memakainya sebagai syarat optimistic-locking,
       // jadi order yang keburu berpindah ditolak server alih-alih direbut diam-diam.
       java.util.LinkedHashMap<String, String> picked = new java.util.LinkedHashMap<>();
+      int delivering = 0;
       for (JSONObject o : this.otherDevicesAdapter.data) {
          String uuid = o.optString("uuid", "");
-         // Yang keburu dijalankan kurirnya setelah dipilih (daftar disegarkan) tak ikut diklaim.
-         if (!uuid.isEmpty() && this.claimSelectedOther.contains(uuid) && !isBeingDelivered(o)) {
-            picked.put(uuid, o.optString("routed_uuid", ""));
+         if (uuid.isEmpty() || !this.claimSelectedOther.contains(uuid)) continue;
+         // 🚚 Sedang diantar (dipilih untuk broadcast, atau keburu dijalankan kurirnya) tak ikut diklaim.
+         if (isBeingDelivered(o)) {
+            delivering++;
+            continue;
          }
+         picked.put(uuid, o.optString("routed_uuid", ""));
       }
       if (picked.isEmpty()) {
-         Toast.makeText(this, "Belum ada order yang dipilih.", 0).show();
+         Toast.makeText(this, delivering > 0 ? "🚚 Order terpilih sedang diantar — tidak bisa diambil alih."
+               : "Belum ada order yang dipilih.", 0).show();
          return;
       }
       (new AlertDialog.Builder(this))
             .setTitle("Ambil alih " + picked.size() + " order?")
             .setMessage("Semua order ini pindah ke Antrian Saya. Kurir yang memegangnya sekarang "
-                  + "akan kehilangan order tersebut dari antriannya.")
+                  + "akan kehilangan order tersebut dari antriannya."
+                  + (delivering > 0 ? "\n\n🚚 " + delivering + " order terpilih sedang diantar — tidak ikut diambil alih." : ""))
             .setPositiveButton("Ambil Alih", (d, w) -> this.runBulkClaim(picked, false))
             .setNegativeButton("Batal", (DialogInterface.OnClickListener)null)
             .show();
@@ -14247,7 +14298,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          });
          return true;
       });
-      this.addBroadcastSelectionItem(menu, true, items.size());
+      this.addBroadcastSelectionItem(menu, true, this.selectedBroadcastUuids(true));
       menu.show();
    }
 
@@ -14256,22 +14307,34 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     *  dilihat), jadi order yang keburu pindah / sedang diantar ditolak server. */
    private void showOtherSelectionActions(View anchor) {
       java.util.LinkedHashMap<String, String[]> picked = new java.util.LinkedHashMap<>();
+      int delivering = 0;
       for (JSONObject o : this.otherDevicesAdapter.data) {
          String uuid = o.optString("uuid", "");
-         if (!uuid.isEmpty() && this.claimSelectedOther.contains(uuid) && !isBeingDelivered(o)) {
-            picked.put(uuid, new String[]{otherHolderUuid(o), o.optString("name", "")});
+         if (uuid.isEmpty() || !this.claimSelectedOther.contains(uuid)) continue;
+         // 🚚 Sedang diantar: hanya ikut 📢 Broadcast, tidak ikut Lepas/Alihkan/Void (server menolaknya juga).
+         if (isBeingDelivered(o)) {
+            delivering++;
+            continue;
          }
+         picked.put(uuid, new String[]{otherHolderUuid(o), o.optString("name", "")});
       }
-      if (picked.isEmpty()) {
+      List<String> broadcast = this.selectedBroadcastUuids(false);
+      if (picked.isEmpty() && broadcast.isEmpty()) {
          Toast.makeText(this, "Belum ada order yang dipilih.", 0).show();
          return;
       }
       PopupMenu menu = new PopupMenu(this, anchor);
-      menu.getMenu().add(0, 4, 0, "🔓 Lepas " + picked.size() + " order (jadi Pesanan Terbuka)");
-      menu.getMenu().add(0, 1, 1, "📲 Alihkan " + picked.size() + " order ke perangkat lain");
-      menu.getMenu().add(0, 2, 2, "🧭 Alihkan " + picked.size() + " order sesuai wilayahnya");
-      menu.getMenu().add(0, 3, 3, "🗑️ Void " + picked.size() + " order (persetujuan)");
+      if (delivering > 0) {
+         menu.getMenu().add(0, 5, 0, "🚚 " + delivering + " order sedang diantar — hanya ikut Broadcast").setEnabled(false);
+      }
+      if (!picked.isEmpty()) {
+         menu.getMenu().add(0, 4, 0, "🔓 Lepas " + picked.size() + " order (jadi Pesanan Terbuka)");
+         menu.getMenu().add(0, 1, 1, "📲 Alihkan " + picked.size() + " order ke perangkat lain");
+         menu.getMenu().add(0, 2, 2, "🧭 Alihkan " + picked.size() + " order sesuai wilayahnya");
+         menu.getMenu().add(0, 3, 3, "🗑️ Void " + picked.size() + " order (persetujuan)");
+      }
       menu.setOnMenuItemClickListener((item) -> {
+         if (item.getItemId() == 5) return true;
          if (item.getItemId() == 4) {
             StringBuilder names = new StringBuilder();
             int i = 0;
@@ -14328,7 +14391,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
          return true;
       });
-      this.addBroadcastSelectionItem(menu, false, this.claimSelectedOther.size());
+      this.addBroadcastSelectionItem(menu, false, broadcast);
       menu.show();
    }
 
@@ -14809,20 +14872,21 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                cardView.setStrokeColor(DeliveryQueueActivity.this.getResources().getColor(color.primary));
             }
          }
+         // 🚚 Sedang diantar BOLEH dipilih — pelanggannya justru sasaran 📢 Broadcast "Terlambat"; aksi
+         // pindah antrean (Ambil Alih/Lepas/Alihkan/Void) tetap melewatinya.
          h.itemView.setOnClickListener((v) -> {
             if (DeliveryQueueActivity.this.claimSelectOther) {
-               if (delivering) {
-                  DeliveryQueueActivity.this.toastBeingDelivered(q);
-                  return;
-               }
+               if (trxUuid.isEmpty()) return;
+               boolean adding = !DeliveryQueueActivity.this.claimSelectedOther.contains(trxUuid);
                DeliveryQueueActivity.this.toggleClaimOther(trxUuid);
+               if (adding && delivering) DeliveryQueueActivity.this.toastDeliveringBroadcastOnly(q);
                this.notifyItemChanged(h.getBindingAdapterPosition());
             } else {
                DeliveryQueueActivity.this.showOtherDeviceOrderDetail(q);
             }
          });
          h.itemView.setOnLongClickListener((v) -> {
-            if (DeliveryQueueActivity.this.claimSelectOther || trxUuid.isEmpty() || delivering) {
+            if (DeliveryQueueActivity.this.claimSelectOther || trxUuid.isEmpty()) {
                return false;
             }
             DeliveryQueueActivity.this.enterClaimSelect(false);
@@ -14830,6 +14894,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                return false;   // belum terhubung server → jangan kunci kartunya
             }
             DeliveryQueueActivity.this.toggleClaimOther(trxUuid);
+            if (delivering) DeliveryQueueActivity.this.toastDeliveringBroadcastOnly(q);
             this.notifyDataSetChanged();
             return true;
          });
