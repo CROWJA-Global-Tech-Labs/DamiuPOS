@@ -30,6 +30,7 @@ import com.crowja.damiupos.adapter.ChatMessageAdapter;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.model.ChatMessage;
+import com.crowja.damiupos.sync.OrderChatMessageActions;
 import com.crowja.damiupos.sync.OrderChatNotifier;
 import com.crowja.damiupos.sync.OrderChatOutbox;
 import com.crowja.damiupos.sync.SyncApi;
@@ -127,6 +128,8 @@ public class ChatLogActivity extends AppCompatActivity {
     private String sendKind = "reply";
     private String agentPausedUntil;
     private boolean agentBusy;
+    /** Sunting / hapus pesan sedang berjalan (satu per layar). */
+    private boolean msgOpBusy;
     /** Isi menu terakhir yang dibangun — lihat {@link #refreshMenuIfChanged()}. */
     private String menuStateKey;
     private long lastMediaReloadAt;
@@ -437,6 +440,7 @@ public class ChatLogActivity extends AppCompatActivity {
 
         adapter.setOnStatusClickListener(this::onBubbleStatusClick);
         adapter.setOnMediaErrorListener(this::onMediaHttpError);
+        adapter.setOnBubbleLongClickListener(this::onBubbleLongClick);
         btnSend.setOnClickListener(v -> onSendClicked());
         btnAttach.setOnClickListener(v -> pickImage());
         findViewById(R.id.btnAttachRemove).setOnClickListener(v -> clearAttachment(true));
@@ -1100,6 +1104,222 @@ public class ChatLogActivity extends AppCompatActivity {
     private void cleanupOldFiles() {
         final android.content.Context app = getApplicationContext();
         new Thread(() -> OrderChatOutbox.pruneFiles(app), "order-chat-cleanup").start();
+    }
+
+    // ---------------------------------------------------------------- edit / hapus pesan
+
+    /** Tekan lama gelembung: menu "✏️ Edit pesan" / "🗑️ Hapus untuk semua orang" sesuai izin server. */
+    private boolean onBubbleLongClick(ChatMessage m) {
+        if (m == null || !sessionLoaded || isFinishing()) return false;
+        if (!m.isOutbound() || m.deleted) return false;   // pesan pelanggan: biarkan (salin teks dll.)
+        if (msgOpBusy || confirmShowing) return true;
+        final List<OrderChatMessageActions.Action> acts = OrderChatMessageActions.offer(m.isOutbound(),
+                m.isOptimistic(), m.deleted, m.waMessageId, m.editable, Ts.millis(m.editUntil),
+                m.deletable, Ts.millis(m.deleteUntil), System.currentTimeMillis());
+        if (acts.isEmpty()) {
+            Toast.makeText(this, !canSend && sendBlockReason != null ? sendBlockReason
+                    : "Pesan ini sudah tidak bisa diedit atau dihapus (batas waktu WhatsApp sudah lewat).",
+                    Toast.LENGTH_LONG).show();
+            return true;
+        }
+        String[] labels = new String[acts.size()];
+        for (int i = 0; i < acts.size(); i++) {
+            labels[i] = acts.get(i) == OrderChatMessageActions.Action.EDIT ? "✏️ Edit pesan" : "🗑️ Hapus untuk semua orang";
+        }
+        confirmShowing = true;
+        new AlertDialog.Builder(this)
+                .setItems(labels, (d, which) -> {
+                    // Sesudah menu ini tertutup (onDismiss-nya mereset confirmShowing), baru dialog berikutnya.
+                    final boolean edit = acts.get(which) == OrderChatMessageActions.Action.EDIT;
+                    handler.post(() -> { if (edit) showEditDialog(m); else showDeleteDialog(m); });
+                })
+                .setOnDismissListener(d -> confirmShowing = false)
+                .show();
+        return true;
+    }
+
+    /** Kotak dialog: isi + pesan galat merah + progres, dibangun di kode (tanpa layout baru). */
+    private android.widget.LinearLayout dialogBox(View content, TextView errorView, ProgressBar progress) {
+        float dp = getResources().getDisplayMetrics().density;
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        int pad = (int) (20 * dp);
+        box.setPadding(pad, (int) (8 * dp), pad, 0);
+        if (content != null) box.addView(content);
+        errorView.setTextColor(0xFFC62828);   // 5,6:1 di putih
+        errorView.setTextSize(13);
+        errorView.setVisibility(View.GONE);
+        errorView.setPadding(0, (int) (8 * dp), 0, 0);
+        box.addView(errorView);
+        progress.setIndeterminate(true);
+        progress.setVisibility(View.GONE);
+        box.addView(progress, new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, (int) (36 * dp)));
+        return box;
+    }
+
+    private void showEditDialog(ChatMessage m) {
+        if (isFinishing() || m.waMessageId == null) return;
+        final String original = m.text != null ? m.text : "";
+        final EditText et = new EditText(this);
+        et.setText(original);
+        et.setSelection(et.getText().length());
+        et.setMinLines(2);
+        et.setMaxLines(8);
+        et.setTextColor(0xFF212121);
+        et.setFilters(new android.text.InputFilter[]{
+                new android.text.InputFilter.LengthFilter(OrderChatMessageActions.TEXT_MAX)});
+        et.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        final TextView err = new TextView(this);
+        final ProgressBar progress = new ProgressBar(this);
+        confirmShowing = true;
+        final AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle("✏️ Edit pesan")
+                .setMessage("Pelanggan melihat label \"Diedit\" di WhatsApp. Hanya bisa dalam 15 menit setelah dikirim.")
+                .setView(dialogBox(et, err, progress))
+                .setPositiveButton("Simpan", null)
+                .setNegativeButton("Batal", null)
+                .setOnDismissListener(d -> confirmShowing = false)
+                .create();
+        dlg.setOnShowListener(d -> {
+            final Button save = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
+            final Runnable sync = () -> save.setEnabled(!msgOpBusy
+                    && OrderChatMessageActions.canSave(original, et.getText().toString()));
+            et.addTextChangedListener(new android.text.TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+                @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+                @Override public void afterTextChanged(android.text.Editable s) {
+                    err.setVisibility(View.GONE);
+                    sync.run();
+                }
+            });
+            sync.run();
+            save.setOnClickListener(v -> {
+                final String text = et.getText().toString().trim();
+                if (msgOpBusy || !OrderChatMessageActions.canSave(original, text) || cfg == null) return;
+                setMsgOpBusy(true, dlg, progress, err, "Menyimpan…");
+                et.setEnabled(false);
+                final SyncSettings s = cfg;
+                final String trx = transactionUuid;
+                final String staff = staffName();
+                new Thread(() -> {
+                    SyncApi.OrderChatResult res = new SyncApi(s).orderChatEdit(trx, m.waMessageId, text, staff);
+                    runOnUiThread(() -> {
+                        if (isFinishing() || isDestroyed()) return;
+                        setMsgOpBusy(false, dlg, progress, err, null);
+                        et.setEnabled(true);
+                        save.setText("Simpan");
+                        if (res.isOk()) {
+                            dlg.dismiss();
+                            applyMessageFrom(res.body);
+                            Toast.makeText(this, "Pesan diedit", Toast.LENGTH_SHORT).show();
+                        } else {
+                            showDialogError(err, res, "Pesan gagal diubah.");
+                            sync.run();
+                        }
+                    });
+                }, "order-chat-edit").start();
+            });
+        });
+        dlg.show();
+        et.requestFocus();
+    }
+
+    /** Konfirmasi dua ketuk: ketukan pertama mempersenjatai ("Ketuk lagi untuk menghapus"), kedua mengeksekusi. */
+    private void showDeleteDialog(ChatMessage m) {
+        if (isFinishing() || m.waMessageId == null) return;
+        final TextView err = new TextView(this);
+        final ProgressBar progress = new ProgressBar(this);
+        final long[] armedAt = {0L};
+        confirmShowing = true;
+        final AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle("🗑️ Hapus untuk semua orang?")
+                .setMessage("Pesan ini akan ditarik dari WhatsApp pelanggan. Pelanggan akan melihat "
+                        + "\"Pesan ini dihapus\" sebagai gantinya. Tindakan ini tidak bisa dibatalkan.")
+                .setView(dialogBox(null, err, progress))
+                .setPositiveButton("Hapus", null)
+                .setNegativeButton("Batal", null)
+                .setOnDismissListener(d -> confirmShowing = false)
+                .create();
+        dlg.setOnShowListener(d -> {
+            final Button del = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
+            del.setTextColor(0xFFC62828);   // merah tua: 5,6:1 di latar dialog putih
+            final Runnable disarm = () -> {
+                if (armedAt[0] != 0L && !msgOpBusy) {
+                    armedAt[0] = 0L;
+                    del.setText("Hapus");
+                }
+            };
+            del.setOnClickListener(v -> {
+                if (msgOpBusy || cfg == null) return;
+                long now = SystemClock.elapsedRealtime();
+                if (!OrderChatMessageActions.deleteConfirmed(armedAt[0], now)) {
+                    armedAt[0] = now;
+                    del.setText("Ketuk lagi untuk menghapus");
+                    handler.postDelayed(disarm, OrderChatMessageActions.DELETE_ARM_WINDOW_MS);
+                    return;
+                }
+                handler.removeCallbacks(disarm);
+                armedAt[0] = 0L;
+                setMsgOpBusy(true, dlg, progress, err, "Menghapus…");
+                final SyncSettings s = cfg;
+                final String trx = transactionUuid;
+                final String staff = staffName();
+                new Thread(() -> {
+                    SyncApi.OrderChatResult res = new SyncApi(s).orderChatDelete(trx, m.waMessageId, staff);
+                    runOnUiThread(() -> {
+                        if (isFinishing() || isDestroyed()) return;
+                        setMsgOpBusy(false, dlg, progress, err, null);
+                        del.setText("Hapus");
+                        if (res.isOk()) {
+                            dlg.dismiss();
+                            applyMessageFrom(res.body);
+                            Toast.makeText(this, "Pesan dihapus untuk semua orang", Toast.LENGTH_SHORT).show();
+                        } else {
+                            showDialogError(err, res, "Pesan gagal dihapus.");
+                        }
+                    });
+                }, "order-chat-delete").start();
+            });
+            dlg.setOnDismissListener(x -> {
+                confirmShowing = false;
+                handler.removeCallbacks(disarm);
+            });
+        });
+        dlg.show();
+    }
+
+    private void setMsgOpBusy(boolean busy, AlertDialog dlg, ProgressBar progress, TextView err, @Nullable String label) {
+        msgOpBusy = busy;
+        progress.setVisibility(busy ? View.VISIBLE : View.GONE);
+        if (busy) err.setVisibility(View.GONE);
+        dlg.setCancelable(!busy);
+        Button pos = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
+        Button neg = dlg.getButton(AlertDialog.BUTTON_NEGATIVE);
+        if (pos != null) {
+            pos.setEnabled(!busy);
+            if (label != null) pos.setText(label);
+        }
+        if (neg != null) neg.setEnabled(!busy);
+    }
+
+    private void showDialogError(TextView err, SyncApi.OrderChatResult res, String fallback) {
+        String msg = res.errorMessage != null && !res.errorMessage.isEmpty() ? res.errorMessage : fallback;
+        err.setText("❗ " + msg);
+        err.setVisibility(View.VISIBLE);
+    }
+
+    /** Baris yang dikembalikan server (sudah tersunting / terhapus) langsung digambar, lalu poll menyusul. */
+    private void applyMessageFrom(@Nullable JSONObject body) {
+        JSONObject msg = body != null ? body.optJSONObject("message") : null;
+        if (msg != null) {
+            List<ChatMessage> one = new ArrayList<>();
+            one.add(ChatMessage.fromJson(msg));
+            absolutize(one);
+            adapter.merge(one);
+        }
+        pollSoon();
     }
 
     // ---------------------------------------------------------------- util

@@ -39,6 +39,8 @@ public class ChatMessageAdapter extends RecyclerView.Adapter<ChatMessageAdapter.
     /** An image did not load: HTTP status (403 = signed URL expired, 404 = media gone), or 0 when
      *  there was no response (timeout / IO) or the file could not be decoded. */
     public interface OnMediaErrorListener { void onMediaHttpError(ChatMessage m, int httpCode); }
+    /** Long-press on a confirmed bubble (order chat: edit / delete-for-everyone menu). */
+    public interface OnBubbleLongClickListener { boolean onBubbleLongClick(ChatMessage m); }
 
     private static final int TYPE_IN = 0;
     private static final int TYPE_OUT = 1;
@@ -49,6 +51,7 @@ public class ChatMessageAdapter extends RecyclerView.Adapter<ChatMessageAdapter.
     private OnMediaClickListener onMediaClickListener;
     private OnStatusClickListener onStatusClickListener;
     private OnMediaErrorListener onMediaErrorListener;
+    private OnBubbleLongClickListener onBubbleLongClickListener;
 
     public ChatMessageAdapter() {
         setHasStableIds(true);
@@ -71,6 +74,10 @@ public class ChatMessageAdapter extends RecyclerView.Adapter<ChatMessageAdapter.
 
     public void setOnMediaErrorListener(OnMediaErrorListener l) {
         this.onMediaErrorListener = l;
+    }
+
+    public void setOnBubbleLongClickListener(OnBubbleLongClickListener l) {
+        this.onBubbleLongClickListener = l;
     }
 
     /** Full (reset) response: the server list replaces everything, except optimistic bubbles whose
@@ -237,21 +244,37 @@ public class ChatMessageAdapter extends RecyclerView.Adapter<ChatMessageAdapter.
 
         bindMedia(h, m);
 
+        // Label redup memakai grey_dark (#616161): ≥ 5,5:1 di gelembung hijau #DCF8C6 maupun putih
+        // (text_secondary #757575 hanya ~4:1 di hijau). Aplikasi Light-only, jadi satu nilai cukup.
+        int muted = ContextCompat.getColor(h.itemView.getContext(), R.color.grey_dark);
         if (m.deleted) {
             h.tvText.setVisibility(View.VISIBLE);
-            h.tvText.setText("🚫 Pesan dihapus");
+            h.tvText.setText("🚫 Pesan ini dihapus");
             h.tvText.setTypeface(null, Typeface.ITALIC);
-            h.tvText.setTextColor(ContextCompat.getColor(h.itemView.getContext(), R.color.text_secondary));
+            h.tvText.setTextColor(muted);
         } else if (m.text != null && !m.text.isEmpty()) {
             h.tvText.setVisibility(View.VISIBLE);
             h.tvText.setTypeface(null, Typeface.NORMAL);
             h.tvText.setTextColor(ContextCompat.getColor(h.itemView.getContext(), R.color.text_primary));
-            h.tvText.setText(m.edited ? m.text + "  (diedit)" : m.text);
+            if (m.edited) {
+                android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder(m.text);
+                int start = sb.length();
+                sb.append("  (diedit)");
+                sb.setSpan(new android.text.style.ForegroundColorSpan(muted), start, sb.length(),
+                        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                sb.setSpan(new android.text.style.StyleSpan(Typeface.ITALIC), start, sb.length(),
+                        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                sb.setSpan(new android.text.style.RelativeSizeSpan(0.85f), start, sb.length(),
+                        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                h.tvText.setText(sb);
+            } else {
+                h.tvText.setText(m.text);
+            }
             Linkify.addLinks(h.tvText, Linkify.WEB_URLS);
         } else if (m.edited) {
             h.tvText.setVisibility(View.VISIBLE);
             h.tvText.setTypeface(null, Typeface.ITALIC);
-            h.tvText.setTextColor(ContextCompat.getColor(h.itemView.getContext(), R.color.text_secondary));
+            h.tvText.setTextColor(muted);
             h.tvText.setText("(diedit)");
         } else {
             h.tvText.setVisibility(View.GONE);
@@ -259,6 +282,17 @@ public class ChatMessageAdapter extends RecyclerView.Adapter<ChatMessageAdapter.
 
         h.tvTime.setText(shortTime(m.waTimestamp));
         bindStatus(h, m);
+        if (onBubbleLongClickListener != null && !m.isOptimistic() && m.waMessageId != null) {
+            final ChatMessage bound = m;
+            h.itemView.setOnLongClickListener(v -> onBubbleLongClickListener.onBubbleLongClick(bound));
+            // Teks bertaut (autoLink) menelan sentuhan: tekan lama di teksnya juga membuka menu.
+            h.tvText.setOnLongClickListener(v -> onBubbleLongClickListener.onBubbleLongClick(bound));
+        } else {
+            h.itemView.setOnLongClickListener(null);
+            h.itemView.setLongClickable(false);
+            h.tvText.setOnLongClickListener(null);
+            h.tvText.setLongClickable(false);
+        }
     }
 
     private void bindMedia(ViewHolder h, ChatMessage m) {

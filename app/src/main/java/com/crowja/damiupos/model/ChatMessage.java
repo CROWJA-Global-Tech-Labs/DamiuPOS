@@ -44,6 +44,13 @@ public class ChatMessage {
     public String sentByStaff;
     /** Idempotency key of the staff send -- lets an optimistic bubble be replaced by the server row. */
     public String clientKey;
+    /** Order chat: server allows "✏️ Edit pesan" on this row for this device (outbound text, ≤ 15 min). */
+    public boolean editable;
+    /** Order chat: server allows "🗑️ Hapus untuk semua orang" (outbound, ≤ 2 days). */
+    public boolean deletable;
+    /** ISO-Z deadline of {@link #editable} / {@link #deletable} (null when not applicable). */
+    public String editUntil;
+    public String deleteUntil;
 
     /** Local only: null (server row) | SENDING | PENDING | FAILED | UNKNOWN. */
     public String localStatus;
@@ -107,6 +114,10 @@ public class ChatMessage {
         m.sentByStaff = o.isNull("sent_by_staff") ? null : o.optString("sent_by_staff", null);
         m.clientKey = o.isNull("client_key") ? null : o.optString("client_key", null);
         if (m.clientKey != null && m.clientKey.isEmpty()) m.clientKey = null;
+        m.editable = o.optBoolean("editable", false);
+        m.deletable = o.optBoolean("deletable", false);
+        m.editUntil = o.isNull("edit_until") ? null : o.optString("edit_until", null);
+        m.deleteUntil = o.isNull("delete_until") ? null : o.optString("delete_until", null);
         if (m.waMessageId != null && m.waMessageId.isEmpty()) m.waMessageId = null;
         return m;
     }
