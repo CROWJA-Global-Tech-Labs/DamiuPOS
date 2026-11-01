@@ -104,6 +104,7 @@ import com.crowja.damiupos.util.CompassArrowView;
 import com.crowja.damiupos.util.DeliveryNavLogic;
 import com.crowja.damiupos.util.DeliveryProofPolicy;
 import com.crowja.damiupos.util.OrderChatEntry;
+import com.crowja.damiupos.util.RemoteCompleteLogic;
 import com.crowja.damiupos.util.PickupNearbyLogic;
 import com.crowja.damiupos.util.SejalurPlanLogic;
 import com.crowja.damiupos.util.TertundaRows;
@@ -3507,14 +3508,213 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             case 6:
                this.showEditItemsDialog(q.optString("uuid", ""), safe(q.optString("name", "")), this.slugQtyOf(q));
                return true;
+            case 8:
+               this.onRemoteCompleteOther(q);
+               return true;
             default:
                return false;
          }
       });
+      String rcLabel = RemoteCompleteLogic.menuLabel(this.remoteCompleteOffer(q.optString("uuid", ""), isBeingDelivered(q), true));
+      if (rcLabel != null) menu.getMenu().add(0, 8, 0, rcLabel);
       menu.getMenu().add(0, 4, 3, "📤 Kirim ke Perangkat Lain");
       if (!q.optBoolean("pickup_only", false)) menu.getMenu().add(0, 5, 4, "🚰 Jenis Galon");
       if (!q.optBoolean("pickup_only", false)) menu.getMenu().add(0, 6, 5, "✏️ Ubah Item");
       menu.show();
+   }
+
+   // ============ ✓ Selesai dari Perangkat Lain / Pesanan Terbuka (RemoteCompleteLogic) ============
+
+   /** Cegah ketuk ganda selama klaim "✓ Selesai" berjalan. */
+   private boolean remoteCompleteBusy = false;
+
+   /** Gerbang aksi ✓ Selesai — sama dengan Ambil Alih, plus peran Viewer disembunyikan. */
+   private RemoteCompleteLogic.Offer remoteCompleteOffer(String uuid, boolean inProgress, boolean checkApproval) {
+      SyncSettings cfg = this.syncCfg();
+      boolean hasUuid = uuid != null && !uuid.isEmpty() && !"null".equals(uuid);
+      return RemoteCompleteLogic.offer(cfg.isEnrolled(), cfg.isDeliveryDevice(), this.currentUserIsViewer(), hasUuid,
+            inProgress, checkApproval && hasUuid && ClaimRequests.blocks(uuid));
+   }
+
+   /** ✓ Selesai pada kartu Perangkat Lain: klaim (pemilik yang diharapkan = routed_uuid) → alur selesai biasa. */
+   private void onRemoteCompleteOther(JSONObject q) {
+      String uuid = q.optString("uuid", "");
+      RemoteCompleteLogic.Offer o = this.remoteCompleteOffer(uuid, isBeingDelivered(q), true);
+      if (o == RemoteCompleteLogic.Offer.DISABLED_IN_PROGRESS) {
+         String dev = strJson(q, "device_group_label");
+         Toast.makeText(this, "🚚 Sedang diantar" + (dev.isEmpty() ? "" : " oleh " + dev) + " — tidak bisa diselesaikan dari HP ini.", 1).show();
+         return;
+      }
+      if (o == RemoteCompleteLogic.Offer.DISABLED_AWAITING_APPROVAL) {
+         Toast.makeText(this, ClaimRequests.blockedToast(uuid), 1).show();
+         return;
+      }
+      if (o != RemoteCompleteLogic.Offer.ENABLED) return;
+      String msg = RemoteCompleteLogic.confirmMessage(q.optString("name", ""), strJson(q, "device_group_label"));
+      String routed = strJson(q, "routed_uuid");
+      this.showRemoteCompleteConfirm(msg, (dialog) -> this.runRemoteCompleteOther(dialog, uuid, routed));
+   }
+
+   /** ✓ Selesai pada kartu Pesanan Terbuka: klaim lewat claimOpenDispatch → alur ✓ Selesai yang sama. */
+   private void onRemoteCompleteOpen(Transaction t) {
+      if (this.remoteCompleteOffer(this.trxUuid(t), false, false) != RemoteCompleteLogic.Offer.ENABLED) return;
+      String msg = RemoteCompleteLogic.confirmMessage(t.getCustomerName(), "Pesanan Terbuka");
+      this.showRemoteCompleteConfirm(msg, (dialog) -> {
+         this.remoteCompleteBusy = true;
+         this.claimOpenDispatch(t, false, () -> {
+            this.remoteCompleteBusy = false;
+            try { dialog.dismiss(); } catch (Throwable ignored) {}
+            // Sudah milik HP ini secara lokal (markClaimedLocally) → pintu masuk yang sama dengan panel ✅ Selesai.
+            this.pendingCompleteTrxId = t.getId();
+            this.openPendingComplete();
+         }, () -> {
+            this.remoteCompleteBusy = false;
+            try { dialog.dismiss(); } catch (Throwable ignored) {}
+         });
+      });
+   }
+
+   private void showRemoteCompleteConfirm(String msg, java.util.function.Consumer<AlertDialog> onConfirm) {
+      if (this.remoteCompleteBusy) {
+         Toast.makeText(this, "Masih memproses order sebelumnya…", 0).show();
+         return;
+      }
+      AlertDialog dialog = (new AlertDialog.Builder(this)).setTitle("✓ Tandai selesai?").setMessage(msg)
+            .setPositiveButton("Ambil Alih & Selesai", (DialogInterface.OnClickListener)null)
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener)null).create();
+      dialog.setOnShowListener((d) -> {
+         Button pos = dialog.getButton(-1);
+         pos.setOnClickListener((v) -> {
+            if (this.remoteCompleteBusy) return;
+            pos.setEnabled(false);
+            pos.setText("Memproses…");
+            dialog.setCancelable(false);
+            Button neg = dialog.getButton(-2);
+            if (neg != null) neg.setEnabled(false);
+            onConfirm.accept(dialog);
+         });
+      });
+      dialog.show();
+   }
+
+   private void runRemoteCompleteOther(AlertDialog dialog, String trxUuid, String routedUuid) {
+      SyncSettings cfg = this.syncCfg();
+      this.remoteCompleteBusy = true;
+      (new Thread(() -> {
+         boolean ok = false;
+         boolean needsApproval = false;
+         String errMsg = null;
+         try {
+            JSONObject body = new JSONObject();
+            body.put("transaction_uuid", trxUuid);
+            body.put("expected_device_uuid", routedUuid != null ? routedUuid : "");
+            (new SyncApi(cfg)).claimDelivery(body);
+            ok = true;
+         } catch (SyncApi.SyncException se) {
+            needsApproval = ClaimRequests.isNeedsApproval(se);
+            try {
+               errMsg = (new JSONObject(se.body)).optString("message", (String)null);
+            } catch (Exception ignored) {
+            }
+            if (errMsg == null || errMsg.isEmpty()) {
+               errMsg = TertundaRows.isStaleCode(se.code)
+                     ? "Order ini sudah berubah (diambil/diselesaikan pihak lain) — daftar dimuat ulang."
+                     : "Gagal mengambil alih (kode " + se.code + ").";
+            }
+         } catch (Exception e) {
+            errMsg = "Gagal mengambil alih — periksa koneksi internet.";
+         }
+         final boolean okF = ok;
+         final boolean approvalF = needsApproval;
+         final String errF = errMsg;
+         this.runOnUiThread(() -> {
+            this.remoteCompleteBusy = false;
+            if (this.isFinishing() || this.isDestroyed()) return;
+            try { dialog.dismiss(); } catch (Throwable ignored) {}
+            if (okF) {
+               // Barisnya baru ada di HP ini setelah sinkron → titip uuid; absorbPendingRemoteComplete
+               // (dari applyList) membuka alur ✓ Selesai biasa begitu barisnya masuk Antrian Saya.
+               SettingsDao sdao = new SettingsDao(DatabaseHelper.getInstance(this));
+               sdao.set(RemoteCompleteLogic.SETTINGS_KEY,
+                     RemoteCompleteLogic.add(sdao.get(RemoteCompleteLogic.SETTINGS_KEY, ""), trxUuid, System.currentTimeMillis()));
+               Toast.makeText(this, "Order diambil alih — dialog Selesai terbuka setelah tersinkron.", 1).show();
+               if (this.tabs != null) this.tabs.selectTab(this.tabs.getTabAt(0));
+               SyncScheduler.syncNow(this.getApplicationContext());
+               this.loadData();
+               this.loadOtherDevices();
+            } else if (approvalF) {
+               // Pemilik antrean wajib menyetujui — permintaan sudah terkirim (ClaimRequests); TIDAK diselesaikan.
+               (new AlertDialog.Builder(this)).setTitle("⏳ Menunggu persetujuan")
+                     .setMessage(errF + "\n\nHP pemilik antrean harus menyetujui pemindahan dulu. Permintaan sudah dikirim — order ini BELUM dicatat selesai.")
+                     .setPositiveButton("OK", (DialogInterface.OnClickListener)null).show();
+               if (this.otherDevicesAdapter != null) this.otherDevicesAdapter.notifyDataSetChanged();
+            } else {
+               Toast.makeText(this, errF, 1).show();
+               this.loadOtherDevices();
+               this.loadData();
+            }
+         });
+      })).start();
+   }
+
+   /** Dipanggil applyList: order titipan ✓ Selesai yang kini ada di Antrian Saya → alur ✓ Selesai biasa. */
+   private void absorbPendingRemoteComplete(List<Transaction> list) {
+      SettingsDao sdao = new SettingsDao(DatabaseHelper.getInstance(this));
+      String raw = sdao.get(RemoteCompleteLogic.SETTINGS_KEY, "");
+      if (raw == null || raw.isEmpty()) return;
+      long now = System.currentTimeMillis();
+      RemoteCompleteLogic.Pending p = RemoteCompleteLogic.parse(raw, now);
+      if (!p.expired.isEmpty()) {
+         Toast.makeText(this, "Order yang diambil alih belum masuk Antrian Saya — selesaikan dari sana setelah tersinkron.", 1).show();
+      }
+      Map<String, Long> idByUuid = new HashMap<>();
+      if (!p.alive.isEmpty()) {
+         for (Transaction t : list) {
+            if (t == null) continue;
+            String u = this.trxUuid(t);
+            if (u != null && p.alive.containsKey(u)) idByUuid.put(u, t.getId());
+         }
+      }
+      List<String> arrived = RemoteCompleteLogic.arrived(p, idByUuid.keySet());
+      java.util.Set<String> drop = new java.util.HashSet<>();
+      // Satu per satu: dibuka hanya saat layar bebas (tak ada dialog lain). Sisanya menunggu sampai
+      // dialog penyelesaian ini tertutup → onWindowFocusChanged → tryRemoteCompleteNext.
+      if (!arrived.isEmpty() && this.remoteCompleteScreenFree()) {
+         String u = arrived.get(0);
+         drop.add(u);
+         this.pendingCompleteTrxId = idByUuid.get(u);
+         this.findViewById(android.R.id.content).post(this::openPendingComplete);
+      }
+      String next = RemoteCompleteLogic.remove(raw, drop, now);
+      java.util.Set<String> waiting = new java.util.LinkedHashSet<>(arrived);
+      waiting.removeAll(drop);
+      if (!waiting.isEmpty()) next = RemoteCompleteLogic.touch(next, waiting, now);
+      if (!next.equals(raw)) sdao.set(RemoteCompleteLogic.SETTINGS_KEY, next);
+   }
+
+   private boolean remoteCompleteScreenFree() {
+      return RemoteCompleteLogic.canOpenNext(
+            this.getLifecycle().getCurrentState().isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED),
+            this.hasWindowFocus(), this.pendingCompleteTrxId > 0L, this.remoteCompleteBusy,
+            this.wizardAdvancePending, this.dataGateTrxId > 0L || this.directPickupTrxId > 0L);
+   }
+
+   /** Layar kembali bebas (dialog tertutup) → buka dialog Selesai titipan berikutnya, dari Antrean Saya
+    *  UTUH (adapter.data — kotak cari/saring hanya memengaruhi yang dirender). Pola tryWizardAdvance. */
+   private void tryRemoteCompleteNext() {
+      this.tick.postDelayed(() -> {
+         if (this.isFinishing() || this.isDestroyed() || this.adapter == null || !this.remoteCompleteScreenFree()) return;
+         this.absorbPendingRemoteComplete(new ArrayList<>(this.adapter.data));
+      }, 1200L);
+   }
+
+   /** Cadangan findQueueTrx: baris Antrean Saya langsung dari DB (bukan daftar yang sedang tampil). */
+   @Nullable
+   private Transaction findOwnQueueTrxFromDb(long trxId) {
+      for (Transaction t : this.dao.getDeliveryQueue()) {
+         if (t != null && t.getId() == trxId && !t.isOpenDispatch()) return t;
+      }
+      return null;
    }
 
    /** Jumlah per slug produk (KAPITAL) dari baris server (item_slugs). */
@@ -5620,6 +5820,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.autoRerouteAfterAdd();
       }
       this.setTabCount(0, list.size());
+      this.absorbPendingRemoteComplete(list);
       if (this.selectionMode) {
          if (list.isEmpty()) {
             this.exitSelectionMode();
@@ -10495,6 +10696,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.wizardCompleteId = id;
       }
       Transaction t = this.findQueueTrx(id);
+      if (t == null) t = this.findOwnQueueTrxFromDb(id);
       if (t != null) {
          this.maybeWarnIncompleteThenComplete(t);
       } else if (inRit && !this.guidedMode) {
@@ -10735,7 +10937,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    @Override
    public void onWindowFocusChanged(boolean hasFocus) {
       super.onWindowFocusChanged(hasFocus);
-      if (hasFocus) this.tryWizardAdvance();
+      if (hasFocus) {
+         this.tryWizardAdvance();
+         this.tryRemoteCompleteNext();
+      }
    }
 
    /** Lanjut hanya saat layar ini benar-benar bebas (tak ada dialog penyelesaian / WA yang menyusul). */
@@ -14601,9 +14806,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    /** @param onClaimed (opsional) dijalankan di thread UI setelah klaim sukses dan order sudah milik HP ini secara lokal. */
    private void claimOpenDispatch(Transaction t, boolean thenRun, @Nullable Runnable onClaimed) {
+      this.claimOpenDispatch(t, thenRun, onClaimed, null);
+   }
+
+   /** @param onFailed (opsional) dijalankan di thread UI bila klaim tidak jadi (gagal / belum terhubung / tanpa uuid). */
+   private void claimOpenDispatch(Transaction t, boolean thenRun, @Nullable Runnable onClaimed, @Nullable Runnable onFailed) {
       SyncSettings cfg = this.syncCfg();
       if (!cfg.isEnrolled()) {
          Toast.makeText(this, "Perangkat belum terhubung ke server.", 1).show();
+         if (onFailed != null) onFailed.run();
       } else {
          String trxUuid = this.dao.getSyncUuidById(t.getId());
          if (trxUuid != null && !trxUuid.isEmpty()) {
@@ -14654,6 +14865,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                      } else {
                         Toast.makeText(this, errMsgF, 1).show();
                         this.loadData();
+                        if (onFailed != null) onFailed.run();
                      }
 
                   }
@@ -14661,6 +14873,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             })).start();
          } else {
             Toast.makeText(this, "Order ini belum punya identitas server. Coba muat ulang.", 1).show();
+            if (onFailed != null) onFailed.run();
          }
       }
    }
@@ -15425,8 +15638,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                menu.getMenu().add(0, 3, 2, "🚰 Jenis Galon");
                menu.getMenu().add(0, 4, 3, "✏️ Ubah Item");
             }
+            String rcLabel = RemoteCompleteLogic.menuLabel(DeliveryQueueActivity.this.remoteCompleteOffer(DeliveryQueueActivity.this.trxUuid(t), false, false));
+            if (rcLabel != null) menu.getMenu().add(0, 5, 0, rcLabel);
             menu.setOnMenuItemClickListener((item) -> {
                switch (item.getItemId()) {
+                  case 5:
+                     DeliveryQueueActivity.this.onRemoteCompleteOpen(t);
+                     return true;
                   case 3:
                      DeliveryQueueActivity.this.showGalonTypeDialog(t);
                      return true;
