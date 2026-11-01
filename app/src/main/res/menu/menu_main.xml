@@ -9,13 +9,19 @@
         app:showAsAction="always" />
 
     <item
+        android:id="@+id/action_delivery"
+        android:title="Delivery"
+        android:visible="false"
+        app:actionLayout="@layout/menu_delivery_switch"
+        app:showAsAction="always" />
+
+    <item
         android:id="@+id/action_sync"
         android:title="Sinkronisasi Online"
         app:showAsAction="never" />
 
     <item
         android:id="@+id/action_info"
-        android:icon="@drawable/ic_info"
         android:title="Tentang"
-        app:showAsAction="always" />
+        app:showAsAction="never" />
 </menu>

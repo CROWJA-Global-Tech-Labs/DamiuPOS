@@ -640,6 +640,8 @@ public class MainActivity extends AppCompatActivity {
     private long lastMeRefreshAt = 0L;
 
     private void refreshOperatorBar() {
+        // Sakelar "Delivery" toolbar bergantung pada peran yang login & status delivery HP ini.
+        invalidateOptionsMenu();
         View card = findViewById(R.id.cardOperator);
         if (card == null) return;
         long uid = settingsDao.getCurrentUserId();
@@ -1111,7 +1113,94 @@ public class MainActivity extends AppCompatActivity {
         if (inbox != null) inbox.setVisible(
                 !com.crowja.damiupos.db.UserDao.isCurrentUserAlertSilenced(this)
                         && orderInboxDao != null && orderInboxDao.countPendingForThisDevice() > 0);
+        bindDeliverySwitch(menu.findItem(R.id.action_delivery));
         return super.onPrepareOptionsMenu(menu);
+    }
+
+    private boolean deliverySwitchBusy = false;
+
+    /**
+     * Sakelar "Delivery" di toolbar: hanya Admin (multi user) pada HP yang terhubung server. Mengubah
+     * is_delivery HP INI lewat /api/admin/devices/{uuid}/flags — sama dengan centang "Perangkat delivery"
+     * di Pengaturan Perangkat; gagal → sakelar dikembalikan.
+     */
+    private void bindDeliverySwitch(@androidx.annotation.Nullable MenuItem item) {
+        if (item == null) return;
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+        long uid = settingsDao.getCurrentUserId();
+        boolean admin = false;
+        if (settingsDao.isMultiUserEnabled() && uid > 0) {
+            com.crowja.damiupos.model.User cur =
+                    new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid);
+            admin = cur != null && cur.isAdmin();
+        }
+        boolean show = admin && cfg.isEnrolled();
+        item.setVisible(show);
+        if (!show || !(item.getActionView() instanceof com.google.android.material.switchmaterial.SwitchMaterial)) return;
+        com.google.android.material.switchmaterial.SwitchMaterial sw =
+                (com.google.android.material.switchmaterial.SwitchMaterial) item.getActionView();
+        int[][] states = {{android.R.attr.state_checked}, {}};
+        sw.setThumbTintList(new ColorStateList(states, new int[]{0xFFFFFFFF, 0xFFE0E0E0}));
+        sw.setTrackTintList(new ColorStateList(states, new int[]{0xFF66BB6A, 0x99FFFFFF}));
+        sw.setOnCheckedChangeListener(null);
+        sw.setChecked(cfg.isDeliveryDevice());
+        sw.setEnabled(!deliverySwitchBusy);
+        sw.setOnCheckedChangeListener((b, on) -> {
+            if (!on) {
+                new AlertDialog.Builder(this)
+                        .setTitle("Matikan Delivery di HP ini?")
+                        .setMessage("HP ini tidak lagi jadi tujuan pengantaran: tidak muncul di pilihan perangkat dan tidak menerima order baru. Order yang sudah di antriannya tetap ada.")
+                        .setPositiveButton("Matikan", (d, w) -> setThisDeviceDelivery(false))
+                        .setNegativeButton("Batal", (d, w) -> invalidateOptionsMenu())
+                        .setOnCancelListener(d -> invalidateOptionsMenu())
+                        .show();
+            } else {
+                setThisDeviceDelivery(true);
+            }
+        });
+    }
+
+    private void setThisDeviceDelivery(boolean on) {
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+        String staffUuid = com.crowja.damiupos.sync.LocationReporter.currentStaffUuid(this);
+        String myUuid = cfg.getDeviceUuid();
+        if (staffUuid == null || staffUuid.isEmpty() || myUuid == null || myUuid.isEmpty()) {
+            Toast.makeText(this, "Login sebagai Admin & sinkronkan dulu.", Toast.LENGTH_LONG).show();
+            invalidateOptionsMenu();
+            return;
+        }
+        deliverySwitchBusy = true;
+        invalidateOptionsMenu();
+        new Thread(() -> {
+            String msg;
+            boolean ok = false;
+            try {
+                org.json.JSONObject b = new org.json.JSONObject();
+                b.put("is_delivery", on);
+                new com.crowja.damiupos.sync.SyncApi(cfg).adminDeviceUpdate(myUuid, "flags", b, staffUuid);
+                cfg.setDeliveryDevice(on);
+                ok = true;
+                msg = on ? "HP ini jadi perangkat delivery." : "Delivery di HP ini dimatikan.";
+            } catch (com.crowja.damiupos.sync.SyncApi.SyncException se) {
+                String m = null;
+                try { m = new org.json.JSONObject(se.body).optString("message", null); } catch (Exception ignored) {}
+                msg = m != null && !m.isEmpty() ? m : "Ditolak server (kode " + se.code + ").";
+            } catch (Exception e) {
+                msg = "Gagal — periksa koneksi.";
+            }
+            final String msgF = msg;
+            final boolean okF = ok;
+            runOnUiThread(() -> {
+                deliverySwitchBusy = false;
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(this, msgF, Toast.LENGTH_LONG).show();
+                invalidateOptionsMenu();
+                if (okF) {
+                    refreshOperatorBar();
+                    com.crowja.damiupos.sync.OnlineTasks.forceConfigRefreshNow(getApplicationContext(), null);
+                }
+            });
+        }).start();
     }
 
     @Override
