@@ -6776,6 +6776,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             public void sejalurOpenMap() {
                DeliveryQueueActivity.this.openSejalurMap();
             }
+
+            public List<SejalurPlanLogic.Badge> sejalurBadges(JSONObject row) {
+               return DeliveryQueueActivity.this.sejalurBadges(row);
+            }
+
+            public TextView sejalurBadgeView(CharSequence label, int bg) {
+               return DeliveryQueueActivity.this.makeDetailBadge(label, bg);
+            }
          });
       }
       return this.sejalurFlow;
@@ -6990,6 +6998,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
       }
       x.items = items.toString();
+      // Kapsul produk berwarna + tag jenis galon — sama persis dengan kartu Antrian Saya.
+      boolean assumed = galonAssumed(t.getGalonTypeSource());
+      for (Object[] r : this.typedRows(t)) x.badges.add(new SejalurPlanLogic.Badge(typedChipText(r, assumed), (Integer) r[3]));
       x.galon = Math.max(0, t.getJumlahGalon());
       x.pickupOnly = isPickupOnly(t);
       x.priority = DeliveryPlanner.isPriority(t);
@@ -7020,6 +7031,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          if (e.getValue()[0] > 0) items.append("×").append(e.getValue()[0]);
       }
       x.items = items.toString();
+      x.badges = this.sejalurBadges(o);
       x.galon = Math.max(0, o.optInt("galon", 0));
       x.pickupOnly = o.optBoolean("pickup_only", false);
       x.priority = o.optBoolean("is_priority", false) || o.optInt("order_priority_level", 0) > 0;
@@ -7029,6 +7041,48 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       x.lng = o.optDouble("longitude", 0.0);
       x.elapsedMs = elapsedMillis(o.optString("queued_at", null));
       return x;
+   }
+
+   /**
+    * Kapsul produk berwarna satu baris server (rencana Kirim Sejalur / antrean perangkat lain): dari
+    * {@code item_slugs} (slug kanonik + warna server, cara {@link #tripTotalItems}), dipecah/ditandai per jenis
+    * galon seperti kartu antrean ({@link #typedChipText}). Kosong bila server tak mengirim item_slugs →
+    * pemanggil menampilkan teks items.
+    */
+   private List<SejalurPlanLogic.Badge> sejalurBadges(JSONObject o) {
+      List<SejalurPlanLogic.Badge> out = new ArrayList<>();
+      JSONArray slugs = o != null ? o.optJSONArray("item_slugs") : null;
+      if (slugs == null || slugs.length() == 0) return out;
+      String gt = strJson(o, "galon_type");
+      boolean typed = !o.optBoolean("pickup_only", false) && GalonTypeUi.known(gt);
+      Map<String, LinkedHashMap<String, Integer>> spec = typed && GalonTypeUi.CAMPUR.equals(gt)
+            ? GalonTypeUi.specBySlug(o.opt("galon_spec")) : new HashMap<>();
+      boolean assumed = galonAssumed(strJson(o, "galon_type_source"));
+      // (slug, jenis) → {label, jenis, qty, warna} — slug yang sama dijumlah (baris promo).
+      LinkedHashMap<String, Object[]> rows = new LinkedHashMap<>();
+      for (int k = 0; k < slugs.length(); k++) {
+         JSONObject it = slugs.optJSONObject(k);
+         String slug = it != null ? strJson(it, "slug") : null;
+         int qty = it != null ? (int) Math.round(it.optDouble("qty", 0)) : 0;
+         if (slug == null || slug.trim().isEmpty() || qty <= 0) continue;
+         slug = slug.trim();
+         int color = this.slugColor(slug, strJson(it, "color"));
+         LinkedHashMap<String, Integer> split = spec.get(slug.toUpperCase(Locale.US));
+         if (split != null && !split.isEmpty()) {
+            for (Map.Entry<String, Integer> r : split.entrySet()) addSejalurBadgeRow(rows, slug, r.getKey(), r.getValue(), color);
+         } else {
+            addSejalurBadgeRow(rows, slug, typed ? gt : "", qty, color);
+         }
+      }
+      for (Object[] r : rows.values()) out.add(new SejalurPlanLogic.Badge(typedChipText(r, assumed), (Integer) r[3]));
+      return out;
+   }
+
+   private static void addSejalurBadgeRow(LinkedHashMap<String, Object[]> rows, String slug, String type, int qty, int color) {
+      String key = typedKey(slug, type);
+      Object[] r = rows.get(key);
+      if (r == null) rows.put(key, new Object[]{slug, type, qty, color});
+      else r[2] = (Integer) r[2] + qty;
    }
 
    /** Pesanan Terbuka di layar ini: uuid → id lokal (dibaca sebelum /sejalur/start; dipakai SejalurFlow.persistStart). */
