@@ -13866,10 +13866,21 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          return;
       }
       PopupMenu menu = new PopupMenu(this, anchor);
-      menu.getMenu().add(0, 1, 0, "📲 Alihkan " + picked.size() + " order ke perangkat lain");
-      menu.getMenu().add(0, 2, 1, "🧭 Alihkan " + picked.size() + " order sesuai wilayahnya");
-      menu.getMenu().add(0, 3, 2, "🗑️ Void " + picked.size() + " order (persetujuan)");
+      menu.getMenu().add(0, 4, 0, "🔓 Lepas " + picked.size() + " order (jadi Pesanan Terbuka)");
+      menu.getMenu().add(0, 1, 1, "📲 Alihkan " + picked.size() + " order ke perangkat lain");
+      menu.getMenu().add(0, 2, 2, "🧭 Alihkan " + picked.size() + " order sesuai wilayahnya");
+      menu.getMenu().add(0, 3, 3, "🗑️ Void " + picked.size() + " order (persetujuan)");
       menu.setOnMenuItemClickListener((item) -> {
+         if (item.getItemId() == 4) {
+            StringBuilder names = new StringBuilder();
+            int i = 0;
+            for (String[] v : picked.values()) names.append(++i).append(". ").append(v[1]).append('\n');
+            (new AlertDialog.Builder(this)).setTitle("Lepas " + picked.size() + " order?")
+                  .setMessage("Order terpilih keluar dari antrian perangkat pemegangnya dan menjadi PESANAN TERBUKA — perangkat mana pun bisa mengklaimnya.\n\n" + names.toString().trim())
+                  .setPositiveButton("Lepas Semua", (d, w) -> this.runBulkOpenOther(picked))
+                  .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
+            return true;
+         }
          if (item.getItemId() == 3) {
             List<String[]> items = new ArrayList<>();
             for (Map.Entry<String, String[]> e : picked.entrySet()) items.add(new String[]{e.getKey(), e.getValue()[1]});
@@ -13917,6 +13928,66 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          return true;
       });
       menu.show();
+   }
+
+   /** 🔓 Lepas massal dari tab Perangkat Lain: /api/delivery/open + from_device_uuid (pemegang yang
+    *  dilihat) per order — order yang keburu pindah (409) / sedang diantar ditolak server & dilaporkan.
+    *  Batas server 20 aksi/menit: begitu 429, sisanya dilaporkan belum diproses. */
+   private void runBulkOpenOther(java.util.LinkedHashMap<String, String[]> picked) {
+      SyncSettings cfg = this.syncCfg();
+      if (!cfg.isEnrolled()) {
+         Toast.makeText(this, "Perangkat belum terhubung ke server.", 1).show();
+         return;
+      }
+      android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
+      wait.setMessage("Melepas " + picked.size() + " order…");
+      wait.setCancelable(false);
+      wait.show();
+      (new Thread(() -> {
+         int ok = 0;
+         List<String> fails = new ArrayList<>();
+         boolean limited = false;
+         for (Map.Entry<String, String[]> e : picked.entrySet()) {
+            String name = e.getValue()[1];
+            if (limited) {
+               fails.add(name + ": belum diproses (batas 20 aksi/menit)");
+               continue;
+            }
+            try {
+               JSONObject body = new JSONObject();
+               body.put("transaction_uuid", e.getKey());
+               body.put("from_device_uuid", e.getValue()[0]);
+               (new SyncApi(cfg)).openDispatch(body);
+               ok++;
+            } catch (SyncApi.SyncException se) {
+               if (se.code == 429) {
+                  limited = true;
+                  fails.add(name + ": belum diproses (batas 20 aksi/menit)");
+               } else {
+                  String m = extractRouteErrorMessage(se.body);
+                  fails.add(name + ": " + (m != null ? m : "ditolak (kode " + se.code + ")"));
+               }
+            } catch (Exception ex) {
+               fails.add(name + ": gagal — periksa koneksi");
+            }
+         }
+         final int okF = ok;
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            try { wait.dismiss(); } catch (Exception ignored) {}
+            StringBuilder sb = new StringBuilder(okF + " order dilepas jadi Pesanan Terbuka.");
+            if (!fails.isEmpty()) {
+               sb.append("\n\nTidak diproses (").append(fails.size()).append("):");
+               for (String f : fails) sb.append("\n• ").append(f);
+            }
+            (new AlertDialog.Builder(this)).setTitle("Lepas Massal").setMessage(sb.toString())
+                  .setPositiveButton("OK", (DialogInterface.OnClickListener) null).show();
+            this.exitClaimSelect(false);
+            SyncScheduler.syncNow(this.getApplicationContext());
+            this.loadData();
+            this.loadOtherDevices();
+         });
+      })).start();
    }
 
    private void runBulkForwardOther(java.util.LinkedHashMap<String, String[]> picked, String targetUuid, String targetName) {
