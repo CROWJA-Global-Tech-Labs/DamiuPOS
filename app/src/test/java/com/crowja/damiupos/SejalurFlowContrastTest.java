@@ -67,4 +67,13 @@ public class SejalurFlowContrastTest {
         assertTrue(contrast(blend(SejalurFlow.C_DANGER, PICKER_ROOT_BG, 0.6), card) < 4.5);
         assertTrue(contrast(blend(SejalurFlow.C_MUTED, PICKER_ROOT_BG, 0.6), card) < 4.5);
     }
+
+    @Test
+    public void widenBadgeAndButtonsReadable() {
+        assertReadable("lencana melebar", SejalurFlow.C_WIDE_FG, SejalurFlow.C_WIDE_BG);
+        assertReadable("tombol Perlebar utama", 0xFFFFFFFF, SejalurFlow.C_PRIMARY_DARK);
+        assertReadable("tombol Perlebar lain", SejalurFlow.C_PRIMARY_DARK, 0xFFFFFFFF);
+        assertReadable("saringan jenis (C_TEXT) di latar pemilih", SejalurFlow.C_TEXT, PICKER_ROOT_BG);
+        assertReadable("catatan Perlebar (C_TEXT2)", SejalurFlow.C_TEXT2, 0xFFFFFFFF);
+    }
 }
