@@ -204,6 +204,20 @@
                 app:iconGravity="textStart"
                 app:iconSize="18dp" />
 
+            <!-- Tambah komisi manual (kredit saldo + deskripsi) -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnTambahKomisi"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="Tambah Komisi Manual"
+                android:textAllCaps="false"
+                app:cornerRadius="10dp"
+                app:icon="@android:drawable/ic_input_add"
+                app:iconGravity="textStart"
+                app:iconSize="18dp" />
+
             <!-- Tambahkan komisi reseller ke harga jual saat transaksi -->
             <com.google.android.material.checkbox.MaterialCheckBox
                 android:id="@+id/cbKomisiKeHarga"
