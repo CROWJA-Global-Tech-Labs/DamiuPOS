@@ -751,17 +751,22 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  #btnme{position:fixed;right:14px;bottom:22px;width:48px;height:48px;border-radius:24px;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;font-size:24px;z-index:1000;cursor:pointer;}\n" +
                 // LEGENDA diperbesar: sasaran sentuh sebelumnya ~20px (font 12px, padding 3px) —
                 // di bawah ambang 48dp Android dan sering meleset saat HP dipakai sambil berkendara.
-                "  #legend{position:fixed;left:8px;top:8px;max-width:82%;max-height:46%;overflow:auto;z-index:1000;}\n" +
-                "  .lchip{display:inline-flex;align-items:center;gap:7px;background:#fff;border-radius:20px;padding:8px 8px 8px 12px;margin:3px;box-shadow:0 2px 6px rgba(0,0,0,.3);font-size:14px;font-weight:600;cursor:pointer;border:2px solid transparent;}\n" +
-                "  .lchip:active{transform:scale(.96);}\n" +
-                "  .lchip.off{opacity:.4;}\n" +
-                "  .lchip.nogeo{border-color:#cbd5e1;}\n" +
+                // BAR ATAS: dropdown "Perangkat" (centang = tampilkan, bawaan SEMUA) + centang jenis order
+                // Penjualan / Ambil galon. Menggantikan deretan chip mata yang menutupi separuh peta.
+                "  #topbar{position:fixed;left:8px;right:8px;top:8px;z-index:1000;display:flex;flex-wrap:wrap;gap:6px;align-items:flex-start;}\n" +
+                "  .tbtn{display:inline-flex;align-items:center;gap:6px;background:#fff;color:#1f2937;border-radius:18px;padding:9px 12px;box-shadow:0 2px 6px rgba(0,0,0,.3);font-size:14px;font-weight:700;cursor:pointer;border:2px solid transparent;user-select:none;}\n" +
+                "  .tbtn:active{transform:scale(.96);}\n" +
+                "  .tbtn.on{border-color:#1565C0;background:#E3F2FD;}\n" +
+                "  .ckon{background:#1565C0 !important;border-color:#1565C0 !important;}\n" +
+                "  .ckoff{border-color:#475569 !important;}\n" +
+                "  #devpanel{position:fixed;left:8px;top:58px;z-index:1001;background:#fff;color:#1f2937;border-radius:12px;box-shadow:0 4px 14px rgba(0,0,0,.35);min-width:230px;max-width:88%;max-height:55%;overflow:auto;display:none;padding:4px 0;}\n" +
+                "  .drow{display:flex;align-items:center;gap:10px;padding:10px 12px;font-size:14px;font-weight:600;cursor:pointer;min-height:28px;}\n" +
+                "  .drow:active{background:#f1f5f9;}\n" +
+                "  .drow.all{border-bottom:1px solid #e2e8f0;}\n" +
+                "  .dname{flex:1 1 auto;}\n" +
+                "  .nogeo{font-size:11px;font-weight:500;color:#475569;}\n" +
+                "  .dloc{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:17px;background:#f1f5f9;font-size:15px;flex:0 0 auto;}\n" +
                 "  .ldot{width:13px;height:13px;border-radius:7px;display:inline-block;flex:0 0 auto;}\n" +
-                // Tombol mata TERPISAH di dalam chip: ketuk nama = LACAK ke perangkat, ketuk mata =
-                // sembunyikan/tampilkan. Dua aksi berbeda butuh dua sasaran sentuh berbeda — kalau
-                // digabung jadi satu ketukan, mustahil melacak tanpa ikut menyembunyikan.
-                "  .leye{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:15px;background:#f1f5f9;font-size:14px;flex:0 0 auto;}\n" +
-                "  .lchip.off .leye{background:#e2e8f0;}\n" +
                 // Badge slug produk (popup pin) + baris filter centang produk di bawah peta.
                 "  .pbadges{margin-top:4px;}\n" +
                 "  .pb{display:inline-block;font-size:11px;font-weight:bold;padding:2px 8px;border-radius:10px;margin:2px 4px 0 0;}\n" +
@@ -773,7 +778,8 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 MapTiles.BRIGHT_TILE_CSS + "\n" +
                 "</style>\n</head><body>\n" +
                 "<div id='map'></div>\n" +
-                "<div id='legend'></div>\n" +
+                "<div id='topbar'></div>\n" +
+                "<div id='devpanel'></div>\n" +
                 "<div id='pfilter'></div>\n" +
                 "<div id='btnme' onclick='goMe()' title='Posisi Saya'>&#128205;</div>\n" +
                 "<script>\n" +
@@ -794,10 +800,10 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "var cluster = L.markerClusterGroup({maxClusterRadius:50,spiderfyOnMaxZoom:true});\n" +
                 "map.addLayer(cluster);\n" +
                 "var hiddenDevices = {};\n" +
-                // Bawaan: hanya pesanan perangkat INI; perangkat lain (termasuk yang baru muncul)
-                // disembunyikan sampai 👁 diketuk.
-                "var seenDevices = {};\n" +
-                "function seedHidden(){ if(sejalurPick||!myUuid||typeof legend==='undefined') return; legend.forEach(function(g){ if(seenDevices[g.uuid]) return; seenDevices[g.uuid]=true; if(g.uuid!==myUuid) hiddenDevices[g.uuid]=true; }); }\n" +
+                // Bawaan: SEMUA perangkat tampil (permintaan owner 2026-11-01); hapus centang di dropdown
+                // "Perangkat" untuk menyembunyikan. Penjualan / Ambil galon juga bawaan tercentang.
+                "var showSales = true, showPickup = true, devPanelOpen = false;\n" +
+                "function seedHidden(){}\n" +
                 "function pinIcon(color,emoji,mine,openDispatch){\n" +
                 "  var svg='<svg width=\"30\" height=\"38\" viewBox=\"0 0 30 38\" xmlns=\"http://www.w3.org/2000/svg\">'+\n" +
                 "    '<path d=\"M15 0C6.7 0 0 6.7 0 15c0 10 15 23 15 23s15-13 15-23C30 6.7 23.3 0 15 0z\" fill=\"'+color+'\"/>'+\n" +
@@ -863,7 +869,8 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "});\n" +
                 "}\n" +
                 "buildMarkers();\n" +
-                "function visible(p){ seedHidden(); return!hiddenDevices[p.device_uuid||'__none__'] && productOk(p); }\n" +
+                "function kindOk(p){ return p.pickup_only ? showPickup : showSales; }\n" +
+                "function visible(p){ return!hiddenDevices[p.device_uuid||'__none__'] && kindOk(p) && productOk(p); }\n" +
                 // FILTER PRODUK: centang = tampilkan HANYA order yang memuat salah satu produk tercentang
                 // (OR). Tak ada yang dicentang = semua. Digabung dengan mata perangkat di legenda.
                 "var productOn={};\n" +
@@ -887,7 +894,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "    c.innerHTML='<span class=\"pbox\">'+(productOn[sl]?'✓':'')+'</span>'\n" +
                 "      +'<span class=\"pb\" style=\"margin:0;background:'+escHtml(col[sl])+';color:'+textOn(col[sl])+'\">'+escHtml(sl)+'</span>'\n" +
                 "      +'<span>('+cnt[sl]+')</span>';\n" +
-                "    c.onclick=function(){ productOn[sl]=!productOn[sl]; renderProductFilter(); applyFilter(true); };\n" +
+                "    c.onclick=function(){ productOn[sl]=!productOn[sl]; renderProductFilter(); renderLegend(); applyFilter(true); };\n" +
                 "    el.appendChild(c); });\n" +
                 "}\n" +
                 // fit=false → hanya ganti pin, tampilan peta (zoom/posisi) dibiarkan apa adanya.
@@ -902,7 +909,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  redrawOpenDispatchLines();\n" +
                 "}\n" +
                 // Penyegaran data dari HP (setelah Ambil Alih / klaim basi) — TANPA fitBounds.
-                "function refreshData(list){ map.closePopup(); pts=list||[]; buildMarkers(); renderProductFilter(); applyFilter(false); }\n" +
+                "function refreshData(list){ map.closePopup(); pts=list||[]; buildMarkers(); renderProductFilter(); renderLegend(); applyFilter(false); }\n" +
                 // Umpan balik instan setelah klaim sukses, sebelum data segar tiba.
                 "function markClaimed(uuid){\n" +
                 "  var mine=null; for(var k=0;k<legend.length;k++){ if(legend[k].uuid===myUuid){ mine=legend[k]; break; } }\n" +
@@ -969,27 +976,41 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  t.textContent=msg; t.style.display='block';\n" +
                 "  clearTimeout(t._h); t._h=setTimeout(function(){t.style.display='none';},2600);\n" +
                 "}\n" +
-                "function renderLegend(){ seedHidden();\n" +
-                "  var el=document.getElementById('legend');el.innerHTML='';\n" +
+                "function countKind(pk){ var n=0; pts.forEach(function(p){ if(!!p.pickup_only===pk && !hiddenDevices[p.device_uuid||'__none__'] && productOk(p)) n++; }); return n; }\n" +
+                "function boxHtml(on){ return '<span class=\"pbox '+(on?'ckon':'ckoff')+'\">'+(on?'✓':'')+'</span>'; }\n" +
+                "function renderLegend(){\n" +
+                "  var bar=document.getElementById('topbar'); bar.innerHTML='';\n" +
+                "  var shown=0; legend.forEach(function(g){ if(!hiddenDevices[g.uuid]) shown++; });\n" +
+                "  var dd=document.createElement('div'); dd.className='tbtn'+(shown<legend.length?' on':'');\n" +
+                "  dd.textContent='📱 Perangkat ('+shown+'/'+legend.length+') '+(devPanelOpen?'▴':'▾');\n" +
+                "  dd.onclick=function(ev){ ev.stopPropagation(); devPanelOpen=!devPanelOpen; renderLegend(); };\n" +
+                "  bar.appendChild(dd);\n" +
+                "  [[false,'🛒 Penjualan'],[true,'↩ Ambil galon']].forEach(function(k){\n" +
+                "    var on=k[0]?showPickup:showSales;\n" +
+                "    var c=document.createElement('div'); c.className='tbtn'+(on?' on':'');\n" +
+                "    c.innerHTML=boxHtml(on)+'<span>'+k[1]+' ('+countKind(k[0])+')</span>';\n" +
+                "    c.onclick=function(ev){ ev.stopPropagation(); if(k[0]) showPickup=!showPickup; else showSales=!showSales; renderLegend(); applyFilter(); };\n" +
+                "    bar.appendChild(c); });\n" +
+                "  var pn=document.getElementById('devpanel'); pn.innerHTML=''; pn.style.display=devPanelOpen?'block':'none';\n" +
+                "  if(!devPanelOpen) return;\n" +
+                "  pn.style.top=(bar.getBoundingClientRect().bottom+6)+'px';\n" +
+                "  var allOn=shown===legend.length;\n" +
+                "  var all=document.createElement('div'); all.className='drow all';\n" +
+                "  all.innerHTML=boxHtml(allOn)+'<span class=\"dname\">Semua perangkat</span>';\n" +
+                "  all.onclick=function(ev){ ev.stopPropagation(); legend.forEach(function(g){ if(allOn) hiddenDevices[g.uuid]=true; else delete hiddenDevices[g.uuid]; }); renderLegend(); applyFilter(); };\n" +
+                "  pn.appendChild(all);\n" +
                 "  legend.forEach(function(g){\n" +
-                "    var hasGeo=!!deviceLatLng(g.uuid);\n" +
-                "    var c=document.createElement('div');\n" +
-                "    c.className='lchip'+(hiddenDevices[g.uuid]?' off':'')+(hasGeo?'':' nogeo');\n" +
-                "    var lbl=document.createElement('span');\n" +
-                "    lbl.style.cssText='display:inline-flex;align-items:center;gap:7px;';\n" +
-                "    lbl.innerHTML='<span class=\"ldot\" style=\"background:'+g.color+'\"></span>'\n" +
-                "      +'<span>'+g.icon+' '+escHtml(g.name)+'</span>';\n" +
-                "    lbl.onclick=function(ev){ ev.stopPropagation(); locateDevice(g); };\n" +
-                "    var eye=document.createElement('span');\n" +
-                "    eye.className='leye';\n" +
-                "    eye.textContent=hiddenDevices[g.uuid]?'🚫':'👁';\n" +
-                "    eye.title='Sembunyikan/tampilkan order perangkat ini';\n" +
-                "    eye.onclick=function(ev){ ev.stopPropagation();\n" +
-                "      hiddenDevices[g.uuid]=!hiddenDevices[g.uuid]; renderLegend(); applyFilter(); };\n" +
-                "    c.appendChild(lbl); c.appendChild(eye);\n" +
-                "    el.appendChild(c);\n" +
+                "    var on=!hiddenDevices[g.uuid], hasGeo=!!deviceLatLng(g.uuid);\n" +
+                "    var r=document.createElement('div'); r.className='drow';\n" +
+                "    r.innerHTML=boxHtml(on)+'<span class=\"ldot\" style=\"background:'+escHtml(g.color)+'\"></span>'\n" +
+                "      +'<span class=\"dname\">'+g.icon+' '+escHtml(g.name)+(hasGeo?'':' <span class=\"nogeo\">· belum ada posisi</span>')+'</span>';\n" +
+                "    r.onclick=function(ev){ ev.stopPropagation(); if(hiddenDevices[g.uuid]) delete hiddenDevices[g.uuid]; else hiddenDevices[g.uuid]=true; renderLegend(); applyFilter(); };\n" +
+                "    var loc=document.createElement('span'); loc.className='dloc'; loc.textContent='📍'; loc.title='Lacak posisi perangkat';\n" +
+                "    loc.onclick=function(ev){ ev.stopPropagation(); devPanelOpen=false; renderLegend(); locateDevice(g); };\n" +
+                "    r.appendChild(loc); pn.appendChild(r);\n" +
                 "  });\n" +
                 "}\n" +
+                "map.on('click',function(){ if(devPanelOpen){ devPanelOpen=false; renderLegend(); } });\n" +
                 "renderLegend();renderProductFilter();applyFilter(true);\n" +
                 // Posisi live datang belakangan (LiveDeviceOverlay menyegarkan tiap 25 detik) —
                 // gambar ulang legenda supaya penanda "belum ada posisi" ikut mutakhir.
