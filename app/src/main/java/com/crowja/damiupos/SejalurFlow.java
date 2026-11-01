@@ -1,6 +1,7 @@
 package com.crowja.damiupos;
 
 import android.app.Dialog;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.res.ColorStateList;
 import android.graphics.Typeface;
@@ -32,7 +33,9 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
+import com.crowja.damiupos.db.TransactionDao;
 import com.crowja.damiupos.sync.SyncApi;
+import com.crowja.damiupos.sync.SyncScheduler;
 import com.crowja.damiupos.sync.SyncSettings;
 import com.crowja.damiupos.util.SejalurPlanLogic;
 import com.crowja.damiupos.util.SejalurPlanLogic.PlanRow;
@@ -74,23 +77,34 @@ final class SejalurFlow {
       @Nullable
       double[] sejalurMyFix();
 
+      /** Pesanan Terbuka di layar: uuid → id lokal (dibaca di UI thread sebelum start). */
+      Map<String, Long> sejalurOpenDispatchIds();
+
+      /** Alasan Kirim Sejalur tak boleh dimulai sekarang (rit berjalan, rencana lain menunggu, …); null = boleh. */
+      @Nullable
+      String sejalurBlock();
+
       /**
-       * Start sukses di server → terapkan di HP (klaim lokal Pesanan Terbuka, titipan rencana, sinkron,
-       * muat ulang → rit berjalan). @return {mulai sekarang, menunggu sinkron}
+       * Start sukses di server, rencana sudah tersimpan ({@link #persistStart}) → muat ulang layar supaya
+       * rit berjalan. @return {mulai sekarang, menunggu sinkron}
        */
-      int[] sejalurApplyStart(String targetUuid, List<String> ritUuids, boolean targetHeld);
+      int[] sejalurApplyStart(List<String> ritUuids);
 
       /** Buka Peta Delivery dalam mode pilih titik terjauh. */
       void sejalurOpenMap();
    }
 
-   private static final int C_TEXT = 0xFF212121;
-   private static final int C_TEXT2 = 0xFF424242;
-   private static final int C_MUTED = 0xFF616161;
-   private static final int C_PRIMARY = 0xFF1565C0;
-   private static final int C_PRIMARY_DARK = 0xFF0D47A1;
-   private static final int C_DANGER = 0xFFB71C1C;
-   private static final int C_OK = 0xFF1B5E20;
+   // Palet layar ini (selalu terang). Paket-privat supaya kontrasnya diuji JUnit (SejalurFlowContrastTest).
+   static final int C_TEXT = 0xFF212121;
+   static final int C_TEXT2 = 0xFF424242;
+   static final int C_MUTED = 0xFF616161;
+   static final int C_PRIMARY = 0xFF1565C0;
+   static final int C_PRIMARY_DARK = 0xFF0D47A1;
+   static final int C_DANGER = 0xFFB71C1C;
+   static final int C_OK = 0xFF1B5E20;
+   /** Latar kartu pemilih yang biasa / yang TIDAK bisa dipilih (abu-abu — teks tetap penuh, tanpa alpha). */
+   static final int C_CARD_BG = 0xFFFFFFFF;
+   static final int C_CARD_BLOCKED_BG = 0xFFEEEEEE;
 
    private final AppCompatActivity act;
    private final Host host;
@@ -391,7 +405,7 @@ final class SejalurFlow {
    private View buildRow() {
       LinearLayout card = new LinearLayout(this.act);
       card.setOrientation(LinearLayout.VERTICAL);
-      card.setBackground(this.rounded(-1, 0xFFE0E0E0, 12f));
+      card.setBackground(this.rounded(C_CARD_BG, 0xFFE0E0E0, 12f));
       card.setPadding(this.dp(12f), this.dp(10f), this.dp(12f), this.dp(10f));
       RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(-1, -2);
       lp.setMargins(this.dp(2f), this.dp(4f), this.dp(2f), this.dp(4f));
@@ -482,7 +496,11 @@ final class SejalurFlow {
       String why = t.blockReason();
       block.setText(why.isEmpty() ? "" : "⚠ " + why);
       block.setVisibility(why.isEmpty() ? View.GONE : View.VISIBLE);
-      card.setAlpha(why.isEmpty() ? 1.0F : 0.6F);
+      // Baris yang tak bisa dipilih: latar abu-abu, teks TETAP penuh (alpha kartu menurunkan alasan ⚠ di
+      // bawah 4,5:1 — justru teks itu yang harus terbaca). Kartu didaur ulang → selalu set keduanya.
+      card.setAlpha(1.0F);
+      card.setBackground(why.isEmpty() ? this.rounded(C_CARD_BG, 0xFFE0E0E0, 12f)
+            : this.rounded(C_CARD_BLOCKED_BG, 0xFFBDBDBD, 12f));
    }
 
    // ================================================================== 2. galon yang dibawa
@@ -791,6 +809,14 @@ final class SejalurFlow {
       summary.setTextSize(15f);
       summary.setTypeface(null, Typeface.BOLD);
       box.addView(summary);
+      // Batas 25 order per Kirim Sejalur: kotak yang belum dicentang dikunci begitu penuh — tak ada order
+      // tercentang yang diam-diam terpotong saat start (ringkasan = yang benar-benar dikirim).
+      final TextView capWarn = this.smallNote("⚠ Maksimal " + SejalurPlanLogic.MAX_STOPS
+            + " order per Kirim Sejalur — lepas centang salah satu untuk menukar.", C_DANGER);
+      capWarn.setTypeface(null, Typeface.BOLD);
+      capWarn.setVisibility(View.GONE);
+      box.addView(capWarn);
+      final List<CheckBox> optional = new ArrayList<>();
       JSONObject origin = plan.optJSONObject("origin");
       String src = origin != null ? str(origin, "source", "") : "";
       box.addView(this.smallNote("Dihitung dari " + ("gps".equals(src) ? "posisi HP (lokasi depot belum diatur)"
@@ -808,6 +834,15 @@ final class SejalurFlow {
          summary.setText(SejalurPlanLogic.summaryLine(n, g, capacity, routeKm, method)
                + (over ? "\n⚠ Melebihi muatan " + (g - capacity) + " galon" : ""));
          summary.setTextColor(over ? C_DANGER : C_OK);
+         boolean full = !SejalurPlanLogic.canCheckMore(everything, checked);
+         boolean anyLocked = false;
+         for (CheckBox o : optional) {
+            boolean lock = full && !o.isChecked();
+            o.setEnabled(!lock);
+            o.setTextColor(lock ? C_MUTED : C_TEXT);
+            anyLocked |= lock;
+         }
+         capWarn.setVisibility(anyLocked ? View.VISIBLE : View.GONE);
       };
       for (int i = 0; i < main.size(); i++) {
          final PlanRow r = main.get(i);
@@ -822,6 +857,7 @@ final class SejalurFlow {
                if (on) checked.add(r.uuid); else checked.remove(r.uuid);
                recompute.run();
             });
+            optional.add(cb);
          }
          box.addView(cb);
       }
@@ -837,6 +873,7 @@ final class SejalurFlow {
                if (on) checked.add(r.uuid); else checked.remove(r.uuid);
                recompute.run();
             });
+            optional.add(cb);
             box.addView(cb);
          }
       }
@@ -855,14 +892,29 @@ final class SejalurFlow {
          final Button neg = dlg.getButton(AlertDialog.BUTTON_NEGATIVE);
          pos.setOnClickListener((v) -> {
             if (!pos.isEnabled()) return;
+            List<String> over = SejalurPlanLogic.startOverflow(main, alts, checked, targetUuid);
+            if (!over.isEmpty()) {
+               Toast.makeText(this.act, "Maksimal " + SejalurPlanLogic.MAX_STOPS + " order per Kirim Sejalur — lepas centang "
+                     + over.size() + " order dulu.", 1).show();
+               return;
+            }
+            // Dicek ulang tepat sebelum start: selama pratinjau terbuka rit bisa sudah berjalan (rencana lain
+            // tersinkron) — start baru akan menimpa rencana itu / menggabung ke rit yang tak berhubungan.
+            String busy = this.host.sejalurBlock();
+            if (busy != null) {
+               dlg.dismiss();
+               Toast.makeText(this.act, busy, 1).show();
+               return;
+            }
             List<String> uuids = SejalurPlanLogic.startUuids(main, alts, checked, targetUuid);
             Map<String, String> names = new LinkedHashMap<>();
             for (PlanRow r : everything) names.put(r.uuid, r.name);
+            Map<String, Long> openIds = this.host.sejalurOpenDispatchIds();
             pos.setEnabled(false);
             neg.setEnabled(false);
             pos.setText("Memulai…");
             dlg.setCancelable(false);
-            this.requestStart(dlg, pos, neg, targetUuid, names.get(targetUuid), uuids);
+            this.requestStart(dlg, pos, neg, targetUuid, names.get(targetUuid), uuids, openIds);
          });
       });
       dlg.show();
@@ -870,19 +922,56 @@ final class SejalurFlow {
 
    // ================================================================== 4. mulai + hasil
 
-   private void requestStart(AlertDialog dlg, Button pos, Button neg, String targetUuid, String targetName, List<String> uuids) {
+   /**
+    * Start 200 → simpan di THREAD KERJA, sebelum lompat ke UI: klaim lokal Pesanan Terbuka yang ikut rit,
+    * rencana yang menunggu (urutan rit server, titik terjauh terakhir), lalu sinkron. Server sudah
+    * mengambil alih order & menulis delivery_seq — bila layar dibuat ulang (rotasi) selama permintaan,
+    * layar baru tetap menjalankan rit dari rencana ini di onResume (applyList → absorbSejalurPlan).
+    */
+   static void persistStart(Context ctx, SyncSettings cfg, String targetUuid, List<String> rit, boolean targetHeld,
+                            @Nullable Map<String, Long> openDispatchIds) {
+      if (rit == null || rit.isEmpty()) return;
+      DatabaseHelper db = DatabaseHelper.getInstance(ctx);
+      TransactionDao dao = new TransactionDao(db);
+      String me = cfg.getDeviceUuid();
+      for (String u : rit) {
+         Long id = openDispatchIds != null ? openDispatchIds.get(u) : null;
+         if (id != null && id > 0L) dao.markClaimedLocally(id, me);
+      }
+      (new SettingsDao(db)).setSejalurPending(SejalurPlanLogic.encodePending(
+            new SejalurPlanLogic.Pending(System.currentTimeMillis(), targetHeld ? targetUuid : "", rit)));
+      SyncScheduler.syncNow(ctx.getApplicationContext());
+   }
+
+   private void requestStart(AlertDialog dlg, Button pos, Button neg, String targetUuid, String targetName, List<String> uuids,
+                             Map<String, Long> openDispatchIds) {
       final SyncSettings cfg = this.cfg();
+      final Context app = this.act.getApplicationContext();
       new Thread(() -> {
          JSONObject ok = null;
          String err = null;
          JSONArray errSkipped = null;
          boolean retry = true;
+         List<String> rit = new ArrayList<>();
+         boolean held = false;
          try {
             JSONObject body = new JSONObject();
             body.put("target_uuid", targetUuid);
             body.put("uuids", new JSONArray(uuids));
             this.putFix(body);
             ok = (new SyncApi(cfg)).sejalurStart(body);
+            JSONArray ra = ok.optJSONArray("rit_uuids");
+            if (ra != null) {
+               for (int i = 0; i < ra.length(); i++) {
+                  String u = ra.optString(i, "");
+                  if (!u.isEmpty() && !"null".equals(u) && !rit.contains(u)) rit.add(u);
+               }
+            }
+            held = ok.optBoolean("target_held", rit.contains(targetUuid));
+            try {
+               persistStart(app, cfg, targetUuid, rit, held, openDispatchIds);
+            } catch (Exception ignored) {
+            }
          } catch (SyncApi.SyncException se) {
             String m = se.serverMessage();
             err = m != null ? m : "Gagal memulai Kirim Sejalur (kode " + se.code + ").";
@@ -898,8 +987,14 @@ final class SejalurFlow {
          final String fErr = err;
          final JSONArray fSkipped = errSkipped;
          final boolean fRetry = retry;
+         final List<String> fRit = rit;
+         final boolean fHeld = held;
          this.act.runOnUiThread(() -> {
-            if (this.gone()) return;
+            if (this.gone()) {
+               // Layar sudah dibuat ulang: rencana tersimpan (persistStart), layar baru menjalankan rit-nya.
+               if (fOk != null) Toast.makeText(app, "🛣️ " + str(fOk, "message", "Kirim Sejalur dimulai."), 1).show();
+               return;
+            }
             if (fOk == null) {
                if (fRetry) {
                   pos.setEnabled(true);
@@ -916,17 +1011,8 @@ final class SejalurFlow {
                return;
             }
             dlg.dismiss();
-            List<String> rit = new ArrayList<>();
-            JSONArray ra = fOk.optJSONArray("rit_uuids");
-            if (ra != null) {
-               for (int i = 0; i < ra.length(); i++) {
-                  String u = ra.optString(i, "");
-                  if (!u.isEmpty() && !"null".equals(u) && !rit.contains(u)) rit.add(u);
-               }
-            }
-            boolean held = fOk.optBoolean("target_held", rit.contains(targetUuid));
-            int[] r = rit.isEmpty() ? new int[]{0, 0} : this.host.sejalurApplyStart(targetUuid, rit, held);
-            this.showResult(fOk, rit.size(), r[1], held, targetName);
+            int[] r = fRit.isEmpty() ? new int[]{0, 0} : this.host.sejalurApplyStart(fRit);
+            this.showResult(fOk, fRit.size(), r[1], fHeld, targetName);
          });
       }).start();
    }

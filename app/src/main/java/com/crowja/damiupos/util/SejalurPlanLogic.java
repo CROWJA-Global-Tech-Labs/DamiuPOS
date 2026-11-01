@@ -60,11 +60,14 @@ public final class SejalurPlanLogic {
      */
     public static long ageMinutes(long serverAgeMin, long queuedMs, long nowMs) {
         boolean hasQueued = queuedMs != Long.MAX_VALUE && queuedMs != Long.MIN_VALUE;
+        // age_minutes > 0 = menurut jam SERVER order sudah mengantre — jam HP yang terlambat tak boleh
+        // membuatnya tampak "terjadwal" (queued_at lalu terbaca di masa depan).
+        if (serverAgeMin > 0L) return serverAgeMin;
         // Server mengirim age_minutes = 0 untuk jadwal masa depan — tanda terjadwal hanya ada di queued_at.
         if (hasQueued && queuedMs - nowMs > FUTURE_SLACK_MS) {
             return -Math.max(1L, (queuedMs - nowMs + 59999L) / 60000L);
         }
-        if (serverAgeMin >= 0L) return serverAgeMin;
+        if (serverAgeMin == 0L) return 0L;
         if (hasQueued) return Math.max(0L, (nowMs - queuedMs) / 60000L);
         return AGE_UNKNOWN;
     }
@@ -169,10 +172,29 @@ public final class SejalurPlanLogic {
 
         /** Alasan baris tak bisa dipilih ("" = bisa). */
         public String blockReason() {
-            if (!hasGeo()) return "tanpa lokasi — tidak bisa dipilih";
-            if (scheduled()) return "pesanan terjadwal — belum boleh diantar";
+            if (!hasGeo()) return REASON_NO_GEO;
+            if (scheduled()) return REASON_SCHEDULED;
             return "";
         }
+    }
+
+    public static final String REASON_NO_GEO = "tanpa lokasi — tidak bisa dipilih";
+    public static final String REASON_SCHEDULED = "pesanan terjadwal — belum boleh diantar";
+    public static final String REASON_CLAIM_PENDING = "permintaan Ambil Alih-nya belum tuntas";
+
+    /**
+     * Alasan pin Peta Delivery TIDAK boleh jadi titik terjauh ("" = boleh) — aturan yang sama dengan
+     * pemilih daftar ({@link Target#blockReason}; antrean perangkat lain yang terkunci permintaan
+     * Ambil Alih tak ikut daftar), supaya tombol "Kirim Sejalur ke sini" tak ditawarkan lalu ditolak.
+     *
+     * @param ageMin       {@link #ageMinutes} (negatif = Pesanan Terjadwal; {@link #AGE_UNKNOWN} boleh)
+     * @param claimBlocked order perangkat lain dengan permintaan Ambil Alih yang masih mengunci
+     */
+    public static String mapBlockReason(long ageMin, double lat, double lng, boolean claimBlocked) {
+        if (!isGeo(lat, lng)) return REASON_NO_GEO;
+        if (ageMin != AGE_UNKNOWN && ageMin < 0L) return REASON_SCHEDULED;
+        if (claimBlocked) return REASON_CLAIM_PENDING;
+        return "";
     }
 
     /** Gabung sumber berurutan (Antrian Saya → Pesanan Terbuka → perangkat lain), unik per uuid; tanpa uuid dibuang. */
@@ -267,12 +289,36 @@ public final class SejalurPlanLogic {
     }
 
     /**
+     * Masih boleh mencentang satu order lagi? Satu Kirim Sejalur maksimal {@link #MAX_STOPS} order
+     * (titik terjauh termasuk) — pratinjau mengunci kotak yang belum dicentang begitu batas tercapai,
+     * jadi tak ada order tercentang yang diam-diam terpotong saat start.
+     */
+    public static boolean canCheckMore(Collection<PlanRow> rows, Set<String> checked) {
+        return checkedCount(rows, checked) < MAX_STOPS;
+    }
+
+    /**
      * uuid untuk {@code /sejalur/start}, urutan rute: baris rencana tercentang sesuai urutan tampil,
      * alternatif tercentang DISISIPKAN menurut {@code km_from_origin} (sebelum baris pertama yang lebih
-     * jauh), titik terjauh SELALU terakhir. Dibatasi {@link #MAX_STOPS} (titik terjauh tak pernah terpotong).
+     * jauh), titik terjauh SELALU terakhir. Dibatasi {@link #MAX_STOPS} (titik terjauh tak pernah terpotong)
+     * — yang terpotong dilaporkan {@link #startOverflow} dan pratinjau menolak start selama masih ada.
      */
     public static List<String> startUuids(List<PlanRow> main, List<PlanRow> alternates, Set<String> checked, String targetUuid) {
         String target = targetUuid == null ? "" : targetUuid;
+        List<String> route = routeUuids(main, alternates, checked, target);
+        List<String> out = new ArrayList<>(route.subList(0, Math.min(route.size(), MAX_STOPS - 1)));
+        if (!target.isEmpty()) out.add(target);
+        return out;
+    }
+
+    /** uuid tercentang (bukan titik terjauh) yang TAK muat dalam {@link #startUuids} karena batas {@link #MAX_STOPS}. */
+    public static List<String> startOverflow(List<PlanRow> main, List<PlanRow> alternates, Set<String> checked, String targetUuid) {
+        List<String> route = routeUuids(main, alternates, checked, targetUuid == null ? "" : targetUuid);
+        return route.size() <= MAX_STOPS - 1 ? new ArrayList<>() : new ArrayList<>(route.subList(MAX_STOPS - 1, route.size()));
+    }
+
+    /** Baris tercentang selain titik terjauh, urutan rute (tanpa batas). */
+    private static List<String> routeUuids(List<PlanRow> main, List<PlanRow> alternates, Set<String> checked, String target) {
         List<PlanRow> base = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         seen.add(target);
@@ -301,11 +347,7 @@ public final class SejalurPlanLogic {
             base.add(pos, a);
         }
         List<String> out = new ArrayList<>();
-        for (PlanRow r : base) {
-            if (out.size() >= MAX_STOPS - 1) break;
-            out.add(r.uuid);
-        }
-        if (!target.isEmpty()) out.add(target);
+        for (PlanRow r : base) out.add(r.uuid);
         return out;
     }
 
@@ -342,6 +384,15 @@ public final class SejalurPlanLogic {
         public boolean expired(long nowMs) {
             return nowMs - this.at > PENDING_TTL_MS;
         }
+    }
+
+    /**
+     * Rencana yang masih menunggu (belum kedaluwarsa) — Kirim Sejalur baru ditolak selama ini ada,
+     * supaya order rencana lama yang sudah diambil server tak kehilangan rit-nya. null = tidak ada.
+     */
+    public static Pending waiting(String raw, long nowMs) {
+        Pending p = decodePending(raw);
+        return p != null && !p.expired(nowMs) ? p : null;
     }
 
     private static boolean token(String s) {
@@ -386,10 +437,13 @@ public final class SejalurPlanLogic {
 
     /** Urutan rit Kirim Sejalur yang sedang berjalan: uuid → id lokal, URUTAN rute. */
     public static final class Order {
+        /** {@link Pending#at} rencana asal — identitas rencana (target yang sama bisa dipakai lagi nanti). */
+        public final long planAt;
         public final String target;
         public final LinkedHashMap<String, Long> ids;
 
-        public Order(String target, Map<String, Long> ids) {
+        public Order(long planAt, String target, Map<String, Long> ids) {
+            this.planAt = planAt;
             this.target = target == null ? "" : target;
             this.ids = ids == null ? new LinkedHashMap<>() : new LinkedHashMap<>(ids);
         }
@@ -405,11 +459,16 @@ public final class SejalurPlanLogic {
         }
     }
 
-    /** "target|u1=12,u2=15" */
+    /** Urutan rit {@code o} memang hasil rencana {@code p} (bukan sisa rencana lain dengan target sama). */
+    public static boolean samePlan(Pending p, Order o) {
+        return p != null && o != null && o.planAt == p.at && o.target.equals(p.target);
+    }
+
+    /** "planAt|target|u1=12,u2=15" */
     public static String encodeOrder(Order o) {
         if (o == null || o.ids.isEmpty()) return "";
         StringBuilder sb = new StringBuilder();
-        sb.append(token(o.target) ? o.target : "").append('|');
+        sb.append(o.planAt).append('|').append(token(o.target) ? o.target : "").append('|');
         boolean first = true;
         for (Map.Entry<String, Long> e : o.ids.entrySet()) {
             if (!token(e.getKey()) || e.getValue() == null || e.getValue() <= 0) continue;
@@ -422,10 +481,16 @@ public final class SejalurPlanLogic {
 
     public static Order decodeOrder(String raw) {
         if (raw == null || raw.trim().isEmpty()) return null;
-        String[] parts = raw.trim().split("\\|", -1);
-        if (parts.length != 2) return null;
+        String[] parts = raw.trim().split("[|]", -1);
+        if (parts.length != 3) return null;
+        long planAt;
+        try {
+            planAt = Long.parseLong(parts[0].trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
         LinkedHashMap<String, Long> ids = new LinkedHashMap<>();
-        for (String pair : parts[1].split(",")) {
+        for (String pair : parts[2].split(",")) {
             int eq = pair.indexOf('=');
             if (eq <= 0) continue;
             try {
@@ -436,8 +501,13 @@ public final class SejalurPlanLogic {
             }
         }
         if (ids.isEmpty()) return null;
-        return new Order(parts[0].trim(), ids);
+        return new Order(planAt, parts[1].trim(), ids);
     }
+
+    /** Rencana tak diteruskan: kedaluwarsa sebelum rit-nya sempat jalan (tak ada rit berjalan). */
+    public static final int DROP_EXPIRED = 1;
+    /** Rencana tak diteruskan: rit Kirim Sejalur-nya sudah habis (Selesai / dikeluarkan semua). */
+    public static final int DROP_RIT_ENDED = 2;
 
     /** Hasil satu kali penyerapan rencana ke rit (dipanggil tiap daftar Antrian Saya dimuat). */
     public static final class Absorb {
@@ -449,23 +519,51 @@ public final class SejalurPlanLogic {
         public final List<String> missing = new ArrayList<>();
         /** Urutan rit terbaru (uuid → id), urutan rute. */
         public Order order;
-        /** Rencana tuntas (semua sudah ada) atau kedaluwarsa → titipan dihapus. */
+        /** Rencana tuntas (semua sudah ada), kedaluwarsa, atau dibuang → titipan dihapus. */
         public boolean finished;
-        /** Kedaluwarsa padahal masih ada order yang tak pernah tiba → beri tahu kurir sekali. */
+        /** Kedaluwarsa saat rit berjalan padahal masih ada order yang belum tiba → diteruskan ke titipan "masukkan ke rit"; beri tahu kurir sekali. */
         public boolean expiredMissing;
+        /**
+         * 0, {@link #DROP_EXPIRED} atau {@link #DROP_RIT_ENDED}: rencana DIBUANG tanpa menjalankan apa pun
+         * (tak ada rit berjalan) — {@link #add} kosong, order-nya tetap/akan ada di Antrian Saya.
+         */
+        public int dropped;
+        /** Saat {@link #dropped}: uuid rencana yang tak pernah ikut rit (sudah ada di HP atau belum). */
+        public final List<String> left = new ArrayList<>();
     }
 
     /**
      * Serap rencana: tiap uuid rencana yang barisnya SUDAH ada di Antrian Saya ({@code localIds}) dan
      * belum pernah diserap masuk {@link Absorb#add} bila belum berjalan; yang sudah diserap sebelumnya
-     * ({@code prev}) tak pernah ditambahkan ulang (mungkin sudah Selesai / sengaja dikeluarkan kurir).
+     * ({@code prev} dari rencana yang SAMA, {@link #samePlan}) tak pernah ditambahkan ulang (mungkin
+     * sudah Selesai / sengaja dikeluarkan kurir).
+     *
+     * <p>Rit hanya DIMULAI dari rencana yang masih segar dan belum pernah berjalan. Tanpa rit berjalan,
+     * rencana yang lewat {@link #PENDING_TTL_MS} atau yang rit-nya sudah habis dibuang ({@link Absorb#dropped})
+     * — HP tak diam-diam memulai rit (stempel "sedang diantar") dari rencana basi / dari order yang telat
+     * tersinkron setelah rit-nya selesai. Rit masih berjalan → order yang tiba tetap diserap ke rit itu.
      */
     public static Absorb absorb(Pending p, Order prev, Map<String, Long> localIds, Collection<Long> running, long nowMs) {
         Absorb a = new Absorb();
+        boolean same = samePlan(p, prev);
+        boolean idle = running == null || running.isEmpty();
+        boolean expired = p.expired(nowMs);
+        boolean ended = same && !prev.ids.isEmpty();
+        if (idle && (ended || expired)) {
+            a.dropped = ended ? DROP_RIT_ENDED : DROP_EXPIRED;
+            for (String u : p.uuids) {
+                if (same && prev.ids.containsKey(u)) continue;
+                a.left.add(u);
+                Long id = localIds != null ? localIds.get(u) : null;
+                if (id == null || id <= 0L) a.missing.add(u);
+            }
+            a.order = new Order(p.at, p.target, null);
+            a.finished = true;
+            return a;
+        }
         LinkedHashMap<String, Long> ids = new LinkedHashMap<>();
-        boolean samePlan = prev != null && prev.target.equals(p.target);
         for (String u : p.uuids) {
-            Long known = samePlan ? prev.ids.get(u) : null;
+            Long known = same ? prev.ids.get(u) : null;
             if (known != null) {
                 ids.put(u, known);
                 continue;
@@ -481,11 +579,28 @@ public final class SejalurPlanLogic {
                 a.addUuids.add(u);
             }
         }
-        a.order = new Order(p.target, ids);
-        boolean expired = p.expired(nowMs);
+        a.order = new Order(p.at, p.target, ids);
         a.finished = a.missing.isEmpty() || expired;
         a.expiredMissing = expired && !a.missing.isEmpty();
         return a;
+    }
+
+    /**
+     * Urutan rit Kirim Sejalur DILEPAS dengan sengaja (🔄 Urutkan Rute Terpendek sukses, ▶ rit baru):
+     * rencana yang menunggu ikut dibuang — kalau tidak, penyerapan berikutnya (tanpa {@code prev})
+     * membangun & memaksakan urutan koridor lagi. uuid rencana yang BELUM pernah ikut rit dikembalikan
+     * untuk titipan "masukkan ke rit" bila rit masih berjalan (order perangkat lain yang telat tetap
+     * ikut rit ini); tanpa rit berjalan → kosong (order-nya tinggal di Antrian Saya).
+     */
+    public static List<String> releaseCarry(Pending p, Order current, boolean running) {
+        List<String> out = new ArrayList<>();
+        if (p == null || !running) return out;
+        boolean same = samePlan(p, current);
+        for (String u : p.uuids) {
+            if (same && current.ids.containsKey(u)) continue;
+            out.add(u);
+        }
+        return out;
     }
 
     /**

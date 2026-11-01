@@ -189,8 +189,18 @@ public class DeliveryMapActivity extends AppCompatActivity {
                     q.put("age_lbl", SejalurPlanLogic.mapAgeLine(age));
                 }
                 q.put("age_lv", SejalurPlanLogic.ageLevel(age));
+                // 🛣️ Pin yang ditolak pemilih daftar (terjadwal / tanpa lokasi / terkunci permintaan Ambil
+                // Alih) tak ditawari "Kirim Sejalur ke sini" — alasannya tampil di popup mode pilih.
+                q.put("sejalur_why", sejalurBlockReason(q.optString("uuid", ""), age, q.optDouble("lat", 0.0),
+                        q.optDouble("lng", 0.0), q.optBoolean("mine", false), q.optBoolean("open_dispatch", false)));
             } catch (Exception ignored) {}
         }
+    }
+
+    /** Alasan pin tak boleh jadi titik terjauh ("" = boleh) — aturan pemilih daftar (SejalurPlanLogic). */
+    private static String sejalurBlockReason(String uuid, long ageMin, double lat, double lng, boolean mine, boolean openDispatch) {
+        boolean claimBlocked = !mine && !openDispatch && com.crowja.damiupos.sync.ClaimRequests.blocks(uuid);
+        return SejalurPlanLogic.mapBlockReason(ageMin, lat, lng, claimBlocked);
     }
 
     /** Kirim Sejalur boleh dari peta ini: HP delivery terhubung, bukan mode terpandu. */
@@ -208,6 +218,21 @@ public class DeliveryMapActivity extends AppCompatActivity {
         if (isFinishing() || isDestroyed() || trxUuid == null || trxUuid.isEmpty()) return;
         if (runActive()) {
             Toast.makeText(this, "Selesaikan rit yang berjalan dulu.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        // Ditolak di sini, peta TETAP terbuka (dulu peta ditutup dulu lalu Antrian Delivery menolak).
+        long age = hasAge && !Double.isNaN(ageMin) ? Math.round(ageMin) : SejalurPlanLogic.AGE_UNKNOWN;
+        String why = sejalurBlockReason(trxUuid, age, lat, lng, mine, openDispatch);
+        if (!why.isEmpty()) {
+            boolean claim = SejalurPlanLogic.REASON_CLAIM_PENDING.equals(why);
+            Toast.makeText(this, claim ? com.crowja.damiupos.sync.ClaimRequests.blockedToast(trxUuid)
+                    : "🛣️ " + (custName == null ? "" : custName) + ": " + why, Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (SejalurPlanLogic.waiting(new SettingsDao(DatabaseHelper.getInstance(this)).getSejalurPending(),
+                System.currentTimeMillis()) != null) {
+            Toast.makeText(this, "🛣️ Kirim Sejalur sebelumnya masih menunggu order-nya tersinkron — lihat Antrian Delivery.",
+                    Toast.LENGTH_LONG).show();
             return;
         }
         Intent i = new Intent(this, DeliveryQueueActivity.class);
@@ -825,8 +850,11 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 // sedang diantar / dijeda, dan tak saat rit berjalan (selesaikan rit dulu). onclick memakai
                 // INDEKS pts (angka), bukan uuid mentah di dalam string JS.
                 "  var ageHtml = p.age_lbl ? '<div class=\"pmeta age'+(p.age_lv==2?' late':(p.age_lv==1?' warn':''))+'\">'+escHtml(p.age_lbl)+'</div>' : '';\n" +
+                // sejalur_why (Java, decorateAges) = alasan pemilih daftar menolak pin ini (terjadwal / tanpa
+                // lokasi / permintaan Ambil Alih) → tanpa tombol; di mode pilih alasannya ditampilkan.
                 "  var sejalurBtn = (!sejalurOk || runActive || p.in_progress || p.tertunda_until) ? ''\n" +
-                "    : '<a class=\"claimbtn sejalurbtn\" href=\"#\" onclick=\"sejalurAt('+idx+');return false;\">🛣️ Kirim Sejalur ke sini</a>';\n" +
+                "    : (p.sejalur_why ? (sejalurPick ? '<div class=\"pmeta\">🛣️ Tidak bisa jadi titik terjauh — '+escHtml(p.sejalur_why)+'</div>' : '')\n" +
+                "    : '<a class=\"claimbtn sejalurbtn\" href=\"#\" onclick=\"sejalurAt('+idx+');return false;\">🛣️ Kirim Sejalur ke sini</a>');\n" +
                 "  var actions = sejalurPick ? sejalurBtn : claimBtn+runBtn+sejalurBtn;\n" +
                 "  var html='<div class=\"pname\">'+escHtml(p.name)+mineBadge+'</div><div class=\"pmeta\">'+meta+'</div>'+ageHtml+itemsHtml+odNote+pausedNote+progressNote+actions;\n" +
                 "  m.bindPopup(html);\n" +

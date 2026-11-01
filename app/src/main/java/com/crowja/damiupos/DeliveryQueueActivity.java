@@ -752,8 +752,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * terpendek menurut jarak TEMPUH (OSRM), termasuk balik ke cabang tiap rit, lalu menulisnya sebagai
     * urutan (delivery_seq). Urutan baru tiba lewat sinkron → kartu Strategi & daftar ikut berubah.
     */
-   /** 🔄 di header saat rit berjalan: susun ulang HANYA pemberhentian rit ini dari posisi sekarang. */
-   private void refreshRunRoute(View btn) {
+   /**
+    * 🔄 di header saat rit berjalan: susun ulang HANYA pemberhentian rit ini dari posisi sekarang.
+    *
+    * @param onSuccess dijalankan (UI thread) hanya bila server BENAR-BENAR menulis urutan baru — gagal /
+    *                  tak terkirim → keadaan HP dibiarkan apa adanya
+    */
+   private void refreshRunRoute(View btn, @Nullable Runnable onSuccess) {
       List<String> uuids = new ArrayList<>();
       for (Transaction t : this.runStops()) {
          String u = this.dao.getSyncUuidById(t.getId());
@@ -763,11 +768,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          Toast.makeText(this, uuids.isEmpty() ? "Order rit ini belum tersinkron ke server." : "Rit ini hanya satu pemberhentian.", 0).show();
          return;
       }
-      this.refreshRit(btn, uuids);
+      this.refreshRit(btn, uuids, onSuccess);
    }
 
    /** @param onlyUuids null = seluruh antrean (Refresh RIT); isi = hanya pemberhentian rit berjalan. */
    private void refreshRit(View btn, @Nullable List<String> onlyUuids) {
+      this.refreshRit(btn, onlyUuids, null);
+   }
+
+   private void refreshRit(View btn, @Nullable List<String> onlyUuids, @Nullable Runnable onSuccess) {
       SyncSettings cfg = this.syncCfg();
       if (!cfg.isEnrolled()) {
          Toast.makeText(this, "Perangkat belum terhubung ke server.", 1).show();
@@ -775,7 +784,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
       btn.setEnabled(false);
       Toast.makeText(this, "Menghitung rute terpendek dari posisi Anda…", 0).show();
-      this.currentFixForRit((loc) -> this.sendRefreshRit(btn, cfg, loc, onlyUuids));
+      this.currentFixForRit((loc) -> this.sendRefreshRit(btn, cfg, loc, onlyUuids, onSuccess));
    }
 
    /** Posisi sekarang: fix terakhir yang masih segar, else tunggu satu fix baru (maks 8 dtk), else null. */
@@ -831,7 +840,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }, RIT_FIX_TIMEOUT_MS);
    }
 
-   private void sendRefreshRit(View btn, SyncSettings cfg, @Nullable Location loc, @Nullable List<String> onlyUuids) {
+   private void sendRefreshRit(View btn, SyncSettings cfg, @Nullable Location loc, @Nullable List<String> onlyUuids,
+                               @Nullable Runnable onSuccess) {
       (new Thread(() -> {
          String okMsg = null;
          String errMsg = null;
@@ -856,6 +866,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (this.isFinishing() || this.isDestroyed()) return;
             btn.setEnabled(true);
             if (fOk != null) {
+               if (onSuccess != null) onSuccess.run();
                // Pesan (jumlah rit, km, hemat berapa) cukup panjang untuk toast → dialog singkat.
                (new AlertDialog.Builder(this)).setTitle("🔄 Rit Diperbarui").setMessage(fOk)
                        .setPositiveButton("OK", (DialogInterface.OnClickListener) null).show();
@@ -6448,8 +6459,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private void doStartRunsNow(List<Transaction> list) {
       if (list != null && !list.isEmpty()) {
-         // Rit BARU lewat ▶ biasa → urutan khusus rit Kirim Sejalur sebelumnya tak berlaku lagi.
-         if (!this.isRunning()) this.setSejalurOrder(null);
+         // Rit BARU lewat ▶ biasa → urutan khusus rit Kirim Sejalur sebelumnya tak berlaku lagi, begitu juga
+         // rencananya yang masih menunggu sinkron (jangan diserap ke rit yang tak berhubungan ini).
+         if (!this.isRunning() && this.releaseSejalur()) {
+            Toast.makeText(this, "🛣️ Rencana Kirim Sejalur yang menunggu sinkron dibatalkan — order-nya tetap di Antrian Saya.", 1).show();
+         }
          for(Transaction t : list) {
             if (t != null) {
                this.dao.startDelivery(t.getId());
@@ -6725,7 +6739,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (this.sejalurOrder != null) return;
       View b = this.findViewById(id.btnRunReroute);
       if (b != null && b.isEnabled() && this.runStops().size() > 1) {
-         this.refreshRunRoute(b);
+         this.refreshRunRoute(b, null);
       }
    }
 
@@ -6746,8 +6760,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                return SejalurPlanLogic.isGeo(a.otherLat, a.otherLng) ? new double[]{a.otherLat, a.otherLng} : null;
             }
 
-            public int[] sejalurApplyStart(String targetUuid, List<String> ritUuids, boolean targetHeld) {
-               return DeliveryQueueActivity.this.sejalurApplyStart(targetUuid, ritUuids, targetHeld);
+            public Map<String, Long> sejalurOpenDispatchIds() {
+               return DeliveryQueueActivity.this.sejalurOpenDispatchIds();
+            }
+
+            @Nullable
+            public String sejalurBlock() {
+               return DeliveryQueueActivity.this.sejalurBlock();
+            }
+
+            public int[] sejalurApplyStart(List<String> ritUuids) {
+               return DeliveryQueueActivity.this.sejalurApplyStart(ritUuids);
             }
 
             public void sejalurOpenMap() {
@@ -6758,23 +6781,73 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return this.sejalurFlow;
    }
 
-   /** Gerbang Kirim Sejalur — false (dengan Toast alasannya) bila tak boleh dimulai sekarang. */
-   private boolean sejalurGate() {
+   /** Rencana Kirim Sejalur sebelumnya yang masih menunggu order-nya tersinkron (belum 15 mnt); null = tak ada. */
+   @Nullable
+   private SejalurPlanLogic.Pending sejalurWaiting() {
+      return SejalurPlanLogic.waiting((new SettingsDao(DatabaseHelper.getInstance(this))).getSejalurPending(),
+            System.currentTimeMillis());
+   }
+
+   /** Alasan Kirim Sejalur tak boleh dimulai sekarang; null = boleh. Dicek lagi tepat sebelum /sejalur/start. */
+   @Nullable
+   private String sejalurBlock() {
       SyncSettings cfg = this.syncCfg();
-      if (this.guidedMode) {
-         Toast.makeText(this, "🛣️ Kirim Sejalur tidak tersedia di mode Pengiriman Terpandu.", 1).show();
-         return false;
-      } else if (!cfg.isEnrolled()) {
-         Toast.makeText(this, "Perangkat belum terhubung ke server.", 1).show();
-         return false;
-      } else if (!cfg.isDeliveryDevice()) {
-         Toast.makeText(this, "Perangkat ini tidak ditandai sebagai perangkat delivery — minta admin mengaktifkannya.", 1).show();
-         return false;
-      } else if (this.isRunning()) {
-         Toast.makeText(this, "Selesaikan rit yang berjalan dulu.", 1).show();
-         return false;
+      if (this.guidedMode) return "🛣️ Kirim Sejalur tidak tersedia di mode Pengiriman Terpandu.";
+      if (!cfg.isEnrolled()) return "Perangkat belum terhubung ke server.";
+      if (!cfg.isDeliveryDevice()) return "Perangkat ini tidak ditandai sebagai perangkat delivery — minta admin mengaktifkannya.";
+      if (this.isRunning()) return "Selesaikan rit yang berjalan dulu.";
+      // Rencana sebelumnya (order-nya sudah diambil server) masih menunggu sinkron — rencana baru akan
+      // menimpanya dan order itu tak pernah masuk rit.
+      if (this.sejalurWaiting() != null) return "🛣️ Kirim Sejalur sebelumnya masih menunggu order-nya tersinkron ke HP ini.";
+      return null;
+   }
+
+   /** Gerbang Kirim Sejalur — false (dengan Toast / dialog alasannya) bila tak boleh dimulai sekarang. */
+   private boolean sejalurGate() {
+      String why = this.sejalurBlock();
+      if (why == null) return true;
+      SejalurPlanLogic.Pending waiting = this.isRunning() ? null : this.sejalurWaiting();
+      if (waiting != null && !this.guidedMode) {
+         this.showSejalurWaitingDialog(waiting);
+      } else {
+         Toast.makeText(this, why, 1).show();
       }
-      return true;
+      return false;
+   }
+
+   /** Rencana sebelumnya masih menunggu: tunggu (sinkron sekarang) atau batalkan rencana itu. */
+   private void showSejalurWaitingDialog(SejalurPlanLogic.Pending p) {
+      long left = Math.max(1L, (p.at + SejalurPlanLogic.PENDING_TTL_MS - System.currentTimeMillis() + 59999L) / 60000L);
+      (new AlertDialog.Builder(this)).setTitle("🛣️ Kirim Sejalur Masih Menunggu")
+            .setMessage("Kirim Sejalur sebelumnya (" + p.uuids.size() + " order) masih menunggu order-nya tersinkron ke HP ini "
+                  + "— rit dimulai otomatis begitu tiba (paling lama " + left + " mnt lagi).\n\n"
+                  + "Batalkan rencana itu bila ingin memilih ulang. Order yang sudah diambil tetap ada di Antrian Saya.")
+            .setPositiveButton("Tunggu", (d, w) -> SyncScheduler.syncNow(this.getApplicationContext()))
+            .setNegativeButton("Batalkan Rencana Itu", (d, w) -> {
+               (new SettingsDao(DatabaseHelper.getInstance(this))).setSejalurPending("");
+               if (!this.isRunning()) this.setSejalurOrder(null);
+               Toast.makeText(this, "Rencana Kirim Sejalur dibatalkan — order-nya tetap di Antrian Saya.", 1).show();
+            })
+            .show();
+   }
+
+   /**
+    * 🛣️ Urutan rit Kirim Sejalur DILEPAS dengan sengaja (🔄 sukses, ▶ rit baru): rencana yang menunggu
+    * sinkron ikut dibuang (kalau tidak, applyList memasang urutan koridor lagi), order rencana yang belum
+    * ikut rit diteruskan ke titipan "masukkan ke rit" selama rit masih berjalan.
+    *
+    * @return true bila rencana yang masih menunggu (belum 15 mnt) ikut dibuang
+    */
+   private boolean releaseSejalur() {
+      SettingsDao sdao = new SettingsDao(DatabaseHelper.getInstance(this));
+      SejalurPlanLogic.Pending p = SejalurPlanLogic.decodePending(sdao.getSejalurPending());
+      if (p != null) {
+         List<String> carry = SejalurPlanLogic.releaseCarry(p, this.sejalurOrder, this.isRunning());
+         if (!carry.isEmpty()) sdao.addDeliveryRunPendingUuids(carry);
+         sdao.setSejalurPending("");
+      }
+      this.setSejalurOrder(null);
+      return p != null && !p.expired(System.currentTimeMillis());
    }
 
    /** 🛣️ Menu overflow "Kirim Sejalur": pilih titik terjauh dari daftar (atau dari peta). */
@@ -6814,7 +6887,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             break;
          }
       }
-      if (t == null) t = this.sejalurTargetFromExtras(b);
+      if (t == null) {
+         // Tak ada di daftar pemilih: antrean perangkat lain yang terkunci permintaan Ambil Alih memang
+         // sengaja dikeluarkan dari daftar — jangan lolos lewat ekstra pin peta.
+         String src = b.getString(EXTRA_SEJALUR_SOURCE, SejalurPlanLogic.SRC_OTHER);
+         if (SejalurPlanLogic.SRC_OTHER.equals(src) && ClaimRequests.blocks(uuid)) {
+            Toast.makeText(this, ClaimRequests.blockedToast(uuid), 1).show();
+            return;
+         }
+         t = this.sejalurTargetFromExtras(b);
+      }
       this.sejalur().askGalon(t);
    }
 
@@ -6949,24 +7031,26 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return x;
    }
 
-   /**
-    * Start sukses di server: tandai Pesanan Terbuka yang diambil sebagai milik sendiri (langsung ikut
-    * rit, cermin addToRunningRit), simpan rencana (urutan rit server, titik terjauh terakhir), sinkron,
-    * lalu loadData → applyList → absorbSejalurPlan menjalankan rit. @return {mulai sekarang, menunggu sinkron}
-    */
-   private int[] sejalurApplyStart(String targetUuid, List<String> ritUuids, boolean targetHeld) {
-      SyncSettings cfg = this.syncCfg();
-      HashSet<String> want = new HashSet<>(ritUuids);
+   /** Pesanan Terbuka di layar ini: uuid → id lokal (dibaca sebelum /sejalur/start; dipakai SejalurFlow.persistStart). */
+   private Map<String, Long> sejalurOpenDispatchIds() {
+      HashMap<String, Long> out = new HashMap<>();
       if (this.openDispatchAdapter != null) {
          for (Transaction t : new ArrayList<>(this.openDispatchAdapter.rawData)) {
-            String u = this.dao.getSyncUuidById(t.getId());
-            if (u != null && want.contains(u)) this.dao.markClaimedLocally(t.getId(), cfg.getDeviceUuid());
+            String u = t != null ? this.dao.getSyncUuidById(t.getId()) : null;
+            if (u != null && !u.isEmpty()) out.put(u, t.getId());
          }
       }
-      this.setSejalurOrder(null);
-      (new SettingsDao(DatabaseHelper.getInstance(this))).setSejalurPending(SejalurPlanLogic.encodePending(
-            new SejalurPlanLogic.Pending(System.currentTimeMillis(), targetHeld ? targetUuid : "", ritUuids)));
-      SyncScheduler.syncNow(this.getApplicationContext());
+      return out;
+   }
+
+   /**
+    * Start sukses di server — rencana & klaim lokal Pesanan Terbuka SUDAH disimpan di thread kerja
+    * (SejalurFlow.persistStart, tahan rotasi layar): muat ulang → applyList → absorbSejalurPlan
+    * menjalankan rit. @return {mulai sekarang, menunggu sinkron}
+    */
+   private int[] sejalurApplyStart(List<String> ritUuids) {
+      // Urutan sisa rit sejalur lama (tak berjalan) jangan sampai ikut terbawa ke rencana baru.
+      if (!this.isRunning()) this.setSejalurOrder(null);
       this.loadData();
       this.loadOtherDevices();
       int started = this.sejalurOrder != null ? this.sejalurOrder.ids.size() : 0;
@@ -6978,7 +7062,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * yang barisnya SUDAH ada di Antrian Saya langsung diantar — rit dimulai bila belum ada, TANPA dialog
     * ⏰ Batas Antar "bawa sekalian" (muatan sudah dipilih kurir) dan TANPA reroute otomatis 2 detik
     * (urutan koridor server sudah final; lihat runStops). Order perangkat lain diserap begitu tersinkron;
-    * rencana dibuang setelah semuanya masuk atau 15 menit.
+    * rencana dibuang setelah semuanya masuk atau 15 menit. Tanpa rit berjalan, rencana basi (lewat 15 mnt)
+    * atau yang rit-nya sudah habis TIDAK memulai rit — order-nya tinggal di Antrian Saya.
     *
     * @return true bila ada order yang mulai diantar
     */
@@ -6999,17 +7084,32 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
       boolean wasRunning = this.isRunning();
       SejalurPlanLogic.Absorb a = SejalurPlanLogic.absorb(p, this.sejalurOrder, local, this.runningIds, System.currentTimeMillis());
+      if (a.dropped != 0) {
+         // Tak ada rit berjalan: rencana basi / rit-nya sudah habis → dibuang, rit TIDAK dimulai sendiri.
+         sdao.setSejalurPending("");
+         this.setSejalurOrder(null);
+         if (!a.left.isEmpty()) {
+            Toast.makeText(this, a.dropped == SejalurPlanLogic.DROP_RIT_ENDED
+                  ? "🛣️ Rit Kirim Sejalur sudah selesai — " + a.left.size() + " order yang telat tersinkron tidak ikut; ada di Antrian Saya."
+                  : "🛣️ Rencana Kirim Sejalur lewat 15 menit — rit tidak dimulai otomatis. " + a.left.size()
+                        + " order-nya ada di Antrian Saya (jalankan sendiri bila masih mau diantar).", 1).show();
+         }
+         return false;
+      }
       for (Long id : a.add) {
          this.dao.startDelivery(id);
          this.runningIds.add(id);
       }
       if (!a.order.ids.isEmpty()) this.setSejalurOrder(a.order);
       if (!a.addUuids.isEmpty()) sdao.removeDeliveryRunPendingUuids(a.addUuids);
-      if (a.finished) sdao.setSejalurPending("");
-      if (a.expiredMissing) {
-         Toast.makeText(this, this.isRunning() || !a.add.isEmpty()
-               ? "🛣️ " + a.missing.size() + " order Kirim Sejalur belum tersinkron ke HP setelah 15 menit — ikut rit begitu tiba."
-               : "🛣️ Kirim Sejalur: order belum tersinkron ke HP dalam 15 menit. Cek Antrian Saya / tab Perangkat Lain.", 1).show();
+      if (a.finished) {
+         sdao.setSejalurPending("");
+         // Rencana habis masa tunggunya saat rit berjalan: order yang belum tiba diteruskan ke titipan
+         // "masukkan ke rit" (2 jam) supaya tetap ikut rit ini begitu tersinkron.
+         if (!a.missing.isEmpty() && this.isRunning()) sdao.addDeliveryRunPendingUuids(a.missing);
+      }
+      if (a.expiredMissing && this.isRunning()) {
+         Toast.makeText(this, "🛣️ " + a.missing.size() + " order Kirim Sejalur belum tersinkron ke HP setelah 15 menit — ikut rit begitu tiba.", 1).show();
       }
       if (a.add.isEmpty()) return false;
       // runningIds (urutan sisip, dibaca juga panel navigasi untuk ekor rit) ikut disusun menurut rencana —
@@ -7018,11 +7118,6 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (inPlanOrder.size() == this.runningIds.size()) {
          this.runningIds.clear();
          this.runningIds.addAll(inPlanOrder);
-      }
-      if (!a.missing.isEmpty()) {
-         // Jaring pengaman: rencana ini kedaluwarsa 15 mnt, titipan "masukkan ke rit" (2 jam) tetap menyerap
-         // order perangkat lain yang telat tersinkron.
-         sdao.addDeliveryRunPendingUuids(a.missing);
       }
       this.persistRunning();
       SyncScheduler.syncNow(this.getApplicationContext());
@@ -7398,11 +7493,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       View btnRunReroute = this.findViewById(id.btnRunReroute);
       if (btnRunReroute != null) {
          btnRunReroute.setVisibility(stops.size() > 1 ? 0 : 8);
-         btnRunReroute.setOnClickListener((v) -> {
-            // Kurir sendiri minta rute terpendek → urutan khusus Kirim Sejalur dilepas (pilihan sadar).
-            this.setSejalurOrder(null);
-            this.refreshRunRoute(v);
-         });
+         // Kurir sendiri minta rute terpendek → urutan khusus Kirim Sejalur dilepas (pilihan sadar) — tapi
+         // HANYA setelah server menulis urutan baru; gagal / offline → urutan koridor (titik terjauh
+         // terakhir) tetap dipakai, tak jatuh ke kelompok planner.
+         btnRunReroute.setOnClickListener((v) -> this.refreshRunRoute(v, () -> this.releaseSejalur()));
       }
 
       View btnRunAdd = this.findViewById(id.btnRunAdd);
