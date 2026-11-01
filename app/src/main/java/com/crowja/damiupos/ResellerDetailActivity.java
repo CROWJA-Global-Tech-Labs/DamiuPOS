@@ -100,6 +100,7 @@ public class ResellerDetailActivity extends AppCompatActivity {
         boolean canManage = canManageReseller();
         android.view.View btnCair = findViewById(R.id.btnCairkan);
         android.view.View btnAtur = findViewById(R.id.btnAturKomisi);
+        android.view.View btnTambahKomisi = findViewById(R.id.btnTambahKomisi);
         if (canManage) {
             // Pencairan komisi: reuse layar Transaksi Baru dalam mode payout (bukan dialog).
             btnCair.setOnClickListener(v -> {
@@ -114,7 +115,9 @@ public class ResellerDetailActivity extends AppCompatActivity {
                         .putExtra(TransactionActivity.EXTRA_RESELLER_NAME, resellerName));
             });
             btnAtur.setOnClickListener(v -> showAturKomisiDialog());
+            btnTambahKomisi.setOnClickListener(v -> showTambahKomisiDialog());
         } else {
+            btnTambahKomisi.setVisibility(android.view.View.GONE);
             btnCair.setVisibility(android.view.View.GONE);
             btnAtur.setVisibility(android.view.View.GONE);
         }
@@ -194,7 +197,7 @@ public class ResellerDetailActivity extends AppCompatActivity {
         ((TextView) findViewById(R.id.tvSaldo)).setText("Rp " + NF.format(Math.round(saldo)));
         TextView tvTambahSaldo = findViewById(R.id.tvTambahSaldo);
         if (deposits > 0) {
-            tvTambahSaldo.setText("➕ Tambah saldo (dari dashboard): Rp " + NF.format(Math.round(deposits)));
+            tvTambahSaldo.setText("➕ Tambah saldo / komisi manual: Rp " + NF.format(Math.round(deposits)));
             tvTambahSaldo.setVisibility(View.VISIBLE);
         } else {
             tvTambahSaldo.setVisibility(View.GONE);
@@ -297,6 +300,62 @@ public class ResellerDetailActivity extends AppCompatActivity {
                     refresh();
                 })
                 .show();
+    }
+
+    // =======================================================================
+    // Tambah komisi manual
+    // =======================================================================
+
+    /**
+     * Kredit komisi manual + deskripsi. Disimpan seperti "Tambah Saldo" dashboard: baris
+     * pencairan UANG ber-amount NEGATIF (ResellerSaldo server & hitungan lokal menambahkannya
+     * ke saldo), tanpa pengeluaran karena belum ada uang keluar.
+     */
+    private void showTambahKomisiDialog() {
+        int pad = Math.round(20 * getResources().getDisplayMetrics().density);
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        box.setPadding(pad, pad / 2, pad, 0);
+        TextInputLayout tilNominal = new TextInputLayout(this);
+        tilNominal.setHint("Nominal komisi (Rp)");
+        TextInputEditText etNominal = new TextInputEditText(tilNominal.getContext());
+        etNominal.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        tilNominal.addView(etNominal);
+        TextInputLayout tilDesc = new TextInputLayout(this);
+        tilDesc.setHint("Deskripsi (wajib)");
+        TextInputEditText etDesc = new TextInputEditText(tilDesc.getContext());
+        etDesc.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        etDesc.setMaxLines(3);
+        tilDesc.addView(etDesc);
+        box.addView(tilNominal);
+        box.addView(tilDesc);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Tambah Komisi Manual")
+                .setMessage("Menambah saldo komisi " + resellerName + ". Muncul di riwayat dengan deskripsinya.")
+                .setView(box)
+                .setPositiveButton("Tambah", null)
+                .setNegativeButton("Batal", null)
+                .create();
+        dialog.show();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            double nominal = parseDoubleSafe(etNominal, 0);
+            String desc = etDesc.getText() != null ? etDesc.getText().toString().trim() : "";
+            tilNominal.setError(null);
+            tilDesc.setError(null);
+            if (nominal <= 0) { tilNominal.setError("Nominal wajib diisi"); return; }
+            if (nominal > 100_000_000) { tilNominal.setError("Nominal terlalu besar"); return; }
+            if (desc.isEmpty()) { tilDesc.setError("Deskripsi wajib diisi"); return; }
+            wdDao.insert(customerId, ResellerWithdrawalDao.TYPE_UANG, 0, -nominal,
+                    "Komisi manual: " + desc);
+            com.crowja.damiupos.sync.SyncScheduler.syncNow(this);
+            Toast.makeText(this, "Komisi Rp " + NF.format(Math.round(nominal)) + " ditambahkan",
+                    Toast.LENGTH_LONG).show();
+            dialog.dismiss();
+            refresh();
+        });
     }
 
     // =======================================================================
@@ -535,7 +594,8 @@ public class ResellerDetailActivity extends AppCompatActivity {
             double absAmount = Math.abs(w.amount);
             if (deposit) {
                 h.tvIcon.setText("➕");
-                h.tvTitle.setText("Tambah saldo");
+                h.tvTitle.setText(w.note != null && w.note.startsWith("Komisi manual")
+                        ? "Komisi manual" : "Tambah saldo");
             } else {
                 h.tvIcon.setText(air ? "💧" : "💵");
                 h.tvTitle.setText(air
