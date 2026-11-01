@@ -156,6 +156,8 @@ public final class SejalurPlanLogic {
         /** Jarak garis lurus dari depot (km); {@link Double#MAX_VALUE} = tak diketahui. */
         public double distKm = Double.MAX_VALUE;
         public long localId = -1L;
+        /** Kapsul produk berwarna ("MIN ×2" + tag jenis galon); kosong → teks {@link #items}. */
+        public List<Badge> badges = new ArrayList<>();
 
         public boolean hasGeo() {
             return isGeo(lat, lng);
@@ -219,6 +221,47 @@ public final class SejalurPlanLogic {
         }
     }
 
+    /** Saringan jenis order pemilih: AMBIL GALON SAJA ikut bila {@code pickup}, penjualan bila {@code sales}. */
+    public static boolean kindMatches(Target t, boolean sales, boolean pickup) {
+        return t != null && (t.pickupOnly ? pickup : sales);
+    }
+
+    /**
+     * Status centang "🛒 Penjualan" / "↩ Ambil galon" sesudah kurir menekan salah satunya — minimal satu
+     * tetap tercentang: melepas yang terakhir MENUKAR ke yang lain (daftar tak pernah kosong karena saringan).
+     *
+     * @param salesTapped yang baru ditekan adalah Penjualan
+     * @return {penjualan, ambil galon}
+     */
+    public static boolean[] kindToggle(boolean sales, boolean pickup, boolean salesTapped) {
+        if (!sales && !pickup) {
+            if (salesTapped) pickup = true; else sales = true;
+        }
+        return new boolean[]{sales, pickup};
+    }
+
+    /** "" (keduanya), "Penjualan saja" atau "Ambil galon saja" — untuk baris jumlah pemilih. */
+    public static String kindLabel(boolean sales, boolean pickup) {
+        if (sales == pickup) return "";
+        return sales ? "Penjualan saja" : "Ambil galon saja";
+    }
+
+    /** {@link #filterSort(List, String, boolean)} yang juga menyaring jenis order ({@link #kindMatches}). */
+    public static List<Target> filterSort(List<Target> rows, String query, boolean byAge, boolean sales, boolean pickup) {
+        List<Target> kind = new ArrayList<>();
+        for (Target t : rows) {
+            if (kindMatches(t, sales, pickup)) kind.add(t);
+        }
+        return filterSort(kind, query, byAge);
+    }
+
+    /** Jumlah baris yang bisa dijadikan titik terjauh. */
+    public static int selectableCount(List<Target> rows) {
+        int n = 0;
+        for (Target t : rows) if (t != null && t.selectable()) n++;
+        return n;
+    }
+
     /**
      * Saring (nama/area/produk/perangkat, tak peka huruf) lalu urutkan: baris yang BISA dipilih dulu;
      * {@code byAge} = ⏱ Terlama (umur turun), selainnya 📍 Terjauh (jarak dari depot turun, tak
@@ -263,6 +306,10 @@ public final class SejalurPlanLogic {
         public double kmFromOrigin;
         public double detourKm;
         public long ageMin = AGE_UNKNOWN;
+        /** Tingkat "↔ Perlebar jalur" terkecil yang meloloskan baris ini (0 = koridor biasa). */
+        public int widenLevel;
+        /** Kapsul produk berwarna; kosong → teks {@link #items}. */
+        public List<Badge> badges = new ArrayList<>();
 
         /** Muatan: AMBIL GALON SAJA tak memakan kapasitas. */
         public int load() {
@@ -363,6 +410,112 @@ public final class SejalurPlanLogic {
                     .append("driving".equals(method) ? "jalan" : "garis lurus").append(')');
         }
         return sb.toString();
+    }
+
+    // ================================================================== kapsul produk
+
+    /** Satu kapsul produk berwarna (teks bisa ber-span tag jenis galon; dirakit di layar Android). */
+    public static final class Badge {
+        public final CharSequence text;
+        public final int bg;
+
+        public Badge(CharSequence text, int bg) {
+            this.text = text;
+            this.bg = bg;
+        }
+    }
+
+    // ================================================================== ↔ Perlebar jalur
+
+    /** Satu pilihan {@code widen_options[]} dari server. */
+    public static final class WidenOption {
+        public int level;
+        public double detourMaxKm;
+        public int orders;
+        public int galon;
+        public int addedOrders;
+        public int addedGalon;
+
+        public WidenOption() {}
+
+        public WidenOption(int level, double detourMaxKm, int orders, int galon, int addedOrders, int addedGalon) {
+            this.level = level;
+            this.detourMaxKm = detourMaxKm;
+            this.orders = orders;
+            this.galon = galon;
+            this.addedOrders = addedOrders;
+            this.addedGalon = addedGalon;
+        }
+
+        public boolean adds() {
+            return this.addedOrders > 0 || this.addedGalon > 0;
+        }
+    }
+
+    /**
+     * Pilihan yang ditawarkan: tingkat di atas {@code current} yang benar-benar menambah order/galon,
+     * urut tingkat naik (yang pertama = langkah berikutnya), tingkat ganda sekali. Kosong bila rencana
+     * TIDAK kurang muatan (penuh / titik terjauh sendiri melebihi muatan / kapasitas tak diketahui).
+     */
+    public static List<WidenOption> widenChoices(List<WidenOption> opts, int current, int galon, int capacity, boolean over) {
+        List<WidenOption> out = new ArrayList<>();
+        if (opts == null || over || capacity <= 0 || galon >= capacity) return out;
+        Set<Integer> seen = new HashSet<>();
+        for (WidenOption o : opts) {
+            if (o != null && o.level > current && o.adds() && seen.add(o.level)) out.add(o);
+        }
+        Collections.sort(out, (a, b) -> Integer.compare(a.level, b.level));
+        return out;
+    }
+
+    /** "↔ Perlebar jalur: +2 order · +3 galon (memutar ≤ 2,0 km)". */
+    public static String widenButtonText(WidenOption o) {
+        StringBuilder sb = new StringBuilder("↔ Perlebar jalur: ");
+        boolean any = false;
+        if (o.addedOrders > 0) {
+            sb.append('+').append(o.addedOrders).append(" order");
+            any = true;
+        }
+        if (o.addedGalon > 0) {
+            sb.append(any ? " · " : "").append('+').append(o.addedGalon).append(" galon");
+        }
+        String k = kmText(o.detourMaxKm);
+        if (!k.isEmpty()) sb.append(" (memutar ≤ ").append(k).append(')');
+        return sb.toString();
+    }
+
+    /** Baris status koridor di ringkasan pratinjau: "Jalur biasa (memutar ≤ 1,1 km)" / "↔ Jalur diperlebar …". */
+    public static String widenStateText(int widen, double detourMaxKm) {
+        String k = kmText(detourMaxKm);
+        String lim = k.isEmpty() ? "" : "memutar ≤ " + k;
+        if (widen > 0) return "↔ Jalur diperlebar (tingkat " + widen + (lim.isEmpty() ? "" : " · " + lim) + ")";
+        return "Jalur biasa" + (lim.isEmpty() ? "" : " (" + lim + ")");
+    }
+
+    /**
+     * Centang sesudah rencana dimuat ulang (Perlebar jalur): titik terjauh selalu; baris rencana
+     * tercentang KECUALI yang tadinya tampil &amp; sengaja dilepas kurir (baris baru = tercentang);
+     * alternatif hanya bila tadi dicentang.
+     *
+     * @param prevShown   uuid yang tampil di pratinjau sebelumnya (null = pratinjau pertama)
+     * @param prevChecked uuid yang tercentang di pratinjau sebelumnya
+     */
+    public static Set<String> carryChecks(List<PlanRow> main, List<PlanRow> alternates, Set<String> prevShown, Set<String> prevChecked) {
+        Set<String> out = new HashSet<>();
+        Set<String> shown = prevShown == null ? new HashSet<>() : prevShown;
+        Set<String> was = prevChecked == null ? new HashSet<>() : prevChecked;
+        if (main != null) {
+            for (PlanRow r : main) {
+                if (r == null) continue;
+                if (r.isTarget || !shown.contains(r.uuid) || was.contains(r.uuid)) out.add(r.uuid);
+            }
+        }
+        if (alternates != null) {
+            for (PlanRow r : alternates) {
+                if (r != null && was.contains(r.uuid)) out.add(r.uuid);
+            }
+        }
+        return out;
     }
 
     // ================================================================== titipan rencana & urutan rit
