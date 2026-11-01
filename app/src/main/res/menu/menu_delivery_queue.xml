@@ -22,7 +22,7 @@
         android:title="🚧 Laporkan Kendala Pengiriman"
         app:showAsAction="never" />
 
-    <!-- WA massal ke pelanggan Antrean Saya yang dicentang (DeliveryQueueActivity.showBroadcastMasalah). Gate tab 0. -->
+    <!-- WA massal ke pelanggan order yang dicentang (DeliveryBroadcastDialog) — ketiga tab; sumber bawaan = tab yang dibuka. -->
     <item
         android:id="@+id/action_broadcast_masalah"
         android:title="📢 Broadcast WA Masalah"

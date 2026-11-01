@@ -939,9 +939,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          it.setVisible(this.activeTab == 0);
       }
 
+      // 📢 Broadcast WA Masalah: ketiga tab (dialog memilih sumber sesuai tab yang dibuka).
       MenuItem bc = menu.findItem(id.action_broadcast_masalah);
       if (bc != null) {
-         bc.setVisible(this.activeTab == 0);
+         bc.setVisible(true);
       }
 
       MenuItem outside = menu.findItem(id.action_release_outside_wilayah);
@@ -1646,220 +1647,130 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    // ============================ 📢 Broadcast WA Masalah ============================
+   // Dialognya di DeliveryBroadcastDialog (ketiga tab + "Aksi ⋮" mode pilih); di sini hanya jembatan ke data
+   // tab & helper kartu (kapsul produk ber-jenis galon, filter ▾) supaya tampilannya sama dengan kartu antrean.
 
-   private static final String[][] BROADCAST_PRESETS = {
-         {"⏰ Terlambat", "Halo {nama}, mohon maaf pengiriman galon Anda hari ini terlambat karena ada kendala di jalan. Pesanan tetap kami antar secepatnya. Terima kasih atas kesabarannya 🙏"},
-         {"🚰 Stok habis", "Halo {nama}, mohon maaf stok galon sedang kosong/terbatas sehingga pesanan Anda tertunda. Kami kabari lagi begitu siap diantar. Terima kasih 🙏"},
-         {"🌧️ Cuaca", "Halo {nama}, mohon maaf karena hujan/cuaca buruk pengiriman galon Anda sedikit tertunda. Pesanan tetap kami antar. Terima kasih atas pengertiannya 🙏"},
-         {"🛵 Armada", "Halo {nama}, mohon maaf kendaraan pengiriman kami sedang bermasalah sehingga pesanan Anda tertunda. Kami usahakan secepatnya. Terima kasih 🙏"},
-   };
-
-   /**
-    * "📢 Broadcast WA Masalah": dialog order Antrean Saya (centang = dikirimi) dengan kapsul slug produk + jenis
-    * galon, filter produk & jenis galon (kapsul ▾ yang sama dengan filter tab), pesan ber-{nama} dengan preset
-    * masalah. Kirim lewat server/Bridge ({@code POST /api/delivery/broadcast-masalah}) — satu pesan per pelanggan,
-    * akun WA yang menangani order diutamakan, tercatat di Riwayat Broadcast web.
-    */
    private void showBroadcastMasalah() {
-      SyncSettings cfg = this.syncCfg();
-      if (!cfg.isEnrolled()) {
-         Toast.makeText(this, "Perangkat belum terhubung ke server.", Toast.LENGTH_LONG).show();
-         return;
-      }
-      List<Transaction> scope = new ArrayList<>();
-      if (this.adapter != null && this.adapter.data != null && this.activeTab == 0) {
-         for (Transaction t : this.adapter.data) {
-            if (t != null && !t.isOpenDispatch()) {
-               String u = this.trxUuid(t);
-               if (u != null && !u.isEmpty()) scope.add(t);
-            }
-         }
-      }
-      if (scope.isEmpty()) {
-         Toast.makeText(this, "Antrean Saya kosong (atau belum tersinkron) — tak ada pelanggan untuk dikirimi.", Toast.LENGTH_LONG).show();
-         return;
-      }
-      int pad = this.dp(16f);
-      LinearLayout box = new LinearLayout(this);
-      box.setOrientation(LinearLayout.VERTICAL);
-      box.setPadding(pad, this.dp(8f), pad, 0);
-
-      // ---- pesan + preset
-      EditText msg = new EditText(this);
-      msg.setText(BROADCAST_PRESETS[0][1]);
-      msg.setMinLines(3);
-      msg.setMaxLines(6);
-      msg.setTextSize(14f);
-      msg.setGravity(android.view.Gravity.TOP | android.view.Gravity.START);
-      LinearLayout presets = new LinearLayout(this);
-      presets.setOrientation(LinearLayout.HORIZONTAL);
-      for (String[] p : BROADCAST_PRESETS) {
-         TextView chip = this.makeDetailBadge(p[0], 0xFF475569);
-         chip.setTextSize(12f);
-         chip.setPadding(this.dp(10f), this.dp(4f), this.dp(10f), this.dp(4f));
-         chip.setOnClickListener(v -> msg.setText(p[1]));
-         presets.addView(chip);
-      }
-      android.widget.HorizontalScrollView presetScroll = new android.widget.HorizontalScrollView(this);
-      presetScroll.setHorizontalScrollBarEnabled(false);
-      presetScroll.addView(presets);
-      box.addView(presetScroll);
-      box.addView(msg);
-      TextView hint = new TextView(this);
-      hint.setText("{nama} diganti nama pelanggan. Dikirim lewat WA Bridge, satu pesan per pelanggan.");
-      hint.setTextSize(11f);
-      hint.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
-      box.addView(hint);
-
-      // ---- filter produk & jenis galon (kosong = semua)
-      TextView fl = new TextView(this);
-      fl.setText("Filter produk & jenis galon (ketuk kapsul ▾):");
-      fl.setTextSize(12f);
-      fl.setPadding(0, this.dp(10f), 0, 0);
-      box.addView(fl);
-      java.util.Set<String> sel = new java.util.LinkedHashSet<>();
-      LinearLayout list = new LinearLayout(this);
-      list.setOrientation(LinearLayout.VERTICAL);
-      TextView count = new TextView(this);
-      count.setTextSize(13f);
-      count.setTypeface(null, android.graphics.Typeface.BOLD);
-      count.setPadding(0, this.dp(6f), 0, this.dp(2f));
-      List<android.widget.CheckBox> boxes = new ArrayList<>();
-      List<View> rows = new ArrayList<>();
-      Runnable recount = () -> {
-         int n = 0;
-         for (int i = 0; i < boxes.size(); i++) if (rows.get(i).getVisibility() == View.VISIBLE && boxes.get(i).isChecked()) n++;
-         count.setText("📢 " + n + " order dicentang");
-      };
-      Runnable refilter = () -> {
-         for (int i = 0; i < scope.size(); i++) rows.get(i).setVisibility(this.slugMatches(sel, scope.get(i)) ? View.VISIBLE : View.GONE);
-         recount.run();
-      };
-      android.widget.HorizontalScrollView chips = this.buildSlugChipRow(sel, refilter, false, true);
-      if (chips != null) box.addView(chips);
-
-      LinearLayout allRow = new LinearLayout(this);
-      allRow.setOrientation(LinearLayout.HORIZONTAL);
-      allRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
-      count.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
-      allRow.addView(count);
-      TextView all = new TextView(this);
-      all.setText("☑ Semua");
-      all.setTextColor(ContextCompat.getColor(this, R.color.primary));
-      all.setPadding(this.dp(8f), this.dp(6f), this.dp(8f), this.dp(6f));
-      TextView none = new TextView(this);
-      none.setText("☐ Kosongkan");
-      none.setTextColor(ContextCompat.getColor(this, R.color.primary));
-      none.setPadding(this.dp(8f), this.dp(6f), 0, this.dp(6f));
-      allRow.addView(all);
-      allRow.addView(none);
-      box.addView(allRow);
-
-      int textColor = ContextCompat.getColor(this, R.color.text_primary);
-      for (Transaction t : scope) {
-         LinearLayout row = new LinearLayout(this);
-         row.setOrientation(LinearLayout.VERTICAL);
-         row.setPadding(0, this.dp(2f), 0, this.dp(4f));
-         android.widget.CheckBox cb = new android.widget.CheckBox(this);
-         cb.setChecked(true);
-         cb.setText((DeliveryPlanner.isPriority(t) ? "⚡ " : "") + safe(t.getCustomerName())
-               + (t.isVisitTask() ? "  📞 kunjungan" : DeliveryPlanner.isPickupOnly(t) ? "  ↩ ambil galon" : ""));
-         cb.setTextColor(textColor);
-         cb.setTextSize(14f);
-         cb.setOnCheckedChangeListener((b, c) -> recount.run());
-         row.addView(cb);
-         LinearLayout badges = new LinearLayout(this);
-         badges.setOrientation(LinearLayout.HORIZONTAL);
-         badges.setPadding(this.dp(32f), 0, 0, 0);
-         boolean assumed = "default".equals(t.getGalonTypeSource());
-         for (Object[] r : this.typedRows(t)) badges.addView(this.makeDetailBadge(typedChipText(r, assumed), (Integer) r[3]));
-         if (badges.getChildCount() > 0) {
-            android.widget.HorizontalScrollView bs = new android.widget.HorizontalScrollView(this);
-            bs.setHorizontalScrollBarEnabled(false);
-            bs.addView(badges);
-            row.addView(bs);
-         }
-         boxes.add(cb);
-         rows.add(row);
-         list.addView(row);
-      }
-      all.setOnClickListener(v -> {
-         for (int i = 0; i < boxes.size(); i++) if (rows.get(i).getVisibility() == View.VISIBLE) boxes.get(i).setChecked(true);
-      });
-      none.setOnClickListener(v -> {
-         for (android.widget.CheckBox cb : boxes) cb.setChecked(false);
-      });
-      box.addView(list);
-      recount.run();
-
-      ScrollView sv = new ScrollView(this);
-      sv.addView(box);
-      AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle("📢 Broadcast WA Masalah").setView(sv)
-            .setPositiveButton("Kirim", (DialogInterface.OnClickListener) null)
-            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
-      dlg.setOnShowListener(di -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-         String text = msg.getText().toString().trim();
-         if (text.isEmpty()) {
-            msg.setError("Tulis pesannya dulu");
-            return;
-         }
-         List<String> uuids = new ArrayList<>();
-         java.util.Set<String> names = new java.util.LinkedHashSet<>();
-         for (int i = 0; i < scope.size(); i++) {
-            if (rows.get(i).getVisibility() != View.VISIBLE || !boxes.get(i).isChecked()) continue;
-            uuids.add(this.trxUuid(scope.get(i)));
-            names.add(safe(scope.get(i).getCustomerName()));
-         }
-         if (uuids.isEmpty()) {
-            Toast.makeText(this, "Belum ada order yang dicentang.", Toast.LENGTH_SHORT).show();
-            return;
-         }
-         (new AlertDialog.Builder(this)).setTitle("Kirim ke " + names.size() + " pelanggan?")
-               .setMessage(text)
-               .setPositiveButton("📢 Kirim", (d2, w2) -> {
-                  dlg.dismiss();
-                  this.sendBroadcastMasalah(text, uuids);
-               })
-               .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
-      }));
-      dlg.show();
+      DeliveryBroadcastDialog.show(this, this.broadcastHost(), this.activeTab, null, null);
    }
 
-   private void sendBroadcastMasalah(String text, List<String> uuids) {
-      SyncSettings cfg = this.syncCfg();
-      android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
-      wait.setMessage("Mengirim broadcast…");
-      wait.setCancelable(false);
-      wait.show();
-      new Thread(() -> {
-         String m;
-         StringBuilder failed = new StringBuilder();
-         try {
-            JSONObject r = new SyncApi(cfg).broadcastMasalah(text, uuids);
-            m = r.optString("message", "Terkirim.");
-            JSONArray f = r.optJSONArray("failed");
-            for (int i = 0; f != null && i < f.length(); i++) {
-               JSONObject x = f.optJSONObject(i);
-               if (x != null) failed.append("• ").append(x.optString("name", "?")).append(" — ").append(x.optString("error", "gagal")).append('\n');
-            }
-         } catch (SyncApi.SyncException se) {
-            String sm = se.serverMessage();
-            m = sm != null && !sm.isEmpty() ? sm : "Gagal mengirim broadcast (kode " + se.code + ").";
-         } catch (Exception e) {
-            m = "Gagal mengirim broadcast — periksa koneksi internet.";
+   /** "Aksi ⋮" mode pilih Perangkat Lain / Pesanan Terbuka → dialog berisi PERSIS order terpilih (tercentang). */
+   private void showBroadcastMasalahSelected(boolean open) {
+      java.util.Set<String> uuids = new java.util.LinkedHashSet<>();
+      if (open) {
+         for (Transaction t : this.openDispatchAdapter.rawData) {
+            if (t == null || !this.claimSelectedOpen.contains(t.getId())) continue;
+            String u = this.trxUuid(t);
+            if (u != null && !u.isEmpty()) uuids.add(u);
          }
-         final String fm = m;
-         this.runOnUiThread(() -> {
-            try { wait.dismiss(); } catch (Exception ignored) {}
-            if (this.isFinishing() || this.isDestroyed()) return;
-            if (failed.length() == 0) {
-               Toast.makeText(this, fm, Toast.LENGTH_LONG).show();
-            } else {
-               (new AlertDialog.Builder(this)).setTitle("📢 Broadcast WA Masalah").setMessage(fm + "\n\nTidak terkirim:\n" + failed)
-                     .setPositiveButton("OK", (DialogInterface.OnClickListener) null).show();
+      } else {
+         uuids.addAll(this.claimSelectedOther);
+      }
+      if (uuids.isEmpty()) {
+         Toast.makeText(this, "Belum ada order yang dipilih.", Toast.LENGTH_SHORT).show();
+         return;
+      }
+      DeliveryBroadcastDialog.show(this, this.broadcastHost(), open ? 2 : 1, uuids, () -> this.exitClaimSelect(open));
+   }
+
+   /** Menu "Aksi ⋮" mode pilih: item 📢 dengan listener sendiri (didahulukan Android atas listener menu). */
+   private void addBroadcastSelectionItem(PopupMenu menu, boolean open, int n) {
+      menu.getMenu().add(0, 951, 50, "📢 Broadcast WA Masalah ke " + n + " order").setOnMenuItemClickListener((mi) -> {
+         this.showBroadcastMasalahSelected(open);
+         return true;
+      });
+   }
+
+   private List<com.crowja.damiupos.util.BroadcastScope.Item> broadcastItems(int source) {
+      List<com.crowja.damiupos.util.BroadcastScope.Item> out = new ArrayList<>();
+      if (source == com.crowja.damiupos.util.BroadcastScope.OTHER) {
+         if (this.otherDevicesAdapter == null) return out;
+         for (JSONObject o : this.otherDevicesAdapter.rawData) {
+            String uuid = strJson(o, "uuid");
+            String cust = strJson(o, "customer_uuid");
+            // Tanpa pelanggan → server melewatinya (whereNotNull customer_uuid); jangan ikut dihitung.
+            if (uuid.isEmpty() || cust.isEmpty()) continue;
+            List<String[]> rows = new ArrayList<>();
+            for (Object[] r : this.typedRows(o)) rows.add(new String[]{(String) r[0], (String) r[1]});
+            List<String> slugs = new ArrayList<>();
+            JSONArray arr = o.optJSONArray("item_slugs");
+            for (int i = 0; arr != null && i < arr.length(); i++) {
+               JSONObject x = arr.optJSONObject(i);
+               if (x != null) slugs.add(x.optString("slug", ""));
             }
-         });
-      }).start();
+            String dev = strJson(o, "device_group_label");
+            String label = (o.optBoolean("order_priority", false) ? "⚡ " : "") + strJson(o, "name")
+                  + (o.optBoolean("pickup_only", false) ? "  ↩ ambil galon" : "") + (isBeingDelivered(o) ? "  🚚 diantar" : "");
+            out.add(new com.crowja.damiupos.util.BroadcastScope.Item(uuid, source, cust, label,
+                  "📱 " + (dev.isEmpty() ? "Perangkat lain" : dev), rows, slugs, o));
+         }
+         return out;
+      }
+      boolean mine = source == com.crowja.damiupos.util.BroadcastScope.MINE;
+      List<Transaction> src = mine ? (this.adapter != null ? this.adapter.data : null)
+            : (this.openDispatchAdapter != null ? this.openDispatchAdapter.rawData : null);
+      if (src == null) return out;
+      for (Transaction t : src) {
+         if (t == null || (mine && t.isOpenDispatch())) continue;
+         String uuid = this.trxUuid(t);
+         if (uuid == null || uuid.isEmpty()) continue;
+         List<String[]> rows = new ArrayList<>();
+         for (Object[] r : this.typedRows(t)) rows.add(new String[]{(String) r[0], (String) r[1]});
+         String cust = t.getCustomerId() > 0 ? this.customerDao.getSyncUuidById(t.getCustomerId()) : null;
+         String label = (DeliveryPlanner.isPriority(t) ? "⚡ " : "") + safe(t.getCustomerName())
+               + (t.isVisitTask() ? "  📞 kunjungan" : DeliveryPlanner.isPickupOnly(t) ? "  ↩ ambil galon" : "");
+         out.add(new com.crowja.damiupos.util.BroadcastScope.Item(uuid, source, cust, label, mine ? "" : "🎲 Terbuka", rows, null, t));
+      }
+      return out;
+   }
+
+   private DeliveryBroadcastDialog.Host broadcastHost() {
+      return new DeliveryBroadcastDialog.Host() {
+         public List<com.crowja.damiupos.util.BroadcastScope.Item> broadcastItems(int source) {
+            return DeliveryQueueActivity.this.broadcastItems(source);
+         }
+
+         public boolean otherQueueEmpty() {
+            return DeliveryQueueActivity.this.otherDevicesAdapter == null || DeliveryQueueActivity.this.otherDevicesAdapter.rawCount() == 0;
+         }
+
+         public void reloadOtherQueue(java.util.function.Consumer<Boolean> done) {
+            DeliveryQueueActivity.this.loadOtherDevices(done);
+         }
+
+         public android.widget.HorizontalScrollView productFilterRow(java.util.Set<String> sel, Runnable onChange) {
+            return DeliveryQueueActivity.this.buildSlugChipRow(sel, onChange, false, true);
+         }
+
+         public java.util.Map<String, java.util.Set<String>> productTypeFilter(java.util.Set<String> sel) {
+            return DeliveryQueueActivity.this.slugTypeSel.get(sel);
+         }
+
+         public void releaseProductFilter(java.util.Set<String> sel) {
+            DeliveryQueueActivity.this.slugTypeSel.remove(sel);
+         }
+
+         public void addProductChips(LinearLayout into, com.crowja.damiupos.util.BroadcastScope.Item it) {
+            List<Object[]> rows;
+            boolean assumed;
+            if (it.ref instanceof Transaction) {
+               Transaction t = (Transaction) it.ref;
+               rows = DeliveryQueueActivity.this.typedRows(t);
+               assumed = galonAssumed(t.getGalonTypeSource());
+            } else if (it.ref instanceof JSONObject) {
+               JSONObject o = (JSONObject) it.ref;
+               rows = DeliveryQueueActivity.this.typedRows(o);
+               assumed = galonAssumed(strJson(o, "galon_type_source"));
+            } else {
+               return;
+            }
+            for (Object[] r : rows) into.addView(DeliveryQueueActivity.this.makeDetailBadge(typedChipText(r, assumed), (Integer) r[3]));
+         }
+
+         public TextView badge(CharSequence label, int bg) {
+            return DeliveryQueueActivity.this.makeDetailBadge(label, bg);
+         }
+      };
    }
 
    private void openObstacleReport() {
@@ -2647,6 +2558,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private void loadOtherDevices() {
+      this.loadOtherDevices(null);
+   }
+
+   /** @param after dipanggil di UI thread sesudah data tiba ({@code true} = berhasil); tak dipanggil bila belum terhubung. */
+   private void loadOtherDevices(java.util.function.Consumer<Boolean> after) {
       SyncSettings cfg = this.syncCfg();
       if (!cfg.isEnrolled()) {
          this.tvOtherDevicesEmpty.setText("Perangkat belum terhubung ke server.");
@@ -2711,6 +2627,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                      this.tvOtherDevicesEmpty.setVisibility(0);
                      this.rvOtherDevices.setVisibility(8);
                   }
+                  if (after != null) after.accept(!failedF);
 
                }
             });
@@ -14330,6 +14247,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          });
          return true;
       });
+      this.addBroadcastSelectionItem(menu, true, items.size());
       menu.show();
    }
 
@@ -14410,6 +14328,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
          return true;
       });
+      this.addBroadcastSelectionItem(menu, false, this.claimSelectedOther.size());
       menu.show();
    }
 
