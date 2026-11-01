@@ -1143,6 +1143,35 @@ public class SyncApi {
         return postOrderChat("/api/transactions/" + android.net.Uri.encode(trxUuid) + "/chat/send", body);
     }
 
+    /**
+     * Sunting teks pesan KELUAR (akun & chat sesi) — {@code POST …/chat/edit {message_id, text,
+     * staff_name}}. 200 {@code {ok, message}} (baris yang sudah tersunting); 422 dengan pesan server
+     * (lewat 15 menit, bukan teks, Bridge tak menemukan pesannya, …), 403 baca-saja, 429.
+     */
+    public OrderChatResult orderChatEdit(String trxUuid, String waMessageId, String text, @Nullable String staffName) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("message_id", waMessageId);
+            body.put("text", text);
+            if (staffName != null && !staffName.isEmpty()) body.put("staff_name", staffName);
+        } catch (Exception ignored) {
+            // JSONObject.put(String, String) tak pernah gagal untuk kunci non-null
+        }
+        return postOrderChat("/api/transactions/" + android.net.Uri.encode(trxUuid) + "/chat/edit", body);
+    }
+
+    /** Hapus untuk semua orang — {@code POST …/chat/delete {message_id, staff_name}}; balasan seperti {@link #orderChatEdit}. */
+    public OrderChatResult orderChatDelete(String trxUuid, String waMessageId, @Nullable String staffName) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("message_id", waMessageId);
+            if (staffName != null && !staffName.isEmpty()) body.put("staff_name", staffName);
+        } catch (Exception ignored) {
+            // idem
+        }
+        return postOrderChat("/api/transactions/" + android.net.Uri.encode(trxUuid) + "/chat/delete", body);
+    }
+
     /** "Ambil alih dari AI" ({@code paused=true}) / "Serahkan ke AI" ({@code false}). Balas
      *  {@code {ok, agent_paused_until, agent_paused_by}}. */
     public OrderChatResult orderChatAgent(String trxUuid, boolean paused) {

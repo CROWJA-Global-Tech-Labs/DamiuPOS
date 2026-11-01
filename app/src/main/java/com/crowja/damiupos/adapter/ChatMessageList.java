@@ -174,6 +174,8 @@ final class ChatMessageList {
         if (a == b) return true;
         return a.rowId == b.rowId
                 && a.hasMedia == b.hasMedia && a.deleted == b.deleted && a.edited == b.edited
+                && a.editable == b.editable && a.deletable == b.deletable
+                && Objects.equals(a.editUntil, b.editUntil) && Objects.equals(a.deleteUntil, b.deleteUntil)
                 && a.localMediaGone == b.localMediaGone
                 && a.localMediaFailed == b.localMediaFailed
                 && Objects.equals(a.waMessageId, b.waMessageId)
