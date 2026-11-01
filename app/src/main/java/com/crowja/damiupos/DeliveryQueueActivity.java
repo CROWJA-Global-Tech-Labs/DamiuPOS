@@ -105,6 +105,7 @@ import com.crowja.damiupos.util.DeliveryNavLogic;
 import com.crowja.damiupos.util.DeliveryProofPolicy;
 import com.crowja.damiupos.util.OrderChatEntry;
 import com.crowja.damiupos.util.PickupNearbyLogic;
+import com.crowja.damiupos.util.SejalurPlanLogic;
 import com.crowja.damiupos.util.TertundaRows;
 import com.crowja.damiupos.util.Ts;
 import com.crowja.damiupos.wa.WaContactEnsure;
@@ -157,6 +158,24 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    public static final String EXTRA_NEARBY_PICKUP_NAME = "nearby_pickup_name";
    /** Dari pita panel navigasi: setelah Selesai, navigasi rit lanjut ke titik berikutnya (alur per titik). */
    public static final String EXTRA_NEARBY_PICKUP_FROM_NAV = "nearby_pickup_from_nav";
+   /** 🛣️ "Kirim Sejalur ke sini" dari pin Peta Delivery: uuid order TITIK TERJAUH (+ data tampilan di bawah)
+    *  — dialog galon dibuka di onResume setelah loadData (pola EXTRA_FOCUS_TRX_ID). */
+   public static final String EXTRA_SEJALUR_TARGET = "sejalur_target_uuid";
+   public static final String EXTRA_SEJALUR_NAME = "sejalur_target_name";
+   public static final String EXTRA_SEJALUR_GALON = "sejalur_target_galon";
+   public static final String EXTRA_SEJALUR_PICKUP = "sejalur_target_pickup";
+   public static final String EXTRA_SEJALUR_LAT = "sejalur_target_lat";
+   public static final String EXTRA_SEJALUR_LNG = "sejalur_target_lng";
+   /** Umur antrean (menit; negatif = terjadwal; SejalurPlanLogic.AGE_UNKNOWN = tak diketahui). */
+   public static final String EXTRA_SEJALUR_AGE_MIN = "sejalur_target_age_min";
+   /** mine | open | other (SejalurPlanLogic.SRC_*). */
+   public static final String EXTRA_SEJALUR_SOURCE = "sejalur_target_source";
+   public static final String EXTRA_SEJALUR_DEVICE = "sejalur_target_device";
+   /** Ekstra "Kirim Sejalur ke sini" yang menunggu dibuka di onResume. */
+   private Bundle pendingSejalur;
+   /** Urutan rit Kirim Sejalur yang berjalan (null = bukan rit sejalur) — lihat runStops / absorbSejalurPlan. */
+   private SejalurPlanLogic.Order sejalurOrder;
+   private SejalurFlow sejalurFlow;
    /** Navigasi PER TITIK (wizard) sedang dipakai: tiap Selesai → susun ulang sisa rute → navigasi titik berikutnya. */
    private boolean wizardActive = false;
    private boolean wizardAdvancePending = false;
@@ -434,6 +453,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.pendingFocusTrxId = this.getIntent().getLongExtra(EXTRA_FOCUS_TRX_ID, -1L);
          this.pendingCompleteTrxId = this.getIntent().getLongExtra(EXTRA_COMPLETE_TRX_ID, -1L);
          this.pendingNearbyPickup = nearbyPickupExtras(this.getIntent());
+         this.pendingSejalur = sejalurExtras(this.getIntent());
       }
       if (savedInstanceState != null) {
          this.pendingProofTrxId = savedInstanceState.getLong("proof_trx_id", -1L);
@@ -688,6 +708,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.strategyHidden = sdao.isDeliveryStrategyHidden();
       this.runningIds.clear();
       this.runningIds.addAll(sdao.getDeliveryRunningTrxIds());
+      this.sejalurOrder = SejalurPlanLogic.decodeOrder(sdao.getSejalurOrder());
       View strategyHeader = this.findViewById(id.strategyHeader);
       if (strategyHeader != null) {
          strategyHeader.setOnClickListener((v) -> this.toggleStrategyCollapsed());
@@ -922,6 +943,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          takeWil.setVisible(this.activeTab == 0);
       }
 
+      // 🛣️ Kirim Sejalur: hanya HP delivery yang terhubung (server menolak perangkat non-delivery).
+      MenuItem sejalur = menu.findItem(id.action_kirim_sejalur);
+      if (sejalur != null) {
+         SyncSettings cfg = this.syncCfg();
+         sejalur.setVisible(this.activeTab == 0 && cfg.isEnrolled() && cfg.isDeliveryDevice());
+      }
+
       MenuItem toggleStrategy = menu.findItem(id.action_toggle_strategy);
       if (toggleStrategy != null) {
          toggleStrategy.setVisible(false);
@@ -951,6 +979,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          return true;
       } else if (item.getItemId() == id.action_take_wilayah) {
          this.showTakeWilayahDialog();
+         return true;
+      } else if (item.getItemId() == id.action_kirim_sejalur) {
+         this.startKirimSejalur();
          return true;
       } else if (item.getItemId() == id.action_pending_queue) {
          this.showTertundaQueueDialog();
@@ -2392,6 +2423,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.openPendingFocus();
       this.openPendingComplete();
       this.openPendingNearbyPickup();
+      this.openPendingSejalur();
       this.loadOtherDevices();
       this.loadTrips();
       this.tick.postDelayed(this.ticker, 1000L);
@@ -5562,11 +5594,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
       }
 
+      // 🛣️ Kirim Sejalur DULUAN: rencananya bisa MEMULAI rit (absorbPendingRunAdds membuang titipan bila
+      // tak ada rit berjalan) dan menyerap sendiri order sejalur yang baru tersinkron — tanpa reroute otomatis.
+      boolean sejalurAdded = this.absorbSejalurPlan(list);
       boolean absorbed = this.absorbPendingRunAdds(list);
       List<Transaction> ordered = this.buildStrategyOrderedList(list);
       this.adapter.setData(ordered);
       this.renderStrategy(ordered);
       this.applyRunModeChrome(list);
+      if (sejalurAdded && this.rv != null) {
+         this.rv.scrollToPosition(0);
+      }
       if (absorbed) {
          this.autoRerouteAfterAdd();
       }
@@ -5843,6 +5881,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private void clearRunning() {
       this.runningIds.clear();
       this.persistRunning();
+      // Kurir membatalkan rit ("Ganti pengiriman") → rencana Kirim Sejalur yang menunggu sinkron juga
+      // batal; jangan sampai rit dimulai ulang sendiri begitu order perangkat lain tiba.
+      (new SettingsDao(DatabaseHelper.getInstance(this))).setSejalurPending("");
+      this.setSejalurOrder(null);
    }
 
    private void startRun(Transaction t) {
@@ -6406,6 +6448,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private void doStartRunsNow(List<Transaction> list) {
       if (list != null && !list.isEmpty()) {
+         // Rit BARU lewat ▶ biasa → urutan khusus rit Kirim Sejalur sebelumnya tak berlaku lagi.
+         if (!this.isRunning()) this.setSejalurOrder(null);
          for(Transaction t : list) {
             if (t != null) {
                this.dao.startDelivery(t.getId());
@@ -6675,10 +6719,345 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    /** Setelah order ditambahkan ke rit berjalan: susun ulang rute rit (jalur darat) dari posisi HP. */
    private void autoRerouteAfterAdd() {
+      // 🛣️ Rit Kirim Sejalur: urutan koridor server (titik terjauh TERAKHIR) dipertahankan — optimize
+      // dari posisi HP tak mengenal titik akhir. Order tambahan disisipkan sebelum titik terjauh
+      // (runStops); kurir tetap bisa menekan 🔄 sendiri.
+      if (this.sejalurOrder != null) return;
       View b = this.findViewById(id.btnRunReroute);
       if (b != null && b.isEnabled() && this.runStops().size() > 1) {
          this.refreshRunRoute(b);
       }
+   }
+
+   // ============================ 🛣️ Kirim Sejalur ============================
+
+   /** Alur layar Kirim Sejalur (SejalurFlow); datanya selalu dibaca segar dari layar ini lewat Host. */
+   private SejalurFlow sejalur() {
+      if (this.sejalurFlow == null) {
+         this.sejalurFlow = new SejalurFlow(this, new SejalurFlow.Host() {
+            public List<SejalurPlanLogic.Target> sejalurTargets(@Nullable JSONArray others) {
+               return DeliveryQueueActivity.this.sejalurTargets(others);
+            }
+
+            @Nullable
+            public double[] sejalurMyFix() {
+               DeliveryQueueActivity a = DeliveryQueueActivity.this;
+               if (SejalurPlanLogic.isGeo(a.myLat, a.myLng)) return new double[]{a.myLat, a.myLng};
+               return SejalurPlanLogic.isGeo(a.otherLat, a.otherLng) ? new double[]{a.otherLat, a.otherLng} : null;
+            }
+
+            public int[] sejalurApplyStart(String targetUuid, List<String> ritUuids, boolean targetHeld) {
+               return DeliveryQueueActivity.this.sejalurApplyStart(targetUuid, ritUuids, targetHeld);
+            }
+
+            public void sejalurOpenMap() {
+               DeliveryQueueActivity.this.openSejalurMap();
+            }
+         });
+      }
+      return this.sejalurFlow;
+   }
+
+   /** Gerbang Kirim Sejalur — false (dengan Toast alasannya) bila tak boleh dimulai sekarang. */
+   private boolean sejalurGate() {
+      SyncSettings cfg = this.syncCfg();
+      if (this.guidedMode) {
+         Toast.makeText(this, "🛣️ Kirim Sejalur tidak tersedia di mode Pengiriman Terpandu.", 1).show();
+         return false;
+      } else if (!cfg.isEnrolled()) {
+         Toast.makeText(this, "Perangkat belum terhubung ke server.", 1).show();
+         return false;
+      } else if (!cfg.isDeliveryDevice()) {
+         Toast.makeText(this, "Perangkat ini tidak ditandai sebagai perangkat delivery — minta admin mengaktifkannya.", 1).show();
+         return false;
+      } else if (this.isRunning()) {
+         Toast.makeText(this, "Selesaikan rit yang berjalan dulu.", 1).show();
+         return false;
+      }
+      return true;
+   }
+
+   /** 🛣️ Menu overflow "Kirim Sejalur": pilih titik terjauh dari daftar (atau dari peta). */
+   private void startKirimSejalur() {
+      if (this.sejalurGate()) {
+         this.sejalur().showPicker();
+      }
+   }
+
+   /** "🗺 Pilih dari Peta": Peta Delivery mode pilih — semua perangkat tampil, ketuk pin → kembali ke sini. */
+   private void openSejalurMap() {
+      Intent i = new Intent(this, DeliveryMapActivity.class);
+      i.putExtra(DeliveryMapActivity.EXTRA_SEJALUR_PICK, true);
+      this.startActivity(i);
+   }
+
+   /** Ekstra "Kirim Sejalur ke sini" dari peta; null bila tak ada / dibuka ulang dari Terbaru. */
+   @Nullable
+   private static Bundle sejalurExtras(@Nullable Intent intent) {
+      if (intent == null || (intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) return null;
+      String uuid = intent.getStringExtra(EXTRA_SEJALUR_TARGET);
+      Bundle b = intent.getExtras();
+      return uuid == null || uuid.trim().isEmpty() || b == null ? null : new Bundle(b);
+   }
+
+   /** onResume (setelah loadData): titik terjauh dari pin peta → dialog galon. */
+   private void openPendingSejalur() {
+      Bundle b = this.pendingSejalur;
+      if (b == null) return;
+      this.pendingSejalur = null;
+      if (!this.sejalurGate()) return;
+      String uuid = b.getString(EXTRA_SEJALUR_TARGET, "");
+      SejalurPlanLogic.Target t = null;
+      for (SejalurPlanLogic.Target x : this.sejalurTargets(null)) {
+         if (uuid.equals(x.uuid)) {
+            t = x;
+            break;
+         }
+      }
+      if (t == null) t = this.sejalurTargetFromExtras(b);
+      this.sejalur().askGalon(t);
+   }
+
+   /** Order dari pin peta yang belum ada di data layar ini (mis. tab Perangkat Lain belum dimuat). */
+   private SejalurPlanLogic.Target sejalurTargetFromExtras(Bundle b) {
+      SejalurPlanLogic.Target t = new SejalurPlanLogic.Target();
+      t.uuid = b.getString(EXTRA_SEJALUR_TARGET, "");
+      t.name = safe(cleanLabel(b.getString(EXTRA_SEJALUR_NAME, "")));
+      t.galon = b.getInt(EXTRA_SEJALUR_GALON, 0);
+      t.pickupOnly = b.getBoolean(EXTRA_SEJALUR_PICKUP, false);
+      t.lat = b.getDouble(EXTRA_SEJALUR_LAT, 0.0);
+      t.lng = b.getDouble(EXTRA_SEJALUR_LNG, 0.0);
+      long age = b.getLong(EXTRA_SEJALUR_AGE_MIN, SejalurPlanLogic.AGE_UNKNOWN);
+      t.elapsedMs = age == SejalurPlanLogic.AGE_UNKNOWN ? 0L : age * 60000L;
+      String src = b.getString(EXTRA_SEJALUR_SOURCE, SejalurPlanLogic.SRC_OTHER);
+      t.source = src != null ? src : SejalurPlanLogic.SRC_OTHER;
+      t.deviceLabel = cleanLabel(b.getString(EXTRA_SEJALUR_DEVICE, ""));
+      List<SejalurPlanLogic.Target> one = new ArrayList<>();
+      one.add(t);
+      SejalurPlanLogic.fillDistances(one, this.sejalurOrigin());
+      return t;
+   }
+
+   /** Asal jarak "dari depot": titik cabang; tanpa itu posisi HP; keduanya tak ada → null. */
+   @Nullable
+   private double[] sejalurOrigin() {
+      double[] depot = branchCenter(this.syncCfg());
+      return SejalurPlanLogic.origin(depot[0], depot[1], this.myLat, this.myLng);
+   }
+
+   /**
+    * Calon titik terjauh: Antrian Saya (bukan rit berjalan, tanpa void tertunda), Pesanan Terbuka, lalu
+    * antrean perangkat lain (bukan yang sedang diantar kurirnya / menunggu persetujuan Ambil Alih) —
+    * unik per uuid, jarak garis lurus dari depot.
+    *
+    * @param others antrean perangkat lain segar dari server; null = data tab Perangkat Lain
+    */
+   private List<SejalurPlanLogic.Target> sejalurTargets(@Nullable JSONArray others) {
+      List<SejalurPlanLogic.Target> mine = new ArrayList<>();
+      if (this.adapter != null && this.adapter.data != null) {
+         for (Transaction t : this.adapter.data) {
+            if (t == null || t.isOpenDispatch() || t.hasPendingVoidRequest() || this.runningIds.contains(t.getId())) continue;
+            mine.add(this.sejalurTarget(t, SejalurPlanLogic.SRC_MINE));
+         }
+      }
+      List<SejalurPlanLogic.Target> open = new ArrayList<>();
+      if (this.openDispatchAdapter != null) {
+         for (Transaction t : this.openDispatchAdapter.rawData) {
+            if (t == null || t.hasPendingVoidRequest()) continue;
+            open.add(this.sejalurTarget(t, SejalurPlanLogic.SRC_OPEN));
+         }
+      }
+      List<JSONObject> rows = new ArrayList<>();
+      if (others != null) {
+         for (int i = 0; i < others.length(); i++) {
+            JSONObject o = others.optJSONObject(i);
+            if (o != null) rows.add(o);
+         }
+      } else if (this.otherDevicesAdapter != null) {
+         rows.addAll(this.otherDevicesAdapter.rawData);
+      }
+      List<SejalurPlanLogic.Target> other = new ArrayList<>();
+      for (JSONObject o : rows) {
+         String u = o.optString("uuid", "");
+         // Pesanan Terbuka sudah dari DB lokal; yang sedang diantar kurir lain / menunggu persetujuan dilewati.
+         if (u.isEmpty() || o.optBoolean("open_dispatch", false) || isBeingDelivered(o) || ClaimRequests.blocks(u)) continue;
+         other.add(this.sejalurTarget(o));
+      }
+      List<SejalurPlanLogic.Target> all = SejalurPlanLogic.merge(mine, open, other);
+      SejalurPlanLogic.fillDistances(all, this.sejalurOrigin());
+      return all;
+   }
+
+   private SejalurPlanLogic.Target sejalurTarget(Transaction t, String source) {
+      SejalurPlanLogic.Target x = new SejalurPlanLogic.Target();
+      String u = this.dao.getSyncUuidById(t.getId());
+      x.uuid = u != null ? u : "";
+      x.localId = t.getId();
+      x.name = (t.isOrderPriority() || t.getPriorityLevel() > 0 ? "⚡ " : "") + (t.isCustomerPriority() ? "⭐ " : "") + safe(t.getCustomerName());
+      Customer c = t.getCustomerId() > 0L ? this.customerDao.getById(t.getCustomerId()) : null;
+      x.area = cleanLabel(areaLabel(c, t));
+      StringBuilder items = new StringBuilder();
+      List<TransactionItem> its = t.getItems();
+      if (its != null) {
+         LinkedHashMap<String, Integer> q = new LinkedHashMap<>();
+         for (TransactionItem it : its) {
+            if (it != null && it.jumlah > 0) q.merge(this.chipLabel(it), it.jumlah, Integer::sum);
+         }
+         for (Map.Entry<String, Integer> e : q.entrySet()) {
+            items.append(items.length() > 0 ? " · " : "").append(e.getKey()).append("×").append(e.getValue());
+         }
+      }
+      x.items = items.toString();
+      x.galon = Math.max(0, t.getJumlahGalon());
+      x.pickupOnly = isPickupOnly(t);
+      x.priority = DeliveryPlanner.isPriority(t);
+      x.source = source;
+      x.lat = effectiveLat(t);
+      x.lng = effectiveLng(t);
+      x.elapsedMs = elapsedMillis(t.getDeliveryQueuedAt());
+      return x;
+   }
+
+   private SejalurPlanLogic.Target sejalurTarget(JSONObject o) {
+      SejalurPlanLogic.Target x = new SejalurPlanLogic.Target();
+      x.uuid = o.optString("uuid", "");
+      x.name = (o.optBoolean("order_priority", false) || o.optInt("order_priority_level", 0) > 0 ? "⚡ " : "")
+            + (o.optBoolean(DatabaseHelper.COL_CAMP_PRIORITY, false) ? "⭐ " : "") + safe(cleanLabel(o.optString("name", "")));
+      String customerUuid = cleanLabel(o.optString("customer_uuid", ""));
+      Customer c = customerUuid.isEmpty() ? null : this.customerDao.getBySyncUuid(customerUuid);
+      String dn = cleanLabel(o.optString("dest_name", ""));
+      x.area = cleanLabel(dn.isEmpty() ? areaLabel(c, 0.0, 0.0, "")
+            : areaLabel(c, o.optDouble("latitude", 0.0), o.optDouble("longitude", 0.0), dn));
+      if (x.area.isEmpty()) x.area = cleanLabel(o.optString("address", ""));
+      StringBuilder items = new StringBuilder();
+      for (Map.Entry<String, int[]> e : this.mergedCsvChips(o.optString("items", "")).entrySet()) {
+         String label = e.getKey();
+         int cut = label.indexOf('\u0000');
+         if (cut >= 0) label = label.substring(0, cut);
+         items.append(items.length() > 0 ? " · " : "").append(label);
+         if (e.getValue()[0] > 0) items.append("×").append(e.getValue()[0]);
+      }
+      x.items = items.toString();
+      x.galon = Math.max(0, o.optInt("galon", 0));
+      x.pickupOnly = o.optBoolean("pickup_only", false);
+      x.priority = o.optBoolean("is_priority", false) || o.optInt("order_priority_level", 0) > 0;
+      x.source = SejalurPlanLogic.SRC_OTHER;
+      x.deviceLabel = cleanLabel(o.optString("device_group_label", ""));
+      x.lat = o.optDouble("latitude", 0.0);
+      x.lng = o.optDouble("longitude", 0.0);
+      x.elapsedMs = elapsedMillis(o.optString("queued_at", null));
+      return x;
+   }
+
+   /**
+    * Start sukses di server: tandai Pesanan Terbuka yang diambil sebagai milik sendiri (langsung ikut
+    * rit, cermin addToRunningRit), simpan rencana (urutan rit server, titik terjauh terakhir), sinkron,
+    * lalu loadData → applyList → absorbSejalurPlan menjalankan rit. @return {mulai sekarang, menunggu sinkron}
+    */
+   private int[] sejalurApplyStart(String targetUuid, List<String> ritUuids, boolean targetHeld) {
+      SyncSettings cfg = this.syncCfg();
+      HashSet<String> want = new HashSet<>(ritUuids);
+      if (this.openDispatchAdapter != null) {
+         for (Transaction t : new ArrayList<>(this.openDispatchAdapter.rawData)) {
+            String u = this.dao.getSyncUuidById(t.getId());
+            if (u != null && want.contains(u)) this.dao.markClaimedLocally(t.getId(), cfg.getDeviceUuid());
+         }
+      }
+      this.setSejalurOrder(null);
+      (new SettingsDao(DatabaseHelper.getInstance(this))).setSejalurPending(SejalurPlanLogic.encodePending(
+            new SejalurPlanLogic.Pending(System.currentTimeMillis(), targetHeld ? targetUuid : "", ritUuids)));
+      SyncScheduler.syncNow(this.getApplicationContext());
+      this.loadData();
+      this.loadOtherDevices();
+      int started = this.sejalurOrder != null ? this.sejalurOrder.ids.size() : 0;
+      return new int[]{started, Math.max(0, ritUuids.size() - started)};
+   }
+
+   /**
+    * 🛣️ Rencana Kirim Sejalur yang menunggu (dipanggil applyList SEBELUM absorbPendingRunAdds): order rit
+    * yang barisnya SUDAH ada di Antrian Saya langsung diantar — rit dimulai bila belum ada, TANPA dialog
+    * ⏰ Batas Antar "bawa sekalian" (muatan sudah dipilih kurir) dan TANPA reroute otomatis 2 detik
+    * (urutan koridor server sudah final; lihat runStops). Order perangkat lain diserap begitu tersinkron;
+    * rencana dibuang setelah semuanya masuk atau 15 menit.
+    *
+    * @return true bila ada order yang mulai diantar
+    */
+   private boolean absorbSejalurPlan(List<Transaction> list) {
+      SettingsDao sdao = new SettingsDao(DatabaseHelper.getInstance(this));
+      SejalurPlanLogic.Pending p = SejalurPlanLogic.decodePending(sdao.getSejalurPending());
+      if (p == null) {
+         // Rit sejalur sudah habis → urutan khususnya tak berlaku untuk rit berikutnya.
+         if (this.sejalurOrder != null && !this.isRunning()) this.setSejalurOrder(null);
+         return false;
+      }
+      HashSet<String> want = new HashSet<>(p.uuids);
+      HashMap<String, Long> local = new HashMap<>();
+      for (Transaction t : list) {
+         if (t == null || t.isOpenDispatch() || t.hasPendingVoidRequest()) continue;
+         String u = this.dao.getSyncUuidById(t.getId());
+         if (u != null && want.contains(u)) local.put(u, t.getId());
+      }
+      boolean wasRunning = this.isRunning();
+      SejalurPlanLogic.Absorb a = SejalurPlanLogic.absorb(p, this.sejalurOrder, local, this.runningIds, System.currentTimeMillis());
+      for (Long id : a.add) {
+         this.dao.startDelivery(id);
+         this.runningIds.add(id);
+      }
+      if (!a.order.ids.isEmpty()) this.setSejalurOrder(a.order);
+      if (!a.addUuids.isEmpty()) sdao.removeDeliveryRunPendingUuids(a.addUuids);
+      if (a.finished) sdao.setSejalurPending("");
+      if (a.expiredMissing) {
+         Toast.makeText(this, this.isRunning() || !a.add.isEmpty()
+               ? "🛣️ " + a.missing.size() + " order Kirim Sejalur belum tersinkron ke HP setelah 15 menit — ikut rit begitu tiba."
+               : "🛣️ Kirim Sejalur: order belum tersinkron ke HP dalam 15 menit. Cek Antrian Saya / tab Perangkat Lain.", 1).show();
+      }
+      if (a.add.isEmpty()) return false;
+      // runningIds (urutan sisip, dibaca juga panel navigasi untuk ekor rit) ikut disusun menurut rencana —
+      // order telat tersinkron tak jadi "paling akhir" melewati titik terjauh.
+      List<Long> inPlanOrder = SejalurPlanLogic.orderStops(new ArrayList<>(this.runningIds), this.sejalurOrder);
+      if (inPlanOrder.size() == this.runningIds.size()) {
+         this.runningIds.clear();
+         this.runningIds.addAll(inPlanOrder);
+      }
+      if (!a.missing.isEmpty()) {
+         // Jaring pengaman: rencana ini kedaluwarsa 15 mnt, titipan "masukkan ke rit" (2 jam) tetap menyerap
+         // order perangkat lain yang telat tersinkron.
+         sdao.addDeliveryRunPendingUuids(a.missing);
+      }
+      this.persistRunning();
+      SyncScheduler.syncNow(this.getApplicationContext());
+      if (wasRunning) {
+         Toast.makeText(this, "🛣️ " + a.add.size() + " order Kirim Sejalur masuk rit berjalan.", 0).show();
+      }
+      return true;
+   }
+
+   /** Simpan/lepas urutan rit Kirim Sejalur (ditulis hanya bila berubah). */
+   private void setSejalurOrder(@Nullable SejalurPlanLogic.Order o) {
+      SejalurPlanLogic.Order next = o != null && !o.ids.isEmpty() ? o : null;
+      String before = SejalurPlanLogic.encodeOrder(this.sejalurOrder);
+      String after = SejalurPlanLogic.encodeOrder(next);
+      this.sejalurOrder = next;
+      if (!before.equals(after)) {
+         (new SettingsDao(DatabaseHelper.getInstance(this))).setSejalurOrder(after);
+      }
+   }
+
+   /** runStops dalam urutan rit Kirim Sejalur (titik terjauh terakhir); bukan rit sejalur → apa adanya. */
+   private List<Transaction> sejalurOrdered(List<Transaction> stops) {
+      SejalurPlanLogic.Order o = this.sejalurOrder;
+      if (o == null || stops.size() < 2) return stops;
+      List<Long> ids = new ArrayList<>(stops.size());
+      HashMap<Long, Transaction> byId = new HashMap<>();
+      for (Transaction t : stops) {
+         ids.add(t.getId());
+         byId.put(t.getId(), t);
+      }
+      List<Long> sorted = SejalurPlanLogic.orderStops(ids, o);
+      if (sorted.equals(ids) || sorted.size() != stops.size()) return stops;
+      List<Transaction> out = new ArrayList<>(stops.size());
+      for (Long id : sorted) out.add(byId.get(id));
+      return out;
    }
 
    /** "Nama · 2 galon · MIN×2 OXY×1" — label baris pemilih Tambah ke Rit. */
@@ -6954,7 +7333,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             }
          }
 
-         return out;
+         // 🛣️ Rit Kirim Sejalur: urutan koridor server menang atas kelompok planner (⚡/⭐ dulu,
+         // KEMBALI terakhir) — titik terjauh SELALU pemberhentian terakhir.
+         return this.sejalurOrdered(out);
       }
    }
 
@@ -7017,7 +7398,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       View btnRunReroute = this.findViewById(id.btnRunReroute);
       if (btnRunReroute != null) {
          btnRunReroute.setVisibility(stops.size() > 1 ? 0 : 8);
-         btnRunReroute.setOnClickListener((v) -> this.refreshRunRoute(v));
+         btnRunReroute.setOnClickListener((v) -> {
+            // Kurir sendiri minta rute terpendek → urutan khusus Kirim Sejalur dilepas (pilihan sadar).
+            this.setSejalurOrder(null);
+            this.refreshRunRoute(v);
+         });
       }
 
       View btnRunAdd = this.findViewById(id.btnRunAdd);
@@ -9608,6 +9993,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (done > 0L) this.pendingCompleteTrxId = done;
       Bundle nearby = nearbyPickupExtras(intent);
       if (nearby != null) this.pendingNearbyPickup = nearby;   // diproses di onResume berikutnya
+      Bundle sejalur = sejalurExtras(intent);
+      if (sejalur != null) this.pendingSejalur = sejalur;      // dibuka di onResume, setelah loadData
    }
 
    /**
@@ -9932,7 +10319,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          String u = this.dao.getSyncUuidById(t.getId());
          if (u != null && !u.isEmpty()) uuids.add(u);
       }
-      if (geo.size() < 2 || !cfg.isEnrolled() || uuids.size() < 2) {
+      // 🛣️ Rit Kirim Sejalur: JANGAN optimize ulang dari GPS (titik terjauh bisa pindah ke tengah) —
+      // navigasi mengikuti urutan koridor server yang sudah ada di runStops.
+      if (geo.size() < 2 || !cfg.isEnrolled() || uuids.size() < 2 || this.sejalurOrder != null) {
          this.navigateWizard(null);
          return;
       }
@@ -12593,7 +12982,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * bind + refreshTimers). Prefiks jam-pasir ditempel di sini, bukan di formatter -- pesanan yang
     * sudah melewati batas umur memakai sirene supaya beda di ekor mata.
     */
-   private static void bindElapsedBadge(TextView tv, long elapsedMs) {
+   static void bindElapsedBadge(TextView tv, long elapsedMs) {
       boolean late = lateMs > 0L && elapsedMs >= lateMs;
       // \ud83d\uddd3\ufe0f Pesanan Terjadwal (masih hitung mundur, elapsedMs negatif) menang atas \ud83d\udea8/\u23f1 biasa --
       // lihat elapsedMillis & applyQueueTimerState.

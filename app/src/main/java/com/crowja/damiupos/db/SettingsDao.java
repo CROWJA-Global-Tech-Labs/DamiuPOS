@@ -520,6 +520,28 @@ public class SettingsDao {
         set(K_DLV_RUN_PENDING, sb.toString());
     }
 
+    // -- 🛣️ Kirim Sejalur (LOKAL saja, bukan SHAREABLE_KEYS) — format dikodekan SejalurPlanLogic --
+    /** Rencana yang sudah di-start di server, menunggu barisnya tersinkron: "epochMs|target|u1,u2,…" (TTL 15 mnt). */
+    private static final String K_DLV_SEJALUR_PENDING = "dlv_sejalur_pending";
+    /** Urutan rit Kirim Sejalur yang berjalan: "target|uuid=id,…" (titik terjauh terakhir). */
+    private static final String K_DLV_SEJALUR_ORDER = "dlv_sejalur_order";
+
+    public String getSejalurPending() {
+        return get(K_DLV_SEJALUR_PENDING, "");
+    }
+
+    public void setSejalurPending(String encoded) {
+        set(K_DLV_SEJALUR_PENDING, encoded == null ? "" : encoded);
+    }
+
+    public String getSejalurOrder() {
+        return get(K_DLV_SEJALUR_ORDER, "");
+    }
+
+    public void setSejalurOrder(String encoded) {
+        set(K_DLV_SEJALUR_ORDER, encoded == null ? "" : encoded);
+    }
+
     public void setDeliveryRunningTrxIds(java.util.Collection<Long> ids) {
         StringBuilder sb = new StringBuilder();
         if (ids != null) {

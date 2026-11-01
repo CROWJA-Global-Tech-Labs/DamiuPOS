@@ -4,6 +4,7 @@ import com.crowja.damiupos.map.LiveDeviceOverlay;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationListener;
@@ -29,6 +30,8 @@ import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.sync.SyncApi;
 import com.crowja.damiupos.sync.SyncSettings;
+import com.crowja.damiupos.util.SejalurPlanLogic;
+import com.crowja.damiupos.util.Ts;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -53,6 +56,10 @@ import org.json.JSONObject;
 public class DeliveryMapActivity extends AppCompatActivity {
 
     private static final int REQUEST_PERMISSION_LOCATION = 402;
+
+    /** 🛣️ Dibuka dari pemilih Kirim Sejalur ("🗺 Pilih dari Peta"): semua perangkat tampil, ketuk pin = titik terjauh. */
+    public static final String EXTRA_SEJALUR_PICK = "sejalur_pick";
+    private boolean sejalurPick = false;
 
     private WebView webView;
     private ProgressBar progress;
@@ -87,6 +94,10 @@ public class DeliveryMapActivity extends AppCompatActivity {
 
         cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
         myDeviceUuid = cfg.getDeviceUuid();
+        sejalurPick = getIntent() != null && getIntent().getBooleanExtra(EXTRA_SEJALUR_PICK, false) && sejalurAllowed();
+        if (sejalurPick && getSupportActionBar() != null) {
+            getSupportActionBar().setSubtitle("🛣️ Kirim Sejalur: ketuk pin titik terjauh");
+        }
 
         if (!cfg.isEnrolled()) {
             progress.setVisibility(View.GONE);
@@ -149,8 +160,71 @@ public class DeliveryMapActivity extends AppCompatActivity {
     private void refresh(JSONObject data) {
         JSONArray queue = data.optJSONArray("queue");
         if (queue == null) queue = new JSONArray();
+        decorateAges(queue);
         setTitle("Peta Antrian Delivery (" + queue.length() + ")");
         evalJs("if(window.setRun)setRun(" + runActive() + "," + runUuidsJson() + ");refreshData(" + queue + ");");
+    }
+
+    /**
+     * ⏱ Umur tiap order DIHITUNG DI JAVA lalu disuntikkan ke baris ({@code age_min}, {@code age_lbl},
+     * {@code age_lv}) — JS {@code Date.parse} atas "Y-m-d H:i:s" tanpa zona tak bisa dipercaya, dan
+     * queued_at bisa ISO-UTC atau lokal (Ts.millis menangani keduanya). age_minutes server (anti selisih
+     * jam HP) dipakai lebih dulu; queued_at masa depan = Pesanan Terjadwal. Server lama tanpa kedua kunci
+     * → tanpa baris umur.
+     */
+    private static void decorateAges(JSONArray queue) {
+        long now = System.currentTimeMillis();
+        for (int i = 0; i < queue.length(); i++) {
+            JSONObject q = queue.optJSONObject(i);
+            if (q == null) continue;
+            try {
+                long server = q.has("age_minutes") && !q.isNull("age_minutes") ? q.optLong("age_minutes", -1L) : -1L;
+                String queuedAt = q.isNull("queued_at") ? "" : q.optString("queued_at", "");
+                long age = SejalurPlanLogic.ageMinutes(server, Ts.millis(queuedAt), now);
+                if (age == SejalurPlanLogic.AGE_UNKNOWN) {
+                    q.remove("age_min");
+                    q.put("age_lbl", "");
+                } else {
+                    q.put("age_min", age);
+                    q.put("age_lbl", SejalurPlanLogic.mapAgeLine(age));
+                }
+                q.put("age_lv", SejalurPlanLogic.ageLevel(age));
+            } catch (Exception ignored) {}
+        }
+    }
+
+    /** Kirim Sejalur boleh dari peta ini: HP delivery terhubung, bukan mode terpandu. */
+    private boolean sejalurAllowed() {
+        return cfg != null && cfg.isEnrolled() && cfg.isDeliveryDevice() && !cfg.isGuidedDeliveryDevice();
+    }
+
+    /**
+     * 🛣️ "Kirim Sejalur ke sini": kembali ke Antrian Delivery yang SUDAH ada di bawah peta ini
+     * (CLEAR_TOP|SINGLE_TOP → onNewIntent; launchMode standar membuat instans kedua tanpa itu) dengan
+     * uuid titik terjauh — dialog galon dibuka di sana setelah loadData.
+     */
+    private void pickSejalur(String trxUuid, String custName, int galon, boolean pickupOnly, double lat, double lng,
+                             boolean hasAge, double ageMin, String deviceName, boolean mine, boolean openDispatch) {
+        if (isFinishing() || isDestroyed() || trxUuid == null || trxUuid.isEmpty()) return;
+        if (runActive()) {
+            Toast.makeText(this, "Selesaikan rit yang berjalan dulu.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Intent i = new Intent(this, DeliveryQueueActivity.class);
+        i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_TARGET, trxUuid);
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_NAME, custName == null ? "" : custName);
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_GALON, galon);
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_PICKUP, pickupOnly);
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_LAT, lat);
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_LNG, lng);
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_AGE_MIN,
+                hasAge && !Double.isNaN(ageMin) ? Math.round(ageMin) : SejalurPlanLogic.AGE_UNKNOWN);
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_SOURCE, openDispatch ? SejalurPlanLogic.SRC_OPEN
+                : (mine ? SejalurPlanLogic.SRC_MINE : SejalurPlanLogic.SRC_OTHER));
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_DEVICE, deviceName == null ? "" : deviceName);
+        startActivity(i);
+        finish();
     }
 
     private void render(JSONObject data) {
@@ -164,6 +238,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
         tvEmpty.setVisibility(View.GONE);
         getSupportActionBar();
         setTitle("Peta Antrian Delivery (" + queue.length() + ")");
+        decorateAges(queue);
         // Halaman baru → fungsi JS belum ada sampai onPageFinished; fix GPS ditahan di lastLocation.
         pageReady = false;
         mapRendered = true;
@@ -309,6 +384,14 @@ public class DeliveryMapActivity extends AppCompatActivity {
         public void claimResume(String trxUuid, String expectedDeviceUuid, String custName,
                                 String items, double total, boolean mine) {
             runOnUiThread(() -> confirmClaim(trxUuid, expectedDeviceUuid, custName, items, total, true, mine));
+        }
+
+        /** 🛣️ "Kirim Sejalur ke sini": pin ini jadi titik terjauh → kembali ke Antrian Delivery. */
+        @JavascriptInterface
+        public void sejalur(String trxUuid, String custName, int galon, boolean pickupOnly, double lat, double lng,
+                            boolean hasAge, double ageMin, String deviceName, boolean mine, boolean openDispatch) {
+            runOnUiThread(() -> pickSejalur(trxUuid, custName, galon, pickupOnly, lat, lng, hasAge, ageMin,
+                    deviceName, mine, openDispatch));
         }
 
         /** Pin MILIK SENDIRI saat rit berjalan: ikutkan order ini ke rit tersebut. */
@@ -610,9 +693,15 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  .leaflet-popup-content a.claimbtn{display:block;margin-top:8px;padding:9px 12px;background:#c62828;color:#fff !important;border-radius:6px;text-decoration:none;font-size:13px;font-weight:bold;text-align:center;}\n" +
                 "  .leaflet-popup-content a.claimbtn.resumebtn{background:#6d28d9;}\n" +
                 "  .leaflet-popup-content a.claimbtn.runbtn{background:#0369a1;}\n" +
+                // 🛣️ Kirim Sejalur — hijau toska tua, teks putih 6,4:1.
+                "  .leaflet-popup-content a.claimbtn.sejalurbtn{background:#00695c;}\n" +
                 "  .pname{font-size:14px;font-weight:bold;color:#222;}\n" +
                 "  .pmeta{font-size:12px;color:#666;margin-top:2px;}\n" +
                 "  .pmeta.inprogress{color:#b45309;font-weight:bold;margin-top:6px;}\n" +
+                // ⏱ Umur di popup (latar popup Leaflet selalu putih): abu tua 10:1, ≥1 jam cokelat-amber 7:1, ≥2 jam merah 6,5:1.
+                "  .pmeta.age{color:#374151;font-weight:bold;margin-top:3px;}\n" +
+                "  .pmeta.age.warn{color:#92400e;}\n" +
+                "  .pmeta.age.late{color:#b91c1c;}\n" +
                 "  .badge{display:inline-block;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:8px;margin-left:4px;vertical-align:middle;background:#dcfce7;color:#166534;}\n" +
                 "  .pin{position:relative;width:30px;height:38px;}\n" +
                 "  .pin svg{position:absolute;top:0;left:0;}\n" +
@@ -671,6 +760,10 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 // "➕ Masukkan ke Rit Berjalan" di pin milik sendiri.
                 "var runActive = " + runActive() + ", runUuids = " + runUuidsJson() + ";\n" +
                 "function setRun(a,u){ runActive=!!a; runUuids=u||{}; }\n" +
+                // 🛣️ Kirim Sejalur — DIDEKLARASIKAN di sini, sebelum buildMarkers()/applyFilter() pertama
+                // (pelajaran odLines: var yang telat mematikan seluruh skrip). sejalurPick = dibuka dari
+                // pemilih (semua perangkat tampil); sejalurOk = HP delivery, bukan terpandu.
+                "var sejalurPick = " + sejalurPick + ", sejalurOk = " + sejalurAllowed() + ";\n" +
                 "var map = L.map('map',{zoomControl:true}).setView([" + centerLat + "," + centerLng + "], 13);\n" +
                 "L.tileLayer('" + MapTiles.LEAFLET_URL + "',{subdomains:'" + MapTiles.SUBDOMAINS + "',maxZoom:19,attribution:'" + MapTiles.ATTRIBUTION + "'}).addTo(map);\n" +
                 "var cluster = L.markerClusterGroup({maxClusterRadius:50,spiderfyOnMaxZoom:true});\n" +
@@ -679,7 +772,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 // Bawaan: hanya pesanan perangkat INI; perangkat lain (termasuk yang baru muncul)
                 // disembunyikan sampai 👁 diketuk.
                 "var seenDevices = {};\n" +
-                "function seedHidden(){ if(!myUuid||typeof legend==='undefined') return; legend.forEach(function(g){ if(seenDevices[g.uuid]) return; seenDevices[g.uuid]=true; if(g.uuid!==myUuid) hiddenDevices[g.uuid]=true; }); }\n" +
+                "function seedHidden(){ if(sejalurPick||!myUuid||typeof legend==='undefined') return; legend.forEach(function(g){ if(seenDevices[g.uuid]) return; seenDevices[g.uuid]=true; if(g.uuid!==myUuid) hiddenDevices[g.uuid]=true; }); }\n" +
                 "function pinIcon(color,emoji,mine,openDispatch){\n" +
                 "  var svg='<svg width=\"30\" height=\"38\" viewBox=\"0 0 30 38\" xmlns=\"http://www.w3.org/2000/svg\">'+\n" +
                 "    '<path d=\"M15 0C6.7 0 0 6.7 0 15c0 10 15 23 15 23s15-13 15-23C30 6.7 23.3 0 15 0z\" fill=\"'+color+'\"/>'+\n" +
@@ -699,7 +792,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "var odLines=[];\n" +
                 "function buildMarkers(){\n" +
                 "markers=[]; openDispatchPts=[];\n" +
-                "pts.forEach(function(p){\n" +
+                "pts.forEach(function(p,idx){\n" +
                 "  var m=L.marker([p.lat,p.lng],{icon:pinIcon(p.color,p.icon,p.mine,p.open_dispatch)});\n" +
                 "  m._p=p;\n" +
                 "  var rp = 'Rp '+Math.round(p.total||0).toLocaleString('id-ID');\n" +
@@ -728,7 +821,14 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  var runBtn = (!p.mine || p.tertunda_until || !runActive) ? '' : (runUuids[p.uuid]\n" +
                 "    ? '<div class=\"pmeta inprogress\">🚚 Sudah di rit berjalan</div>'\n" +
                 "    : '<a class=\"claimbtn runbtn\" href=\"#\" onclick=\"addRunById(\\''+p.uuid+'\\');return false;\">➕ Masukkan ke Rit Berjalan</a>');\n" +
-                "  var html='<div class=\"pname\">'+escHtml(p.name)+mineBadge+'</div><div class=\"pmeta\">'+meta+'</div>'+itemsHtml+odNote+pausedNote+progressNote+claimBtn+runBtn;\n" +
+                // ⏱ umur (dihitung di Java: age_lbl/age_lv) + 🛣️ Kirim Sejalur ke sini — bukan untuk pin yang
+                // sedang diantar / dijeda, dan tak saat rit berjalan (selesaikan rit dulu). onclick memakai
+                // INDEKS pts (angka), bukan uuid mentah di dalam string JS.
+                "  var ageHtml = p.age_lbl ? '<div class=\"pmeta age'+(p.age_lv==2?' late':(p.age_lv==1?' warn':''))+'\">'+escHtml(p.age_lbl)+'</div>' : '';\n" +
+                "  var sejalurBtn = (!sejalurOk || runActive || p.in_progress || p.tertunda_until) ? ''\n" +
+                "    : '<a class=\"claimbtn sejalurbtn\" href=\"#\" onclick=\"sejalurAt('+idx+');return false;\">🛣️ Kirim Sejalur ke sini</a>';\n" +
+                "  var actions = sejalurPick ? sejalurBtn : claimBtn+runBtn+sejalurBtn;\n" +
+                "  var html='<div class=\"pname\">'+escHtml(p.name)+mineBadge+'</div><div class=\"pmeta\">'+meta+'</div>'+ageHtml+itemsHtml+odNote+pausedNote+progressNote+actions;\n" +
                 "  m.bindPopup(html);\n" +
                 "  markers.push(m);\n" +
                 "  if(p.open_dispatch){ openDispatchPts.push(p); }\n" +
@@ -800,6 +900,10 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  if(window.Android&&Android.claimResume){Android.claimResume(uuid, exp||'', pts[i].name,\n" +
                 "    pts[i].items||'', +(pts[i].total||0), !!pts[i].mine);}\n" +
                 "  return;}}}\n" +
+                "function sejalurAt(i){ var p=pts[i]; if(!p||!window.Android||!Android.sejalur) return;\n" +
+                "  var hasAge=(typeof p.age_min==='number');\n" +
+                "  Android.sejalur(String(p.uuid||''), String(p.name||''), Math.round(+p.galon||0), !!p.pickup_only,\n" +
+                "    +p.lat||0, +p.lng||0, hasAge, hasAge?p.age_min:0, String(p.device_name||''), !!p.mine, !!p.open_dispatch); }\n" +
                 "function addRunById(uuid){for(var i=0;i<pts.length;i++){if(pts[i].uuid===uuid){\n" +
                 "  if(window.Android&&Android.addToRun){Android.addToRun(uuid, pts[i].name);}\n" +
                 "  return;}}}\n" +
