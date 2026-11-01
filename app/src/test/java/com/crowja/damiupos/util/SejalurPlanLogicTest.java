@@ -521,4 +521,101 @@ public class SejalurPlanLogicTest {
         for (Target t : rows) out.add(t.uuid);
         return out;
     }
+
+    // ------------------------------------------------------------------ ↔ Perlebar jalur
+
+    private static PlanRow row(String uuid, boolean target) {
+        PlanRow r = new PlanRow();
+        r.uuid = uuid;
+        r.isTarget = target;
+        return r;
+    }
+
+    private static SejalurPlanLogic.WidenOption opt(int level, double km, int addedOrders, int addedGalon) {
+        return new SejalurPlanLogic.WidenOption(level, km, 0, 0, addedOrders, addedGalon);
+    }
+
+    @Test
+    public void widenChoicesOnlyWhenUnderCapacityAndOnlyUsefulHigherLevels() {
+        List<SejalurPlanLogic.WidenOption> opts = Arrays.asList(opt(3, 5.0, 2, 4), opt(1, 2.0, 1, 1), opt(2, 3.5, 0, 0),
+                opt(1, 2.0, 1, 1), opt(0, 1.1, 1, 1));
+        List<SejalurPlanLogic.WidenOption> c = SejalurPlanLogic.widenChoices(opts, 0, 3, 5, false);
+        assertEquals(2, c.size());
+        assertEquals(1, c.get(0).level);   // langkah berikutnya = tingkat terkecil yang menambah
+        assertEquals(3, c.get(1).level);
+        // Dari tingkat 1: hanya yang lebih lebar.
+        assertEquals(1, SejalurPlanLogic.widenChoices(opts, 1, 3, 5, false).size());
+        // Penuh, melebihi muatan, kapasitas tak diketahui, tanpa pilihan → tak ditawarkan.
+        assertTrue(SejalurPlanLogic.widenChoices(opts, 0, 5, 5, false).isEmpty());
+        assertTrue(SejalurPlanLogic.widenChoices(opts, 0, 3, 5, true).isEmpty());
+        assertTrue(SejalurPlanLogic.widenChoices(opts, 0, 3, 0, false).isEmpty());
+        assertTrue(SejalurPlanLogic.widenChoices(null, 0, 3, 5, false).isEmpty());
+        assertTrue(SejalurPlanLogic.widenChoices(new ArrayList<>(), 0, 0, 5, false).isEmpty());
+    }
+
+    @Test
+    public void widenTexts() {
+        assertEquals("↔ Perlebar jalur: +2 order · +3 galon (memutar ≤ 2,0 km)",
+                SejalurPlanLogic.widenButtonText(opt(1, 2.0, 2, 3)));
+        assertEquals("↔ Perlebar jalur: +4 galon (memutar ≤ 5,0 km)", SejalurPlanLogic.widenButtonText(opt(3, 5.0, 0, 4)));
+        assertEquals("Jalur biasa (memutar ≤ 1,1 km)", SejalurPlanLogic.widenStateText(0, 1.1));
+        assertEquals("↔ Jalur diperlebar (tingkat 2 · memutar ≤ 3,5 km)", SejalurPlanLogic.widenStateText(2, 3.5));
+        assertEquals("Jalur biasa", SejalurPlanLogic.widenStateText(0, Double.NaN));
+    }
+
+    @Test
+    public void carryChecksKeepsManualUnticksAndTicksNewRows() {
+        Set<String> shown = new HashSet<>(Arrays.asList("a", "b", "x", "T"));
+        Set<String> was = new HashSet<>(Arrays.asList("a", "x", "T"));   // b dilepas kurir, x = alternatif dicentang
+        List<PlanRow> main = Arrays.asList(row("a", false), row("b", false), row("n", false), row("T", true));
+        List<PlanRow> alts = Arrays.asList(row("x", false), row("m", false));
+        Set<String> c = SejalurPlanLogic.carryChecks(main, alts, shown, was);
+        assertEquals(new HashSet<>(Arrays.asList("a", "n", "T", "x")), c);
+        // Titik terjauh tetap tercentang meski entah bagaimana tak ada di centang lama.
+        assertTrue(SejalurPlanLogic.carryChecks(main, alts, shown, new HashSet<>()).contains("T"));
+        // Pratinjau pertama: semua baris rencana, tanpa alternatif.
+        assertEquals(new HashSet<>(Arrays.asList("a", "b", "n", "T")), SejalurPlanLogic.carryChecks(main, alts, null, null));
+    }
+
+    // ------------------------------------------------------------------ saringan jenis order pemilih
+
+    private static Target kind(String uuid, boolean pickup, double km) {
+        Target t = new Target();
+        t.uuid = uuid;
+        t.name = uuid;
+        t.pickupOnly = pickup;
+        t.lat = -7.5;
+        t.lng = 110.8;
+        t.distKm = km;
+        return t;
+    }
+
+    @Test
+    public void pickerKindFilterCombinesWithSearchAndSort() {
+        List<Target> rows = Arrays.asList(kind("jual-dekat", false, 1.0), kind("ambil-jauh", true, 9.0),
+                kind("jual-jauh", false, 5.0), kind("ambil-dekat", true, 2.0));
+        List<String> both = new ArrayList<>();
+        for (Target t : SejalurPlanLogic.filterSort(rows, "", false, true, true)) both.add(t.uuid);
+        assertEquals(Arrays.asList("ambil-jauh", "jual-jauh", "ambil-dekat", "jual-dekat"), both);
+        List<String> sales = new ArrayList<>();
+        for (Target t : SejalurPlanLogic.filterSort(rows, "", false, true, false)) sales.add(t.uuid);
+        assertEquals(Arrays.asList("jual-jauh", "jual-dekat"), sales);
+        List<String> pick = new ArrayList<>();
+        for (Target t : SejalurPlanLogic.filterSort(rows, "dekat", false, false, true)) pick.add(t.uuid);
+        assertEquals(Collections.singletonList("ambil-dekat"), pick);
+        assertEquals(2, SejalurPlanLogic.selectableCount(SejalurPlanLogic.filterSort(rows, "", false, true, false)));
+        assertFalse(SejalurPlanLogic.kindMatches(null, true, true));
+    }
+
+    @Test
+    public void pickerKindToggleNeverLeavesBothUnchecked() {
+        // Lepas Penjualan saat Ambil galon sudah lepas → tukar ke Ambil galon saja.
+        assertTrue(Arrays.equals(new boolean[]{false, true}, SejalurPlanLogic.kindToggle(false, false, true)));
+        assertTrue(Arrays.equals(new boolean[]{true, false}, SejalurPlanLogic.kindToggle(false, false, false)));
+        assertTrue(Arrays.equals(new boolean[]{false, true}, SejalurPlanLogic.kindToggle(false, true, true)));
+        assertTrue(Arrays.equals(new boolean[]{true, true}, SejalurPlanLogic.kindToggle(true, true, false)));
+        assertEquals("", SejalurPlanLogic.kindLabel(true, true));
+        assertEquals("Penjualan saja", SejalurPlanLogic.kindLabel(true, false));
+        assertEquals("Ambil galon saja", SejalurPlanLogic.kindLabel(false, true));
+    }
 }
