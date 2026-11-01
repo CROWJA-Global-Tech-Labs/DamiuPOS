@@ -840,6 +840,17 @@ public class SyncApi {
         return post(path, body, cfg.getToken(), staffUuid);
     }
 
+    /** "Hapus Perangkat" (= Cabut akses di web, data operasional diarsipkan) → {ok, message}. */
+    public JSONObject adminDeviceDelete(String deviceUuid, String staffUuid) throws Exception {
+        String url = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/admin/devices").newBuilder()
+                .addPathSegment(deviceUuid).build().toString();
+        Request.Builder b = new Request.Builder().url(url).header("Accept", "application/json").delete();
+        String token = cfg.getToken();
+        if (token != null && !token.isEmpty()) b.header("Authorization", "Bearer " + token);
+        if (staffUuid != null && !staffUuid.isEmpty()) b.header("X-Staff-Uuid", staffUuid);
+        return execute(b.build());
+    }
+
     // ------------------------------------------------ WhatsApp Admin (/api/admin/wa/*)
     // Cermin grup menu web "WhatsApp". Generik supaya tiap layar (wa.*Activity) memakai jalur sendiri
     // tanpa menambah metode di sini. Semua membawa X-Staff-Uuid (staf Admin aktif cabang ini).

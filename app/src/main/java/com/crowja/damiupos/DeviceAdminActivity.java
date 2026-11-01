@@ -380,6 +380,7 @@ public class DeviceAdminActivity extends AppCompatActivity {
         buildMarketing(d, uuid);
         buildStaffLogins(d, uuid);
         buildCommands(d, uuid);
+        if (!d.optBoolean("is_me")) buildDelete(d, uuid);
         detailBox.addView(footerHint(), topMargin(matchWrap(), 12));
     }
 
@@ -838,6 +839,53 @@ public class DeviceAdminActivity extends AppCompatActivity {
             command(uuid, "message", m, bMsg);
         });
         s.addView(bMsg, topMargin(matchWrap(), 8));
+    }
+
+    // ---- Hapus Perangkat (DELETE — sama dengan "Cabut akses" di web)
+
+    private void buildDelete(JSONObject d, String uuid) {
+        LinearLayout s = section("🗑️ Hapus Perangkat", "Akses HP ini diputus dan hilang dari daftar. Data operasionalnya "
+                + "diarsipkan (bisa dipulihkan di dashboard → Arsip Data); pelanggan, transaksi & absensinya tetap tersimpan. "
+                + "Untuk terhubung lagi HP harus didaftarkan ulang.");
+        MaterialButton b = button("🗑️ Hapus Perangkat", 0xFFC62828);
+        String name = nz(str(d, "name"), "perangkat ini");
+        b.setOnClickListener(v -> new android.app.AlertDialog.Builder(this)
+                .setTitle("Hapus \"" + name + "\"?")
+                .setMessage("HP ini langsung terputus dan harus didaftarkan ulang. Data operasionalnya diarsipkan "
+                        + "(bisa dipulihkan dari dashboard).")
+                .setPositiveButton("Hapus", (dlg, w) -> deleteDevice(uuid, b))
+                .setNegativeButton("Batal", null)
+                .show());
+        s.addView(b, topMargin(matchWrap(), 4));
+    }
+
+    private void deleteDevice(String uuid, View trigger) {
+        trigger.setEnabled(false);
+        new Thread(() -> {
+            String msg;
+            boolean ok = false;
+            try {
+                JSONObject r = new SyncApi(cfg).adminDeviceDelete(uuid, staffUuid);
+                ok = r.optBoolean("ok", true);
+                msg = nz(str(r, "message"), ok ? "Perangkat dihapus." : "Ditolak server.");
+            } catch (SyncApi.SyncException se) {
+                msg = se.serverMessage();
+                if (msg == null) msg = "Gagal (kode " + se.code + ").";
+            } catch (Exception e) {
+                msg = "Gagal — periksa koneksi internet.";
+            }
+            final String fm = msg;
+            final boolean fok = ok;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(this, fm, Toast.LENGTH_LONG).show();
+                trigger.setEnabled(true);
+                if (fok) {
+                    showList();
+                    load();
+                }
+            });
+        }).start();
     }
 
     private void command(String uuid, String cmd, @Nullable String body, View trigger) {
