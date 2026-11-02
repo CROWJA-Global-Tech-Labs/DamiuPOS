@@ -153,6 +153,41 @@ final class SejalurFlow {
       return this.act.isFinishing() || this.act.isDestroyed();
    }
 
+   // ================================================================== 0. tawaran otomatis (pesanan tua)
+
+   /**
+    * Popup otomatis untuk pesanan yang umurnya sudah TERLAMBAT (delivery_max_age_minutes):
+    * tawarkan pesanan itu sebagai titik terjauh. "Buat Rute" langsung menyusun rencana dengan
+    * kapasitas perangkat lalu membuka pratinjau (belum ada yang dimulai sebelum kurir menyetujuinya).
+    */
+   void suggest(final Target t, final String threshold) {
+      if (this.gone() || t == null) return;
+      StringBuilder msg = new StringBuilder();
+      msg.append("🏁 ").append(t.name).append("\n⏱ Sudah menunggu ")
+            .append(SejalurPlanLogic.ageText(t.elapsedMs / 60000L)).append(" (batas terlambat ").append(threshold).append(")");
+      String km = SejalurPlanLogic.kmText(t.distKm);
+      if (!km.isEmpty()) msg.append("\n📍 ").append(km).append(' ').append(this.fromLabel());
+      msg.append("\n").append(galonText(t.galon, t.pickupOnly));
+      if (t.area != null && !t.area.isEmpty()) msg.append("\n").append(t.area);
+      msg.append("\n\nBuat rute Kirim Sejalur dengan pesanan ini sebagai titik terjauh? Sistem mengisi muatan dengan "
+            + "pesanan yang searah, lalu menampilkan pratinjau rute untuk Anda setujui.");
+      final int maxLoad = this.cfg().getMaxLoad();
+      (new AlertDialog.Builder(this.act))
+            .setTitle("🛣️ Pesanan Menunggu Lama")
+            .setMessage(msg.toString())
+            .setPositiveButton("Buat Rute", (d, w) -> {
+               if (maxLoad > 0) {
+                  this.requestPlan(new PlanReq(t, maxLoad, true, true, 0), null,
+                        Collections.<Button>emptyList(), null, null);
+               } else {
+                  this.askGalon(t);
+               }
+            })
+            .setNeutralButton("Atur Galon", (d, w) -> this.askGalon(t))
+            .setNegativeButton("Nanti", (DialogInterface.OnClickListener) null)
+            .show();
+   }
+
    // ================================================================== 1. pemilih titik terjauh
 
    void showPicker() {
@@ -791,7 +826,7 @@ final class SejalurFlow {
                      .setPositiveButton("OK", (DialogInterface.OnClickListener) null).show();
                return;
             }
-            try { prev.dismiss(); } catch (Exception ignored) {}
+            if (prev != null) try { prev.dismiss(); } catch (Exception ignored) {}
             this.showPreview(req, fp, prevShown, prevChecked);
          });
       }).start();

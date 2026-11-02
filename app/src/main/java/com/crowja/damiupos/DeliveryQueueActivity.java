@@ -356,6 +356,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
 
          DeliveryQueueActivity.this.maybeRaiseLateAlarm();
+         DeliveryQueueActivity.this.maybeSuggestSejalur();
          DeliveryQueueActivity.this.updateGuidedElapsedBadge();
          DeliveryQueueActivity.this.tick.postDelayed(this, 1000L);
       }
@@ -6970,6 +6971,40 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       // menimpanya dan order itu tak pernah masuk rit.
       if (this.sejalurWaiting() != null) return "🛣️ Kirim Sejalur sebelumnya masih menunggu order-nya tersinkron ke HP ini.";
       return null;
+   }
+
+   private static final String K_SEJALUR_OFFERED = "dlv_sejalur_suggest_offered";
+   private static final long SEJALUR_SUGGEST_CHECK_MS = 30_000L;
+   private long sejalurSuggestCheckAt = 0L;
+
+   /**
+    * Popup "Pesanan Menunggu Lama": pesanan tertua yang sudah TERLAMBAT (umur &ge; delivery_max_age_minutes,
+    * setelan yang sama dengan Pesanan Terlambat) ditawarkan sebagai titik terjauh Kirim Sejalur.
+    * Dicek tiap 30 dtk dari ticker; diam bila Kirim Sejalur tak bisa dimulai (bukan HP delivery,
+    * rit berjalan, ...), layar sedang mode pilih, atau ada dialog lain terbuka (jendela tak fokus).
+    * Satu pesanan ditawarkan paling sering sekali per jam (dicatat lintas sesi).
+    */
+   private void maybeSuggestSejalur() {
+      long now = System.currentTimeMillis();
+      if (now < this.sejalurSuggestCheckAt) return;
+      this.sejalurSuggestCheckAt = now + SEJALUR_SUGGEST_CHECK_MS;
+      if (this.isFinishing() || this.isDestroyed() || !this.hasWindowFocus()) return;
+      if (this.selectionMode || this.claimSelectOpen || this.claimSelectOther) return;
+      if (this.lateDialog != null && this.lateDialog.isShowing()) return;
+      // Ambang = batas "Pesanan Terlambat" (delivery_max_age_minutes; per-perangkat menang) — lateMs.
+      if (lateMs <= 0L || this.sejalurBlock() != null) return;
+      SettingsDao sd = new SettingsDao(DatabaseHelper.getInstance(this));
+      java.util.Map<String, Long> offered = SejalurPlanLogic.parseOffered(sd.get(K_SEJALUR_OFFERED, ""), now);
+      SejalurPlanLogic.Target t;
+      try {
+         t = SejalurPlanLogic.pickSuggestion(this.sejalurTargets(null), lateMs, offered, now);
+      } catch (Exception e) {
+         return;
+      }
+      if (t == null) return;
+      offered.put(t.uuid, now);
+      sd.set(K_SEJALUR_OFFERED, SejalurPlanLogic.formatOffered(offered));
+      this.sejalur().suggest(t, formatDuration(lateMs));
    }
 
    /** Gerbang Kirim Sejalur — false (dengan Toast / dialog alasannya) bila tak boleh dimulai sekarang. */

@@ -139,6 +139,52 @@ public final class SejalurPlanLogic {
     // ================================================================== pemilih titik terjauh
 
     /** Satu baris pemilih titik terjauh — order Antrian Saya, Pesanan Terbuka, atau perangkat lain. */
+    /** Pesanan yang sama ditawarkan lagi paling cepat setelah selang ini. */
+    public static final long SUGGEST_REPEAT_MS = 60L * 60_000L;
+
+    /**
+     * Popup "Tawarkan Rute Sejalur": pesanan TERTUA yang bisa jadi titik terjauh (berkoordinat, bukan
+     * terjadwal) dengan umur &ge; {@code thresholdMs} dan belum ditawarkan dalam {@link #SUGGEST_REPEAT_MS}.
+     * {@code thresholdMs <= 0} = fitur mati, hasilnya null.
+     */
+    public static Target pickSuggestion(List<Target> rows, long thresholdMs,
+                                        java.util.Map<String, Long> offeredAt, long now) {
+        if (rows == null || thresholdMs <= 0L) return null;
+        Target best = null;
+        for (Target t : rows) {
+            if (t == null || !t.selectable() || t.elapsedMs < thresholdMs) continue;
+            Long last = offeredAt != null ? offeredAt.get(t.uuid) : null;
+            if (last != null && now - last < SUGGEST_REPEAT_MS) continue;
+            if (best == null || t.elapsedMs > best.elapsedMs) best = t;
+        }
+        return best;
+    }
+
+    /** "uuid:ms,uuid:ms" ke peta; entri yang lebih tua dari {@link #SUGGEST_REPEAT_MS} dibuang. */
+    public static java.util.Map<String, Long> parseOffered(String raw, long now) {
+        java.util.Map<String, Long> out = new java.util.LinkedHashMap<>();
+        if (raw == null) return out;
+        for (String part : raw.split(",")) {
+            int c = part.lastIndexOf(':');
+            if (c <= 0) continue;
+            try {
+                long at = Long.parseLong(part.substring(c + 1).trim());
+                if (now - at < SUGGEST_REPEAT_MS) out.put(part.substring(0, c).trim(), at);
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return out;
+    }
+
+    public static String formatOffered(java.util.Map<String, Long> m) {
+        StringBuilder sb = new StringBuilder();
+        for (java.util.Map.Entry<String, Long> e : m.entrySet()) {
+            if (sb.length() > 0) sb.append(',');
+            sb.append(e.getKey()).append(':').append(e.getValue());
+        }
+        return sb.toString();
+    }
+
     public static final class Target {
         public String uuid = "";
         public String name = "";
