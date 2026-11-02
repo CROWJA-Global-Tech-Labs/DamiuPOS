@@ -618,4 +618,33 @@ public class SejalurPlanLogicTest {
         assertEquals("Penjualan saja", SejalurPlanLogic.kindLabel(true, false));
         assertEquals("Ambil galon saja", SejalurPlanLogic.kindLabel(false, true));
     }
+
+    @Test
+    public void suggestionPicksOldestOverThresholdAndRespectsRepeatWindow() {
+        long now = 10_000_000_000L;
+        long thr = 210L * 60_000L;
+        java.util.List<Target> rows = java.util.Arrays.asList(
+                target("a", "A", 3, 200, true),   // di bawah ambang
+                target("b", "B", 3, 250, true),
+                target("c", "C", 3, 400, false),  // tanpa koordinat
+                target("d", "D", 3, 300, true));
+        assertEquals("d", SejalurPlanLogic.pickSuggestion(rows, thr, null, now).uuid);
+        java.util.Map<String, Long> offered = new java.util.HashMap<>();
+        offered.put("d", now - 10 * 60_000L);
+        assertEquals("b", SejalurPlanLogic.pickSuggestion(rows, thr, offered, now).uuid);
+        offered.put("d", now - SejalurPlanLogic.SUGGEST_REPEAT_MS);
+        assertEquals("d", SejalurPlanLogic.pickSuggestion(rows, thr, offered, now).uuid);
+        assertNull(SejalurPlanLogic.pickSuggestion(rows, 0L, null, now));
+        assertNull(SejalurPlanLogic.pickSuggestion(rows, 500L * 60_000L, null, now));
+    }
+
+    @Test
+    public void offeredMapRoundTripsAndDropsExpired() {
+        long now = 10_000_000_000L;
+        java.util.Map<String, Long> m = SejalurPlanLogic.parseOffered(
+                "x:" + (now - 5_000L) + ",y:" + (now - SejalurPlanLogic.SUGGEST_REPEAT_MS - 1) + ",bad,z:nope", now);
+        assertEquals(1, m.size());
+        assertEquals(Long.valueOf(now - 5_000L), m.get("x"));
+        assertEquals("x:" + (now - 5_000L), SejalurPlanLogic.formatOffered(m));
+    }
 }
