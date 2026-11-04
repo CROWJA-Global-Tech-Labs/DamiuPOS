@@ -149,6 +149,18 @@ public class SyncSettings {
 
     public void setMaxLoad(int v) { settings.set(K_MAX_LOAD, String.valueOf(Math.max(0, v))); }
 
+    /** Nama armada terpilih (dari /api/me); kosong = belum memilih. */
+    public String getArmadaName() { return settings.get("sync_armada_name", ""); }
+    public void setArmadaName(String v) { settings.set("sync_armada_name", v != null ? v : ""); }
+
+    /** Server: HP delivery ini belum punya armada padahal cabangnya punya. */
+    public boolean isArmadaRequired() { return "1".equals(settings.get("sync_armada_required", "0")); }
+    public void setArmadaRequired(boolean v) { settings.set("sync_armada_required", v ? "1" : "0"); }
+
+    /** Baru login: staf wajib memilih armada lagi walau HP ini sudah punya pilihan lama. */
+    public boolean isArmadaPromptPending() { return "1".equals(settings.get("sync_armada_prompt_pending", "0")); }
+    public void setArmadaPromptPending(boolean v) { settings.set("sync_armada_prompt_pending", v ? "1" : "0"); }
+
     /** Batas umur antrean khusus perangkat ini (menit) dari /api/me; 0 = tak ada pengecualian. */
     public int getDeviceMaxAgeMinutes() {
         try {

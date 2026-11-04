@@ -522,9 +522,10 @@ public class DeviceAdminActivity extends AppCompatActivity {
         SwitchMaterial swDelivery = switchView("Perangkat delivery (bisa jadi tujuan pengantaran)", d.optBoolean("is_delivery"));
         s.addView(swDelivery);
 
-        s.addView(label("Muatan maks (galon sekali jalan) — kosong = belum diatur"));
-        EditText etLoad = edit(intText(d, "max_load"), "belum diatur", InputType.TYPE_CLASS_NUMBER);
-        s.addView(etLoad);
+        JSONObject armada = d.optJSONObject("armada");
+        s.addView(label(armada != null
+                ? "Armada: " + armada.optString("name") + " · " + armada.optInt("capacity") + " galon"
+                : "Armada belum dipilih di HP ini"));
 
         s.addView(label("Batas umur antrean (menit) — kosong = ikut setelan cabang"));
         EditText etAge = edit(intText(d, "delivery_max_age_minutes"), "ikut setelan cabang", InputType.TYPE_CLASS_NUMBER);
@@ -578,8 +579,6 @@ public class DeviceAdminActivity extends AppCompatActivity {
                 b.put("color", selColor[0] != null ? selColor[0] : JSONObject.NULL);
                 b.put("icon_auto", selIcon[0] == null);
                 b.put("color_auto", selColor[0] == null);
-                Integer ml = DeviceAdminRules.optPositiveInt(etLoad.getText().toString());
-                b.put("max_load", ml != null ? (Object) ml : JSONObject.NULL);
                 Integer age = DeviceAdminRules.optPositiveInt(etAge.getText().toString());
                 b.put("delivery_max_age_minutes", age != null ? (Object) age : JSONObject.NULL);
                 b.put("fill_delivery_ratio", DeviceAdminRules.ratio(etRatio.getText().toString()));

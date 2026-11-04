@@ -690,8 +690,8 @@ final class SejalurFlow {
       if (maxLoad > 0) etGal.setText(String.valueOf(maxLoad));
       box.addView(etGal);
       TextView capNote = new TextView(this.act);
-      capNote.setText(maxLoad > 0 ? "Kapasitas perangkat: " + maxLoad + " galon (boleh diubah)."
-            : "Kapasitas perangkat belum diatur di dashboard — isi jumlah galon yang dibawa.");
+      capNote.setText(maxLoad > 0 ? "Kapasitas armada: " + maxLoad + " galon (boleh diubah)."
+            : "Armada belum dipilih — isi jumlah galon yang dibawa.");
       capNote.setTextColor(C_MUTED);
       capNote.setTextSize(12f);
       box.addView(capNote);
