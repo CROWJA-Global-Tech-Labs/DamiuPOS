@@ -1539,6 +1539,27 @@
                         app:cornerRadius="14dp"
                         app:elevation="3dp" />
                 </LinearLayout>
+
+                <!-- Pertumbuhan Galon Beredar: khusus Admin. Putih di atas #4527A0 = 9,6:1. -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnGalonGrowth"
+                    android:layout_width="match_parent"
+                    android:layout_height="64dp"
+                    android:layout_margin="4dp"
+                    android:minHeight="60dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:text="📈 Pertumbuhan Galon Beredar"
+                    android:textAllCaps="false"
+                    android:textColor="@color/white"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:visibility="gone"
+                    app:backgroundTint="#4527A0"
+                    app:cornerRadius="14dp"
+                    app:elevation="3dp" />
             </LinearLayout>
 
             <!-- Recent Transactions -->

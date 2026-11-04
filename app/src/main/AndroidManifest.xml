@@ -227,6 +227,7 @@
             android:taskAffinity="com.crowja.damiupos.navpip" />
         <activity android:name=".OtherDeviceQueueActivity" />
         <activity android:name=".SalesAchievementActivity" />
+        <activity android:name=".GalonGrowthActivity" />
         <activity android:name=".IntroWaActivity" />
         <activity android:name=".DeliveryRecordActivity" />
         <!-- Karyawan Pengisian (Day-time): singleTask supaya ketukan notifikasi/deep link tak menumpuk

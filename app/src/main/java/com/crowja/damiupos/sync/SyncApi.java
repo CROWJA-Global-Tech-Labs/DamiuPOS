@@ -581,6 +581,20 @@ public class SyncApi {
     /** Device identity + branch + live config (e.g. location_interval_seconds). Versi APK ikut
      *  dilaporkan (?vc/&vn) di tiap heartbeat → kolom versi di dashboard selalu mutakhir, dan
      *  server membalas {@code version_blocked} bila versi ini dinonaktifkan (Kontrol Versi). */
+    /** Pertumbuhan Galon Beredar (Admin). {@code month} menang atas preset, seperti halaman web. */
+    public JSONObject galonGrowth(@Nullable String preset, @Nullable String start, @Nullable String end,
+                                  @Nullable String month, @Nullable String staffUuid) throws Exception {
+        okhttp3.HttpUrl.Builder b = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/admin/galon-growth").newBuilder();
+        if (month != null && !month.isEmpty()) {
+            b.addQueryParameter("month", month);
+        } else if (start != null && end != null) {
+            b.addQueryParameter("start", start).addQueryParameter("end", end);
+        } else if (preset != null && !preset.isEmpty()) {
+            b.addQueryParameter("preset", preset);
+        }
+        return get(b.build().toString(), cfg.getToken(), staffUuid);
+    }
+
     /** Armada aktif cabang: {ok,current_id,armadas:[{id,name,capacity,used_by[]}]}. */
     public JSONObject armadas() throws Exception {
         return get(cfg.getBaseUrl() + "/api/armadas", cfg.getToken());
