@@ -16,6 +16,12 @@
         app:showAsAction="always" />
 
     <item
+        android:id="@+id/action_armada"
+        android:title="Pilih Armada"
+        android:visible="false"
+        app:showAsAction="never" />
+
+    <item
         android:id="@+id/action_sync"
         android:title="Sinkronisasi Online"
         app:showAsAction="never" />

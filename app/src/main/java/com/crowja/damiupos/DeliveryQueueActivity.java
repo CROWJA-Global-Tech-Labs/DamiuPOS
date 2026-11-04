@@ -2388,6 +2388,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    protected void onResume() {
       super.onResume();
       if (this.applyGuidedToggle()) return;
+      ArmadaPicker.askIfNeeded(this);   // HP Pengiriman Terpandu tak pernah singgah di beranda
       if (this.dataGateTrxId > 0L) this.findViewById(android.R.id.content).post(this::resumeDataGate);
       SettingsDao lateCfg = new SettingsDao(DatabaseHelper.getInstance(this));
       lateMs = (long)lateCfg.getDeliveryMaxAgeMinutes() * 60000L;

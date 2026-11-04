@@ -116,6 +116,11 @@ public final class OnlineTasks {
 
             // Muatan max perangkat ini (Strategi Pengiriman) — diatur admin di dashboard.
             if (r.has("max_load")) cfg.setMaxLoad(r.optInt("max_load", 0));
+            if (r.has("armada_required")) {
+                cfg.setArmadaRequired(r.optBoolean("armada_required", false));
+                JSONObject armada = r.optJSONObject("armada");
+                cfg.setArmadaName(armada != null ? armada.optString("name", "") : "");
+            }
             // Batas "Pesanan Terlambat" khusus perangkat ini (menit) — 0 = ikut setelan cabang.
             if (r.has("delivery_max_age_minutes")) {
                 cfg.setDeviceMaxAgeMinutes(r.optInt("delivery_max_age_minutes", 0));

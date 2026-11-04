@@ -581,6 +581,17 @@ public class SyncApi {
     /** Device identity + branch + live config (e.g. location_interval_seconds). Versi APK ikut
      *  dilaporkan (?vc/&vn) di tiap heartbeat → kolom versi di dashboard selalu mutakhir, dan
      *  server membalas {@code version_blocked} bila versi ini dinonaktifkan (Kontrol Versi). */
+    /** Armada aktif cabang: {ok,current_id,armadas:[{id,name,capacity,used_by[]}]}. */
+    public JSONObject armadas() throws Exception {
+        return get(cfg.getBaseUrl() + "/api/armadas", cfg.getToken());
+    }
+
+    /** Pilih armada HP ini: {ok,armada,max_load}. */
+    public JSONObject selectArmada(long armadaId, @Nullable String staffUuid) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/device/armada", new JSONObject().put("armada_id", armadaId),
+                cfg.getToken(), staffUuid);
+    }
+
     public JSONObject me() throws Exception {
         okhttp3.HttpUrl built = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/me")
                 .newBuilder()

@@ -1114,6 +1114,7 @@ public class MainActivity extends AppCompatActivity {
                 !com.crowja.damiupos.db.UserDao.isCurrentUserAlertSilenced(this)
                         && orderInboxDao != null && orderInboxDao.countPendingForThisDevice() > 0);
         bindDeliverySwitch(menu.findItem(R.id.action_delivery));
+        bindArmadaItem(menu.findItem(R.id.action_armada));
         return super.onPrepareOptionsMenu(menu);
     }
 
@@ -1155,9 +1156,17 @@ public class MainActivity extends AppCompatActivity {
                         .setOnCancelListener(d -> invalidateOptionsMenu())
                         .show();
             } else {
-                setThisDeviceDelivery(true);
+                ArmadaPicker.forDeliveryOn(this, () -> setThisDeviceDelivery(true), this::invalidateOptionsMenu);
             }
         });
+    }
+
+    private void bindArmadaItem(@androidx.annotation.Nullable MenuItem item) {
+        if (item == null) return;
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+        item.setVisible(cfg.isEnrolled() && cfg.isDeliveryDevice());
+        String name = cfg.getArmadaName();
+        item.setTitle(name.isEmpty() ? "🚚 Pilih Armada" : "🚚 Armada: " + name + " · " + cfg.getMaxLoad() + " galon");
     }
 
     private void setThisDeviceDelivery(boolean on) {
@@ -1205,6 +1214,10 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onOptionsItemSelected(@NonNull MenuItem item) {
+        if (item.getItemId() == R.id.action_armada) {
+            ArmadaPicker.change(this);
+            return true;
+        }
         if (item.getItemId() == R.id.action_info) {
             showAboutDialog();
             return true;
@@ -1367,6 +1380,7 @@ public class MainActivity extends AppCompatActivity {
         invalidateOptionsMenu();
         // Tampilkan pesan admin yang tertunda (mis. tiba saat app di background).
         showPendingAdminMessage();
+        ArmadaPicker.askIfNeeded(this);
         // Popup "Lengkapi Data Pelanggan" tertunda: pesanan baru untuk perangkat ini yang
         // pelanggannya belum lengkap foto/koordinat (mis. sinkron terjadi saat app di background).
         showPendingIncompleteWarnings();
