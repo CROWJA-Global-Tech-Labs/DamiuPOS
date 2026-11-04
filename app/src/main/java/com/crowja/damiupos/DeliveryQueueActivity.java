@@ -14228,6 +14228,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             .setView(scroll).setPositiveButton("Tutup", (DialogInterface.OnClickListener) null);
       if (d.hasDest) {
          builder.setNeutralButton("🧭 Navigasi", (dlg, w) -> this.navigateToOrder(d.guidedTrxId, d.destLat, d.destLng));
+         builder.setNegativeButton("Peta Pelanggan", (dlg, w) -> this.startActivity(new Intent(this, CustomerMapActivity.class)
+               .putExtra(CustomerMapActivity.EXTRA_FOCUS_LAT, d.destLat)
+               .putExtra(CustomerMapActivity.EXTRA_FOCUS_LNG, d.destLng)
+               .putExtra(CustomerMapActivity.EXTRA_FOCUS_NAME, safe(d.title))));
       }
 
       AlertDialog dialog = builder.create();

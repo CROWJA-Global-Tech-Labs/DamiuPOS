@@ -68,6 +68,8 @@ public class CustomerListActivity extends AppCompatActivity
      *  selalu 403, jadi aksinya disembunyikan (gabung lewat dashboard web). Staf/SPV/Marketing/
      *  Viewer/Pengisian juga tak melihatnya. Butuh sinkronisasi online. */
     private boolean canMergeCustomer = false;
+    /** Dari Peta Pelanggan: id terpilih di peta → langsung alur Gabungkan yang sama. */
+    public static final String EXTRA_MERGE_IDS = "merge_ids";
     /** Daftar yang SEDANG tampil (sudah dedup per orang) — sumber nama & angka di dialog Gabung. */
     private List<Customer> shownCustomers = new java.util.ArrayList<>();
     /** Filter "Ditambahkan" — rentang tanggal pendaftaran (created_at). Null = semua tanggal.
@@ -203,6 +205,11 @@ public class CustomerListActivity extends AppCompatActivity
     protected void onResume() {
         super.onResume();
         loadCustomers(etSearch.getText().toString().trim());
+        long[] mergeIds = getIntent().getLongArrayExtra(EXTRA_MERGE_IDS);
+        if (mergeIds != null) {
+            getIntent().removeExtra(EXTRA_MERGE_IDS);
+            startMergeFromExtra(mergeIds);
+        }
         // Muat ulang begitu sync membawa data baru — terutama tombstone salinan yang barusan
         // dilebur lewat "🔗 Gabungkan" (dan perubahan pelanggan dari web/HP lain).
         android.content.IntentFilter f = new android.content.IntentFilter(
@@ -933,6 +940,21 @@ public class CustomerListActivity extends AppCompatActivity
         // Urutan mengikuti daftar yang tampil (bukan urutan HashSet) supaya mudah dicocokkan.
         List<Customer> picked = new java.util.ArrayList<>();
         for (Customer c : shownCustomers) if (ids.contains(c.getId())) picked.add(c);
+        startMerge(picked);
+    }
+
+    /** Pilihan dari peta: baris dedup yang sama dengan peta, tak terpengaruh filter daftar. */
+    private void startMergeFromExtra(long[] raw) {
+        Set<Long> ids = new java.util.HashSet<>();
+        for (long id : raw) ids.add(id);
+        List<Customer> picked = new java.util.ArrayList<>();
+        for (Customer c : CustomerDao.dedupeForDisplay(customerDao.getAll(CustomerDao.SORT_NAME))) {
+            if (ids.contains(c.getId())) picked.add(c);
+        }
+        startMerge(picked);
+    }
+
+    private void startMerge(List<Customer> picked) {
         if (picked.size() < 2) {
             Toast.makeText(this, "Pilih minimal 2 pelanggan untuk digabung", Toast.LENGTH_SHORT).show();
             return;
