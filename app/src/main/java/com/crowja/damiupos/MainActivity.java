@@ -357,6 +357,10 @@ public class MainActivity extends AppCompatActivity {
         if (btnPengaturanPerangkat != null) {
             btnPengaturanPerangkat.setOnClickListener(v -> startActivity(new Intent(this, DeviceAdminActivity.class)));
         }
+        View btnGalonGrowth = findViewById(R.id.btnGalonGrowth);
+        if (btnGalonGrowth != null) {
+            btnGalonGrowth.setOnClickListener(v -> startActivity(new Intent(this, GalonGrowthActivity.class)));
+        }
         View btnWhatsApp = findViewById(R.id.btnWhatsApp);
         if (btnWhatsApp != null) {
             btnWhatsApp.setOnClickListener(v -> startActivity(new Intent(this, WhatsAppMenuActivity.class)));
@@ -800,6 +804,11 @@ public class MainActivity extends AppCompatActivity {
         if (btnPengaturanPerangkat != null) {
             boolean enrolled = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled();
             btnPengaturanPerangkat.setVisibility(adminOnly && enrolled ? View.VISIBLE : View.GONE);
+        }
+        View btnGalonGrowth = findViewById(R.id.btnGalonGrowth);
+        if (btnGalonGrowth != null) {
+            boolean enrolled = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled();
+            btnGalonGrowth.setVisibility(adminOnly && enrolled ? View.VISIBLE : View.GONE);
         }
         View btnWhatsApp = findViewById(R.id.btnWhatsApp);
         if (btnWhatsApp != null) {
