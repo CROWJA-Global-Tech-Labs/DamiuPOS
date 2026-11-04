@@ -98,6 +98,15 @@ public class CustomerMapActivity extends AppCompatActivity {
     private Location pendingLocation;
     private Location lastLoc;          // fix GPS terakhir — dasar filter "Pelanggan Sekitar"
 
+    /** Dari Preview antrean: fokus (zoom + sorot) ke titik pelanggan begitu peta siap. */
+    public static final String EXTRA_FOCUS_LAT = "focus_lat";
+    public static final String EXTRA_FOCUS_LNG = "focus_lng";
+    public static final String EXTRA_FOCUS_NAME = "focus_name";
+    /** Gerbang sama dengan Gabungkan di daftar pelanggan (CustomerMergeController): Admin login, HP terhubung. */
+    private boolean canMerge = false;
+    /** Gabungkan dibuka dari peta → saat kembali, muat ulang pin (salinan yang dilebur hilang). */
+    private boolean reloadOnReturn = false;
+
     @SuppressLint("SetJavaScriptEnabled")
     /** Pin posisi LIVE perangkat lain — dipasang di semua peta aplikasi. */
     private LiveDeviceOverlay liveDev;
@@ -117,6 +126,11 @@ public class CustomerMapActivity extends AppCompatActivity {
         DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
         customerDao = new CustomerDao(dbHelper);
         settingsDao = new SettingsDao(dbHelper);
+        long uid = settingsDao.getCurrentUserId();
+        com.crowja.damiupos.model.User cur = uid > 0
+                ? new com.crowja.damiupos.db.UserDao(dbHelper).getById(uid) : null;
+        canMerge = new com.crowja.damiupos.sync.SyncSettings(settingsDao).isEnrolled()
+                && settingsDao.isMultiUserEnabled() && cur != null && cur.isAdmin();
 
         // Ambil pelanggan (dedup lintas-perangkat → satu wakil per orang, sekaligus mengisi
         // originLabels) lalu simpan yang punya koordinat.
@@ -153,6 +167,7 @@ public class CustomerMapActivity extends AppCompatActivity {
                     pushLocationToMap(pendingLocation);
                     pendingLocation = null;
                 }
+                applyFocusExtra();
             }
         });
 
@@ -362,7 +377,7 @@ public class CustomerMapActivity extends AppCompatActivity {
             }
         });
 
-        new AlertDialog.Builder(this)
+        final AlertDialog dlg = new AlertDialog.Builder(this)
                 .setTitle("Pilih Pelanggan di Peta")
                 .setView(box)
                 .setPositiveButton("Terapkan", (d, w) -> {
@@ -384,14 +399,31 @@ public class CustomerMapActivity extends AppCompatActivity {
                                 Toast.LENGTH_SHORT).show();
                     }
                 })
-                .setNeutralButton("Pilih Semua", (d, w) -> {
-                    for (Customer c : mapCustomers) {
-                        adapter.checked.add(c.getId());
-                    }
-                    evalJs("showAll();");
-                })
+                .setNeutralButton("Hapus Semua", null)
                 .setNegativeButton("Batal", null)
-                .show();
+                .create();
+        dlg.setOnShowListener(x -> {
+            android.widget.Button toggle = dlg.getButton(AlertDialog.BUTTON_NEUTRAL);
+            toggle.setOnClickListener(v -> {
+                // Dialog tetap terbuka: kosongkan lalu centang beberapa, atau pilih semua lagi.
+                boolean all = adapter.checked.size() >= mapCustomers.size();
+                adapter.checked.clear();
+                if (!all) for (Customer c : mapCustomers) adapter.checked.add(c.getId());
+                toggle.setText(all ? "Pilih Semua" : "Hapus Semua");
+                adapter.notifyDataSetChanged();
+            });
+        });
+        dlg.show();
+    }
+
+    private void applyFocusExtra() {
+        Intent in = getIntent();
+        if (!in.hasExtra(EXTRA_FOCUS_LAT)) return;
+        double lat = in.getDoubleExtra(EXTRA_FOCUS_LAT, 0);
+        double lng = in.getDoubleExtra(EXTRA_FOCUS_LNG, 0);
+        String name = in.getStringExtra(EXTRA_FOCUS_NAME);
+        in.removeExtra(EXTRA_FOCUS_LAT);
+        evalJs("focusAt(" + lat + "," + lng + "," + JSONObject.quote(name != null ? name : "") + ");");
     }
 
     /** Adapter list multi-pilih dengan filter teks; state centang disimpan di {@link #checked}. */
@@ -525,6 +557,11 @@ public class CustomerMapActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (reloadOnReturn) {
+            reloadOnReturn = false;
+            recreate();
+            return;
+        }
         if (mapActive && locationListener == null
                 && ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED) {
@@ -578,6 +615,23 @@ public class CustomerMapActivity extends AppCompatActivity {
                 Intent i = new Intent(CustomerMapActivity.this, CustomerDetailActivity.class);
                 i.putExtra("customer_id", customerId);
                 startActivity(i);
+            });
+        }
+
+        /** Bar "Gabungkan": alur & aturan yang sama dengan daftar pelanggan (server CustomerMerge). */
+        @JavascriptInterface
+        public void mergeSelected(String idsJson) {
+            runOnUiThread(() -> {
+                try {
+                    JSONArray a = new JSONArray(idsJson);
+                    long[] ids = new long[a.length()];
+                    for (int i = 0; i < ids.length; i++) ids[i] = a.getLong(i);
+                    reloadOnReturn = true;
+                    startActivity(new Intent(CustomerMapActivity.this, CustomerListActivity.class)
+                            .putExtra(CustomerListActivity.EXTRA_MERGE_IDS, ids));
+                } catch (Exception e) {
+                    Toast.makeText(CustomerMapActivity.this, "Pilihan tidak valid", Toast.LENGTH_SHORT).show();
+                }
             });
         }
     }
@@ -708,13 +762,22 @@ public class CustomerMapActivity extends AppCompatActivity {
                 "  .lchip{display:inline-flex;align-items:center;gap:4px;background:#fff;border-radius:14px;padding:3px 9px;margin:2px;box-shadow:0 1px 4px rgba(0,0,0,.25);font-size:12px;cursor:pointer;border:2px solid transparent;}\n" +
                 "  .lchip.off{opacity:.4;}\n" +
                 "  .ldot{width:10px;height:10px;border-radius:5px;display:inline-block;}\n" +
+                "  .leaflet-popup-content a.selbtn{display:block;margin-top:8px;padding:9px 12px;background:#6A1B9A;color:#fff !important;border-radius:6px;text-decoration:none;font-size:13px;font-weight:bold;text-align:center;}\n" +
+                "  #mbar{display:none;position:fixed;left:8px;right:72px;bottom:22px;z-index:1000;background:#fff;color:#212121;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.4);padding:8px 10px;font-size:13px;font-weight:bold;}\n" +
+                "  #mbar .row{display:flex;gap:8px;margin-top:6px;}\n" +
+                "  #mbar button{flex:1;border:0;border-radius:8px;padding:9px;font-weight:bold;font-size:13px;}\n" +
+                "  #mgo{background:#6A1B9A;color:#fff;} #mgo:disabled{background:#E0E0E0;color:#424242;} #mno{background:#ECEFF1;color:#212121;}\n" +
+                "  .fring{border-radius:50%;background:rgba(229,57,53,.25);border:3px solid #E53935;animation:fp 1.1s ease-out infinite;}\n" +
+                "  @keyframes fp{0%{transform:scale(.6);opacity:1}100%{transform:scale(1.3);opacity:.35}}\n" +
                 "</style>\n</head><body>\n" +
                 "<div id='map'></div>\n" +
                 "<div id='legend'></div>\n" +
+                "<div id='mbar'><div id='mtxt'></div><div class='row'><button id='mgo' onclick='mergeGo()'>🔗 Gabungkan</button><button id='mno' onclick='mergeClear()'>Batal</button></div></div>\n" +
                 "<div id='radinfo' style='display:none;position:fixed;left:50%;top:8px;transform:translateX(-50%);z-index:1000;background:#1565C0;color:#fff;font-size:12px;font-weight:bold;padding:5px 12px;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,.3);'></div>\n" +
                 "<div id='btnme' onclick='goMe()' title='Posisi Saya'>&#128205;</div>\n" +
                 "<script>\n" +
                 "var pts = " + points + ";\n" +
+                "var canMerge = " + canMerge + ";\n" +
                 "var legend = " + legend + ";\n" +
                 "var map = L.map('map',{zoomControl:true}).setView([" + centerLat + "," + centerLng + "], 13);\n" +
                 "L.tileLayer('" + MapTiles.LEAFLET_URL + "',{subdomains:'" + MapTiles.SUBDOMAINS + "',maxZoom:19,attribution:'" + MapTiles.ATTRIBUTION + "'}).addTo(map);\n" +
@@ -753,7 +816,8 @@ public class CustomerMapActivity extends AppCompatActivity {
                 "  var badges = (p.reseller?'<span class=\"badge\" style=\"background:#fef3c7;color:#b45309\">Reseller</span>':'');\n" +
                 "  var locHtml = (p.loc && p.loc!=='Kediaman') ? '<div class=\"pphone\">📍 '+escHtml(p.loc)+'</div>' : '';\n" +
                 "  var det='<a class=\"detbtn\" href=\"#\" onclick=\"det('+(+p.cid)+');return false;\">👤 Detail Pelanggan</a>';\n" +
-                "  var html='<div class=\"pname\">'+escHtml(p.name)+badges+'</div>'+phoneHtml+locHtml+det+\n" +
+                "  var sel=canMerge?'<a class=\"selbtn\" href=\"#\" onclick=\"mergeTog('+(+p.cid)+');return false;\">☑️ Pilih untuk Gabung</a>':'';\n" +
+                "  var html='<div class=\"pname\">'+escHtml(p.name)+badges+'</div>'+phoneHtml+locHtml+det+sel+\n" +
                 // Nama TIDAK lagi disisipkan ke atribut onclick: nilai di sana melewati DUA lapis
                 // parser (atribut HTML → string JS), dan nama bertanda kutip ganda cukup untuk
                 // keluar dari atributnya. Cukup kirim id numerik; namanya diambil dari objek titik.
@@ -804,6 +868,28 @@ public class CustomerMapActivity extends AppCompatActivity {
                 "  var m=ms[0];\n" +
                 "  if(ms.length>1){map.fitBounds(L.latLngBounds(ms.map(function(x){return x.getLatLng();})),{padding:[40,40],maxZoom:17});}\n" +
                 "  cluster.zoomToShowLayer(m,function(){if(ms.length<2){map.setView(m.getLatLng(),Math.max(map.getZoom(),17));}m.openPopup();});\n" +
+                "}\n" +
+                // Pilih banyak untuk Gabung: tanda ✓ di pin + bar bawah.
+                "var mergeSel=[];\n" +
+                "function mergeSync(){\n" +
+                "  markers.forEach(function(m){var on=mergeSel.indexOf(m._p.cid)>=0;if(m._on!==on){m._on=on;m.setIcon(pinIcon(m._p.color,on?'✅':m._p.icon));}});\n" +
+                "  var names=mergeSel.map(function(c){for(var i=0;i<pts.length;i++){if(pts[i].cid===c)return pts[i].name;}return '';});\n" +
+                "  document.getElementById('mbar').style.display=mergeSel.length?'block':'none';\n" +
+                "  document.getElementById('mtxt').textContent=mergeSel.length+' dipilih: '+names.join(', ');\n" +
+                "  document.getElementById('mgo').disabled=mergeSel.length<2;\n" +
+                "}\n" +
+                "function mergeTog(cid){var i=mergeSel.indexOf(cid);if(i>=0)mergeSel.splice(i,1);else mergeSel.push(cid);map.closePopup();mergeSync();}\n" +
+                "function mergeClear(){mergeSel=[];mergeSync();}\n" +
+                "function mergeGo(){if(mergeSel.length>=2&&window.Android)Android.mergeSelected(JSON.stringify(mergeSel));}\n" +
+                // Dari Preview antrean: zoom + cincin merah berdenyut; pin terdekat ≤60 m (nama sama didahulukan) dibuka.
+                "function focusAt(lat,lng,name){\n" +
+                "  showAll();\n" +
+                "  L.marker([lat,lng],{interactive:false,zIndexOffset:-100,icon:L.divIcon({className:'',html:'<div class=\"fring\" style=\"width:70px;height:70px\"></div>',iconSize:[70,70],iconAnchor:[35,35]})}).addTo(map);\n" +
+                "  var best=null,bs=1e9,q=(name||'').toLowerCase();\n" +
+                "  markers.forEach(function(m){var d=haversine(lat,lng,m._p.lat,m._p.lng);if(d>60)return;\n" +
+                "    var s=d-(q&&(m._p.name||'').toLowerCase()===q?1000:0);if(s<bs){bs=s;best=m;}});\n" +
+                "  map.setView([lat,lng],18);\n" +
+                "  if(best){cluster.zoomToShowLayer(best,function(){best.openPopup();});}\n" +
                 "}\n" +
                 "function renderLegend(){\n" +
                 "  var el=document.getElementById('legend');el.innerHTML='';\n" +
