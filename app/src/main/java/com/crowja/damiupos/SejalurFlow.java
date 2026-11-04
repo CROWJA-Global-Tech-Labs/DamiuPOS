@@ -160,11 +160,13 @@ final class SejalurFlow {
     * tawarkan pesanan itu sebagai titik terjauh. "Buat Rute" langsung menyusun rencana dengan
     * kapasitas perangkat lalu membuka pratinjau (belum ada yang dimulai sebelum kurir menyetujuinya).
     */
-   void suggest(final Target t, final String threshold) {
+   void suggest(final Target t, @Nullable final String threshold) {
       if (this.gone() || t == null) return;
       StringBuilder msg = new StringBuilder();
+      // threshold null = popup pesanan KOMPLAIN (tanpa ambang umur).
       msg.append("🏁 ").append(t.name).append("\n⏱ Sudah menunggu ")
-            .append(SejalurPlanLogic.ageText(t.elapsedMs / 60000L)).append(" (batas terlambat ").append(threshold).append(")");
+            .append(SejalurPlanLogic.ageText(Math.max(0L, t.elapsedMs) / 60000L));
+      if (threshold != null) msg.append(" (batas terlambat ").append(threshold).append(")");
       String km = SejalurPlanLogic.kmText(t.distKm);
       if (!km.isEmpty()) msg.append("\n📍 ").append(km).append(' ').append(this.fromLabel());
       msg.append("\n").append(galonText(t.galon, t.pickupOnly));
@@ -173,7 +175,7 @@ final class SejalurFlow {
             + "pesanan yang searah, lalu menampilkan pratinjau rute untuk Anda setujui.");
       final int maxLoad = this.cfg().getMaxLoad();
       (new AlertDialog.Builder(this.act))
-            .setTitle("🛣️ Pesanan Menunggu Lama")
+            .setTitle(threshold == null ? "😠 Pesanan Dikomplain" : "🛣️ Pesanan Menunggu Lama")
             .setMessage(msg.toString())
             .setPositiveButton("Buat Rute", (d, w) -> {
                if (maxLoad > 0) {
