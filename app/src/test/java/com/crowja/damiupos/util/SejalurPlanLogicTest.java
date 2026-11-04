@@ -647,4 +647,14 @@ public class SejalurPlanLogicTest {
         assertEquals(Long.valueOf(now - 5_000L), m.get("x"));
         assertEquals("x:" + (now - 5_000L), SejalurPlanLogic.formatOffered(m));
     }
+
+    @Test
+    public void suggestionSkipsPickupOnlyOrders() {
+        Target pickup = target("p", "P", 3, 900, true);
+        pickup.pickupOnly = true;
+        Target sale = target("s", "S", 3, 300, true);
+        long thr = 100L * 60_000L;
+        assertEquals("s", SejalurPlanLogic.pickSuggestion(java.util.Arrays.asList(pickup, sale), thr, null, 0L).uuid);
+        assertNull(SejalurPlanLogic.pickSuggestion(java.util.Collections.singletonList(pickup), thr, null, 0L));
+    }
 }
