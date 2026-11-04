@@ -657,4 +657,20 @@ public class SejalurPlanLogicTest {
         assertEquals("s", SejalurPlanLogic.pickSuggestion(java.util.Arrays.asList(pickup, sale), thr, null, 0L).uuid);
         assertNull(SejalurPlanLogic.pickSuggestion(java.util.Collections.singletonList(pickup), thr, null, 0L));
     }
+
+    @Test
+    public void complaintPopupOnlyMineOrOpenAnyAgeOncePerWindow() {
+        Target other = target("o", "O", 3, 900, true);
+        other.complained = true;
+        other.source = SejalurPlanLogic.SRC_OTHER;
+        Target open = target("t", "T", 3, 5, true);
+        open.complained = true;
+        open.source = SejalurPlanLogic.SRC_OPEN;
+        Target plain = target("p", "P", 3, 800, true);
+        java.util.List<Target> rows = java.util.Arrays.asList(other, open, plain);
+        assertEquals("t", SejalurPlanLogic.pickComplaint(rows, null, 1000L).uuid);
+        java.util.Map<String, Long> seen = new java.util.HashMap<>();
+        seen.put("t", 999L);
+        assertNull(SejalurPlanLogic.pickComplaint(rows, seen, 1000L));
+    }
 }

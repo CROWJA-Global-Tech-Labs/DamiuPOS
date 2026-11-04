@@ -6996,19 +6996,24 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (this.selectionMode || this.claimSelectOpen || this.claimSelectOther) return;
       if (this.lateDialog != null && this.lateDialog.isShowing()) return;
       // Ambang = batas "Pesanan Terlambat" (delivery_max_age_minutes; per-perangkat menang) — lateMs.
-      if (lateMs <= 0L || this.sejalurBlock() != null) return;
+      if (this.sejalurBlock() != null) return;
       SettingsDao sd = new SettingsDao(DatabaseHelper.getInstance(this));
       java.util.Map<String, Long> offered = SejalurPlanLogic.parseOffered(sd.get(K_SEJALUR_OFFERED, ""), now);
       SejalurPlanLogic.Target t;
+      boolean complaint;
       try {
-         t = SejalurPlanLogic.pickSuggestion(this.sejalurTargets(null), lateMs, offered, now);
+         // Komplain didahulukan: tanpa ambang umur, hanya Antrian Saya + Pesanan Terbuka (semua HP delivery).
+         List<SejalurPlanLogic.Target> rows = this.sejalurTargets(null);
+         t = SejalurPlanLogic.pickComplaint(rows, offered, now);
+         complaint = t != null;
+         if (t == null) t = SejalurPlanLogic.pickSuggestion(rows, lateMs, offered, now);
       } catch (Exception e) {
          return;
       }
       if (t == null) return;
       offered.put(t.uuid, now);
       sd.set(K_SEJALUR_OFFERED, SejalurPlanLogic.formatOffered(offered));
-      this.sejalur().suggest(t, formatDuration(lateMs));
+      this.sejalur().suggest(t, complaint ? null : formatDuration(lateMs));
    }
 
    /** Gerbang Kirim Sejalur — false (dengan Toast / dialog alasannya) bila tak boleh dimulai sekarang. */
@@ -7205,6 +7210,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       x.galon = Math.max(0, t.getJumlahGalon());
       x.pickupOnly = isPickupOnly(t);
       x.priority = DeliveryPlanner.isPriority(t);
+      x.complained = t.isComplained();
       x.source = source;
       x.lat = effectiveLat(t);
       x.lng = effectiveLng(t);

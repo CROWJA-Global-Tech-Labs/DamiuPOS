@@ -160,6 +160,22 @@ public final class SejalurPlanLogic {
         return best;
     }
 
+    /**
+     * Popup pesanan KOMPLAIN (tanpa ambang umur): yang tertua di Antrian Saya / Pesanan Terbuka —
+     * antrean perangkat lain tidak, komplain itu muncul di HP pemegangnya.
+     */
+    public static Target pickComplaint(List<Target> rows, java.util.Map<String, Long> offeredAt, long now) {
+        if (rows == null) return null;
+        Target best = null;
+        for (Target t : rows) {
+            if (t == null || !t.complained || SRC_OTHER.equals(t.source) || !t.selectable()) continue;
+            Long last = offeredAt != null ? offeredAt.get(t.uuid) : null;
+            if (last != null && now - last < SUGGEST_REPEAT_MS) continue;
+            if (best == null || t.elapsedMs > best.elapsedMs) best = t;
+        }
+        return best;
+    }
+
     /** "uuid:ms,uuid:ms" ke peta; entri yang lebih tua dari {@link #SUGGEST_REPEAT_MS} dibuang. */
     public static java.util.Map<String, Long> parseOffered(String raw, long now) {
         java.util.Map<String, Long> out = new java.util.LinkedHashMap<>();
@@ -193,6 +209,7 @@ public final class SejalurPlanLogic {
         public int galon;
         public boolean pickupOnly;
         public boolean priority;
+        public boolean complained;
         public String source = SRC_MINE;
         public String deviceLabel = "";
         public double lat;
