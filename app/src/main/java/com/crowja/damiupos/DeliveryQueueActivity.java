@@ -2596,6 +2596,39 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       tv.setText(head + galonSuffix(galon));
    }
 
+   /** Total produk tab (kapsul slug + jenis galon) di sebelah kanan ringkasan; rows = hasil typedRows order tampil. */
+   private void setTabSummaryBadges(TextView tv, List<List<Object[]>> perOrder) {
+      if (tv == null || !(tv.getParent() instanceof ViewGroup)) return;
+      ViewGroup parent = (ViewGroup) tv.getParent();
+      LinearLayout chips;
+      if (parent.getTag() instanceof LinearLayout) {
+         chips = (LinearLayout) parent.getTag();
+      } else {
+         // Sekali saja: bungkus ringkasan + kapsul dalam satu baris.
+         int at = parent.indexOfChild(tv);
+         parent.removeView(tv);
+         LinearLayout row = new LinearLayout(this);
+         row.setOrientation(LinearLayout.HORIZONTAL);
+         row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+         row.addView(tv, new LinearLayout.LayoutParams(-2, -2));
+         chips = new LinearLayout(this);
+         chips.setOrientation(LinearLayout.HORIZONTAL);
+         android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+         hs.setHorizontalScrollBarEnabled(false);
+         hs.addView(chips);
+         row.addView(hs, new LinearLayout.LayoutParams(0, -2, 1f));
+         row.setTag(chips);
+         parent.addView(row, at, new ViewGroup.LayoutParams(-1, -2));
+      }
+      chips.removeAllViews();
+      LinkedHashMap<String, Object[]> total = new LinkedHashMap<>();
+      for (List<Object[]> rows : perOrder) {
+         for (Object[] r : rows) addSejalurBadgeRow(total, (String) r[0], (String) r[1], Math.max(0, (Integer) r[2]), (Integer) r[3]);
+      }
+      if (tv.getVisibility() != View.VISIBLE) return;
+      for (Object[] r : total.values()) chips.addView(this.makeDetailBadge(typedChipText(r, false), (Integer) r[3]));
+   }
+
    private void setTabCount(int index, int count) {
       if (this.tabs != null) {
          TabLayout.Tab tab = this.tabs.getTabAt(index);
@@ -15104,6 +15137,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
          DeliveryQueueActivity.this.setTabSummary(DeliveryQueueActivity.this.tvOtherSummary,
                this.data.size(), this.rawData.size(), galon);
+         List<List<Object[]>> rowsOther = new ArrayList<>();
+         for (JSONObject o : this.data) {
+            if (!o.optBoolean("pickup_only", false)) rowsOther.add(DeliveryQueueActivity.this.typedRows(o));
+         }
+         DeliveryQueueActivity.this.setTabSummaryBadges(DeliveryQueueActivity.this.tvOtherSummary, rowsOther);
       }
 
       private double distanceKmOf(JSONObject o) {
@@ -15673,6 +15711,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          DeliveryQueueActivity.this.updateOpenEmptyState();
          DeliveryQueueActivity.this.setTabSummary(DeliveryQueueActivity.this.tvOpenSummary,
                this.data.size(), this.rawData.size(), DeliveryQueueActivity.totalGalonOf(this.data));
+         List<List<Object[]>> rowsOpen = new ArrayList<>();
+         for (Transaction t : this.data) {
+            if (!DeliveryPlanner.isPickupOnly(t)) rowsOpen.add(DeliveryQueueActivity.this.typedRows(t));
+         }
+         DeliveryQueueActivity.this.setTabSummaryBadges(DeliveryQueueActivity.this.tvOpenSummary, rowsOpen);
       }
 
       void refreshTimers() {
