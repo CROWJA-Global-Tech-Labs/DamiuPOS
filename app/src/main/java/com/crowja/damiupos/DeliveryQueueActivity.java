@@ -1204,6 +1204,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          cbSales.setOnCheckedChangeListener((b, on) -> slugRow.setVisibility(on ? View.VISIBLE : View.GONE));
       }
       box.addView(cbPickup);
+      final android.widget.CheckBox cbComplained = new android.widget.CheckBox(this);
+      cbComplained.setText("😠 Hanya pesanan komplain");
+      box.addView(cbComplained);
 
       rg.setOnCheckedChangeListener((g, id) -> {
          custom.setVisibility(id == rbCustom.getId() ? View.VISIBLE : View.GONE);
@@ -1286,6 +1289,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (!g.isEmpty()) body.put("max_galon", Integer.parseInt(g));
             body.put("include_sales", cbSales.isChecked());
             body.put("include_pickup", cbPickup.isChecked());
+            if (cbComplained.isChecked()) body.put("complained_only", true);
             if (forRun) body.put("include_mine", true);
             body.put("_for_run", forRun);
             double km = 0;
