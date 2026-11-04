@@ -1,12 +1,46 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Sakelar "Delivery" di toolbar beranda (Admin): hidup/matikan HP ini sebagai perangkat delivery. -->
-<com.google.android.material.switchmaterial.SwitchMaterial xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/swToolbarDelivery"
+<!-- Toolbar beranda: label Delivery + armada yang dipakai, dan sakelar (hanya Admin). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:layout_marginEnd="4dp"
-    android:text="Delivery"
-    android:textColor="#FFFFFF"
-    android:textSize="14sp"
-    android:textStyle="bold"
-    android:switchPadding="6dp" />
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <LinearLayout
+        android:id="@+id/toolbarArmadaInfo"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:contentDescription="Ganti armada"
+        android:gravity="end"
+        android:minHeight="48dp"
+        android:orientation="vertical"
+        android:paddingStart="4dp"
+        android:paddingEnd="6dp"
+        android:foreground="?attr/selectableItemBackground">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="Delivery"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvToolbarArmada"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxWidth="130dp"
+            android:maxLines="1"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <com.google.android.material.switchmaterial.SwitchMaterial
+        android:id="@+id/swToolbarDelivery"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content" />
+</LinearLayout>

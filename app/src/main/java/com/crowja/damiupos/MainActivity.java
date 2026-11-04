@@ -1135,11 +1135,21 @@ public class MainActivity extends AppCompatActivity {
                     new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid);
             admin = cur != null && cur.isAdmin();
         }
-        boolean show = admin && cfg.isEnrolled();
-        item.setVisible(show);
-        if (!show || !(item.getActionView() instanceof com.google.android.material.switchmaterial.SwitchMaterial)) return;
-        com.google.android.material.switchmaterial.SwitchMaterial sw =
-                (com.google.android.material.switchmaterial.SwitchMaterial) item.getActionView();
+        boolean showArmada = cfg.isEnrolled() && cfg.isDeliveryDevice();
+        boolean showSwitch = admin && cfg.isEnrolled();
+        item.setVisible(showArmada || showSwitch);
+        View bar = item.getActionView();
+        if (bar == null || !(showArmada || showSwitch)) return;
+        TextView tvArmada = bar.findViewById(R.id.tvToolbarArmada);
+        tvArmada.setVisibility(showArmada ? View.VISIBLE : View.GONE);
+        String armadaName = cfg.getArmadaName();
+        tvArmada.setText(armadaName.isEmpty() ? "Pilih armada" : armadaName + " · " + cfg.getMaxLoad() + " galon");
+        View armadaInfo = bar.findViewById(R.id.toolbarArmadaInfo);
+        armadaInfo.setOnClickListener(showArmada ? v -> ArmadaPicker.change(this) : null);
+        armadaInfo.setClickable(showArmada);
+        com.google.android.material.switchmaterial.SwitchMaterial sw = bar.findViewById(R.id.swToolbarDelivery);
+        sw.setVisibility(showSwitch ? View.VISIBLE : View.GONE);
+        if (!showSwitch) return;
         int[][] states = {{android.R.attr.state_checked}, {}};
         sw.setThumbTintList(new ColorStateList(states, new int[]{0xFFFFFFFF, 0xFFE0E0E0}));
         sw.setTrackTintList(new ColorStateList(states, new int[]{0xFF66BB6A, 0x99FFFFFF}));
