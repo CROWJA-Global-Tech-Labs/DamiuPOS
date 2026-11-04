@@ -20,7 +20,7 @@ android {
         // di API 26+.
         minSdk 26
         targetSdk 34
-        versionCode 288
+        versionCode 1288
         versionName "1.4.269"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 

@@ -143,7 +143,7 @@ public final class SejalurPlanLogic {
     public static final long SUGGEST_REPEAT_MS = 60L * 60_000L;
 
     /**
-     * Popup "Tawarkan Rute Sejalur": pesanan TERTUA yang bisa jadi titik terjauh (berkoordinat, bukan
+     * Popup "Tawarkan Rute Sejalur": pesanan PENJUALAN (bukan ambil galon) TERTUA yang bisa jadi titik terjauh (berkoordinat, bukan
      * terjadwal) dengan umur &ge; {@code thresholdMs} dan belum ditawarkan dalam {@link #SUGGEST_REPEAT_MS}.
      * {@code thresholdMs <= 0} = fitur mati, hasilnya null.
      */
@@ -152,7 +152,7 @@ public final class SejalurPlanLogic {
         if (rows == null || thresholdMs <= 0L) return null;
         Target best = null;
         for (Target t : rows) {
-            if (t == null || !t.selectable() || t.elapsedMs < thresholdMs) continue;
+            if (t == null || t.pickupOnly || !t.selectable() || t.elapsedMs < thresholdMs) continue;
             Long last = offeredAt != null ? offeredAt.get(t.uuid) : null;
             if (last != null && now - last < SUGGEST_REPEAT_MS) continue;
             if (best == null || t.elapsedMs > best.elapsedMs) best = t;
