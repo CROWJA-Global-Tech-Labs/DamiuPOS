@@ -1410,8 +1410,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          sb.append(safe(c.optString("name")));
          if (dest != null && !dest.isEmpty()) sb.append(" · ").append(dest);
          sb.append('\n');
+         // Produk = kapsul slug berwarna di bawah baris ini (teks hanya bila server tak mengirim slug).
+         List<SejalurPlanLogic.Badge> badges = pickup ? new ArrayList<>() : this.sejalurBadges(c);
+         String queuedAt = strJson(c, "queued_at");
+         if (queuedAt != null && !queuedAt.isEmpty()) {
+            sb.append("⏱ ").append(SejalurPlanLogic.ageText(elapsedMillis(queuedAt) / 60000L)).append(" · ");
+         }
          if (pickup) sb.append("↩ ambil galon saja");
-         else sb.append(items != null && !items.isEmpty() ? items : "-").append(" · ").append(gal).append(" galon");
+         else if (badges.isEmpty()) sb.append(items != null && !items.isEmpty() ? items : "-").append(" · ").append(gal).append(" galon");
+         else sb.append(gal).append(" galon");
          sb.append(" · 📍 ");
          if (c.isNull("km")) sb.append("? km");
          else sb.append(String.format(java.util.Locale.US, "%.1f km", c.optDouble("km")));
@@ -1454,6 +1461,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             box.addView(line);
          } else {
             box.addView(cb);
+         }
+         if (!badges.isEmpty()) {
+            LinearLayout chips = new LinearLayout(this);
+            chips.setOrientation(LinearLayout.HORIZONTAL);
+            for (SejalurPlanLogic.Badge bd : badges) chips.addView(this.makeDetailBadge(bd.text, bd.bg));
+            android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+            hs.setHorizontalScrollBarEnabled(false);
+            hs.setPadding(this.dp(32f), 0, 0, this.dp(6f));
+            hs.addView(chips);
+            box.addView(hs);
          }
          boxes.add(cb);
          rows.add(c);
