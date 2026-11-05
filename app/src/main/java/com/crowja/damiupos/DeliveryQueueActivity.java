@@ -2826,8 +2826,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (Transaction.isResellerDestName(dn)) {
          return Transaction.resellerDestLabel(dn);
       }
-      String area = c != null ? cleanLabel(c.getAdminArea()) : "";
       boolean destGeo = destLat != 0.0 || destLng != 0.0;
+      String area = pointArea(c, destLat, destLng);
       boolean primaryGeo = c != null && (c.getLatitude() != 0.0 || c.getLongitude() != 0.0);
       boolean elsewhere = destGeo && (!primaryGeo
             || haversineKm(c.getLatitude(), c.getLongitude(), destLat, destLng) > 0.1);
@@ -2898,7 +2898,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     */
    static String destAreaFor(Customer c, double lat, double lng) {
       if (c == null) return "";
-      String area = cleanLabel(c.getAdminArea());
+      String area = pointArea(c, lat, lng);
       boolean primaryGeo = c.getLatitude() != 0.0 || c.getLongitude() != 0.0;
       if (lat == 0.0 && lng == 0.0) return area;
       if (primaryGeo && haversineKm(c.getLatitude(), c.getLongitude(), lat, lng) <= 0.1) return area;
@@ -2908,6 +2908,23 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    static String areaLabel(Customer c, Transaction t) {
       return areaLabel(c, t.getDeliveryDestLat(), t.getDeliveryDestLng(), t.getDeliveryDestName());
+   }
+
+   /**
+    * Wilayah menurut KOORDINAT titik itu (0,0 = titik utama pelanggan). Desa/kecamatan tersimpan hanya
+    * diisi sekali dan tak ikut berubah saat koordinat digeser, jadi hanya dipakai selama wilayah titik
+    * belum diketahui.
+    */
+   static String pointArea(Customer c, double lat, double lng) {
+      String stored = c != null ? cleanLabel(c.getAdminArea()) : "";
+      double pLat = lat;
+      double pLng = lng;
+      if (pLat == 0.0 && pLng == 0.0 && c != null) {
+         pLat = c.getLatitude();
+         pLng = c.getLongitude();
+      }
+      String cached = cleanLabel(DestAreaCache.lookup(pLat, pLng));
+      return cached.isEmpty() ? stored : cached;
    }
 
    /** Jumlah lokasi bernama pelanggan (entri null diabaikan). */
@@ -4258,7 +4275,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       String custUuid = q.optString("customer_uuid", "");
       Customer c = !custUuid.isEmpty() && !custUuid.equals("null") ? this.customerDao.getBySyncUuid(custUuid) : null;
       String destLocName = strJson(q, "dest_name");
-      String adminArea = hasDest ? destAreaFor(c, destLat, destLng) : (c != null ? cleanLabel(c.getAdminArea()) : "");
+      String adminArea = hasDest ? destAreaFor(c, destLat, destLng) : pointArea(c, 0.0, 0.0);
       String areaSuffix = !adminArea.isEmpty() ? " (" + adminArea + ")" : "";
       String custAddress = c != null && c.getAddress() != null ? c.getAddress().trim() : "";
       // Tujuan RESELLER: label khusus & TANPA foto rumah afiliasi sebagai cadangan — cermin
@@ -14656,8 +14673,19 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          return;
       }
       PopupMenu menu = new PopupMenu(this, anchor);
-      menu.getMenu().add(0, 1, 0, "🗑️ Void " + items.size() + " order (persetujuan)");
+      if (this.currentUserIsAdmin()) {
+         menu.getMenu().add(0, 2, 0, "📲 Alihkan " + items.size() + " order ke perangkat lain");
+      }
+      menu.getMenu().add(0, 1, 1, "🗑️ Void " + items.size() + " order (persetujuan)");
       menu.setOnMenuItemClickListener((item) -> {
+         if (item.getItemId() == 2) {
+            java.util.LinkedHashMap<String, String[]> picked = new java.util.LinkedHashMap<>();
+            for (String[] it : items) {
+               if (it[0] != null && !it[0].isEmpty()) picked.put(it[0], new String[]{"", it[1]});
+            }
+            this.pickOpenForwardTarget(picked);
+            return true;
+         }
          DeliveryVoidDialog.showBulk(this, items, () -> {
             this.exitClaimSelect(true);
             this.loadData();
@@ -14666,6 +14694,53 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       });
       this.addBroadcastSelectionItem(menu, true, this.selectedBroadcastUuids(true));
       menu.show();
+   }
+
+   private boolean currentUserIsAdmin() {
+      long uid = (new SettingsDao(DatabaseHelper.getInstance(this))).getCurrentUserId();
+      if (uid <= 0L) return false;
+      User u = (new UserDao(DatabaseHelper.getInstance(this))).getById(uid);
+      return u != null && u.isAdmin();
+   }
+
+   /** Admin: pindahkan Pesanan Terbuka ke antrian perangkat lain. Tanpa from_device_uuid, server menolak
+    *  order yang keburu diklaim perangkat lain. */
+   private void pickOpenForwardTarget(java.util.LinkedHashMap<String, String[]> picked) {
+      if (picked.isEmpty()) {
+         Toast.makeText(this, "Order belum tersinkron ke server. Coba lagi sebentar.", 1).show();
+         return;
+      }
+      SyncSettings cfg = this.syncCfg();
+      String myUuid = cfg.getDeviceUuid();
+      List<String[]> devs = new ArrayList<>();
+      try {
+         JSONArray arr = new JSONArray(cfg.getDeviceRoster());
+         for (int i = 0; i < arr.length(); ++i) {
+            JSONObject d = arr.optJSONObject(i);
+            if (d == null) continue;
+            String u = d.optString("uuid", "");
+            if (!u.isEmpty() && !u.equals(myUuid)) devs.add(new String[]{u, d.optString("name", "Perangkat")});
+         }
+      } catch (Exception ignored) {
+      }
+      if (devs.isEmpty()) {
+         Toast.makeText(this, "Belum ada perangkat delivery lain di roster. Coba sinkron dulu.", 1).show();
+         return;
+      }
+      String[] names = new String[devs.size()];
+      for (int i = 0; i < devs.size(); ++i) names[i] = devs.get(i)[1];
+      (new AlertDialog.Builder(this)).setTitle("Alihkan " + picked.size() + " order ke perangkat mana?")
+            .setItems(names, (dx, which) -> {
+               String[] tg = devs.get(which);
+               StringBuilder list = new StringBuilder();
+               int n = 0;
+               for (String[] v : picked.values()) list.append(++n).append(". ").append(v[1]).append('\n');
+               (new AlertDialog.Builder(this)).setTitle("Alihkan ke \"" + tg[1] + "\"?")
+                     .setMessage(picked.size() + " order keluar dari Pesanan Terbuka dan masuk antrian \"" + tg[1] + "\".\n\n" + list.toString().trim())
+                     .setPositiveButton("Alihkan", (d, w) -> this.runBulkForwardOther(picked, tg[0], tg[1], true))
+                     .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
+            })
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
    }
 
    /** "Aksi ⋮" mode-pilih tab Perangkat Lain — cermin Aksi massal Antrian Saya: Alihkan ke perangkat
@@ -14822,6 +14897,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private void runBulkForwardOther(java.util.LinkedHashMap<String, String[]> picked, String targetUuid, String targetName) {
+      this.runBulkForwardOther(picked, targetUuid, targetName, false);
+   }
+
+   private void runBulkForwardOther(java.util.LinkedHashMap<String, String[]> picked, String targetUuid, String targetName, boolean open) {
       SyncSettings cfg = this.syncCfg();
       android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
       wait.setMessage("Mengalihkan " + picked.size() + " order…");
@@ -14837,7 +14916,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                JSONObject body = new JSONObject();
                body.put("transaction_uuid", e.getKey());
                body.put("target_device_uuid", targetUuid);
-               body.put("from_device_uuid", holder);
+               if (!holder.isEmpty()) body.put("from_device_uuid", holder);
                (new SyncApi(cfg)).routeDelivery(body);
                ok++;
             } catch (SyncApi.SyncException se) {
@@ -14852,7 +14931,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.runOnUiThread(() -> {
             if (this.isFinishing() || this.isDestroyed()) return;
             wait.dismiss();
-            this.exitClaimSelect(false);
+            this.exitClaimSelect(open);
             SyncScheduler.syncNow(this.getApplicationContext());
             this.loadData();
             String msg = okF + " order dialihkan ke " + targetName + "." + (failF.isEmpty() ? "" : "\n\nGagal:" + failF);
@@ -15795,8 +15874,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             }
             String rcLabel = RemoteCompleteLogic.menuLabel(DeliveryQueueActivity.this.remoteCompleteOffer(DeliveryQueueActivity.this.trxUuid(t), false, false));
             if (rcLabel != null) menu.getMenu().add(0, 5, 0, rcLabel);
+            if (DeliveryQueueActivity.this.currentUserIsAdmin()) menu.getMenu().add(0, 6, 4, "📲 Alihkan ke Perangkat Lain");
             menu.setOnMenuItemClickListener((item) -> {
                switch (item.getItemId()) {
+                  case 6:
+                     java.util.LinkedHashMap<String, String[]> one = new java.util.LinkedHashMap<>();
+                     String oneUuid = DeliveryQueueActivity.this.trxUuid(t);
+                     if (oneUuid != null && !oneUuid.isEmpty()) one.put(oneUuid, new String[]{"", safe(t.getCustomerName())});
+                     DeliveryQueueActivity.this.pickOpenForwardTarget(one);
+                     return true;
                   case 5:
                      DeliveryQueueActivity.this.onRemoteCompleteOpen(t);
                      return true;
