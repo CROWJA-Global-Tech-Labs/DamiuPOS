@@ -44,6 +44,19 @@ public class BroadcastScopeTest {
     }
 
     @Test
+    public void kindFilterSeparatesSalesAndPickup() {
+        Item sale = item("s", 1, "c1");
+        Item pickup = new Item("p", 1, "c2", "Ambil", "", null, null, null, null, true);
+        List<Item> items = Arrays.asList(sale, pickup);
+        Set<Integer> s = src(1);
+
+        assertEquals(Arrays.asList("s"), uuidsOf(BroadcastScope.picked(items, s, sel(), null, null, BroadcastScope.KIND_SALES)));
+        assertEquals(Arrays.asList("p"), uuidsOf(BroadcastScope.picked(items, s, sel(), null, null, BroadcastScope.KIND_PICKUP)));
+        assertEquals(Arrays.asList("s", "p"), uuidsOf(BroadcastScope.picked(items, s, sel(), null, null, BroadcastScope.KIND_ALL)));
+        assertFalse(BroadcastScope.visible(pickup, s, sel(), null, BroadcastScope.KIND_SALES));
+    }
+
+    @Test
     public void defaultSourceFollowsActiveTab() {
         assertEquals(BroadcastScope.MINE, BroadcastScope.defaultSource(0));
         assertEquals(BroadcastScope.OTHER, BroadcastScope.defaultSource(1));

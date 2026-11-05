@@ -82,6 +82,7 @@ final class DeliveryBroadcastDialog {
             {"🚰 Stok habis", "Halo {nama}, mohon maaf stok galon sedang kosong/terbatas sehingga pesanan Anda tertunda. Kami kabari lagi begitu siap diantar. Terima kasih 🙏"},
             {"🌧️ Cuaca", "Halo {nama}, mohon maaf karena hujan/cuaca buruk pengiriman galon Anda sedikit tertunda. Pesanan tetap kami antar. Terima kasih atas pengertiannya 🙏"},
             {"🛵 Armada", "Halo {nama}, mohon maaf kendaraan pengiriman kami sedang bermasalah sehingga pesanan Anda tertunda. Kami usahakan secepatnya. Terima kasih 🙏"},
+            {"👤 Operator", "Halo {nama}, mohon maaf operator pengiriman kami sedang berhalangan sehingga pesanan Anda tertunda. Kami usahakan secepatnya. Terima kasih atas pengertiannya 🙏"},
     };
 
     private static final String[] SOURCE_LABELS = {"📱 Antrian Saya", "👥 Perangkat Lain", "🎲 Pesanan Terbuka"};
@@ -99,6 +100,7 @@ final class DeliveryBroadcastDialog {
     private List<Item> items;
     private final Set<Integer> sources = new HashSet<>();
     private final Set<String> sel = new LinkedHashSet<>();
+    private int kind = BroadcastScope.KIND_ALL;
     private final Set<String> unchecked = new HashSet<>();
     /** uuid yang pernah ada di daftar dialog ini — baris yang datang belakangan dikenali lewat ini. */
     private final Set<String> known = new HashSet<>();
@@ -239,6 +241,12 @@ final class DeliveryBroadcastDialog {
             box.addView(sc);
         }
 
+        // ---- jenis order (mode pilih tak disaring: order sudah dipilih sendiri)
+        if (!this.scoped()) {
+            this.kind = BroadcastScope.KIND_SALES;
+            box.addView(this.kindRow(textColor));
+        }
+
         // ---- status muat Perangkat Lain
         LinearLayout st = new LinearLayout(this.act);
         st.setOrientation(LinearLayout.HORIZONTAL);
@@ -320,6 +328,42 @@ final class DeliveryBroadcastDialog {
         this.dlg.setOnDismissListener(di -> this.host.releaseProductFilter(this.sel));
         this.dlg.show();
         this.maybeLoadOther();
+    }
+
+    /** "Penjualan saja" / "Ambil galon saja", saling eksklusif seperti di tab; keduanya kosong = semua order. */
+    private View kindRow(int textColor) {
+        MaterialCheckBox sales = this.kindBox("🛒 Penjualan saja", textColor);
+        MaterialCheckBox pickup = this.kindBox("↩ Ambil galon saja", textColor);
+        sales.setChecked(true);
+        sales.setOnCheckedChangeListener((b, on) -> {
+            if (on) pickup.setChecked(false);
+            this.setKind(on ? BroadcastScope.KIND_SALES : pickup.isChecked() ? BroadcastScope.KIND_PICKUP : BroadcastScope.KIND_ALL);
+        });
+        pickup.setOnCheckedChangeListener((b, on) -> {
+            if (on) sales.setChecked(false);
+            this.setKind(on ? BroadcastScope.KIND_PICKUP : sales.isChecked() ? BroadcastScope.KIND_SALES : BroadcastScope.KIND_ALL);
+        });
+        LinearLayout col = new LinearLayout(this.act);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.addView(sales, new LinearLayout.LayoutParams(-1, -2));
+        col.addView(pickup, new LinearLayout.LayoutParams(-1, -2));
+        return col;
+    }
+
+    private MaterialCheckBox kindBox(String text, int textColor) {
+        MaterialCheckBox cb = new MaterialCheckBox(this.act);
+        cb.setText(text);
+        cb.setMinHeight(dp(48));
+        cb.setMinimumHeight(dp(48));
+        cb.setTextSize(13f);
+        cb.setTextColor(textColor);
+        cb.setPadding(dp(2), 0, dp(12), 0);
+        return cb;
+    }
+
+    private void setKind(int k) {
+        this.kind = k;
+        this.refilter();
     }
 
     /** Kapsul kecil dibungkus bidang sentuh ≥ 48dp (tampilan kapsul tetap; TalkBack membaca teks kapsul). */
@@ -431,7 +475,7 @@ final class DeliveryBroadcastDialog {
         int shown = 0;
         for (Item it : this.items) {
             View row = this.rowByUuid.get(it.uuid);
-            boolean vis = BroadcastScope.visible(it, this.sources, this.sel, typeSel);
+            boolean vis = BroadcastScope.visible(it, this.sources, this.sel, typeSel, this.kind);
             if (vis) shown++;
             if (row != null) row.setVisibility(vis ? View.VISIBLE : View.GONE);
         }
@@ -449,7 +493,7 @@ final class DeliveryBroadcastDialog {
     }
 
     private List<Item> currentPicked() {
-        return BroadcastScope.picked(this.items, this.sources, this.sel, this.host.productTypeFilter(this.sel), this.unchecked);
+        return BroadcastScope.picked(this.items, this.sources, this.sel, this.host.productTypeFilter(this.sel), this.unchecked, this.kind);
     }
 
     private void recount() {
@@ -468,7 +512,7 @@ final class DeliveryBroadcastDialog {
         this.clearedAll = !on;
         this.syncing = true;
         for (Item it : this.items) {
-            if (on && !BroadcastScope.visible(it, this.sources, this.sel, typeSel)) continue;
+            if (on && !BroadcastScope.visible(it, this.sources, this.sel, typeSel, this.kind)) continue;
             CheckBox cb = this.boxByUuid.get(it.uuid);
             if (on) this.unchecked.remove(it.uuid);
             else this.unchecked.add(it.uuid);

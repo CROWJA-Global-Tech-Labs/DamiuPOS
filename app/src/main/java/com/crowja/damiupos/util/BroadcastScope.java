@@ -26,6 +26,11 @@ public final class BroadcastScope {
     public static final int OPEN = 2;
     public static final int SOURCE_COUNT = 3;
 
+    /** Jenis order yang dikirimi. */
+    public static final int KIND_ALL = 0;
+    public static final int KIND_SALES = 1;
+    public static final int KIND_PICKUP = 2;
+
     /** Batas server per kirim. */
     public static final int MAX_UUIDS = 300;
 
@@ -50,6 +55,8 @@ public final class BroadcastScope {
         public final Object ref;
         /** Baris kapsul siap gambar (hasil parse sekali di Host) — tak dipakai logika ini; boleh null. */
         public final Object chips;
+        /** Order "ambil galon saja" (tanpa penjualan). */
+        public final boolean pickupOnly;
 
         public Item(String uuid, int source, String customerKey, String label, String badge,
                     List<String[]> rows, Collection<String> extraSlugs, Object ref) {
@@ -58,6 +65,12 @@ public final class BroadcastScope {
 
         public Item(String uuid, int source, String customerKey, String label, String badge,
                     List<String[]> rows, Collection<String> extraSlugs, Object ref, Object chips) {
+            this(uuid, source, customerKey, label, badge, rows, extraSlugs, ref, chips, false);
+        }
+
+        public Item(String uuid, int source, String customerKey, String label, String badge,
+                    List<String[]> rows, Collection<String> extraSlugs, Object ref, Object chips, boolean pickupOnly) {
+            this.pickupOnly = pickupOnly;
             this.uuid = uuid == null ? "" : uuid.trim();
             this.source = source;
             this.customerKey = customerKey == null ? "" : customerKey.trim();
@@ -219,16 +232,33 @@ public final class BroadcastScope {
 
     /** Baris tampil = sumbernya dicentang DAN lolos filter produk/jenis. */
     public static boolean visible(Item it, Set<Integer> sources, Set<String> sel, Map<String, Set<String>> typeSel) {
-        return it != null && sources != null && sources.contains(it.source) && productMatches(it, sel, typeSel);
+        return visible(it, sources, sel, typeSel, KIND_ALL);
+    }
+
+    /** Seperti {@link #visible(Item, Set, Set, Map)}, ditambah saringan jenis order. */
+    public static boolean visible(Item it, Set<Integer> sources, Set<String> sel, Map<String, Set<String>> typeSel, int kind) {
+        return it != null && sources != null && sources.contains(it.source) && kindMatches(it, kind)
+                && productMatches(it, sel, typeSel);
+    }
+
+    static boolean kindMatches(Item it, int kind) {
+        if (kind == KIND_SALES) return !it.pickupOnly;
+        if (kind == KIND_PICKUP) return it.pickupOnly;
+        return true;
     }
 
     /** Yang dikirim: tampil (lihat {@link #visible}) dan tidak dilepas centangnya. */
     public static List<Item> picked(List<Item> items, Set<Integer> sources, Set<String> sel,
                                     Map<String, Set<String>> typeSel, Set<String> unchecked) {
+        return picked(items, sources, sel, typeSel, unchecked, KIND_ALL);
+    }
+
+    public static List<Item> picked(List<Item> items, Set<Integer> sources, Set<String> sel,
+                                    Map<String, Set<String>> typeSel, Set<String> unchecked, int kind) {
         List<Item> out = new ArrayList<>();
         if (items == null) return out;
         for (Item it : items) {
-            if (!visible(it, sources, sel, typeSel)) continue;
+            if (!visible(it, sources, sel, typeSel, kind)) continue;
             if (unchecked != null && unchecked.contains(it.uuid)) continue;
             out.add(it);
         }
