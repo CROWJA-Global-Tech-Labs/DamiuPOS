@@ -107,6 +107,7 @@ import com.crowja.damiupos.util.OrderChatEntry;
 import com.crowja.damiupos.util.RemoteCompleteLogic;
 import com.crowja.damiupos.util.PickupNearbyLogic;
 import com.crowja.damiupos.util.SejalurPlanLogic;
+import com.crowja.damiupos.util.TakeKmRange;
 import com.crowja.damiupos.util.TertundaRows;
 import com.crowja.damiupos.util.Ts;
 import com.crowja.damiupos.wa.WaContactEnsure;
@@ -1097,7 +1098,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    /**
     * 📥 Ambil Antrean — dua opsi: (1) SESUAI WILAYAH SAYA (area primer + sekunder) + "ambil berapa galon";
-    * (2) CUSTOM: jarak perjalanan darat dari posisi HP (default 2 km) dan/atau wilayah perangkat terpilih
+    * (2) CUSTOM: rentang jarak perjalanan darat dari posisi HP (default 0–5 km) dan/atau wilayah perangkat terpilih
     * (dipaksa walau bukan wilayah saya, boleh banyak) + "ambil berapa galon". Server: DeliveryTakeQueue.
     */
    private void renderTakeQueueDialog(JSONArray zones) {
@@ -1152,12 +1153,26 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       custom.setOrientation(LinearLayout.VERTICAL);
       custom.setPadding(this.dp(16f), 0, 0, 0);
       TextView lblKm = new TextView(this);
-      lblKm.setText("Jarak perjalanan darat dari posisi saya (km, kosongkan = tanpa batas):");
+      lblKm.setText("Jarak perjalanan darat dari posisi saya (geser ke paling kanan = tanpa batas):");
       custom.addView(lblKm);
-      final EditText etKm = new EditText(this);
-      etKm.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
-      etKm.setText("2");
-      custom.addView(etKm);
+      final TextView tvKmRange = new TextView(this);
+      tvKmRange.setTextSize(15f);
+      tvKmRange.setTypeface(null, android.graphics.Typeface.BOLD);
+      tvKmRange.setTextColor(this.getColor(R.color.primary));
+      tvKmRange.setPadding(0, this.dp(6f), 0, 0);
+      custom.addView(tvKmRange);
+      final com.google.android.material.slider.RangeSlider kmSlider = new com.google.android.material.slider.RangeSlider(this);
+      kmSlider.setValueFrom(TakeKmRange.SCALE_MIN);
+      kmSlider.setValueTo(TakeKmRange.SCALE_MAX);
+      kmSlider.setStepSize(TakeKmRange.STEP);
+      kmSlider.setMinSeparationValue(TakeKmRange.STEP);
+      kmSlider.setLabelBehavior(com.google.android.material.slider.LabelFormatter.LABEL_GONE);
+      kmSlider.setTickVisible(false);
+      kmSlider.setValues(TakeKmRange.DEFAULT_MIN, TakeKmRange.DEFAULT_MAX);
+      tvKmRange.setText(TakeKmRange.label(TakeKmRange.DEFAULT_MIN, TakeKmRange.DEFAULT_MAX));
+      kmSlider.addOnChangeListener((sl, value, fromUser) ->
+            tvKmRange.setText(TakeKmRange.label(sl.getValues().get(0), sl.getValues().get(1))));
+      custom.addView(kmSlider);
       final List<android.widget.CheckBox> zoneBoxes = new ArrayList<>();
       final List<Integer> zoneIdx = new ArrayList<>();
       if (zones.length() > 0) {
@@ -1292,22 +1307,24 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (cbComplained.isChecked()) body.put("complained_only", true);
             if (forRun) body.put("include_mine", true);
             body.put("_for_run", forRun);
-            double km = 0;
+            boolean kmLimited = false;
             if (isCustom) {
                JSONArray zs = new JSONArray();
                for (int i = 0; i < zoneBoxes.size(); i++) if (zoneBoxes.get(i).isChecked()) zs.put(zoneIdx.get(i));
                body.put("zones", zs);
-               String k = etKm.getText().toString().trim().replace(',', '.');
-               km = k.isEmpty() ? 0 : Double.parseDouble(k);
-               if (km > 0) body.put("max_km", km);
-               if (km <= 0 && zs.length() == 0) {
-                  Toast.makeText(this, "Isi jarak atau pilih minimal satu wilayah.", Toast.LENGTH_SHORT).show();
+               float minKm = kmSlider.getValues().get(0);
+               float maxKm = kmSlider.getValues().get(1);
+               kmLimited = TakeKmRange.hasLimit(minKm, maxKm);
+               if (minKm > TakeKmRange.SCALE_MIN) body.put("min_km", (double) minKm);
+               if (!TakeKmRange.isUnlimited(maxKm)) body.put("max_km", (double) maxKm);
+               if (!kmLimited && zs.length() == 0) {
+                  Toast.makeText(this, "Batasi jarak atau pilih minimal satu wilayah.", Toast.LENGTH_SHORT).show();
                   return;
                }
             }
             dlg.dismiss();
             // Posisi HP selalu dicoba (jarak km di ceklis preview); wajib hanya bila Custom memakai batas jarak.
-            final boolean needLoc = km > 0;
+            final boolean needLoc = kmLimited;
             LocationService.lastLocation(this, (loc) -> {
                if (loc == null && needLoc) {
                   Toast.makeText(this, "Lokasi HP belum didapat — nyalakan GPS lalu coba lagi.", Toast.LENGTH_LONG).show();
