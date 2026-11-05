@@ -54,6 +54,18 @@ public class DeliveryPlannerWebOrderTest {
         assertEquals(Arrays.asList("Mas Mansyur"), names(trips.get(1).stops));
     }
 
+    @Test public void runningRitFollowsRouteNotPriorityLevel() {
+        Transaction pickup = order("Ambil", 0, 2, "2026-10-15 08:00:00", 0.1, 0);
+        pickup.setType(Transaction.TYPE_KEMBALI);
+        List<Transaction> stops = Arrays.asList(
+                order("Slamet", 14, 3, "2026-10-15 08:00:00", 3.0, 1),
+                pickup,
+                order("Baru", 2, 0, "2026-10-15 08:00:00", 0.2, 1),
+                order("Pak bakdi", 1, 1, "2026-10-15 08:00:00", 0.1, 1));
+
+        assertEquals(Arrays.asList("Pak bakdi", "Slamet", "Baru", "Ambil"), names(DeliveryPlanner.runRouteOrder(stops)));
+    }
+
     @Test public void starCustomerStaysAboveLevel() {
         Transaction star = order("Bintang", 0, 0, "2026-10-15 10:00:00", 2.0, 1);
         star.setCustomerPriority(true);
