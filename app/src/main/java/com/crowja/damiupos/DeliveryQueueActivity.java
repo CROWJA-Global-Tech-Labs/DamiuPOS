@@ -5927,6 +5927,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             ordered.addAll(trip.stops);
          }
       }
+      // Rit berjalan: pemberhentiannya di atas menurut rute server, baru antrean yang menunggu.
+      if (this.isRunning()) {
+         List<Transaction> running = new ArrayList<>();
+         List<Transaction> waiting = new ArrayList<>();
+         for (Transaction t : ordered) (this.runningIds.contains(t.getId()) ? running : waiting).add(t);
+         ordered = new ArrayList<>(this.sejalurOrdered(DeliveryPlanner.runRouteOrder(running)));
+         ordered.addAll(waiting);
+      }
       ordered.addAll(voidPending);
       return ordered;
    }
@@ -7788,7 +7796,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          return out;
       } else {
          // Urutan pemberhentian = urutan RENCANA terkini (adapter.data sudah diurutkan
-         // DeliveryPlanner menurut delivery_seq), BUKAN urutan saat order mulai dijalankan — supaya
+         // DeliveryPlanner.runRouteOrder menurut delivery_seq), BUKAN urutan saat order mulai dijalankan — supaya
          // "Urutkan Rute Terpendek" / Refresh RIT (jalur jalan darat dari server) langsung mengubah
          // urutan antar rit yang sedang berjalan, termasuk "Selanjutnya" di mode terpandu.
          for(Transaction t : this.adapter.data) {

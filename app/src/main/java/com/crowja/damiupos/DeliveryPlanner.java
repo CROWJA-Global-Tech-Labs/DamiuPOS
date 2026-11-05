@@ -343,6 +343,23 @@ public final class DeliveryPlanner {
         return isPickupOnly(t) ? 2 : (isPriority(t) ? 0 : 1);
     }
 
+    /**
+     * Urutan pemberhentian rit BERJALAN: muatannya sudah di kendaraan, jadi murni rute dari server
+     * (delivery_seq, cermin mode rit berjalan DeliveryOptimizeController), tanpa kunci level ⚡.
+     * Order tanpa nomor rute menyusul dengan urutan semula; ambil galon saja tetap terakhir.
+     */
+    public static List<Transaction> runRouteOrder(List<Transaction> stops) {
+        List<Transaction> out = new ArrayList<>(stops);
+        Collections.sort(out, (a, b) -> {
+            boolean pa = isPickupOnly(a), pb = isPickupOnly(b);
+            if (pa != pb) return pa ? 1 : -1;
+            int sa = a.getDeliverySeq(), sb = b.getDeliverySeq();
+            if ((sa > 0) != (sb > 0)) return sa > 0 ? -1 : 1;
+            return sa > 0 ? Integer.compare(sa, sb) : 0;
+        });
+        return out;
+    }
+
     /** AMBIL GALON SAJA paling belakang; lalu prioritas; di dalam grup: manual, lalu mode. */
     private static List<Transaction> sortStops(List<Transaction> queue, double dLat, double dLng, int mode, long nowMs) {
         // KEMBALI (jemput galon kosong) SELALU di belakang — mengalahkan prioritas & jarak,
