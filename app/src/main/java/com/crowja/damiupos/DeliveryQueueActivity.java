@@ -6762,8 +6762,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if ("JUAL".equals(t.getType())) {
          menu.getMenu().add(0, 6, 5, "🚰 Jenis Galon");
       }
+      // Gerbang sama dengan tombol Ubah di popup detail kartu.
+      if (this.currentUserCanRequestTrxChange() && !t.hasPendingVoidRequest()) {
+         menu.getMenu().add(0, 7, 6, "✏️ Ubah");
+      }
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
+            case 7:
+               this.showUbahMenu(t);
+               return true;
             case 6:
                this.showGalonTypeDialog(t);
                return true;
@@ -12557,7 +12564,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).show();
    }
 
-   private static final String[] RESCHEDULE_REASON_PRESETS = new String[]{"Pesanan overload", "Cuaca buruk", "Kecelakaan", "Kendaraan bermasalah", "Lainnya (jelaskan)"};
+   private static final String[] RESCHEDULE_REASON_PRESETS = new String[]{"Permintaan konsumen", "Pesanan overload", "Cuaca buruk", "Kecelakaan", "Kendaraan bermasalah", "Lainnya (jelaskan)"};
    private static final int REQ_POSTPONE_PHOTO = 7406;
    private static final int REQ_POSTPONE_CAMERA_PERM = 7407;
 
