@@ -1779,7 +1779,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             String label = (o.optBoolean("order_priority", false) ? "⚡ " : "") + strJson(o, "name")
                   + (o.optBoolean("pickup_only", false) ? "  ↩ ambil galon" : "") + (isBeingDelivered(o) ? "  🚚 diantar" : "");
             out.add(new com.crowja.damiupos.util.BroadcastScope.Item(uuid, source, cust, label,
-                  "📱 " + (dev.isEmpty() ? "Perangkat lain" : dev), rows, slugs, o, typed));
+                  "📱 " + (dev.isEmpty() ? "Perangkat lain" : dev), rows, slugs, o, typed, o.optBoolean("pickup_only", false)));
          }
          return out;
       }
@@ -1804,7 +1804,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          for (Object[] r : typed) rows.add(new String[]{(String) r[0], (String) r[1]});
          String label = (DeliveryPlanner.isPriority(t) ? "⚡ " : "") + safe(t.getCustomerName())
                + (t.isVisitTask() ? "  📞 kunjungan" : DeliveryPlanner.isPickupOnly(t) ? "  ↩ ambil galon" : "");
-         out.add(new com.crowja.damiupos.util.BroadcastScope.Item(uuid, source, cust, label, mine ? "" : "🎲 Terbuka", rows, null, t, typed));
+         out.add(new com.crowja.damiupos.util.BroadcastScope.Item(uuid, source, cust, label, mine ? "" : "🎲 Terbuka", rows, null, t, typed, DeliveryPlanner.isPickupOnly(t)));
       }
       return out;
    }
