@@ -1098,7 +1098,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    /**
     * 📥 Ambil Antrean — dua opsi: (1) SESUAI WILAYAH SAYA (area primer + sekunder) + "ambil berapa galon";
-    * (2) CUSTOM: rentang jarak perjalanan darat dari posisi HP (default 0–5 km) dan/atau wilayah perangkat terpilih
+    * (2) CUSTOM: rentang jarak perjalanan darat dari posisi HP atau kios (default 0–5 km) dan/atau wilayah perangkat terpilih
     * (dipaksa walau bukan wilayah saya, boleh banyak) + "ambil berapa galon". Server: DeliveryTakeQueue.
     */
    private void renderTakeQueueDialog(JSONArray zones) {
@@ -1153,8 +1153,20 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       custom.setOrientation(LinearLayout.VERTICAL);
       custom.setPadding(this.dp(16f), 0, 0, 0);
       TextView lblKm = new TextView(this);
-      lblKm.setText("Jarak perjalanan darat dari posisi saya (geser ke paling kanan = tanpa batas):");
+      lblKm.setText("Jarak perjalanan darat dari (geser ke paling kanan = tanpa batas):");
       custom.addView(lblKm);
+      final android.widget.RadioButton rbFromMe = new android.widget.RadioButton(this);
+      rbFromMe.setText("📍 Posisi saya");
+      rbFromMe.setId(View.generateViewId());
+      final android.widget.RadioButton rbFromKios = new android.widget.RadioButton(this);
+      rbFromKios.setText("🏪 Kios");
+      rbFromKios.setId(View.generateViewId());
+      android.widget.RadioGroup rgKmFrom = new android.widget.RadioGroup(this);
+      rgKmFrom.setOrientation(LinearLayout.HORIZONTAL);
+      rgKmFrom.addView(rbFromMe);
+      rgKmFrom.addView(rbFromKios);
+      rbFromMe.setChecked(true);
+      custom.addView(rgKmFrom);
       final TextView tvKmRange = new TextView(this);
       tvKmRange.setTextSize(15f);
       tvKmRange.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -1308,12 +1320,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (forRun) body.put("include_mine", true);
             body.put("_for_run", forRun);
             boolean kmLimited = false;
+            boolean fromKios = false;
             if (isCustom) {
                JSONArray zs = new JSONArray();
                for (int i = 0; i < zoneBoxes.size(); i++) if (zoneBoxes.get(i).isChecked()) zs.put(zoneIdx.get(i));
                body.put("zones", zs);
                float minKm = kmSlider.getValues().get(0);
                float maxKm = kmSlider.getValues().get(1);
+               fromKios = rbFromKios.isChecked();
+               if (fromKios) body.put("km_from", "kios");
                kmLimited = TakeKmRange.hasLimit(minKm, maxKm);
                if (minKm > TakeKmRange.SCALE_MIN) body.put("min_km", (double) minKm);
                if (!TakeKmRange.isUnlimited(maxKm)) body.put("max_km", (double) maxKm);
@@ -1324,7 +1339,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             }
             dlg.dismiss();
             // Posisi HP selalu dicoba (jarak km di ceklis preview); wajib hanya bila Custom memakai batas jarak.
-            final boolean needLoc = kmLimited;
+            final boolean needLoc = kmLimited && !fromKios;
             LocationService.lastLocation(this, (loc) -> {
                if (loc == null && needLoc) {
                   Toast.makeText(this, "Lokasi HP belum didapat — nyalakan GPS lalu coba lagi.", Toast.LENGTH_LONG).show();
@@ -1415,6 +1430,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       final List<android.widget.CheckBox> boxes = new ArrayList<>();
       final List<JSONObject> rows = new ArrayList<>();
       final Runnable[] upd = new Runnable[1];
+      final String kmSuffix = "kios".equals(body.optString("km_from")) ? " dari kios" : "";
       for (int i = 0; i < cands.length(); i++) {
          JSONObject c = cands.optJSONObject(i);
          if (c == null || c.optString("uuid").isEmpty()) continue;
@@ -1438,7 +1454,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          else sb.append(gal).append(" galon");
          sb.append(" · 📍 ");
          if (c.isNull("km")) sb.append("? km");
-         else sb.append(String.format(java.util.Locale.US, "%.1f km", c.optDouble("km")));
+         else sb.append(String.format(java.util.Locale.US, "%.1f km", c.optDouble("km"))).append(kmSuffix);
          JSONObject dl = c.optJSONObject("deadline");
          if (dl != null && !dl.optString("label").isEmpty()) {
             sb.append(" · ⏰ ").append(dl.optString("label"));
