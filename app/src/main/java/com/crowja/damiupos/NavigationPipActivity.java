@@ -1347,7 +1347,7 @@ public class NavigationPipActivity extends AppCompatActivity {
             // 📷 Koreksi foto lokasi: foto baru jadi foto PERTAMA lokasi tujuan, foto lama digeser ke belakang.
             fabPhotoFix = floatingRound("📷", 0xFF0D47A1);
             fabPhotoFix.setContentDescription("Koreksi foto lokasi");
-            fabPhotoFix.setOnClickListener(v -> startFixPhoto());
+            fabPhotoFix.setOnClickListener(v -> CustomerFormActivity.askQuickCapture(this, this::runFixMode));
             android.widget.FrameLayout.LayoutParams cp = new android.widget.FrameLayout.LayoutParams(size, size,
                     android.view.Gravity.TOP | android.view.Gravity.START);
             cp.setMargins(m, m, m, m);
@@ -1367,6 +1367,18 @@ public class NavigationPipActivity extends AppCompatActivity {
     }
 
     /** 📷 ketuk: buka kamera (izin dulu bila perlu) untuk foto lokasi perhentian aktif. */
+    /** null = tanya soal koordinat sesudah foto (alur wajib foto saat Selesai). */
+    private String fixMode;
+
+    private void runFixMode(String mode) {
+        if (CustomerFormActivity.QUICK_LOCATION.equals(mode)) {
+            openActiveStopForm(mode);
+            return;
+        }
+        fixMode = mode;
+        startFixPhoto();
+    }
+
     private void startFixPhoto() {
         Transaction a = last != null ? last.active : null;
         if (a == null || a.getCustomerId() <= 0) return;
@@ -1400,6 +1412,9 @@ public class NavigationPipActivity extends AppCompatActivity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQ_FIX_PHOTO) return;
         fixPhotoPath = null;
+        if (resultCode != RESULT_OK || data == null) {
+            fixMode = null;
+        }
         if (resultCode != RESULT_OK || data == null) {   // Batal → Selesai juga batal (foto wajib)
             if (completeAfterFixPhoto) Toast.makeText(this, "Pesanan belum diselesaikan — foto lokasi wajib.", Toast.LENGTH_LONG).show();
             completeAfterFixPhoto = false;
@@ -1412,8 +1427,14 @@ public class NavigationPipActivity extends AppCompatActivity {
         final float acc = (float) data.getDoubleExtra(PhotoCoordinateActivity.EXTRA_ACCURACY, data.getFloatExtra(PhotoCoordinateActivity.EXTRA_ACCURACY, 0f));
         final long cust = fixCustomerId;
         final String dest = fixDestName;
-        if (lat == 0 && lng == 0) {
+        final String mode = fixMode;
+        fixMode = null;
+        if ((lat == 0 && lng == 0) || CustomerFormActivity.QUICK_PHOTO.equals(mode)) {
             uploadFixPhoto(path, cust, dest, null);
+            return;
+        }
+        if (mode != null) {
+            uploadFixPhoto(path, cust, dest, new double[]{lat, lng});
             return;
         }
         new androidx.appcompat.app.AlertDialog.Builder(this)
@@ -1794,6 +1815,10 @@ TextView done = mediaChip("✅ Selesai", 0xFF15803D);
 
     /** Kamera foto rumah + koordinat di form pelanggan; sesudah SIMPAN kembali ke panel navigasi ini. */
     private void updateActiveStopPhoto() {
+        CustomerFormActivity.askQuickCapture(this, this::openActiveStopForm);
+    }
+
+    private void openActiveStopForm(String mode) {
         Transaction a = last != null ? last.active : null;
         if (a == null || a.getCustomerId() <= 0L) {
             Toast.makeText(this, "Tidak ada pelanggan di perhentian ini", Toast.LENGTH_SHORT).show();
@@ -1802,7 +1827,7 @@ TextView done = mediaChip("✅ Selesai", 0xFF15803D);
         leaving = true;   // onResume menyalakan lagi auto-melayang
         disableAutoEnter();
         startActivity(new Intent(this, CustomerFormActivity.class).putExtra("customer_id", a.getCustomerId())
-                .putExtra(CustomerFormActivity.EXTRA_QUICK_CAPTURE, CustomerFormActivity.QUICK_PHOTO_COORD));
+                .putExtra(CustomerFormActivity.EXTRA_QUICK_CAPTURE, mode));
     }
 
     private void openQueueForActiveStop(String extra) {

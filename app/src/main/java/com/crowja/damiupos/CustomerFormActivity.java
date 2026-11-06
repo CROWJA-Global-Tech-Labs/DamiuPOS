@@ -69,6 +69,18 @@ public class CustomerFormActivity extends AppCompatActivity {
     public static final String EXTRA_QUICK_CAPTURE = "quick_capture";
     public static final String QUICK_PHOTO_COORD = "photo_coord";
     public static final String QUICK_LOCATION = "location";
+    public static final String QUICK_PHOTO = "photo";
+
+    /** Pilihan Update: foto saja, lokasi saja, atau keduanya; onPick menerima salah satu QUICK_*. */
+    static void askQuickCapture(android.app.Activity act, java.util.function.Consumer<String> onPick) {
+        String[] modes = {QUICK_PHOTO, QUICK_LOCATION, QUICK_PHOTO_COORD};
+        new androidx.appcompat.app.AlertDialog.Builder(act).setTitle("Update Foto & Lokasi")
+                .setItems(new String[]{"📷 Update foto saja", "📍 Update lokasi saja", "📷📍 Update foto & lokasi"},
+                        (d, which) -> onPick.accept(modes[which]))
+                .setNegativeButton("Batal", null).show();
+    }
+
+    private boolean quickPhotoOnly;
     public static final String EXTRA_PREFILL_PHONE = "prefill_phone";
 
     /** Id pelanggan yang baru di-insert, dipakai untuk setResult */
@@ -378,7 +390,10 @@ public class CustomerFormActivity extends AppCompatActivity {
         if (editId != -1 && savedInstanceState == null && quick != null) {
             findViewById(R.id.btnSimpan).post(() -> {
                 if (isFinishing() || isDestroyed()) return;
-                if (QUICK_PHOTO_COORD.equals(quick)) {
+                if (QUICK_PHOTO.equals(quick)) {
+                    quickPhotoOnly = true;
+                    takePhotoAndCoordinate();
+                } else if (QUICK_PHOTO_COORD.equals(quick)) {
                     takePhotoAndCoordinate();
                 } else if (QUICK_LOCATION.equals(quick) && !locationRows.isEmpty()) {
                     getLocation(locationRows.get(0));
@@ -1393,7 +1408,7 @@ public class CustomerFormActivity extends AppCompatActivity {
             }
             double lat = data.getDoubleExtra(PhotoCoordinateActivity.EXTRA_LAT, 0);
             double lng = data.getDoubleExtra(PhotoCoordinateActivity.EXTRA_LNG, 0);
-            if (lat != 0 || lng != 0) {
+            if (!quickPhotoOnly && (lat != 0 || lng != 0)) {
                 if (locationRows.isEmpty()) addLocationRow(null);   // pastikan ada baris utama
                 LocationRow primary = locationRows.get(0);
                 primary.lat = lat;
@@ -1401,7 +1416,8 @@ public class CustomerFormActivity extends AppCompatActivity {
                 updateKoordinatDisplay(primary);
             }
             refreshNewPrimaryPhotoStrip();
-            Toast.makeText(this, "Foto & koordinat lokasi utama tersimpan", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, quickPhotoOnly ? "Foto terisi, koordinat tidak diubah" : "Foto & koordinat lokasi utama tersimpan",
+                    Toast.LENGTH_SHORT).show();
         }
     }
 
