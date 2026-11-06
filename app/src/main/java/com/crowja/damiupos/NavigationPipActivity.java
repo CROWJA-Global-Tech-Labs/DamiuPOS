@@ -1641,31 +1641,7 @@ public class NavigationPipActivity extends AppCompatActivity {
         top.addView(name);
         if (last != null && last.active != null) {
             final Transaction act = last.active;
-            // Chat WA konsumen (ikon WhatsApp resmi) + 💬 Chat Pesanan (riwayat chat order ini).
-            if (act.getCustomerPhone() != null && !act.getCustomerPhone().trim().isEmpty()) {
-                ImageView wa = new ImageView(this);
-                wa.setImageResource(R.drawable.ic_whatsapp);
-                int pad = Math.round(6 * d);
-                wa.setPadding(pad, pad, pad, pad);
-                android.graphics.drawable.GradientDrawable wg = new android.graphics.drawable.GradientDrawable();
-                wg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-                wg.setColor(0xFFFFFFFF);
-                wa.setBackground(wg);
-                android.widget.LinearLayout.LayoutParams wl = new android.widget.LinearLayout.LayoutParams(
-                        Math.round(40 * d), Math.round(40 * d));
-                wl.rightMargin = Math.round(6 * d);
-                wa.setLayoutParams(wl);
-                wa.setContentDescription("Chat WA");
-                wa.setOnClickListener(v -> DeliveryQueueActivity.openWhatsApp(this, act.getCustomerPhone(), ""));
-                top.addView(wa);
-            }
-            TextView chat = mediaChip("💬", 0xFF0F766E);
-            chat.setTextSize(15f);
-            chat.setClickable(true);
-            chat.setContentDescription("Chat Pesanan");
-            chat.setOnClickListener(v -> openOrderChat(act));
-            top.addView(chat);
-            TextView done = mediaChip("✅ Selesai", 0xFF15803D);
+TextView done = mediaChip("✅ Selesai", 0xFF15803D);
             done.setTextSize(15f);
             done.setClickable(true);
             done.setOnClickListener(v -> completeActiveStop());
@@ -1677,6 +1653,12 @@ public class NavigationPipActivity extends AppCompatActivity {
                 skip.setOnClickListener(v -> skipActiveStop());
                 top.addView(skip);
             }
+            TextView more = mediaChip("⋮", 0xFF475569);
+            more.setTextSize(15f);
+            more.setClickable(true);
+            more.setContentDescription("Menu lainnya");
+            more.setOnClickListener(v -> showActiveStopMenu(v, act));
+            top.addView(more);
         }
         llMediaChips.addView(top);
         // Badge 📝 catatan SATU baris, font seukuran nominal rupiah; diketuk → catatan lengkap 10 detik.
@@ -1722,19 +1704,54 @@ public class NavigationPipActivity extends AppCompatActivity {
             chips.addView(mediaChip(GalonTypeUi.emoji(gt) + " " + GalonTypeUi.tag(gt) + (assumed ? "?" : ""), GalonTypeUi.color(gt)));
         }
         if (!mediaTotal.isEmpty()) chips.addView(mediaChip("💰 " + mediaTotal, 0xFF15803D));
-        // Layar terbagi hanya menampilkan baris ini, tanpa panel tombol di bawah.
-        if (!single && DeliveryQueueActivity.canReportFailed(act)) {
-            TextView failed = mediaChip("✕ Gagal", 0xFFB91C1C);
-            failed.setTextSize(15f);
-            failed.setClickable(true);
-            failed.setContentDescription(DeliveryQueueActivity.FAILED_RESCHEDULE_LABEL);
-            failed.setOnClickListener(v -> failActiveStop());
-            chips.addView(failed);
-        }
         android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
         hs.setHorizontalScrollBarEnabled(false);
         hs.addView(chips);
         llMediaChips.addView(hs);
+    }
+
+    /** Menu ⋮ layar terbagi: Chat WA, Chat Pesanan, Gagal, Ubah Pesanan. */
+    private void showActiveStopMenu(View anchor, Transaction act) {
+        android.widget.PopupMenu menu = new android.widget.PopupMenu(this, anchor);
+        if (act.getCustomerPhone() != null && !act.getCustomerPhone().trim().isEmpty()) {
+            menu.getMenu().add(0, 1, 0, "📱 Chat WA");
+        }
+        menu.getMenu().add(0, 2, 1, "💬 Chat Pesanan");
+        if (!single && DeliveryQueueActivity.canReportFailed(act)) {
+            menu.getMenu().add(0, 3, 2, DeliveryQueueActivity.FAILED_RESCHEDULE_LABEL);
+        }
+        if (canEditActiveStop(act)) {
+            menu.getMenu().add(0, 4, 3, "✏️ Ubah Pesanan");
+        }
+        menu.setOnMenuItemClickListener(item -> {
+            switch (item.getItemId()) {
+                case 1:
+                    DeliveryQueueActivity.openWhatsApp(this, act.getCustomerPhone(), "");
+                    return true;
+                case 2:
+                    openOrderChat(act);
+                    return true;
+                case 3:
+                    failActiveStop();
+                    return true;
+                case 4:
+                    DeliveryEditDialog.show(this, act);
+                    return true;
+                default:
+                    return false;
+            }
+        });
+        menu.show();
+    }
+
+    /** Gerbang sama dengan menu Ubah di kartu antrean. */
+    private boolean canEditActiveStop(Transaction act) {
+        if (!"JUAL".equals(act.getType()) || act.hasPendingVoidRequest()) return false;
+        DatabaseHelper db = DatabaseHelper.getInstance(this);
+        long uid = new com.crowja.damiupos.db.SettingsDao(db).getCurrentUserId();
+        if (uid <= 0L) return true;
+        com.crowja.damiupos.model.User u = new com.crowja.damiupos.db.UserDao(db).getById(uid);
+        return u == null || u.canEditTransactionLimited();
     }
 
     /**
