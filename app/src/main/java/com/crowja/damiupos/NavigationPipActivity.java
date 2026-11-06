@@ -1716,6 +1716,15 @@ public class NavigationPipActivity extends AppCompatActivity {
             chips.addView(mediaChip(GalonTypeUi.emoji(gt) + " " + GalonTypeUi.tag(gt) + (assumed ? "?" : ""), GalonTypeUi.color(gt)));
         }
         if (!mediaTotal.isEmpty()) chips.addView(mediaChip("💰 " + mediaTotal, 0xFF15803D));
+        // Layar terbagi hanya menampilkan baris ini, tanpa panel tombol di bawah.
+        if (!single && DeliveryQueueActivity.canReportFailed(act)) {
+            TextView failed = mediaChip("✕ Gagal", 0xFFB91C1C);
+            failed.setTextSize(15f);
+            failed.setClickable(true);
+            failed.setContentDescription(DeliveryQueueActivity.FAILED_RESCHEDULE_LABEL);
+            failed.setOnClickListener(v -> failActiveStop());
+            chips.addView(failed);
+        }
         android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
         hs.setHorizontalScrollBarEnabled(false);
         hs.addView(chips);
