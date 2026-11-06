@@ -1734,6 +1734,7 @@ TextView done = mediaChip("✅ Selesai", 0xFF15803D);
     /** Menu ⋮ layar terbagi: Chat WA, Chat Pesanan, Gagal, Ubah Pesanan. */
     private void showActiveStopMenu(View anchor, Transaction act) {
         android.widget.PopupMenu menu = new android.widget.PopupMenu(this, anchor);
+        menu.getMenu().add(0, 5, 4, "🧭 Navigasi Ulang");
         if (act.getCustomerPhone() != null && !act.getCustomerPhone().trim().isEmpty()) {
             menu.getMenu().add(0, 1, 0, "📱 Chat WA");
         }
@@ -1754,6 +1755,9 @@ TextView done = mediaChip("✅ Selesai", 0xFF15803D);
                     return true;
                 case 3:
                     failActiveStop();
+                    return true;
+                case 5:
+                    openMaps(false, isSplitScreen());
                     return true;
                 case 4:
                     DeliveryEditDialog.show(this, act);
