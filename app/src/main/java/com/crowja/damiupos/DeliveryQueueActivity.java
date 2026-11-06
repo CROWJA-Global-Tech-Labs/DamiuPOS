@@ -1495,7 +1495,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       final TextView sum = new TextView(this);
       sum.setTextSize(13f);
       sum.setPadding(0, 0, 0, this.dp(6f));
-      box.addView(sum);
+      // Ringkasan + 🏷 total per produk tetap terlihat saat daftarnya digulir.
+      LinearLayout pinned = new LinearLayout(this);
+      pinned.setOrientation(LinearLayout.VERTICAL);
+      pinned.setPadding(pad, this.dp(4f), pad, this.dp(6f));
+      pinned.addView(sum);
+      final LinearLayout totals = new LinearLayout(this);
+      totals.setOrientation(LinearLayout.HORIZONTAL);
+      android.widget.HorizontalScrollView totalsScroll = new android.widget.HorizontalScrollView(this);
+      totalsScroll.setHorizontalScrollBarEnabled(false);
+      totalsScroll.addView(totals);
+      pinned.addView(totalsScroll);
       final List<android.widget.CheckBox> boxes = new ArrayList<>();
       final List<JSONObject> rows = new ArrayList<>();
       final Runnable[] upd = new Runnable[1];
@@ -1592,7 +1602,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
       ScrollView sv = new ScrollView(this);
       sv.addView(box);
-      final AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle("📋 Cek Order yang Diambil").setView(sv)
+      LinearLayout dlgRoot = new LinearLayout(this);
+      dlgRoot.setOrientation(LinearLayout.VERTICAL);
+      dlgRoot.addView(pinned);
+      dlgRoot.addView(sv, new LinearLayout.LayoutParams(-1, -2, 1f));
+      final AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle("📋 Cek Order yang Diambil").setView(dlgRoot)
             .setPositiveButton("Ambil", (DialogInterface.OnClickListener) null)
             .setNeutralButton("Kosongkan", (DialogInterface.OnClickListener) null)
             .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
@@ -1603,12 +1617,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       dlg.setOnDismissListener(di -> DestAreaCache.removeListener(areaListener));
       upd[0] = () -> {
          int n = 0, g = 0;
+         List<JSONObject> checked = new ArrayList<>();
          for (int i = 0; i < boxes.size(); i++) {
             if (!boxes.get(i).isChecked()) continue;
             n++;
             g += rows.get(i).optInt("galon");
+            checked.add(rows.get(i));
          }
          sum.setText(n + " dari " + boxes.size() + " order dicentang · " + g + " galon");
+         totals.removeAllViews();
+         for (SejalurPlanLogic.Badge bd : this.takeSlugTotals(checked)) totals.addView(this.makeDetailBadge(bd.text, bd.bg));
+         totals.setVisibility(totals.getChildCount() > 0 ? View.VISIBLE : View.GONE);
          Button pos = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
          if (pos != null) {
             pos.setText("Ambil (" + n + ")");
@@ -1638,6 +1657,27 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          });
       });
       dlg.show();
+   }
+
+   /** Total item per produk (slug) dari order yang dicentang; ambil galon saja tak dihitung. */
+   private List<SejalurPlanLogic.Badge> takeSlugTotals(List<JSONObject> checked) {
+      LinkedHashMap<String, Object[]> bySlug = new LinkedHashMap<>();
+      for (JSONObject c : checked) {
+         JSONArray slugs = c.optBoolean("pickup_only") ? null : c.optJSONArray("item_slugs");
+         for (int k = 0; slugs != null && k < slugs.length(); k++) {
+            JSONObject it = slugs.optJSONObject(k);
+            String slug = it != null ? strJson(it, "slug") : null;
+            int qty = it != null ? (int) Math.round(it.optDouble("qty", 0)) : 0;
+            if (slug == null || slug.trim().isEmpty() || qty <= 0) continue;
+            String key = slug.trim().toUpperCase(Locale.US);
+            Object[] r = bySlug.get(key);
+            if (r == null) bySlug.put(key, new Object[]{slug.trim(), qty, this.slugColor(slug.trim(), strJson(it, "color"))});
+            else r[1] = (Integer) r[1] + qty;
+         }
+      }
+      List<SejalurPlanLogic.Badge> out = new ArrayList<>();
+      for (Object[] r : bySlug.values()) out.add(new SejalurPlanLogic.Badge(r[0] + " ×" + r[1], (Integer) r[2]));
+      return out;
    }
 
    private void runTakeQueue(JSONObject body) {
