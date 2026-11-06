@@ -57,7 +57,15 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
     private RecyclerView rv;
     private TextView tvEmpty;
     private View progress;
+    /** Yang tampil (hasil cari/saring/urut) dari {@link #all}, antrean perangkat terpilih. */
     private final List<JSONObject> data = new ArrayList<>();
+    private final List<JSONObject> all = new ArrayList<>();
+    private final java.util.Map<String, Integer> tabCounts = new java.util.HashMap<>();
+    private com.google.android.material.tabs.TabLayout deviceTabs;
+    private TextView tvSummary;
+    private String searchText = "";
+    private int filterMode = 0;   // 0 semua, 1 prioritas, 2 terlambat, 3 terbuka
+    private int sortMode = 2;     // 0 jarak, 1 galon, 2 umur
     private Adapter adapter;
     /** Perangkat yang antriannya sedang dilihat — dipakai ulang saat memuat ulang setelah ambil alih. */
     private String peekDeviceUuid;
@@ -108,6 +116,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         adapter = new Adapter();
         rv.setAdapter(adapter);
 
+        buildHeader();
         load(deviceUuid);
 
         // Jarak dihitung dari posisi kurir SEKARANG. Non-blok: daftar tampil lebih dulu, baris
@@ -117,7 +126,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
             if (loc == null || isFinishing() || isDestroyed()) return;
             myLat = loc.getLatitude();
             myLng = loc.getLongitude();
-            adapter.notifyDataSetChanged();
+            applyView();
         });
     }
 
@@ -147,6 +156,143 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         tick.removeCallbacks(ticker);
     }
 
+    /** Tab perangkat (roster cabang), kotak cari, saringan, urutan, dan ringkasan. */
+    private void buildHeader() {
+        android.widget.LinearLayout header = findViewById(R.id.queueHeader);
+        deviceTabs = new com.google.android.material.tabs.TabLayout(this);
+        deviceTabs.setTabMode(com.google.android.material.tabs.TabLayout.MODE_SCROLLABLE);
+        header.addView(deviceTabs);
+        SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
+        String me = cfg.getDeviceUuid();
+        boolean foundCurrent = false;
+        try {
+            JSONArray roster = new JSONArray(cfg.getDeviceRoster());
+            for (int i = 0; i < roster.length(); i++) {
+                JSONObject d = roster.optJSONObject(i);
+                String u = d != null ? d.optString("uuid", "") : "";
+                if (u.isEmpty() || u.equals(me)) continue;
+                boolean current = u.equals(peekDeviceUuid);
+                foundCurrent |= current;
+                addDeviceTab(u, d.optString("name", "Perangkat"), current);
+            }
+        } catch (Exception ignored) {
+        }
+        if (!foundCurrent) addDeviceTab(peekDeviceUuid, safe(peekDeviceName), true);
+        deviceTabs.addOnTabSelectedListener(new com.google.android.material.tabs.TabLayout.OnTabSelectedListener() {
+            @Override public void onTabSelected(com.google.android.material.tabs.TabLayout.Tab tab) {
+                String[] dev = (String[]) tab.getTag();
+                peekDeviceUuid = dev[0];
+                peekDeviceName = dev[1];
+                ((Toolbar) findViewById(R.id.toolbar)).setTitle("Antrian: " + dev[1]);
+                all.clear();
+                applyView();
+                load(dev[0]);
+            }
+            @Override public void onTabUnselected(com.google.android.material.tabs.TabLayout.Tab tab) { }
+            @Override public void onTabReselected(com.google.android.material.tabs.TabLayout.Tab tab) { load(((String[]) tab.getTag())[0]); }
+        });
+
+        int pad = Math.round(12 * getResources().getDisplayMetrics().density);
+        android.widget.EditText search = new android.widget.EditText(this);
+        search.setHint("🔍 Cari nama / no. WA / struk / catatan…");
+        search.setSingleLine(true);
+        android.widget.LinearLayout.LayoutParams slp = new android.widget.LinearLayout.LayoutParams(-1, -2);
+        slp.setMargins(pad, pad / 2, pad, 0);
+        header.addView(search, slp);
+        search.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence c, int a, int b, int d) { }
+            @Override public void onTextChanged(CharSequence c, int a, int b, int d) { }
+            @Override public void afterTextChanged(android.text.Editable e) {
+                searchText = e.toString().trim().toLowerCase(Locale.ROOT);
+                applyView();
+            }
+        });
+        header.addView(chipRow(new String[]{"Semua", "⚡ Prioritas", "🚨 Terlambat", "🎲 Terbuka"}, filterMode, i -> { filterMode = i; applyView(); }));
+        header.addView(chipRow(new String[]{"📍 Jarak", "🛢 Galon", "⏱ Umur"}, sortMode, i -> { sortMode = i; applyView(); }));
+        tvSummary = new TextView(this);
+        tvSummary.setTextColor(0xFF37474F);
+        tvSummary.setTextSize(13f);
+        tvSummary.setPadding(pad, pad / 3, pad, pad / 3);
+        header.addView(tvSummary);
+    }
+
+    private void addDeviceTab(String uuid, String name, boolean select) {
+        String label = name.isEmpty() ? "Perangkat" : name;
+        deviceTabs.addTab(deviceTabs.newTab().setText(label).setTag(new String[]{uuid, label}), select);
+    }
+
+    private android.widget.HorizontalScrollView chipRow(String[] labels, int selected, java.util.function.IntConsumer onPick) {
+        com.google.android.material.chip.ChipGroup group = new com.google.android.material.chip.ChipGroup(this);
+        group.setSingleLine(true);
+        group.setSingleSelection(true);
+        group.setSelectionRequired(true);
+        int pad = Math.round(12 * getResources().getDisplayMetrics().density);
+        group.setPadding(pad, 0, pad, 0);
+        for (int i = 0; i < labels.length; i++) {
+            final int idx = i;
+            com.google.android.material.chip.Chip chip = new com.google.android.material.chip.Chip(this);
+            chip.setText(labels[i]);
+            chip.setCheckable(true);
+            chip.setId(View.generateViewId());
+            group.addView(chip);
+            if (i == selected) chip.setChecked(true);
+            chip.setOnCheckedChangeListener((b, on) -> { if (on) onPick.accept(idx); });
+        }
+        android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
+        hs.addView(group);
+        return hs;
+    }
+
+    private boolean isLateOrder(JSONObject q) {
+        return lateMs > 0 && elapsedMillis(q.optString("queued_at", null)) >= lateMs;
+    }
+
+    private boolean matchesView(JSONObject q) {
+        if (filterMode == 1 && !q.optBoolean("order_priority", false)) return false;
+        if (filterMode == 2 && !isLateOrder(q)) return false;
+        if (filterMode == 3 && !q.optBoolean("open_dispatch", false)) return false;
+        if (searchText.isEmpty()) return true;
+        String hay = (str(q, "name") + " " + str(q, "phone") + " " + str(q, "receipt_no") + " " + str(q, "note") + " "
+                + str(q, "address") + " " + str(q, "items")).toLowerCase(Locale.ROOT);
+        return hay.contains(searchText);
+    }
+
+    /** Terapkan cari, saring, urut, lalu perbarui daftar, ringkasan, dan jumlah di tab. */
+    private void applyView() {
+        data.clear();
+        for (JSONObject q : all) if (matchesView(q)) data.add(q);
+        if (sortMode == 1) {
+            data.sort((a, b) -> Integer.compare(b.optInt("galon", 0), a.optInt("galon", 0)));
+        } else if (sortMode == 2) {
+            data.sort((a, b) -> Long.compare(elapsedMillis(b.optString("queued_at", null)), elapsedMillis(a.optString("queued_at", null))));
+        } else {
+            data.sort((a, b) -> {
+                double x = distanceKmTo(a), y = distanceKmTo(b);
+                return Double.compare(Double.isNaN(x) ? Double.MAX_VALUE : x, Double.isNaN(y) ? Double.MAX_VALUE : y);
+            });
+        }
+        int galon = 0, late = 0, priority = 0;
+        for (JSONObject q : data) {
+            galon += Math.max(0, q.optInt("galon", 0));
+            if (isLateOrder(q)) late++;
+            if (q.optBoolean("order_priority", false)) priority++;
+        }
+        if (tvSummary != null) {
+            tvSummary.setText((data.size() < all.size() ? data.size() + " dari " + all.size() : String.valueOf(all.size())) + " order · " + galon + " galon"
+                    + (priority > 0 ? " · ⚡ " + priority : "") + (late > 0 ? " · 🚨 " + late : ""));
+        }
+        adapter.notifyDataSetChanged();
+    }
+
+    private void showLoadedCount(String deviceUuid, int count) {
+        for (int i = 0; i < deviceTabs.getTabCount(); i++) {
+            com.google.android.material.tabs.TabLayout.Tab tab = deviceTabs.getTabAt(i);
+            String[] dev = (String[]) tab.getTag();
+            if (dev[0].equals(deviceUuid)) tab.setText(dev[1] + " (" + count + ")");
+        }
+    }
+
     private void load(String deviceUuid) {
         progress.setVisibility(View.VISIBLE);
         tvEmpty.setVisibility(View.GONE);
@@ -163,7 +309,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
             final JSONArray finalQueue = queue;
             final String finalError = error;
             runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed()) return;
+                if (isFinishing() || isDestroyed() || !deviceUuid.equals(peekDeviceUuid)) return;   // tab sudah berganti
                 progress.setVisibility(View.GONE);
                 if (finalError != null) {
                     Toast.makeText(this, finalError, Toast.LENGTH_LONG).show();
@@ -171,14 +317,16 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
                     tvEmpty.setVisibility(View.VISIBLE);
                     return;
                 }
-                data.clear();
+                all.clear();
                 if (finalQueue != null) {
                     for (int i = 0; i < finalQueue.length(); i++) {
                         JSONObject o = finalQueue.optJSONObject(i);
-                        if (o != null) data.add(o);
+                        if (o != null) all.add(o);
                     }
                 }
-                adapter.notifyDataSetChanged();
+                showLoadedCount(deviceUuid, all.size());
+                applyView();
+                tvEmpty.setText(all.isEmpty() ? "Antrian perangkat ini kosong 🎉" : "Tidak ada order yang cocok");
                 tvEmpty.setVisibility(data.isEmpty() ? View.VISIBLE : View.GONE);
             });
         }).start();

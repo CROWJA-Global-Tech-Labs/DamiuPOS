@@ -20,18 +20,12 @@
             app:title="Antrian Perangkat Lain" />
     </com.google.android.material.appbar.AppBarLayout>
 
-    <!-- Read-only: bukan antrian sendiri, jadi tak ada aksi (Navigasi/Selesai/dll) di sini. -->
-    <TextView
+    <LinearLayout
+        android:id="@+id/queueHeader"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@color/primary"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="10dp"
-        android:text="👁 Lihat saja — tidak bisa diproses dari sini"
-        android:textColor="#D6FFFFFF"
-        android:textSize="12sp" />
+        android:background="@color/white"
+        android:orientation="vertical" />
 
     <FrameLayout
         android:layout_width="match_parent"
