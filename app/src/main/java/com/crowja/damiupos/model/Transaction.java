@@ -38,6 +38,7 @@ public class Transaction {
     public static final String PAY_TUNAI = "TUNAI";
     public static final String PAY_QRIS = "QRIS";
     public static final String PAY_TRANSFER = "TRANSFER";
+    public static final String LUNAS_NOTE_MARKER = "✅ LUNAS (";
     /** Galonnya keluar sekarang, uangnya belakangan. Penjualan TETAP tercatat penuh (omzet & bonus
      *  tak berubah); yang dicatat sebagai piutang hanya uangnya — lihat CustomerDebtDao. */
     public static final String PAY_HUTANG = "HUTANG";
@@ -287,6 +288,16 @@ public class Transaction {
         return paymentConfirmedAt != null && !paymentConfirmedAt.isEmpty();
     }
 
+    /**
+     * Sudah LUNAS, tak ada yang ditagih di pintu: terkonfirmasi, atau QRIS/transfer bertanda
+     * "✅ LUNAS (" di catatan dari agen (aturan sama dengan DeviceRules di server).
+     */
+    public boolean isMarkedLunas() {
+        if (isPaymentConfirmed()) return true;
+        String pm = paymentMethod != null ? paymentMethod.trim().toUpperCase(java.util.Locale.US) : "";
+        return (PAY_QRIS.equals(pm) || PAY_TRANSFER.equals(pm)) && catatan != null && catatan.contains(LUNAS_NOTE_MARKER);
+    }
+
     /** Label ramah metode pembayaran ("Tunai"/"QRIS"/"Transfer"/"Hutang"), "" kalau kosong; tambah "· LUNAS" kalau cash bon sudah dikonfirmasi. */
     public String getPaymentMethodLabel() {
         String label;
@@ -301,7 +312,7 @@ public class Transaction {
         } else {
             return "";
         }
-        return isPaymentConfirmed() ? label.concat(" · LUNAS") : label;
+        return isMarkedLunas() ? label.concat(" · LUNAS") : label;
     }
 
     public long getResellerId() { return resellerId; }

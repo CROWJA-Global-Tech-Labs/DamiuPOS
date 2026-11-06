@@ -3420,7 +3420,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    static String checkoutCollectHint(Transaction t) {
       if (t == null || !t.isCheckoutLeg()) return "";
       return CheckoutStrukText.collectHint(t.getCheckoutSeq(), t.getCheckoutSize(), t.getDeliveryDestName(),
-            t.getPaymentMethod(), t.isPaymentConfirmed());
+            t.getPaymentMethod(), t.isMarkedLunas());
    }
 
    /** checkout_uuid leg ini untuk pengecualian hutang segar leg saudara; null untuk order biasa. */
@@ -9583,15 +9583,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private void askPaymentThenComplete(Transaction t, int returnQty, boolean revokeCredit) {
       // Baca ULANG dari DB: tanda LUNAS (agen / web) bisa tiba lewat pull SESUDAH kartu ini dirender.
       Transaction latest = this.dao.getById(t.getId());
-      if (latest != null && latest.isPaymentConfirmed()) {
-         // Sudah LUNAS → tak ada yang ditagih di pintu: cukup info (tanggal & metode) lalu selesaikan.
+      if (latest != null && latest.isMarkedLunas()) {
+         // Sudah LUNAS → tak ada yang ditagih di pintu: cukup info (metode, tanggal bila ada) lalu selesaikan.
          String when = Ts.local(latest.getPaymentConfirmedAt());
          String method = latest.getPaymentMethodLabel().replace(" · LUNAS", "");
          (new AlertDialog.Builder(this))
                .setTitle("✅ Pesanan Sudah Lunas")
                .setMessage("Pembayaran \"" + safe(t.getCustomerName()) + "\" sudah ditandai LUNAS — tidak perlu menagih.\n\n"
-                     + "Tanggal: " + (when.isEmpty() ? "-" : formatQueued(when)) + "\n"
                      + "Metode: " + (method.isEmpty() ? "-" : method) + "\n"
+                     + (when.isEmpty() ? "" : "Tanggal: " + formatQueued(when) + "\n")
                      + "Total: " + this.rp(t.getTotalHarga()))
                .setCancelable(false)
                .setPositiveButton("OK", (d, w) -> this.doComplete(latest, revokeCredit))
@@ -9600,7 +9600,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
       double total = t.getTotalHarga();
       String pm = t.getPaymentMethod() != null ? t.getPaymentMethod().trim() : "";
-      if (total <= 0 || t.isPaymentConfirmed() || this.isCashBon(t) || "HUTANG".equalsIgnoreCase(pm)) {
+      if (total <= 0 || t.isMarkedLunas() || this.isCashBon(t) || "HUTANG".equalsIgnoreCase(pm)) {
          this.doComplete(t, revokeCredit);
          return;
       }
