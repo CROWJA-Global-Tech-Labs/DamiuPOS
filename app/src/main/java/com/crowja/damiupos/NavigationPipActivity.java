@@ -1040,6 +1040,8 @@ public class NavigationPipActivity extends AppCompatActivity {
         if (btnLewatiTitik != null) btnLewatiTitik.setOnClickListener(v -> skipActiveStop());
         View btnGagalTitik = findViewById(R.id.btnGagalTitik);
         if (btnGagalTitik != null) btnGagalTitik.setOnClickListener(v -> failActiveStop());
+        View btnUpdateFoto = findViewById(R.id.btnUpdateFotoTitik);
+        if (btnUpdateFoto != null) btnUpdateFoto.setOnClickListener(v -> updateActiveStopPhoto());
         findViewById(R.id.btnKembaliAntrian).setOnClickListener(v -> openQueueAndClose());
         findViewById(R.id.btnPipSettings).setOnClickListener(v -> openPipSettings());
         tvPipName.setText("Memuat…");
@@ -1217,6 +1219,8 @@ public class NavigationPipActivity extends AppCompatActivity {
             if (rowWizardGone != null) rowWizardGone.setVisibility(View.GONE);
             View btnGagalGone = findViewById(R.id.btnGagalTitik);
             if (btnGagalGone != null) btnGagalGone.setVisibility(View.GONE);
+            View btnFotoGone = findViewById(R.id.btnUpdateFotoTitik);
+            if (btnFotoGone != null) btnFotoGone.setVisibility(View.GONE);
             mediaLabel = head;
             mediaName = head;
             mediaProducts = "";
@@ -1232,6 +1236,8 @@ public class NavigationPipActivity extends AppCompatActivity {
         if (btnLewati != null) btnLewati.setVisibility(!single && s.pendingCount > 1 ? View.VISIBLE : View.GONE);
         View btnGagal = findViewById(R.id.btnGagalTitik);
         if (btnGagal != null) btnGagal.setVisibility(!single && DeliveryQueueActivity.canReportFailed(t) ? View.VISIBLE : View.GONE);
+        View btnFoto = findViewById(R.id.btnUpdateFotoTitik);
+        if (btnFoto != null) btnFoto.setVisibility(t.getCustomerId() > 0L ? View.VISIBLE : View.GONE);
 
         String name = t.getCustomerName() != null && !t.getCustomerName().trim().isEmpty()
                 ? t.getCustomerName().trim() : "Pelanggan";
@@ -1767,6 +1773,19 @@ public class NavigationPipActivity extends AppCompatActivity {
     /** "❌ Gagal": dialog alasan + foto ada di layar antrean, navigasi lanjut sesudah terkirim. */
     private void failActiveStop() {
         openQueueForActiveStop(DeliveryQueueActivity.EXTRA_FAIL_TRX_ID);
+    }
+
+    /** Kamera foto rumah + koordinat di form pelanggan; sesudah SIMPAN kembali ke panel navigasi ini. */
+    private void updateActiveStopPhoto() {
+        Transaction a = last != null ? last.active : null;
+        if (a == null || a.getCustomerId() <= 0L) {
+            Toast.makeText(this, "Tidak ada pelanggan di perhentian ini", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        leaving = true;   // onResume menyalakan lagi auto-melayang
+        disableAutoEnter();
+        startActivity(new Intent(this, CustomerFormActivity.class).putExtra("customer_id", a.getCustomerId())
+                .putExtra(CustomerFormActivity.EXTRA_QUICK_CAPTURE, CustomerFormActivity.QUICK_PHOTO_COORD));
     }
 
     private void openQueueForActiveStop(String extra) {
