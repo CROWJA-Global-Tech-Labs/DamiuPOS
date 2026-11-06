@@ -603,6 +603,31 @@ public class CustomerDao {
      * menjumlah SATU salinan, sehingga orang yang punya beberapa salinan (hasil pendaftaran di
      * lebih dari satu perangkat) DIJAMIN tampil beda antara HP dan web.
      */
+    /** Pelanggan terafiliasi seorang reseller, satu entri per orang; tautan boleh menunjuk salinan mana pun. */
+    public List<Customer> getAffiliates(long resellerId) {
+        java.util.Set<String> uuids = new java.util.HashSet<>();
+        for (Long id : mergedGroupIds(resellerId)) {
+            String u = getSyncUuidById(id);
+            if (u != null && !u.isEmpty()) uuids.add(u);
+        }
+        List<Customer> out = new ArrayList<>();
+        for (Customer c : getAll()) {
+            if (c.getLinkedResellerUuid() != null && uuids.contains(c.getLinkedResellerUuid())) out.add(c);
+        }
+        return dedupeByIdentity(out);
+    }
+
+    /** Pasang atau lepas tautan reseller di SEMUA salinan orang ini; null = lepas. Ikut tersinkron. */
+    public void setLinkedResellerForPerson(long customerId, String resellerUuid) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        for (Long id : mergedGroupIds(customerId)) {
+            ContentValues v = new ContentValues();
+            v.put(DatabaseHelper.COL_LINKED_RESELLER_UUID, resellerUuid);
+            dbHelper.syncUpdate(db, DatabaseHelper.TABLE_CUSTOMERS, v, DatabaseHelper.COL_ID + "=?",
+                    new String[]{String.valueOf(id)});
+        }
+    }
+
     public java.util.List<Long> mergedGroupIds(long customerId) {
         java.util.List<Long> ids = new ArrayList<>();
         if (customerId <= 0) return ids;

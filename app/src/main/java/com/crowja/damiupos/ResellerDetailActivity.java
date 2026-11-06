@@ -144,7 +144,164 @@ public class ResellerDetailActivity extends AppCompatActivity {
         refresh();
     }
 
+    // ------------------------------------------------------- Afiliasi
+
+    private void renderAffiliates() {
+        android.widget.LinearLayout box = findViewById(R.id.affiliateBox);
+        final boolean manage = canManageReseller();
+        new Thread(() -> {
+            List<Customer> list = customerDao.getAffiliates(customerId);
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                box.removeAllViews();
+                TextView title = new TextView(this);
+                title.setText("Pelanggan Afiliasi (" + list.size() + ")");
+                title.setTextSize(15f);
+                title.setTypeface(null, android.graphics.Typeface.BOLD);
+                title.setTextColor(getColor(R.color.text_primary));
+                box.addView(title);
+                if (manage) {
+                    com.google.android.material.button.MaterialButton add = new com.google.android.material.button.MaterialButton(this,
+                            null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+                    add.setText("+ Tambah Afiliasi");
+                    add.setAllCaps(false);
+                    add.setOnClickListener(v -> showAddAffiliate(list));
+                    box.addView(add);
+                }
+                if (list.isEmpty()) {
+                    TextView none = new TextView(this);
+                    none.setText("Belum ada pelanggan afiliasi");
+                    none.setTextColor(0xFF5F6B7A);
+                    none.setPadding(0, dpx(8), 0, dpx(8));
+                    box.addView(none);
+                }
+                for (Customer c : list) box.addView(affiliateRow(c, manage));
+            });
+        }).start();
+    }
+
+    private int dpx(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
+
+    private View affiliateRow(Customer c, boolean manage) {
+        android.widget.LinearLayout row = new android.widget.LinearLayout(this);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dpx(6), 0, dpx(6));
+        TextView info = new TextView(this);
+        String phone = c.getPhone() != null ? c.getPhone() : "";
+        info.setText(c.getName() + (phone.isEmpty() ? "" : "\n" + phone));
+        info.setTextColor(getColor(R.color.text_primary));
+        info.setOnClickListener(v -> startActivity(new Intent(this, CustomerDetailActivity.class).putExtra("customer_id", c.getId())));
+        row.addView(info, new android.widget.LinearLayout.LayoutParams(0, -2, 1f));
+        if (manage) {
+            row.addView(rowAction("Ubah", 0xFF1565C0, v -> startActivity(new Intent(this, CustomerFormActivity.class).putExtra("customer_id", c.getId()))));
+            row.addView(rowAction("Lepas", 0xFFB71C1C, v -> confirmUnlink(c)));
+        }
+        return row;
+    }
+
+    private TextView rowAction(String text, int color, View.OnClickListener click) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextColor(color);
+        t.setTypeface(null, android.graphics.Typeface.BOLD);
+        t.setPadding(dpx(10), dpx(10), dpx(10), dpx(10));
+        t.setOnClickListener(click);
+        return t;
+    }
+
+    /** Hanya melepas tautan; data pelanggan dan transaksinya tetap ada. Ketuk dua kali. */
+    private void confirmUnlink(Customer c) {
+        AlertDialog d = new AlertDialog.Builder(this).setTitle("Lepas afiliasi?")
+                .setMessage("\"" + c.getName() + "\" tidak lagi tertaut ke reseller ini. Data pelanggan dan transaksinya tetap ada.")
+                .setPositiveButton("Lepas", null).setNegativeButton("Batal", null).create();
+        d.setOnShowListener(x -> {
+            int[] n = {0};
+            d.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                if (++n[0] < 2) {
+                    d.getButton(AlertDialog.BUTTON_POSITIVE).setText("Ketuk sekali lagi");
+                    return;
+                }
+                customerDao.setLinkedResellerForPerson(c.getId(), null);
+                com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                d.dismiss();
+                renderAffiliates();
+            });
+        });
+        d.show();
+    }
+
+    private void showAddAffiliate(List<Customer> current) {
+        new AlertDialog.Builder(this).setTitle("Tambah Afiliasi")
+                .setItems(new String[]{"Pilih pelanggan yang sudah ada", "Buat pelanggan baru"}, (d, w) -> {
+                    if (w == 1) {
+                        startActivity(new Intent(this, CustomerFormActivity.class)
+                                .putExtra(CustomerFormActivity.EXTRA_PREFILL_LINKED_RESELLER, customerDao.getSyncUuidById(customerId)));
+                    } else {
+                        pickExistingAffiliate(current);
+                    }
+                }).show();
+    }
+
+    private void pickExistingAffiliate(List<Customer> current) {
+        java.util.Set<String> linked = new java.util.HashSet<>();
+        for (Customer c : current) linked.add(CustomerDao.dedupKey(c));
+        List<Customer> pool = new java.util.ArrayList<>();
+        for (Customer c : CustomerDao.dedupeByIdentity(customerDao.getAll())) {
+            if (!c.isReseller() && !linked.contains(CustomerDao.dedupKey(c))) pool.add(c);
+        }
+        android.widget.LinearLayout root = new android.widget.LinearLayout(this);
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        root.setPadding(dpx(16), dpx(4), dpx(16), 0);
+        android.widget.EditText search = new android.widget.EditText(this);
+        search.setHint("Cari nama / no. WA…");
+        search.setSingleLine(true);
+        root.addView(search);
+        android.widget.ListView lv = new android.widget.ListView(this);
+        root.addView(lv, new android.widget.LinearLayout.LayoutParams(-1, dpx(360)));
+        List<Customer> shown = new java.util.ArrayList<>();
+        android.widget.ArrayAdapter<String> ad = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_list_item_1, new java.util.ArrayList<>());
+        lv.setAdapter(ad);
+        Runnable filter = () -> {
+            String q = search.getText().toString().trim().toLowerCase(java.util.Locale.ROOT);
+            shown.clear();
+            ad.clear();
+            for (Customer c : pool) {
+                String phone = c.getPhone() != null ? c.getPhone() : "";
+                if (!q.isEmpty() && !(c.getName() + " " + phone).toLowerCase(java.util.Locale.ROOT).contains(q)) continue;
+                shown.add(c);
+                boolean other = c.getLinkedResellerUuid() != null && !c.getLinkedResellerUuid().isEmpty();
+                ad.add(c.getName() + (phone.isEmpty() ? "" : " · " + phone) + (other ? " · tertaut reseller lain" : ""));
+                if (shown.size() >= 100) break;
+            }
+        };
+        filter.run();
+        search.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence c, int a, int b, int d) { }
+            @Override public void onTextChanged(CharSequence c, int a, int b, int d) { }
+            @Override public void afterTextChanged(android.text.Editable e) { filter.run(); }
+        });
+        AlertDialog dlg = new AlertDialog.Builder(this).setTitle("Pilih Pelanggan").setView(root).setNegativeButton("Batal", null).create();
+        lv.setOnItemClickListener((p, v, pos, id) -> {
+            Customer c = shown.get(pos);
+            Runnable link = () -> {
+                customerDao.setLinkedResellerForPerson(c.getId(), customerDao.getSyncUuidById(customerId));
+                com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                dlg.dismiss();
+                renderAffiliates();
+            };
+            if (c.getLinkedResellerUuid() != null && !c.getLinkedResellerUuid().isEmpty()) {
+                new AlertDialog.Builder(this).setTitle("Pindahkan afiliasi?")
+                        .setMessage("\"" + c.getName() + "\" sudah tertaut ke reseller lain dan akan dipindahkan ke reseller ini.")
+                        .setPositiveButton("Pindahkan", (d, w) -> link.run()).setNegativeButton("Batal", null).show();
+            } else {
+                link.run();
+            }
+        });
+        dlg.show();
+    }
+
     private void refresh() {
+        renderAffiliates();
         // Cari reseller ini (dengan komisi_galon) dari query agregat.
         List<Customer> allResellers = customerDao.getResellers();
         Customer me = null;

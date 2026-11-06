@@ -64,6 +64,8 @@ public class CustomerFormActivity extends AppCompatActivity {
 
     /** Prefill mode buat-baru (caller: bubble "+ Trx" saat pelanggan chat WA belum terdaftar). */
     public static final String EXTRA_PREFILL_NAME = "prefill_name";
+    /** Pelanggan baru dari Detail Reseller: langsung tertaut ke reseller ini (sync uuid). */
+    public static final String EXTRA_PREFILL_LINKED_RESELLER = "prefill_linked_reseller";
     /** Dibuka dari gerbang "Wajib Lengkapi Data" saat Selesai di Antrian Delivery: langsung jalankan
      *  {@link #QUICK_PHOTO_COORD} (kamera foto rumah + koordinat) atau {@link #QUICK_LOCATION} (GPS lokasi utama). */
     public static final String EXTRA_QUICK_CAPTURE = "quick_capture";
@@ -382,6 +384,11 @@ public class CustomerFormActivity extends AppCompatActivity {
         // Kalau nomor sudah terdaftar, tawarkan langsung ke pelanggan itu (buat transaksi / batal)
         // alih-alih melanjutkan input duplikat.
         if (editId == -1) {
+            String preLinked = getIntent().getStringExtra(EXTRA_PREFILL_LINKED_RESELLER);
+            if (preLinked != null && !preLinked.isEmpty()) {
+                linkedResellerUuid = preLinked;
+                updateLinkedResellerLabel();
+            }
             showPhoneGateDialog(getIntent().getStringExtra(EXTRA_PREFILL_PHONE));
         }
 
