@@ -7134,7 +7134,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                this.startFailedReschedule(t);
                return true;
             case 8:
-               this.openQuickCapture(t, CustomerFormActivity.QUICK_PHOTO_COORD);
+               CustomerFormActivity.askQuickCapture(this, (mode) -> this.openQuickCapture(t, mode));
                return true;
             case 7:
                this.showUbahMenu(t);
@@ -7183,7 +7183,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
             case 8:
-               this.openQuickCapture(t, CustomerFormActivity.QUICK_PHOTO_COORD);
+               CustomerFormActivity.askQuickCapture(this, (mode) -> this.openQuickCapture(t, mode));
                return true;
             case 5:
                this.showGalonTypeDialog(t);
