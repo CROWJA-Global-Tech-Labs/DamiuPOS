@@ -1248,7 +1248,7 @@ public class NavigationPipActivity extends AppCompatActivity {
         String galon = (pickup ? "↩ Ambil " : "💧 ") + t.getJumlahGalon() + " galon";
 
         boolean cashBon = t.getCatatan() != null && t.getCatatan().contains(TransactionDao.CASH_BON_MARKER);
-        PayKind kind = DeliveryNavLogic.payKind(t.getTotalHarga(), t.getPaymentMethod(), t.isPaymentConfirmed(), cashBon);
+        PayKind kind = DeliveryNavLogic.payKind(t.getTotalHarga(), t.getPaymentMethod(), t.isMarkedLunas(), cashBon);
         DoorMoney money = s.money != null ? s.money : DoorMoney.plain(t.getTotalHarga());
         PayKind shown = DeliveryNavLogic.displayKind(kind, money);
         // Angka = yang DITAGIH di pintu (setelah saldo refund, + hutang lama pintu ini) — bukan
