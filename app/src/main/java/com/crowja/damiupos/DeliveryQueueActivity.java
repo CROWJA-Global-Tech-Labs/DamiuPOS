@@ -6824,8 +6824,18 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (this.currentUserCanRequestTrxChange() && !t.hasPendingVoidRequest()) {
          menu.getMenu().add(0, 7, 6, "✏️ Ubah");
       }
+      if (t.getCustomerId() > 0L) {
+         menu.getMenu().add(0, 8, 7, "📷 Update Foto");
+         menu.getMenu().add(0, 9, 8, "📍 Update Lokasi");
+      }
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
+            case 8:
+               this.openQuickCapture(t, CustomerFormActivity.QUICK_PHOTO_COORD);
+               return true;
+            case 9:
+               this.openQuickCapture(t, CustomerFormActivity.QUICK_LOCATION);
+               return true;
             case 7:
                this.showUbahMenu(t);
                return true;
@@ -6867,8 +6877,18 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if ("JUAL".equals(t.getType())) {
          menu.getMenu().add(0, 5, 4, "🚰 Jenis Galon");
       }
+      if (t.getCustomerId() > 0L) {
+         menu.getMenu().add(0, 8, 5, "📷 Update Foto");
+         menu.getMenu().add(0, 9, 6, "📍 Update Lokasi");
+      }
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
+            case 8:
+               this.openQuickCapture(t, CustomerFormActivity.QUICK_PHOTO_COORD);
+               return true;
+            case 9:
+               this.openQuickCapture(t, CustomerFormActivity.QUICK_LOCATION);
+               return true;
             case 5:
                this.showGalonTypeDialog(t);
                return true;
@@ -6889,6 +6909,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
       });
       menu.show();
+   }
+
+   /** Update foto rumah + koordinat, atau lokasi GPS, pelanggan order ini lewat form pelanggan (staf tinggal SIMPAN). */
+   private void openQuickCapture(Transaction t, String quick) {
+      Customer c = t.getCustomerId() > 0L ? this.customerDao.getById(t.getCustomerId()) : null;
+      if (c == null) {
+         Toast.makeText(this, "Order ini tanpa pelanggan.", Toast.LENGTH_SHORT).show();
+         return;
+      }
+      this.startActivity(new Intent(this, CustomerFormActivity.class).putExtra("customer_id", c.getId())
+            .putExtra(CustomerFormActivity.EXTRA_QUICK_CAPTURE, quick));
    }
 
    private void promptMarkPriority(Transaction t) {
