@@ -413,6 +413,11 @@ public class SyncApi {
         return post(cfg.getBaseUrl() + "/api/delivery/postpone", body, cfg.getToken());
     }
 
+    /** Jadwalkan ulang massal: transaction_uuids (maks 50), resume_at, reason & photo_base64 opsional. */
+    public JSONObject postponeDeliveryBulk(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/postpone/bulk", body, cfg.getToken());
+    }
+
     /** "Gagal & Jadwalkan Ulang" untuk order yang sedang diantar; reason + photo_base64 wajib. Jawaban sama dgn postponeDelivery. */
     public JSONObject failDelivery(JSONObject body) throws Exception {
         return post(cfg.getBaseUrl() + "/api/delivery/postpone/failed", body, cfg.getToken());
