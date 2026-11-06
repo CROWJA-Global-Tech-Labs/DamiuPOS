@@ -6934,8 +6934,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          menu.getMenu().add(0, 7, 6, "✏️ Ubah");
       }
       if (t.getCustomerId() > 0L) {
-         menu.getMenu().add(0, 8, 7, "📷 Update Foto");
-         menu.getMenu().add(0, 9, 8, "📍 Update Lokasi");
+         menu.getMenu().add(0, 8, 7, "📷 Update Foto & Lokasi");
       }
       if (canReportFailed(t)) {
          menu.getMenu().add(0, 10, 9, FAILED_RESCHEDULE_LABEL);
@@ -6947,9 +6946,6 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                return true;
             case 8:
                this.openQuickCapture(t, CustomerFormActivity.QUICK_PHOTO_COORD);
-               return true;
-            case 9:
-               this.openQuickCapture(t, CustomerFormActivity.QUICK_LOCATION);
                return true;
             case 7:
                this.showUbahMenu(t);
@@ -6993,16 +6989,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          menu.getMenu().add(0, 5, 4, "🚰 Jenis Galon");
       }
       if (t.getCustomerId() > 0L) {
-         menu.getMenu().add(0, 8, 5, "📷 Update Foto");
-         menu.getMenu().add(0, 9, 6, "📍 Update Lokasi");
+         menu.getMenu().add(0, 8, 5, "📷 Update Foto & Lokasi");
       }
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
             case 8:
                this.openQuickCapture(t, CustomerFormActivity.QUICK_PHOTO_COORD);
-               return true;
-            case 9:
-               this.openQuickCapture(t, CustomerFormActivity.QUICK_LOCATION);
                return true;
             case 5:
                this.showGalonTypeDialog(t);
@@ -16071,9 +16063,6 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          h.tvCustomer.setText(voidPending ? DeliveryQueueActivity.safe(t.getCustomerName()) : (t.isVisitTask() ? "📞 " : "") + (t.isOpenDispatch() ? "\ud83c\udfb2 " : "") + (t.isSelfOrder() ? "\ud83d\udecd️ " : "") + (t.isResellerOrder() ? "🤝 " : "") + (t.requiresDeliveryProof() ? "📷 " : "") + (t.isCustomerPriority() ? "⭐ " : "") + (t.isCustomerDataIncomplete() ? "❗ " : "") + (t.isComplained() ? "\ud83d\ude20 " : "") + DeliveryQueueActivity.safe(t.getCustomerName()));
          int flags = h.tvCustomer.getPaintFlags();
          h.tvCustomer.setPaintFlags(voidPending ? flags | 16 : flags & -17);
-         boolean showFailed = full && DeliveryQueueActivity.canReportFailed(t);
-         h.btnRunFailed.setVisibility(showFailed ? View.VISIBLE : View.GONE);
-         if (showFailed) h.btnRunFailed.setOnClickListener((v) -> DeliveryQueueActivity.this.startFailedReschedule(t));
          if (voidPending) {
             h.tvPriorityBig.setVisibility(8);
             h.tvPriorityBig.clearAnimation();
@@ -16274,7 +16263,6 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          TextView tvOrderNote;
          MaterialButton btnMore;
          MaterialButton btnTakeOver;
-         MaterialButton btnRunFailed;
          LinearLayout productChips;
          String jarakLabel;
 
@@ -16296,7 +16284,6 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.tvElapsed = (TextView)v.findViewById(id.tvElapsed);
             this.btnMore = (MaterialButton)v.findViewById(id.btnMore);
             this.btnTakeOver = (MaterialButton)v.findViewById(id.btnTakeOver);
-            this.btnRunFailed = (MaterialButton)v.findViewById(id.btnRunFailed);
             this.productChips = (LinearLayout)v.findViewById(id.productChips);
          }
       }
