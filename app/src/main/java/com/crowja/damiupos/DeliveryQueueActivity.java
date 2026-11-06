@@ -16819,6 +16819,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          h.btnClaim.setVisibility(pickingOpen ? 8 : 0);
          h.card.setStrokeWidth(DeliveryQueueActivity.this.dp(pickedOpen || lateOpen ? 3.0F : 1.0F));
          if (pickedOpen) {
+            this.stopCardBlink(h);   // kedip menimpa warna tanda terpilih
             h.card.setStrokeColor(DeliveryQueueActivity.this.getResources().getColor(color.primary));
          }
          h.itemView.setOnClickListener((v) -> {
