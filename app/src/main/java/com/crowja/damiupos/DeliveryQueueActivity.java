@@ -1098,7 +1098,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    /**
     * 📥 Ambil Antrean — dua opsi: (1) SESUAI WILAYAH SAYA (area primer + sekunder) + "ambil berapa galon";
-    * (2) CUSTOM: rentang jarak perjalanan darat dari posisi HP atau kios (default 0–5 km) dan/atau wilayah perangkat terpilih
+    * (2) CUSTOM: rentang jarak perjalanan darat dari posisi HP atau kios (default 0–5 km), arah mata angin dan/atau wilayah perangkat terpilih
     * (dipaksa walau bukan wilayah saya, boleh banyak) + "ambil berapa galon". Server: DeliveryTakeQueue.
     */
    private void renderTakeQueueDialog(JSONArray zones) {
@@ -1185,6 +1185,25 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       kmSlider.addOnChangeListener((sl, value, fromUser) ->
             tvKmRange.setText(TakeKmRange.label(sl.getValues().get(0), sl.getValues().get(1))));
       custom.addView(kmSlider);
+      // 🧭 Kirim ke Arah: ketuk kuadran Utara/Timur/Selatan/Barat (boleh beberapa) — dihitung dari acuan di atas.
+      TextView lblDir = new TextView(this);
+      lblDir.setText("Kirim ke arah (ketuk satu atau beberapa kuadran, dihitung dari acuan di atas):");
+      lblDir.setPadding(0, this.dp(10f), 0, 0);
+      custom.addView(lblDir);
+      final com.crowja.damiupos.util.DirectionPieView dirPie = new com.crowja.damiupos.util.DirectionPieView(this);
+      final TextView tvDir = new TextView(this);
+      tvDir.setTextSize(14f);
+      tvDir.setTypeface(null, android.graphics.Typeface.BOLD);
+      tvDir.setTextColor(this.getColor(R.color.primary));
+      tvDir.setText("Arah: " + dirPie.describe());
+      dirPie.setOnChange(() -> tvDir.setText("Arah: " + dirPie.describe()));
+      LinearLayout.LayoutParams pieLp = new LinearLayout.LayoutParams(-2, -2);
+      pieLp.gravity = android.view.Gravity.CENTER_HORIZONTAL;
+      pieLp.topMargin = this.dp(6f);
+      custom.addView(dirPie, pieLp);
+      LinearLayout.LayoutParams dirTxtLp = new LinearLayout.LayoutParams(-2, -2);
+      dirTxtLp.gravity = android.view.Gravity.CENTER_HORIZONTAL;
+      custom.addView(tvDir, dirTxtLp);
       final List<android.widget.CheckBox> zoneBoxes = new ArrayList<>();
       final List<Integer> zoneIdx = new ArrayList<>();
       if (zones.length() > 0) {
@@ -1321,6 +1340,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             body.put("_for_run", forRun);
             boolean kmLimited = false;
             boolean fromKios = false;
+            boolean needDir = false;
             if (isCustom) {
                JSONArray zs = new JSONArray();
                for (int i = 0; i < zoneBoxes.size(); i++) if (zoneBoxes.get(i).isChecked()) zs.put(zoneIdx.get(i));
@@ -1332,14 +1352,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                kmLimited = TakeKmRange.hasLimit(minKm, maxKm);
                if (minKm > TakeKmRange.SCALE_MIN) body.put("min_km", (double) minKm);
                if (!TakeKmRange.isUnlimited(maxKm)) body.put("max_km", (double) maxKm);
-               if (!kmLimited && zs.length() == 0) {
-                  Toast.makeText(this, "Batasi jarak atau pilih minimal satu wilayah.", Toast.LENGTH_SHORT).show();
+               java.util.List<String> dirSel = dirPie.selected();
+               if (!dirSel.isEmpty()) body.put("dirs", new JSONArray(dirSel));
+               if (!kmLimited && zs.length() == 0 && dirSel.isEmpty()) {
+                  Toast.makeText(this, "Batasi jarak, pilih arah, atau pilih minimal satu wilayah.", Toast.LENGTH_SHORT).show();
                   return;
                }
+               needDir = !dirSel.isEmpty();
             }
             dlg.dismiss();
             // Posisi HP selalu dicoba (jarak km di ceklis preview); wajib hanya bila Custom memakai batas jarak.
-            final boolean needLoc = kmLimited && !fromKios;
+            final boolean needLoc = (kmLimited || needDir) && !fromKios;
             LocationService.lastLocation(this, (loc) -> {
                if (loc == null && needLoc) {
                   Toast.makeText(this, "Lokasi HP belum didapat — nyalakan GPS lalu coba lagi.", Toast.LENGTH_LONG).show();
