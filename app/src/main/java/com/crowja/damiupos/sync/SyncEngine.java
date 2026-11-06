@@ -1777,8 +1777,11 @@ public class SyncEngine {
                             } else if (com.crowja.damiupos.model.Transaction.DELIVERY_TERTUNDA.equals(newStatus)) {
                                 boolean running = false;
                                 try { running = settingsDao.getDeliveryRunningTrxIds().contains(localId); } catch (Throwable ignored) {}
-                                pulledRescheduled.add(new String[]{custName,
-                                        v.getAsString(DatabaseHelper.COL_DELIVERY_TERTUNDA_REASON), running ? "1" : "0"});
+                                // Dilaporkan gagal oleh kurir HP ini sendiri: bukan kabar untuknya.
+                                if (!com.crowja.damiupos.util.FailingStops.contains(localId)) {
+                                    pulledRescheduled.add(new String[]{custName,
+                                            v.getAsString(DatabaseHelper.COL_DELIVERY_TERTUNDA_REASON), running ? "1" : "0"});
+                                }
                             }
                         }
                     }

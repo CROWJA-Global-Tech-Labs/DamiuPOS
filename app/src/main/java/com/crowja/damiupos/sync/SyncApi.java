@@ -413,6 +413,11 @@ public class SyncApi {
         return post(cfg.getBaseUrl() + "/api/delivery/postpone", body, cfg.getToken());
     }
 
+    /** "Gagal & Jadwalkan Ulang" untuk order yang sedang diantar; reason + photo_base64 wajib. Jawaban sama dgn postponeDelivery. */
+    public JSONObject failDelivery(JSONObject body) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/postpone/failed", body, cfg.getToken());
+    }
+
     /**
      * "⏸ Antrean Tertunda" SE-CABANG (read-only, tanpa efek samping — server tak menjalankan
      * auto-lanjut di sini). Pull transaksi per-perangkat, jadi tunda milik HP lain tak pernah ada

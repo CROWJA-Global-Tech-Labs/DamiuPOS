@@ -993,6 +993,25 @@ public class TransactionDao {
     }
 
     /**
+     * Cerminkan "Gagal & Jadwalkan Ulang" yang BARU SAJA diterima server ke baris lokal, tanpa menunggu
+     * sinkron. Keputusan server, jadi TIDAK ditandai kotor: stempel lokal baru bisa mengalahkan server
+     * di LWW dan mengembalikan order ke antrean. Pull berikutnya menimpa dengan nilai server.
+     */
+    public void mirrorFailedReschedule(long trxId, String resumeAtDb, String reason) {
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_DELIVERY_STATUS, Transaction.DELIVERY_TERTUNDA);
+        v.put(DatabaseHelper.COL_DELIVERY_TERTUNDA_AT, DatabaseHelper.nowIso());
+        v.put(DatabaseHelper.COL_DELIVERY_TERTUNDA_RESUME_AT, resumeAtDb);
+        v.put(DatabaseHelper.COL_DELIVERY_TERTUNDA_REASON, reason);
+        v.putNull(DatabaseHelper.COL_DELIVERY_STARTED_AT);
+        v.putNull(DatabaseHelper.COL_DELIVERY_STARTED_CLEARED_AT);
+        v.put(DatabaseHelper.COL_DELIVERY_SEQ, 0);
+        v.put(DatabaseHelper.COL_SYNCED, 1);
+        dbHelper.getWritableDatabase().update(DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_TRX_ID + "=?", new String[]{String.valueOf(trxId)});
+    }
+
+    /**
      * Cerminkan klaim "Pesanan Terbuka" (POST /api/delivery/claim) yang BARU SAJA sukses ke baris
      * LOKAL, SEGERA — server yang menyimpan klaim itu sendiri, jadi ini murni cache optimistik supaya
      * order langsung terlihat "milik perangkat ini" (isOpenDispatch()==false, ikut getDeliveryQueue()
