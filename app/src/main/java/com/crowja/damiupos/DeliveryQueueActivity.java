@@ -1147,6 +1147,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * (2) CUSTOM: rentang jarak perjalanan darat dari posisi HP atau kios (default 0–5 km), arah mata angin dan/atau wilayah perangkat terpilih
     * (dipaksa walau bukan wilayah saya, boleh banyak) + "ambil berapa galon". Server: DeliveryTakeQueue.
     */
+   /** Dialog Ambil Antrean terakhir: dibuka lagi dengan isian utuh untuk mengatur ulang. */
+   private AlertDialog takeDialog;
+
+   private void reopenTakeDialog() {
+      if (this.takeDialog != null && !this.isFinishing() && !this.isDestroyed()) this.takeDialog.show();
+   }
+
    private void renderTakeQueueDialog(JSONArray zones) {
       int pad = this.dp(20f);
       LinearLayout box = new LinearLayout(this);
@@ -1306,13 +1313,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       TextView lblGal = new TextView(this);
       lblGal.setText("Ambil berapa galon? (kosongkan = semua)");
-      lblGal.setPadding(0, this.dp(10f), 0, 0);
-      box.addView(lblGal);
+      lblGal.setPadding(0, this.dp(4f), 0, 0);
       final EditText etGal = new EditText(this);
       etGal.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
       int maxLoad = this.syncCfg().getMaxLoad();
       if (maxLoad > 0) etGal.setText(String.valueOf(maxLoad));
-      box.addView(etGal);
       final android.widget.CheckBox cbSales = new android.widget.CheckBox(this);
       cbSales.setText("🛒 Penjualan");
       cbSales.setChecked(true);
@@ -1322,29 +1327,51 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       // Produk (slug) yang mau diambil — bawaan SEMUA terpilih; hanya berlaku untuk penjualan.
       final java.util.Set<String> takeSlugs = new java.util.HashSet<>();
       final java.util.Set<String> allSlugs = new java.util.HashSet<>();
-      final Runnable[] capRefresh = new Runnable[]{() -> { }};
-      android.widget.HorizontalScrollView slugRow = this.buildSlugChipRow(takeSlugs, () -> capRefresh[0].run(), true);
+      // Jumlah galon, pilih salah satu: bebas (total + saring produk) atau komposisi (jumlah tiap produk).
+      final android.widget.RadioButton rbQtyFree = new android.widget.RadioButton(this);
+      rbQtyFree.setText("Jumlah bebas");
+      rbQtyFree.setId(View.generateViewId());
+      final android.widget.RadioButton rbQtyMix = new android.widget.RadioButton(this);
+      rbQtyMix.setText("Dengan komposisi");
+      rbQtyMix.setId(View.generateViewId());
+      android.widget.RadioGroup rgQty = new android.widget.RadioGroup(this);
+      rgQty.setOrientation(LinearLayout.HORIZONTAL);
+      rgQty.addView(rbQtyFree);
+      rgQty.addView(rbQtyMix);
+      final LinearLayout qtyFree = new LinearLayout(this);
+      qtyFree.setOrientation(LinearLayout.VERTICAL);
+      qtyFree.addView(lblGal);
+      qtyFree.addView(etGal);
+      final LinearLayout qtyMix = new LinearLayout(this);
+      qtyMix.setOrientation(LinearLayout.VERTICAL);
+      qtyMix.setVisibility(View.GONE);
       final LinkedHashMap<String, EditText> capInputs = new LinkedHashMap<>();
+      android.widget.HorizontalScrollView slugRow = this.buildSlugChipRow(takeSlugs, () -> { }, true);
       if (slugRow != null) {
          allSlugs.addAll(takeSlugs);
-         box.addView(slugRow);
-         // Komposisi: batas galon per produk; kosong = tak dibatasi.
-         final LinearLayout capBox = new LinearLayout(this);
-         capBox.setOrientation(LinearLayout.VERTICAL);
+         qtyFree.addView(slugRow);
          TextView lblCap = new TextView(this);
-         lblCap.setText("Komposisi per produk (galon, kosongkan = tanpa batas):");
+         lblCap.setText("Isi jumlah tiap produk (kosong = produk itu tidak diambil):");
          lblCap.setPadding(0, this.dp(4f), 0, 0);
-         capBox.addView(lblCap);
+         qtyMix.addView(lblCap);
          LinearLayout capRow = new LinearLayout(this);
          capRow.setOrientation(LinearLayout.HORIZONTAL);
-         final LinkedHashMap<String, View> capCells = new LinkedHashMap<>();
          final TextView tvCapSum = new TextView(this);
          tvCapSum.setTextSize(13f);
          tvCapSum.setTextColor(this.getColor(R.color.primary));
+         tvCapSum.setVisibility(View.GONE);
          android.text.TextWatcher capWatch = new android.text.TextWatcher() {
             public void beforeTextChanged(CharSequence c, int a, int b, int d) {}
             public void onTextChanged(CharSequence c, int a, int b, int d) {}
-            public void afterTextChanged(android.text.Editable e) { capRefresh[0].run(); }
+            public void afterTextChanged(android.text.Editable e) {
+               int sum = 0;
+               for (EditText et : capInputs.values()) {
+                  String capVal = et.getText().toString().trim();
+                  if (!capVal.isEmpty()) sum += Integer.parseInt(capVal);
+               }
+               tvCapSum.setVisibility(sum > 0 ? View.VISIBLE : View.GONE);
+               tvCapSum.setText("Total: " + sum + " galon" + (maxLoad > 0 && sum > maxLoad ? " · melebihi muatan " + maxLoad + " galon" : ""));
+            }
          };
          for (Product pr : new ProductDao(DatabaseHelper.getInstance(this)).getAll()) {
             String slug = pr.getSlug() != null ? pr.getSlug().trim() : "";
@@ -1365,33 +1392,25 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             cell.addView(et);
             capRow.addView(cell);
             capInputs.put(key, et);
-            capCells.put(key, cell);
          }
          android.widget.HorizontalScrollView capScroll = new android.widget.HorizontalScrollView(this);
          capScroll.setHorizontalScrollBarEnabled(false);
          capScroll.addView(capRow);
-         capBox.addView(capScroll);
-         capBox.addView(tvCapSum);
-         box.addView(capBox);
-         capRefresh[0] = () -> {
-            int sum = 0;
-            for (Map.Entry<String, EditText> e : capInputs.entrySet()) {
-               boolean on = takeSlugs.contains(e.getKey());
-               capCells.get(e.getKey()).setVisibility(on ? View.VISIBLE : View.GONE);
-               String v = e.getValue().getText().toString().trim();
-               if (on && !v.isEmpty()) sum += Integer.parseInt(v);
-            }
-            String total = etGal.getText().toString().trim();
-            int cap = total.isEmpty() || total.length() > 6 ? 0 : Integer.parseInt(total);
-            tvCapSum.setVisibility(sum > 0 ? View.VISIBLE : View.GONE);
-            tvCapSum.setText("Total komposisi: " + sum + " galon" + (cap > 0 && sum > cap ? " · batas " + cap + " galon tetap berlaku" : ""));
-         };
-         etGal.addTextChangedListener(capWatch);
-         cbSales.setOnCheckedChangeListener((b, on) -> {
-            slugRow.setVisibility(on ? View.VISIBLE : View.GONE);
-            capBox.setVisibility(on ? View.VISIBLE : View.GONE);
-         });
+         qtyMix.addView(capScroll);
+         qtyMix.addView(tvCapSum);
       }
+      final LinearLayout qtyBox = new LinearLayout(this);
+      qtyBox.setOrientation(LinearLayout.VERTICAL);
+      if (!capInputs.isEmpty()) qtyBox.addView(rgQty);
+      qtyBox.addView(qtyFree);
+      qtyBox.addView(qtyMix);
+      box.addView(qtyBox);
+      rgQty.setOnCheckedChangeListener((g, id) -> {
+         qtyFree.setVisibility(id == rbQtyMix.getId() ? View.GONE : View.VISIBLE);
+         qtyMix.setVisibility(id == rbQtyMix.getId() ? View.VISIBLE : View.GONE);
+      });
+      rbQtyFree.setChecked(true);
+      cbSales.setOnCheckedChangeListener((b, on) -> qtyBox.setVisibility(on ? View.VISIBLE : View.GONE));
       box.addView(cbPickup);
       final android.widget.CheckBox cbComplained = new android.widget.CheckBox(this);
       cbComplained.setText("😠 Hanya pesanan komplain");
@@ -1450,6 +1469,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             .setPositiveButton("Ambil", (DialogInterface.OnClickListener) null)
             .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
       dlgRef[0] = dlg;
+      this.takeDialog = dlg;
       dlg.setOnShowListener(di -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
          if (!cbSales.isChecked() && !cbPickup.isChecked()) {
             Toast.makeText(this, "Pilih minimal satu jenis.", Toast.LENGTH_SHORT).show();
@@ -1469,17 +1489,31 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                }
                if (oz.length() < oldBoxes.size()) body.put("zones", oz);
             }
-            if (cbSales.isChecked() && takeSlugs.isEmpty() && !allSlugs.isEmpty()) {
-               Toast.makeText(this, "Pilih minimal satu produk.", Toast.LENGTH_SHORT).show();
-               return;
+            if (cbSales.isChecked() && rbQtyMix.isChecked()) {
+               // Hanya produk berisi yang diambil; sisanya batas 0 supaya order campuran dengan produk itu tak ikut.
+               JSONObject caps = new JSONObject();
+               JSONArray wanted = new JSONArray();
+               for (Map.Entry<String, EditText> e : capInputs.entrySet()) {
+                  String capVal = e.getValue().getText().toString().trim();
+                  int qty = capVal.isEmpty() ? 0 : Integer.parseInt(capVal);
+                  caps.put(e.getKey(), qty);
+                  if (qty > 0) wanted.put(e.getKey());
+               }
+               if (wanted.length() == 0) {
+                  Toast.makeText(this, "Isi jumlah minimal satu produk.", Toast.LENGTH_SHORT).show();
+                  return;
+               }
+               body.put("slugs", wanted);
+               body.put("slug_caps", caps);
+            } else {
+               if (cbSales.isChecked() && takeSlugs.isEmpty() && !allSlugs.isEmpty()) {
+                  Toast.makeText(this, "Pilih minimal satu produk.", Toast.LENGTH_SHORT).show();
+                  return;
+               }
+               if (takeSlugs.size() < allSlugs.size()) body.put("slugs", new JSONArray(takeSlugs));
+               String g = etGal.getText().toString().trim();
+               if (!g.isEmpty()) body.put("max_galon", Integer.parseInt(g));
             }
-            if (takeSlugs.size() < allSlugs.size()) body.put("slugs", new JSONArray(takeSlugs));
-            JSONObject caps = new JSONObject();
-            for (Map.Entry<String, EditText> e : capInputs.entrySet()) {
-               String capVal = e.getValue().getText().toString().trim();
-               if (!capVal.isEmpty() && takeSlugs.contains(e.getKey())) caps.put(e.getKey(), Integer.parseInt(capVal));
-            }
-            if (cbSales.isChecked() && caps.length() > 0) body.put("slug_caps", caps);
             String g = etGal.getText().toString().trim();
             if (!g.isEmpty()) body.put("max_galon", Integer.parseInt(g));
             body.put("include_sales", cbSales.isChecked());
@@ -1575,6 +1609,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (this.isFinishing() || this.isDestroyed()) return;
             if (fe != null) {
                Toast.makeText(this, fe, Toast.LENGTH_LONG).show();
+               this.reopenTakeDialog();
                return;
             }
             if (fl) {
@@ -1712,7 +1747,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       final AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle("📋 Cek Order yang Diambil").setView(dlgRoot)
             .setPositiveButton("Ambil", (DialogInterface.OnClickListener) null)
             .setNeutralButton("Kosongkan", (DialogInterface.OnClickListener) null)
-            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
+            .setNegativeButton("Batal", (d, w) -> this.reopenTakeDialog())
+            .setOnCancelListener((d) -> this.reopenTakeDialog()).create();
       final Runnable areaListener = () -> {
          for (Runnable r : areaRows) r.run();
       };
