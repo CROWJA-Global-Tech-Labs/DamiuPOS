@@ -2153,7 +2153,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       menu.getMenu().add(0, 4, 4, "🗑️ Void " + picked.size() + " order (persetujuan)");
       menu.setOnMenuItemClickListener((item) -> {
          if (item.getItemId() == 5) {
-            this.pickResumeSchedule((cal) -> this.confirmBulkPostpone(picked, cal));
+            List<String[]> items = new ArrayList<>();
+            for (Transaction t : picked) items.add(new String[]{this.trxUuid(t), safe(t.getCustomerName())});
+            this.startBulkPostpone(items, this.numberedNames(picked), () -> {
+               this.exitSelectionMode();
+               this.loadData();
+            });
             return true;
          }
          if (item.getItemId() == 4) {
@@ -13381,8 +13386,19 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       dialog.show();
    }
 
+   /** Jadwalkan Ulang massal dari tab mana pun; items = {uuid server, nama pelanggan}. */
+   private void startBulkPostpone(List<String[]> items, String namesText, Runnable onDone) {
+      this.pickResumeSchedule((cal) -> this.confirmBulkPostpone(items, namesText, cal, onDone));
+   }
+
+   private static String numberedItemNames(List<String[]> items) {
+      StringBuilder sb = new StringBuilder();
+      for (int i = 0; i < items.size(); i++) sb.append(i > 0 ? "\n" : "").append(i + 1).append(". ").append(items.get(i)[1]);
+      return sb.toString();
+   }
+
    /** Dialog Jadwalkan Ulang massal: satu jadwal, alasan (preset), foto kendaraan bila perlu; ketuk dua kali. */
-   private void confirmBulkPostpone(List<Transaction> picked, Calendar resume) {
+   private void confirmBulkPostpone(List<String[]> picked, String namesText, Calendar resume, Runnable onDone) {
       String resumeLabel = new SimpleDateFormat("EEEE, d MMM yyyy HH:mm", new Locale("id", "ID")).format(resume.getTime());
 
       LinearLayout root = new LinearLayout(this);
@@ -13393,7 +13409,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       TextView hint = new TextView(this);
       hint.setText(picked.size() + " order akan keluar dari antrian aktif dan kembali otomatis pada:\n\n" + resumeLabel
             + "\n\nPelanggan diberi tahu lewat WA, bertahap bila akun WA sedang jeda. Order yang sedang diantar dilewati.\n\n"
-            + this.numberedNames(picked));
+            + namesText);
       hint.setTextSize(13.0F);
       root.addView(hint);
 
@@ -13425,7 +13441,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                Toast.makeText(this, "Foto kendaraan wajib untuk alasan \"Kendaraan bermasalah\" — ketuk 📷 Ambil Foto.", 1).show();
             } else {
                dialog.dismiss();
-               this.runBulkPostpone(picked, resume, reason.getText().toString().trim(), this.postponePhotoPath);
+               this.runBulkPostpone(picked, resume, reason.getText().toString().trim(), this.postponePhotoPath, onDone);
             }
          });
       });
@@ -13433,7 +13449,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    /** Maks 50 order per panggilan server, jadi pilihan besar dikirim bertahap. */
-   private void runBulkPostpone(List<Transaction> picked, Calendar resume, String reason, String photoPath) {
+   private void runBulkPostpone(List<String[]> picked, Calendar resume, String reason, String photoPath, Runnable onDone) {
       SyncSettings cfg = this.syncCfg();
       if (!cfg.isEnrolled()) {
          Toast.makeText(this, "Perangkat belum terhubung ke server.", 1).show();
@@ -13447,10 +13463,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       (new Thread(() -> {
          List<String> fails = new ArrayList<>();
          LinkedHashMap<String, String> names = new LinkedHashMap<>();
-         for (Transaction t : picked) {
-            String uuid = this.dao.getSyncUuidById(t.getId());
-            if (uuid == null || uuid.isEmpty()) fails.add(safe(t.getCustomerName()) + ": belum tersinkron ke server");
-            else names.put(uuid, safe(t.getCustomerName()));
+         for (String[] it : picked) {
+            if (it[0] == null || it[0].isEmpty()) fails.add(it[1] + ": belum tersinkron ke server");
+            else names.put(it[0], it[1]);
          }
          List<String> uuids = new ArrayList<>(names.keySet());
          int ok = 0, waSent = 0, waQueued = 0, waNoPhone = 0;
@@ -13501,9 +13516,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             }
             (new AlertDialog.Builder(this)).setTitle("Jadwalkan Ulang Massal").setMessage(sb.toString())
                   .setPositiveButton("OK", (DialogInterface.OnClickListener) null).show();
-            this.exitSelectionMode();
             SyncScheduler.syncNow(this.getApplicationContext());
-            this.loadData();
+            onDone.run();
          });
       })).start();
    }
@@ -15424,8 +15438,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (this.currentUserIsAdmin()) {
          menu.getMenu().add(0, 2, 0, "📲 Alihkan " + items.size() + " order ke perangkat lain");
       }
-      menu.getMenu().add(0, 1, 1, "🗑️ Void " + items.size() + " order (persetujuan)");
+      menu.getMenu().add(0, 3, 1, "🕒 Jadwalkan Ulang " + items.size() + " order");
+      menu.getMenu().add(0, 1, 2, "🗑️ Void " + items.size() + " order (persetujuan)");
       menu.setOnMenuItemClickListener((item) -> {
+         if (item.getItemId() == 3) {
+            this.startBulkPostpone(items, numberedItemNames(items), () -> {
+               this.exitClaimSelect(true);
+               this.loadData();
+            });
+            return true;
+         }
          if (item.getItemId() == 2) {
             java.util.LinkedHashMap<String, String[]> picked = new java.util.LinkedHashMap<>();
             for (String[] it : items) {
@@ -15520,10 +15542,20 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          menu.getMenu().add(0, 4, 0, "🔓 Lepas " + picked.size() + " order (jadi Pesanan Terbuka)");
          menu.getMenu().add(0, 1, 1, "📲 Alihkan " + picked.size() + " order ke perangkat lain");
          menu.getMenu().add(0, 2, 2, "🧭 Alihkan " + picked.size() + " order sesuai wilayahnya");
-         menu.getMenu().add(0, 3, 3, "🗑️ Void " + picked.size() + " order (persetujuan)");
+         menu.getMenu().add(0, 6, 3, "🕒 Jadwalkan Ulang " + picked.size() + " order");
+         menu.getMenu().add(0, 3, 4, "🗑️ Void " + picked.size() + " order (persetujuan)");
       }
       menu.setOnMenuItemClickListener((item) -> {
          if (item.getItemId() == 5) return true;
+         if (item.getItemId() == 6) {
+            List<String[]> items = new ArrayList<>();
+            for (Map.Entry<String, String[]> e : picked.entrySet()) items.add(new String[]{e.getKey(), safe(e.getValue()[1])});
+            this.startBulkPostpone(items, numberedItemNames(items), () -> {
+               this.exitClaimSelect(false);
+               this.loadOtherDevices();
+            });
+            return true;
+         }
          if (item.getItemId() == 4) {
             StringBuilder names = new StringBuilder();
             int i = 0;
