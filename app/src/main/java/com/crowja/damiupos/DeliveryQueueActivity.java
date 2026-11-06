@@ -1500,6 +1500,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       final List<JSONObject> rows = new ArrayList<>();
       final Runnable[] upd = new Runnable[1];
       final String kmSuffix = "kios".equals(body.optString("km_from")) ? " dari kios" : "";
+      final List<Runnable> areaRows = new ArrayList<>();
       for (int i = 0; i < cands.length(); i++) {
          JSONObject c = cands.optJSONObject(i);
          if (c == null || c.optString("uuid").isEmpty()) continue;
@@ -1512,6 +1513,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          sb.append(safe(c.optString("name")));
          if (dest != null && !dest.isEmpty()) sb.append(" · ").append(dest);
          sb.append('\n');
+         final int headEnd = sb.length();
          // Produk = kapsul slug berwarna di bawah baris ini (teks hanya bila server tak mengirim slug).
          List<SejalurPlanLogic.Badge> badges = pickup ? new ArrayList<>() : this.sejalurBadges(c);
          String queuedAt = strJson(c, "queued_at");
@@ -1536,7 +1538,18 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          if ("mine".equals(src)) sb.append(" · Antrian Saya");
          else if ("open".equals(src)) sb.append(" · 📢 Terbuka");
          android.widget.CheckBox cb = new android.widget.CheckBox(this);
-         cb.setText(sb.toString());
+         // 🗺 Nama wilayah menurut KOORDINAT titik tujuan; baris diperbarui begitu hasil pencariannya tiba.
+         final String head = sb.substring(0, headEnd);
+         final String tail = sb.substring(headEnd);
+         final double destLat = c.optDouble("lat", 0.0);
+         final double destLng = c.optDouble("lng", 0.0);
+         Runnable applyArea = () -> {
+            String area = DestAreaCache.lookup(destLat, destLng);
+            String clean = area == null ? "" : cleanLabel(area);
+            cb.setText(head + (area == null ? "🗺 memuat wilayah…\n" : clean.isEmpty() ? "" : "🗺 " + clean + "\n") + tail);
+         };
+         applyArea.run();
+         areaRows.add(applyArea);
          cb.setChecked(true);
          cb.setPadding(0, this.dp(4f), 0, this.dp(4f));
          cb.setOnCheckedChangeListener((b, on) -> upd[0].run());
@@ -1583,6 +1596,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             .setPositiveButton("Ambil", (DialogInterface.OnClickListener) null)
             .setNeutralButton("Kosongkan", (DialogInterface.OnClickListener) null)
             .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
+      final Runnable areaListener = () -> {
+         for (Runnable r : areaRows) r.run();
+      };
+      DestAreaCache.addListener(areaListener);
+      dlg.setOnDismissListener(di -> DestAreaCache.removeListener(areaListener));
       upd[0] = () -> {
          int n = 0, g = 0;
          for (int i = 0; i < boxes.size(); i++) {
