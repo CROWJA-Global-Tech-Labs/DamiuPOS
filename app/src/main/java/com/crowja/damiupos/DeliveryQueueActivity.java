@@ -11903,9 +11903,25 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.confirmBulkResumeTertunda(todo, offline, false, reload);
          return;
       }
-      String[] opts = {"▶ Lanjutkan sesuai perangkat (" + todo.size() + ")", "📥 Lanjutkan & Ambil ke HP ini (" + claimable + ")"};
+      int openable = 0;
+      for (TertundaRows.Merged<Transaction> m : todo) {
+         if (!offline && m.server != null && !m.server.uuid.isEmpty() && !m.server.openDispatch) openable++;
+      }
+      final int openableF = openable;
+      String[] opts = openable > 0
+            ? new String[]{"▶ Lanjutkan sesuai perangkat (" + todo.size() + ")", "📥 Lanjutkan & Ambil ke HP ini (" + claimable + ")",
+                  "🎲 Lanjutkan & Jadikan Pesanan Terbuka (" + openable + ")"}
+            : new String[]{"▶ Lanjutkan sesuai perangkat (" + todo.size() + ")", "📥 Lanjutkan & Ambil ke HP ini (" + claimable + ")"};
       (new AlertDialog.Builder(this)).setTitle("Lanjutkan " + todo.size() + " pesanan")
-            .setItems(opts, (d, which) -> this.confirmBulkResumeTertunda(todo, offline, which == 1, reload))
+            .setItems(opts, (d, which) -> {
+               if (which == 2) {
+                  this.confirmTertundaTwoTap("🎲 Lanjutkan & Jadikan Terbuka " + openableF + " pesanan?",
+                        tertundaNotDueWarning(todo) + openableF + " pesanan dilanjutkan sekarang lalu dilepas jadi PESANAN TERBUKA (perangkat mana pun bisa mengambilnya)." + "\n\nKetuk \"Lanjutkan & Jadikan Terbuka\" dua kali untuk memastikan.",
+                        "Lanjutkan & Jadikan Terbuka", "Memproses…", (dialog, pos, neg) -> this.runBulkResumeTertunda(dialog, todo, offline, false, true, reload));
+               } else {
+                  this.confirmBulkResumeTertunda(todo, offline, which == 1, reload);
+               }
+            })
             .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
    }
 
@@ -11923,8 +11939,30 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private void runBulkResumeTertunda(AlertDialog dialog, List<TertundaRows.Merged<Transaction>> todo, boolean offline, boolean claim, Runnable reload) {
+      this.runBulkResumeTertunda(dialog, todo, offline, claim, false, reload);
+   }
+
+   /** Setelah dilanjutkan: lepas order jadi Pesanan Terbuka. null = berhasil / sudah terbuka, selain itu pesan galat. */
+   private String openAfterResume(SyncApi api, String trxUuid, TertundaRows.ResumeOutcome r, String myUuid) {
+      if (r == null || r.openDispatch) return null;
+      try {
+         JSONObject body = new JSONObject();
+         body.put("transaction_uuid", trxUuid);
+         if (!r.routedUuid.isEmpty() && !r.routedUuid.equals(myUuid)) body.put("from_device_uuid", r.routedUuid);
+         api.openDispatch(body);
+         return null;
+      } catch (SyncApi.SyncException se) {
+         String m = se.serverMessage();
+         return m != null ? m : "kode " + se.code;
+      } catch (Exception e) {
+         return "periksa koneksi internet";
+      }
+   }
+
+   private void runBulkResumeTertunda(AlertDialog dialog, List<TertundaRows.Merged<Transaction>> todo, boolean offline, boolean claim, boolean makeOpen, Runnable reload) {
       SyncSettings cfg = this.syncCfg();
       new Thread(() -> {
+         int opened = 0;
          int ok = 0;
          int fail = 0;
          int taken = 0;
@@ -11940,6 +11978,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                   TertundaRows.ResumeOutcome res = TertundaRows.parseResume(api.resumeTertunda(body).toString());
                   touched.add(m.uuid());
                   ok++;
+                  if (makeOpen && this.openAfterResume(api, m.uuid(), res, cfg.getDeviceUuid()) == null) opened++;
                   if (claim && this.canClaimTertunda(m.server)) {
                      String expected = TertundaRows.claimExpectedAfterResume(res, cfg.getDeviceUuid());
                      try {
@@ -11975,6 +12014,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          final int fOk = ok;
          final int fFail = fail;
          final int fTaken = taken;
+         final int fOpened = opened;
          final boolean fLocal = anyLocal;
          this.runOnUiThread(() -> {
             if (this.isFinishing() || this.isDestroyed()) return;
@@ -11984,7 +12024,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (fLocal) SyncScheduler.syncNow(this.getApplicationContext());
             this.afterTertundaServerChange();
             this.loadData();
-            Toast.makeText(this, "▶ " + fOk + " pesanan dilanjutkan" + (claim ? ", " + fTaken + " diambil ke HP ini" : "") + (fFail > 0 ? " · " + fFail + " gagal (coba lagi)" : "") + ".", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "▶ " + fOk + " pesanan dilanjutkan" + (claim ? ", " + fTaken + " diambil ke HP ini" : "") + (makeOpen ? ", " + fOpened + " dijadikan Pesanan Terbuka" : "") + (fFail > 0 ? " · " + fFail + " gagal (coba lagi)" : "") + ".", Toast.LENGTH_LONG).show();
             if (reload != null) reload.run();
          });
       }).start();
@@ -12096,6 +12136,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             btnClaim.setAllCaps(false);
             btnClaim.setOnClickListener((v) -> this.confirmResumeClaimTertunda(s, reload));
             this.addGridAction(actions, btnClaim);
+         }
+         if (s != null && !s.uuid.isEmpty() && !s.openDispatch && !offline) {
+            Button btnOpen = new Button(this);
+            btnOpen.setText("🎲 Lanjutkan & Jadikan Terbuka");
+            btnOpen.setAllCaps(false);
+            btnOpen.setOnClickListener((v) -> this.confirmTertundaTwoTap("🎲 Lanjutkan & Jadikan Terbuka?",
+                  "Order \"" + s.name + "\" dilanjutkan sekarang lalu dilepas jadi PESANAN TERBUKA (perangkat mana pun bisa mengambilnya)." + "\n\nKetuk \"Lanjutkan & Jadikan Terbuka\" dua kali untuk memastikan.",
+                  "Lanjutkan & Jadikan Terbuka", "Memproses…", (dialog, pos, neg) -> this.runTertundaResumeOpen(dialog, pos, neg, s.uuid, reload)));
+            this.addGridAction(actions, btnOpen);
          }
       }
       // 💬 Chat Pesanan & 😠 Chat Komplain — baca chat boleh untuk Viewer juga (server yang menolak kirim).
@@ -12609,6 +12658,52 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                      + "\nTetapi gagal diambil ke perangkat ini: " + claimErrF;
             }
             Toast.makeText(this, msg, 1).show();
+            dialog.dismiss();
+            this.markTertundaServerTouched(trxUuid, true);
+            this.afterTertundaServerChange();
+            if (onDone != null) onDone.run();
+         });
+      })).start();
+   }
+
+   private void runTertundaResumeOpen(AlertDialog dialog, Button pos, Button neg, String trxUuid, Runnable onDone) {
+      SyncSettings cfg = this.syncCfg();
+      (new Thread(() -> {
+         SyncApi api = new SyncApi(cfg);
+         TertundaRows.ResumeOutcome resumed = null;
+         String err = null;
+         boolean stale = false;
+         try {
+            JSONObject body = new JSONObject();
+            body.put("transaction_uuid", trxUuid);
+            resumed = TertundaRows.parseResume(api.resumeTertunda(body).toString());
+         } catch (SyncApi.SyncException se) {
+            stale = TertundaRows.isStaleCode(se.code);
+            err = se.serverMessage() != null ? se.serverMessage() : "Gagal melanjutkan (kode " + se.code + ").";
+         } catch (Exception e) {
+            err = "Gagal melanjutkan — periksa koneksi internet.";
+         }
+         String openErr = resumed != null ? this.openAfterResume(api, trxUuid, resumed, cfg.getDeviceUuid()) : null;
+         final TertundaRows.ResumeOutcome resumedF = resumed;
+         final String errF = err;
+         final boolean staleF = stale;
+         final String openErrF = openErr;
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            if (resumedF == null) {
+               Toast.makeText(this, errF, 1).show();
+               if (staleF) {
+                  dialog.dismiss();
+                  this.markTertundaServerTouched(trxUuid, true);
+                  this.afterTertundaServerChange();
+                  if (onDone != null) onDone.run();
+               } else {
+                  rearmTertundaConfirm(dialog, pos, neg, "Lanjutkan & Jadikan Terbuka");
+               }
+               return;
+            }
+            Toast.makeText(this, openErrF == null ? "Order dilanjutkan & dijadikan Pesanan Terbuka."
+                  : "Order dilanjutkan, tetapi gagal dijadikan terbuka: " + openErrF, 1).show();
             dialog.dismiss();
             this.markTertundaServerTouched(trxUuid, true);
             this.afterTertundaServerChange();
