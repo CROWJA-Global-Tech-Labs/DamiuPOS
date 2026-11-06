@@ -1164,6 +1164,24 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       rbOpen.setId(View.generateViewId());
       rg.addView(rbMine);
       rg.addView(rbCustom);
+      // Setelan Custom ada di popup sendiri; di sini cukup ringkasannya.
+      final LinearLayout customSum = new LinearLayout(this);
+      customSum.setOrientation(LinearLayout.HORIZONTAL);
+      customSum.setGravity(android.view.Gravity.CENTER_VERTICAL);
+      customSum.setPadding(this.dp(32f), 0, 0, this.dp(4f));
+      customSum.setVisibility(View.GONE);
+      final TextView tvCustomSum = new TextView(this);
+      tvCustomSum.setTextSize(13f);
+      tvCustomSum.setTextColor(this.getColor(R.color.primary));
+      customSum.addView(tvCustomSum, new LinearLayout.LayoutParams(0, -2, 1f));
+      TextView btCustomEdit = new TextView(this);
+      btCustomEdit.setText("Ubah");
+      btCustomEdit.setTextSize(14f);
+      btCustomEdit.setTypeface(null, android.graphics.Typeface.BOLD);
+      btCustomEdit.setTextColor(this.getColor(R.color.primary));
+      btCustomEdit.setPadding(this.dp(12f), this.dp(8f), this.dp(4f), this.dp(8f));
+      customSum.addView(btCustomEdit);
+      rg.addView(customSum);
       rg.addView(rbOpen);
       final android.widget.RadioButton rbOldest = new android.widget.RadioButton(this);
       rbOldest.setText("⏳ Umur Tertua (semua wilayah + Pesanan Terbuka)");
@@ -1197,7 +1215,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       final LinearLayout custom = new LinearLayout(this);
       custom.setOrientation(LinearLayout.VERTICAL);
-      custom.setPadding(this.dp(16f), 0, 0, 0);
+      custom.setPadding(pad, this.dp(8f), pad, 0);
       TextView lblKm = new TextView(this);
       lblKm.setText("Jarak perjalanan darat dari (geser ke paling kanan = tanpa batas):");
       custom.addView(lblKm);
@@ -1269,7 +1287,22 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          zoneBoxes.add(cb);
          zoneIdx.add(z.optInt("index", i));
       }
-      box.addView(custom);
+      ScrollView customScroll = new ScrollView(this);
+      customScroll.addView(custom);
+      final Runnable paintCustomSum = () -> {
+         StringBuilder sb = new StringBuilder(TakeKmRange.label(kmSlider.getValues().get(0), kmSlider.getValues().get(1)));
+         sb.append(rbFromKios.isChecked() ? " dari Kios" : " dari posisi saya");
+         sb.append("\nArah: ").append(dirPie.describe());
+         int zoneCount = 0;
+         for (android.widget.CheckBox cb : zoneBoxes) if (cb.isChecked()) zoneCount++;
+         if (zoneCount > 0) sb.append("\nWilayah perangkat: ").append(zoneCount);
+         tvCustomSum.setText(sb);
+      };
+      paintCustomSum.run();
+      final AlertDialog customDlg = (new AlertDialog.Builder(this)).setTitle("⚙️ Custom").setView(customScroll)
+            .setPositiveButton("Selesai", (DialogInterface.OnClickListener) null).create();
+      customDlg.setOnDismissListener((d) -> paintCustomSum.run());
+      btCustomEdit.setOnClickListener((v) -> customDlg.show());
 
       TextView lblGal = new TextView(this);
       lblGal.setText("Ambil berapa galon? (kosongkan = semua)");
@@ -1289,11 +1322,75 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       // Produk (slug) yang mau diambil — bawaan SEMUA terpilih; hanya berlaku untuk penjualan.
       final java.util.Set<String> takeSlugs = new java.util.HashSet<>();
       final java.util.Set<String> allSlugs = new java.util.HashSet<>();
-      android.widget.HorizontalScrollView slugRow = this.buildSlugChipRow(takeSlugs, () -> { }, true);
+      final Runnable[] capRefresh = new Runnable[]{() -> { }};
+      android.widget.HorizontalScrollView slugRow = this.buildSlugChipRow(takeSlugs, () -> capRefresh[0].run(), true);
+      final LinkedHashMap<String, EditText> capInputs = new LinkedHashMap<>();
       if (slugRow != null) {
          allSlugs.addAll(takeSlugs);
          box.addView(slugRow);
-         cbSales.setOnCheckedChangeListener((b, on) -> slugRow.setVisibility(on ? View.VISIBLE : View.GONE));
+         // Komposisi: batas galon per produk; kosong = tak dibatasi.
+         final LinearLayout capBox = new LinearLayout(this);
+         capBox.setOrientation(LinearLayout.VERTICAL);
+         TextView lblCap = new TextView(this);
+         lblCap.setText("Komposisi per produk (galon, kosongkan = tanpa batas):");
+         lblCap.setPadding(0, this.dp(4f), 0, 0);
+         capBox.addView(lblCap);
+         LinearLayout capRow = new LinearLayout(this);
+         capRow.setOrientation(LinearLayout.HORIZONTAL);
+         final LinkedHashMap<String, View> capCells = new LinkedHashMap<>();
+         final TextView tvCapSum = new TextView(this);
+         tvCapSum.setTextSize(13f);
+         tvCapSum.setTextColor(this.getColor(R.color.primary));
+         android.text.TextWatcher capWatch = new android.text.TextWatcher() {
+            public void beforeTextChanged(CharSequence c, int a, int b, int d) {}
+            public void onTextChanged(CharSequence c, int a, int b, int d) {}
+            public void afterTextChanged(android.text.Editable e) { capRefresh[0].run(); }
+         };
+         for (Product pr : new ProductDao(DatabaseHelper.getInstance(this)).getAll()) {
+            String slug = pr.getSlug() != null ? pr.getSlug().trim() : "";
+            String key = slug.toUpperCase(Locale.US);
+            if (slug.isEmpty() || capInputs.containsKey(key)) continue;
+            LinearLayout cell = new LinearLayout(this);
+            cell.setOrientation(LinearLayout.HORIZONTAL);
+            cell.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            cell.setPadding(0, 0, this.dp(10f), 0);
+            cell.addView(this.makeDetailBadge(slug, this.slugColor(slug, pr.getColor())));
+            EditText et = new EditText(this);
+            et.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+            et.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(4)});
+            et.setHint("–");
+            et.setMinWidth(this.dp(56f));
+            et.setGravity(android.view.Gravity.CENTER);
+            et.addTextChangedListener(capWatch);
+            cell.addView(et);
+            capRow.addView(cell);
+            capInputs.put(key, et);
+            capCells.put(key, cell);
+         }
+         android.widget.HorizontalScrollView capScroll = new android.widget.HorizontalScrollView(this);
+         capScroll.setHorizontalScrollBarEnabled(false);
+         capScroll.addView(capRow);
+         capBox.addView(capScroll);
+         capBox.addView(tvCapSum);
+         box.addView(capBox);
+         capRefresh[0] = () -> {
+            int sum = 0;
+            for (Map.Entry<String, EditText> e : capInputs.entrySet()) {
+               boolean on = takeSlugs.contains(e.getKey());
+               capCells.get(e.getKey()).setVisibility(on ? View.VISIBLE : View.GONE);
+               String v = e.getValue().getText().toString().trim();
+               if (on && !v.isEmpty()) sum += Integer.parseInt(v);
+            }
+            String total = etGal.getText().toString().trim();
+            int cap = total.isEmpty() || total.length() > 6 ? 0 : Integer.parseInt(total);
+            tvCapSum.setVisibility(sum > 0 ? View.VISIBLE : View.GONE);
+            tvCapSum.setText("Total komposisi: " + sum + " galon" + (cap > 0 && sum > cap ? " · batas " + cap + " galon tetap berlaku" : ""));
+         };
+         etGal.addTextChangedListener(capWatch);
+         cbSales.setOnCheckedChangeListener((b, on) -> {
+            slugRow.setVisibility(on ? View.VISIBLE : View.GONE);
+            capBox.setVisibility(on ? View.VISIBLE : View.GONE);
+         });
       }
       box.addView(cbPickup);
       final android.widget.CheckBox cbComplained = new android.widget.CheckBox(this);
@@ -1301,11 +1398,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       box.addView(cbComplained);
 
       rg.setOnCheckedChangeListener((g, id) -> {
-         custom.setVisibility(id == rbCustom.getId() ? View.VISIBLE : View.GONE);
+         customSum.setVisibility(id == rbCustom.getId() ? View.VISIBLE : View.GONE);
          oldest.setVisibility(id == rbOldest.getId() ? View.VISIBLE : View.GONE);
+         if (id == rbCustom.getId()) customDlg.show();
       });
       rbMine.setChecked(true);
-      custom.setVisibility(View.GONE);
 
       ScrollView sv = new ScrollView(this);
       sv.addView(box);
@@ -1377,6 +1474,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                return;
             }
             if (takeSlugs.size() < allSlugs.size()) body.put("slugs", new JSONArray(takeSlugs));
+            JSONObject caps = new JSONObject();
+            for (Map.Entry<String, EditText> e : capInputs.entrySet()) {
+               String capVal = e.getValue().getText().toString().trim();
+               if (!capVal.isEmpty() && takeSlugs.contains(e.getKey())) caps.put(e.getKey(), Integer.parseInt(capVal));
+            }
+            if (cbSales.isChecked() && caps.length() > 0) body.put("slug_caps", caps);
             String g = etGal.getText().toString().trim();
             if (!g.isEmpty()) body.put("max_galon", Integer.parseInt(g));
             body.put("include_sales", cbSales.isChecked());
