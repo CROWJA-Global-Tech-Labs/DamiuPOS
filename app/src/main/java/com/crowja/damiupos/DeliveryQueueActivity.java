@@ -2149,8 +2149,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       menu.getMenu().add(0, 1, 0, "\ud83d\udd13 Lepas " + picked.size() + " order (jadi Pesanan Terbuka)");
       menu.getMenu().add(0, 2, 1, "\ud83d\udcf2 Alihkan " + picked.size() + " order ke perangkat lain");
       menu.getMenu().add(0, 3, 2, "\ud83e\udded Alihkan " + picked.size() + " order sesuai wilayahnya");
-      menu.getMenu().add(0, 4, 3, "🗑️ Void " + picked.size() + " order (persetujuan)");
+      menu.getMenu().add(0, 5, 3, "🕒 Jadwalkan Ulang " + picked.size() + " order");
+      menu.getMenu().add(0, 4, 4, "🗑️ Void " + picked.size() + " order (persetujuan)");
       menu.setOnMenuItemClickListener((item) -> {
+         if (item.getItemId() == 5) {
+            this.pickResumeSchedule((cal) -> this.confirmBulkPostpone(picked, cal));
+            return true;
+         }
          if (item.getItemId() == 4) {
             List<String[]> items = new ArrayList<>();
             for (Transaction t : picked) items.add(new String[]{this.trxUuid(t), safe(t.getCustomerName())});
@@ -13374,6 +13379,133 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          });
       });
       dialog.show();
+   }
+
+   /** Dialog Jadwalkan Ulang massal: satu jadwal, alasan (preset), foto kendaraan bila perlu; ketuk dua kali. */
+   private void confirmBulkPostpone(List<Transaction> picked, Calendar resume) {
+      String resumeLabel = new SimpleDateFormat("EEEE, d MMM yyyy HH:mm", new Locale("id", "ID")).format(resume.getTime());
+
+      LinearLayout root = new LinearLayout(this);
+      root.setOrientation(1);
+      int pad = this.dp(16.0F);
+      root.setPadding(pad, this.dp(8.0F), pad, this.dp(4.0F));
+
+      TextView hint = new TextView(this);
+      hint.setText(picked.size() + " order akan keluar dari antrian aktif dan kembali otomatis pada:\n\n" + resumeLabel
+            + "\n\nPelanggan diberi tahu lewat WA, bertahap bila akun WA sedang jeda. Order yang sedang diantar dilewati.\n\n"
+            + this.numberedNames(picked));
+      hint.setTextSize(13.0F);
+      root.addView(hint);
+
+      EditText reason = new EditText(this);
+      reason.setHint("Alasan menjadwalkan ulang (opsional)…");
+      reason.setInputType(147457);
+      reason.setMinLines(2);
+      LinearLayout.LayoutParams reasonLp = new LinearLayout.LayoutParams(-1, -2);
+      reasonLp.topMargin = this.dp(10.0F);
+      reason.setLayoutParams(reasonLp);
+      root.addView(reason);
+      root.addView(DeliveryVoidDialog.buildQuickReasonRow(this, reason, RESCHEDULE_REASON_PRESETS));
+      root.addView(this.buildPostponePhotoRow(reason));
+
+      ScrollView scroll = new ScrollView(this);
+      scroll.addView(root);
+
+      AlertDialog dialog = (new AlertDialog.Builder(this)).setIcon(17301543).setTitle("Jadwalkan Ulang " + picked.size() + " Order?")
+            .setCancelable(false).setView(scroll).setPositiveButton("Jadwalkan", (DialogInterface.OnClickListener) null)
+            .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
+      dialog.setOnShowListener((d) -> {
+         Button pos = dialog.getButton(-1);
+         int[] clicks = new int[]{0};
+         pos.setOnClickListener((v) -> {
+            if (++clicks[0] < 2) {
+               pos.setText("Ketuk sekali lagi");
+            } else if (needsVehiclePhoto(reason.getText().toString()) && this.postponePhotoPath == null) {
+               clicks[0] = 1;
+               Toast.makeText(this, "Foto kendaraan wajib untuk alasan \"Kendaraan bermasalah\" — ketuk 📷 Ambil Foto.", 1).show();
+            } else {
+               dialog.dismiss();
+               this.runBulkPostpone(picked, resume, reason.getText().toString().trim(), this.postponePhotoPath);
+            }
+         });
+      });
+      dialog.show();
+   }
+
+   /** Maks 50 order per panggilan server, jadi pilihan besar dikirim bertahap. */
+   private void runBulkPostpone(List<Transaction> picked, Calendar resume, String reason, String photoPath) {
+      SyncSettings cfg = this.syncCfg();
+      if (!cfg.isEnrolled()) {
+         Toast.makeText(this, "Perangkat belum terhubung ke server.", 1).show();
+         return;
+      }
+      String resumeIso = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(resume.getTime());
+      android.app.ProgressDialog wait = new android.app.ProgressDialog(this);
+      wait.setMessage("Menjadwalkan ulang " + picked.size() + " order…");
+      wait.setCancelable(false);
+      wait.show();
+      (new Thread(() -> {
+         List<String> fails = new ArrayList<>();
+         LinkedHashMap<String, String> names = new LinkedHashMap<>();
+         for (Transaction t : picked) {
+            String uuid = this.dao.getSyncUuidById(t.getId());
+            if (uuid == null || uuid.isEmpty()) fails.add(safe(t.getCustomerName()) + ": belum tersinkron ke server");
+            else names.put(uuid, safe(t.getCustomerName()));
+         }
+         List<String> uuids = new ArrayList<>(names.keySet());
+         int ok = 0, waSent = 0, waQueued = 0, waNoPhone = 0;
+         for (int at = 0; at < uuids.size(); at += 50) {
+            List<String> part = uuids.subList(at, Math.min(at + 50, uuids.size()));
+            try {
+               JSONObject body = new JSONObject();
+               body.put("transaction_uuids", new JSONArray(part));
+               body.put("resume_at", resumeIso);
+               if (!reason.isEmpty()) body.put("reason", reason);
+               putPostponePhoto(body, photoPath);
+               JSONObject r = (new SyncApi(cfg)).postponeDeliveryBulk(body);
+               JSONArray done = r.optJSONArray("postponed");
+               ok += done != null ? done.length() : 0;
+               waSent += r.optInt("wa_sent", 0);
+               waQueued += r.optInt("wa_queued", 0);
+               JSONArray noPhone = r.optJSONArray("wa_no_phone");
+               waNoPhone += noPhone != null ? noPhone.length() : 0;
+               JSONArray skipped = r.optJSONArray("skipped");
+               for (int i = 0; skipped != null && i < skipped.length(); i++) {
+                  JSONObject s = skipped.optJSONObject(i);
+                  if (s == null) continue;
+                  String why = s.optString("reason", "");
+                  fails.add(names.get(s.optString("transaction_uuid", "")) + ": "
+                        + ("running".equals(why) ? "sedang diantar" : "sudah tidak di antrean"));
+               }
+            } catch (Exception e) {
+               String m = null;
+               if (e instanceof SyncApi.SyncException) m = extractRouteErrorMessage(((SyncApi.SyncException) e).body);
+               String why = m != null ? m : "gagal — periksa koneksi";
+               for (String u : part) fails.add(names.get(u) + ": " + why);
+            }
+         }
+         final int okF = ok, sentF = waSent, queuedF = waQueued, noPhoneF = waNoPhone;
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            try { wait.dismiss(); } catch (Exception ignored) {}
+            StringBuilder sb = new StringBuilder(okF + " order dijadwalkan ulang.");
+            if (okF > 0) {
+               sb.append("\n\nWA pelanggan: ").append(sentF).append(" terkirim");
+               if (queuedF > 0) sb.append(", ").append(queuedF).append(" diantrekan dan dikirim bertahap");
+               if (noPhoneF > 0) sb.append(", ").append(noPhoneF).append(" tanpa nomor");
+               sb.append(".");
+            }
+            if (!fails.isEmpty()) {
+               sb.append("\n\nTidak diproses (").append(fails.size()).append("):");
+               for (String f : fails) sb.append("\n• ").append(f);
+            }
+            (new AlertDialog.Builder(this)).setTitle("Jadwalkan Ulang Massal").setMessage(sb.toString())
+                  .setPositiveButton("OK", (DialogInterface.OnClickListener) null).show();
+            this.exitSelectionMode();
+            SyncScheduler.syncNow(this.getApplicationContext());
+            this.loadData();
+         });
+      })).start();
    }
 
    private void doPostpone(AlertDialog dialog, Button pos, Button neg, Transaction t, Calendar resume, String reason, String photoPath) {
