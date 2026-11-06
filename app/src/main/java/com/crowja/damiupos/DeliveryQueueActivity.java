@@ -15195,6 +15195,39 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (label != null) {
          label.setText(n + " dipilih");
       }
+      this.refreshClaimSummary(open);
+   }
+
+   /** Ringkasan Tab 2/3: mode-pilih = total galon & produk order terpilih yang tampil (sasaran aksi), selain itu semua yang tampil. */
+   private void refreshClaimSummary(boolean open) {
+      TextView tv = open ? this.tvOpenSummary : this.tvOtherSummary;
+      boolean selecting = open ? this.claimSelectOpen : this.claimSelectOther;
+      int picked = 0, shown, raw, galon = 0;
+      List<List<Object[]>> rows = new ArrayList<>();
+      if (open) {
+         if (this.openDispatchAdapter == null) return;
+         shown = this.openDispatchAdapter.data.size();
+         raw = this.openDispatchAdapter.rawData.size();
+         for (Transaction t : this.openDispatchAdapter.data) {
+            if (selecting && !this.claimSelectedOpen.contains(t.getId())) continue;
+            picked++;
+            galon += Math.max(0, t.getJumlahGalon());
+            if (!DeliveryPlanner.isPickupOnly(t)) rows.add(this.typedRows(t));
+         }
+      } else {
+         if (this.otherDevicesAdapter == null) return;
+         shown = this.otherDevicesAdapter.data.size();
+         raw = this.otherDevicesAdapter.rawData.size();
+         for (JSONObject o : this.otherDevicesAdapter.data) {
+            if (selecting && !this.claimSelectedOther.contains(o.optString("uuid", ""))) continue;
+            picked++;
+            galon += Math.max(0, o.optInt("galon", 0));
+            if (!o.optBoolean("pickup_only", false)) rows.add(this.typedRows(o));
+         }
+      }
+      this.setTabSummary(tv, shown, raw, galon);
+      if (selecting && tv != null && raw > 0) tv.setText(picked + " dari " + shown + " order dipilih" + galonSuffix(galon));
+      this.setTabSummaryBadges(tv, rows);
    }
 
    /** Ketuk kartu saat mode-pilih aktif → masuk/keluar pilihan. */
@@ -15805,17 +15838,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
          this.notifyDataSetChanged();
          DeliveryQueueActivity.this.updateOtherEmptyState();
-         int galon = 0;
-         for (JSONObject o : this.data) {
-            galon += Math.max(0, o.optInt("galon", 0));
-         }
-         DeliveryQueueActivity.this.setTabSummary(DeliveryQueueActivity.this.tvOtherSummary,
-               this.data.size(), this.rawData.size(), galon);
-         List<List<Object[]>> rowsOther = new ArrayList<>();
-         for (JSONObject o : this.data) {
-            if (!o.optBoolean("pickup_only", false)) rowsOther.add(DeliveryQueueActivity.this.typedRows(o));
-         }
-         DeliveryQueueActivity.this.setTabSummaryBadges(DeliveryQueueActivity.this.tvOtherSummary, rowsOther);
+         DeliveryQueueActivity.this.refreshClaimSummary(false);
       }
 
       private double distanceKmOf(JSONObject o) {
@@ -16383,13 +16406,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
          this.notifyDataSetChanged();
          DeliveryQueueActivity.this.updateOpenEmptyState();
-         DeliveryQueueActivity.this.setTabSummary(DeliveryQueueActivity.this.tvOpenSummary,
-               this.data.size(), this.rawData.size(), DeliveryQueueActivity.totalGalonOf(this.data));
-         List<List<Object[]>> rowsOpen = new ArrayList<>();
-         for (Transaction t : this.data) {
-            if (!DeliveryPlanner.isPickupOnly(t)) rowsOpen.add(DeliveryQueueActivity.this.typedRows(t));
-         }
-         DeliveryQueueActivity.this.setTabSummaryBadges(DeliveryQueueActivity.this.tvOpenSummary, rowsOpen);
+         DeliveryQueueActivity.this.refreshClaimSummary(true);
       }
 
       void refreshTimers() {
