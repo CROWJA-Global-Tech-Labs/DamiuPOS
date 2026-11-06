@@ -275,6 +275,20 @@
                     android:textSize="12sp"
                     android:textStyle="bold"
                     android:visibility="gone" />
+                <!-- Hanya kartu rit berjalan (QueueAdapter): kurir gagal menyerahkan order. -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnRunFailed"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:minHeight="48dp"
+                    android:text="❌ Gagal &amp; Jadwalkan Ulang"
+                    android:textAllCaps="false"
+                    android:textColor="#B91C1C"
+                    android:textSize="12sp"
+                    android:visibility="gone"
+                    app:strokeColor="#B91C1C" />
             </LinearLayout>
 
             <!-- ⋮ Lainnya (Preview Peta + Foto, lihat showOtherDeviceMoreMenu) — menggantikan tombol

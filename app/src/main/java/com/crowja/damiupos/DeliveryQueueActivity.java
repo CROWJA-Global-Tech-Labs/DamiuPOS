@@ -106,6 +106,7 @@ import com.crowja.damiupos.util.DeliveryProofPolicy;
 import com.crowja.damiupos.util.OrderChatEntry;
 import com.crowja.damiupos.util.RemoteCompleteLogic;
 import com.crowja.damiupos.util.PickupNearbyLogic;
+import com.crowja.damiupos.util.FailingStops;
 import com.crowja.damiupos.util.SejalurPlanLogic;
 import com.crowja.damiupos.util.TakeKmRange;
 import com.crowja.damiupos.util.TertundaRows;
@@ -149,6 +150,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    public static final String EXTRA_FOCUS_TRX_ID = "focus_trx_id";
    /** Dari panel navigasi "✅ Selesai": jalankan alur penyelesaian order ini, lalu lanjut ke titik berikutnya. */
    public static final String EXTRA_COMPLETE_TRX_ID = "complete_trx_id";
+   /** Panel navigasi "❌ Gagal": buka dialog Gagal & Jadwalkan Ulang untuk order ini. */
+   public static final String EXTRA_FAIL_TRX_ID = "fail_trx_id";
    /** 📥 "Ambil" dari peringatan Galon Kembali di sekitar rute (notifikasi PickupNearbyMonitor / pita panel
     *  navigasi): order KEMBALI ini langsung masuk alur Selesai pickup (klaim/ambil alih dulu bila bukan milik HP ini). */
    public static final String EXTRA_NEARBY_PICKUP_UUID = "nearby_pickup_uuid";
@@ -182,6 +185,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private boolean wizardActive = false;
    private boolean wizardAdvancePending = false;
    private long pendingCompleteTrxId = -1L;
+   private long pendingFailTrxId = -1L;
+   /** Order yang gagal dari panel navigasi: sesudah terkirim, navigasi lanjut ke titik berikutnya. */
+   private long wizardFailId = -1L;
    /** Ekstra "📥 Ambil" galon kembali yang menunggu diproses di onResume (setelah loadData). */
    private Bundle pendingNearbyPickup;
    /** Order KEMBALI yang Selesai-nya dari "📥 Ambil": konfirmasi umum dilewati → langsung askPickupOutcome. */
@@ -413,6 +419,34 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private String pendingPostponeCameraPath;
    private android.widget.ImageView postponePhotoThumb;
    private TextView postponePhotoStatus;
+   /** Isian dialog Gagal & Jadwalkan Ulang — dibuka kembali bila activity dibunuh sistem saat kamera berjalan. */
+   private long failDraftTrxId = -1L;
+   private long failDraftResumeMs;
+   private EditText failDraftReasonField;
+   private String failDraftReason;
+   private boolean failDraftRestore;
+   /** Isian yang dibatalkan: dipakai lagi kalau order yang sama dilaporkan lagi (mis. sinyal hilang di lokasi). */
+   private long failKeepTrxId = -1L;
+   private String failKeepReason;
+   private String failKeepPhoto;
+   private long lastFailTapAt;
+   /** Jawaban server yang tiba saat activity pengirimnya sudah tertutup; diambil activity berikutnya. */
+   private static volatile FailResult sFailResult;
+
+   private static final class FailResult {
+      final long id;
+      final String name, uuid, message, photoPath;
+      final JSONObject wa;
+
+      FailResult(long id, String name, String uuid, String message, JSONObject wa, String photoPath) {
+         this.id = id;
+         this.name = name;
+         this.uuid = uuid;
+         this.message = message;
+         this.wa = wa;
+         this.photoPath = photoPath;
+      }
+   }
    private static final int REQ_PROOF_CAMERA = 7402;
    private static final int REQ_PERM_PROOF_CAMERA = 7403;
    private static final Pattern ITEM_LABEL_PATTERN;
@@ -455,6 +489,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (savedInstanceState == null && this.getIntent() != null) {
          this.pendingFocusTrxId = this.getIntent().getLongExtra(EXTRA_FOCUS_TRX_ID, -1L);
          this.pendingCompleteTrxId = this.getIntent().getLongExtra(EXTRA_COMPLETE_TRX_ID, -1L);
+         if ((this.getIntent().getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0) {
+            this.pendingFailTrxId = this.getIntent().getLongExtra(EXTRA_FAIL_TRX_ID, -1L);
+         }
          this.pendingNearbyPickup = nearbyPickupExtras(this.getIntent());
          this.pendingSejalur = sejalurExtras(this.getIntent());
       }
@@ -464,6 +501,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.pendingProofPath = savedInstanceState.getString("proof_path");
          this.wizardActive = savedInstanceState.getBoolean("wizard_active", false);
          this.wizardCompleteId = savedInstanceState.getLong("wizard_complete_id", -1L);
+         this.wizardFailId = savedInstanceState.getLong("wizard_fail_id", -1L);
+         this.pendingPostponeCameraPath = savedInstanceState.getString("postpone_camera_path");
+         this.failDraftTrxId = savedInstanceState.getLong("fail_draft_trx_id", -1L);
+         if (this.failDraftTrxId > 0L) {
+            this.failDraftResumeMs = savedInstanceState.getLong("fail_draft_resume_ms");
+            this.failDraftReason = savedInstanceState.getString("fail_draft_reason");
+            this.postponePhotoPath = savedInstanceState.getString("fail_draft_photo");
+            this.failDraftRestore = true;
+         }
       }
 
       Toolbar toolbar = (Toolbar)this.findViewById(id.toolbar);
@@ -2455,6 +2501,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.loadData();
       this.openPendingFocus();
       this.openPendingComplete();
+      this.openPendingFail();
+      this.consumeFailResult();
+      this.restoreFailDraft();
       this.openPendingNearbyPickup();
       this.openPendingSejalur();
       this.loadOtherDevices();
@@ -2530,7 +2579,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          if (grantResults.length > 0 && grantResults[0] == 0) {
             this.launchPostponeCamera();
          } else {
-            Toast.makeText(this, "Izin kamera ditolak — foto kendaraan tidak bisa diambil.", 1).show();
+            if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA)) {
+               Toast.makeText(this, "Izin kamera ditolak — foto tidak bisa diambil.", 1).show();
+            } else {
+               (new AlertDialog.Builder(this)).setTitle("Izin kamera mati")
+                     .setMessage("Foto wajib diambil dengan kamera. Izinkan kamera untuk aplikasi ini di Pengaturan, lalu coba lagi.")
+                     .setPositiveButton("Buka Pengaturan", (d, w) -> this.startActivity(new Intent(
+                           android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + this.getPackageName()))))
+                     .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).show();
+            }
          }
       }
 
@@ -2558,6 +2615,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       out.putString("proof_path", this.pendingProofPath);
       out.putBoolean("wizard_active", this.wizardActive);
       out.putLong("wizard_complete_id", this.wizardCompleteId);
+      out.putLong("wizard_fail_id", this.wizardFailId);
+      out.putString("postpone_camera_path", this.pendingPostponeCameraPath);
+      out.putLong("fail_draft_trx_id", this.failDraftTrxId);
+      if (this.failDraftTrxId > 0L) {
+         out.putLong("fail_draft_resume_ms", this.failDraftResumeMs);
+         out.putString("fail_draft_reason", this.failDraftReasonField != null
+               ? this.failDraftReasonField.getText().toString() : this.failDraftReason);
+         out.putString("fail_draft_photo", this.postponePhotoPath);
+      }
    }
 
    private void loadData() {
@@ -5863,6 +5929,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private void applyList(List<Transaction> list) {
+      this.consumeFailResult();
       if (this.isRunning()) {
          HashSet<Long> alive = new HashSet();
 
@@ -5873,7 +5940,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          List<Long> gone = new ArrayList();
 
          for(Long id : this.runningIds) {
-            if (!alive.contains(id)) {
+            if (!alive.contains(id) && !FailingStops.contains(id)) {
                gone.add(id);
             }
          }
@@ -6594,7 +6661,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             boolean changed = false;
             for (Map.Entry<String, Long> e : byUuid.entrySet()) {
                JSONObject v = fo.optJSONObject(e.getKey());
-               if (v == null || v.optBoolean("deliverable", true) || !this.runningIds.contains(e.getValue())) continue;
+               if (v == null || v.optBoolean("deliverable", true) || !this.runningIds.contains(e.getValue())
+                     || FailingStops.contains(e.getValue())) continue;
                Transaction t = this.findInList(e.getValue());
                why.append("• ").append(t != null ? safe(t.getCustomerName()) : "Order").append(" — ").append(v.optString("message")).append('\n');
                this.dao.stopDelivery(e.getValue());
@@ -6851,8 +6919,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          menu.getMenu().add(0, 8, 7, "📷 Update Foto");
          menu.getMenu().add(0, 9, 8, "📍 Update Lokasi");
       }
+      if (canReportFailed(t)) {
+         menu.getMenu().add(0, 10, 9, FAILED_RESCHEDULE_LABEL);
+      }
       menu.setOnMenuItemClickListener((item) -> {
          switch (item.getItemId()) {
+            case 10:
+               this.startFailedReschedule(t);
+               return true;
             case 8:
                this.openQuickCapture(t, CustomerFormActivity.QUICK_PHOTO_COORD);
                return true;
@@ -10516,6 +10590,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
       long done = intent != null ? intent.getLongExtra(EXTRA_COMPLETE_TRX_ID, -1L) : -1L;
       if (done > 0L) this.pendingCompleteTrxId = done;
+      long failed = intent != null ? intent.getLongExtra(EXTRA_FAIL_TRX_ID, -1L) : -1L;
+      if (failed > 0L) this.pendingFailTrxId = failed;
       Bundle nearby = nearbyPickupExtras(intent);
       if (nearby != null) this.pendingNearbyPickup = nearby;   // diproses di onResume berikutnya
       Bundle sejalur = sejalurExtras(intent);
@@ -12787,15 +12863,28 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     */
    private View buildPostponePhotoRow(EditText reason) {
       this.postponePhotoPath = null;
+      View row = this.buildCameraPhotoRow("📷 Ambil Foto Kendaraan (wajib)",
+            "Foto akan dikirim ke pelanggan bersama pemberitahuan jadwal ulang.");
+      row.setVisibility(View.GONE);
+      reason.addTextChangedListener(new TextWatcher() {
+         public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+         public void onTextChanged(CharSequence s, int a, int b, int c) {}
+         public void afterTextChanged(Editable s) {
+            row.setVisibility(needsVehiclePhoto(s.toString()) ? View.VISIBLE : View.GONE);
+         }
+      });
+      return row;
+   }
+
+   private View buildCameraPhotoRow(String buttonText, String statusText) {
       LinearLayout row = new LinearLayout(this);
       row.setOrientation(LinearLayout.VERTICAL);
       LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
       lp.topMargin = this.dp(8.0F);
       row.setLayoutParams(lp);
-      row.setVisibility(View.GONE);
 
       com.google.android.material.button.MaterialButton btn = new com.google.android.material.button.MaterialButton(this);
-      btn.setText("📷 Ambil Foto Kendaraan (wajib)");
+      btn.setText(buttonText);
       btn.setAllCaps(false);
       btn.setOnClickListener((v) -> this.launchPostponeCamera());
       row.addView(btn);
@@ -12810,18 +12899,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       TextView status = new TextView(this);
       status.setTextSize(12.0F);
-      status.setText("Foto akan dikirim ke pelanggan bersama pemberitahuan jadwal ulang.");
+      status.setText(statusText);
       row.addView(status);
 
       this.postponePhotoThumb = thumb;
       this.postponePhotoStatus = status;
-      reason.addTextChangedListener(new TextWatcher() {
-         public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
-         public void onTextChanged(CharSequence s, int a, int b, int c) {}
-         public void afterTextChanged(Editable s) {
-            row.setVisibility(needsVehiclePhoto(s.toString()) ? View.VISIBLE : View.GONE);
-         }
-      });
       return row;
    }
 
@@ -12899,7 +12981,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
       String text = strJson(wa, "text");
       String phone = strJson(wa, "phone");
-      if (text.isEmpty() || !WaShare.hasUsablePhone(phone)) return;   // no_phone / tanpa pelanggan
+      if (text.isEmpty() || !WaShare.hasUsablePhone(phone)) {
+         Toast.makeText(this, "⚠️ Nomor pelanggan tidak ada atau tidak valid — pemberitahuan WA tidak terkirim.", Toast.LENGTH_LONG).show();
+         return;
+      }
       String why = "rejected".equals(status) ? "Bridge WA menolak pesan ini"
             : ("deferred".equals(status) ? "Bridge WA sedang jeda antar pesan"
             : ("disabled".equals(status) ? "Kirim otomatis WA jadwal ulang nonaktif"
@@ -12917,6 +13002,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private void showPostponeSchedulePicker(Transaction t) {
+      this.pickResumeSchedule((cal) -> this.confirmPostpone(t, cal));
+   }
+
+   private void pickResumeSchedule(java.util.function.Consumer<Calendar> onPicked) {
       Calendar cal = Calendar.getInstance();
       cal.add(5, 1);
       cal.set(11, 8);
@@ -12927,11 +13016,252 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             cal.set(11, hour);
             cal.set(12, minute);
             cal.set(13, 0);
-            this.confirmPostpone(t, cal);
+            onPicked.accept(cal);
          }, cal.get(11), cal.get(12), true)).show();
       }, cal.get(1), cal.get(2), cal.get(5));
       datePicker.getDatePicker().setMinDate(System.currentTimeMillis() - 1000L);
       datePicker.show();
+   }
+
+   // ============================ ❌ Gagal & Jadwalkan Ulang ============================
+
+   static final String FAILED_RESCHEDULE_LABEL = "❌ Gagal & Jadwalkan Ulang";
+   private static final int FAILED_TEXT_COLOR = 0xFFB91C1C;   // 6,5:1 di atas putih
+   private static final String[] FAILED_REASON_PRESETS = new String[]{"Pelanggan tidak ada di tempat", "Pelanggan tidak bisa dihubungi",
+         "Alamat tidak ditemukan", "Permintaan konsumen", "Cuaca buruk", "Kendaraan bermasalah", "Lainnya (jelaskan)"};
+
+   /** Kunjungan bukan pesanan pelanggan; order yang sedang diajukan void sudah punya alurnya sendiri. */
+   static boolean canReportFailed(Transaction t) {
+      return t != null && !t.isVisitTask() && !t.hasPendingVoidRequest();
+   }
+
+   /** Tombol kartu, menu ⋮, panel terpandu: pilih jadwal baru dulu, lalu isi alasan + foto. */
+   private void startFailedReschedule(Transaction t) {
+      long now = System.currentTimeMillis();
+      if (now - this.lastFailTapAt < 1000L) return;   // ketuk ganda tak boleh menumpuk dua pemilih tanggal
+      this.lastFailTapAt = now;
+      this.pickResumeSchedule((cal) -> {
+         if (cal.getTimeInMillis() <= System.currentTimeMillis()) {
+            Toast.makeText(this, "Jadwal baru harus setelah waktu sekarang.", Toast.LENGTH_LONG).show();
+            this.lastFailTapAt = 0L;
+            this.startFailedReschedule(t);
+            return;
+         }
+         boolean kept = this.failKeepTrxId == t.getId();
+         this.postponePhotoPath = kept && this.failKeepPhoto != null && (new File(this.failKeepPhoto)).exists() ? this.failKeepPhoto : null;
+         this.showFailedRescheduleDialog(t, cal, kept && this.failKeepReason != null ? this.failKeepReason : "");
+      });
+   }
+
+   /** Panel navigasi "❌ Gagal": sama dengan tombol kartu, lalu navigasi lanjut ke titik berikutnya. */
+   private void openPendingFail() {
+      long id = this.pendingFailTrxId;
+      if (id <= 0L) return;
+      this.pendingFailTrxId = -1L;
+      Transaction t = this.findQueueTrx(id);
+      if (t == null) t = this.findOwnQueueTrxFromDb(id);
+      if (t == null || !this.runningIds.contains(id)) {
+         Toast.makeText(this, "Order itu sudah tidak ada di rit ini.", Toast.LENGTH_LONG).show();
+         return;
+      }
+      if (!canReportFailed(t)) {
+         Toast.makeText(this, "Order ini tidak bisa dilaporkan gagal.", Toast.LENGTH_LONG).show();
+         return;
+      }
+      if (!this.guidedMode) {
+         this.wizardActive = true;
+         this.wizardFailId = id;
+      }
+      this.startFailedReschedule(t);
+   }
+
+   /** Activity dibunuh saat kamera berjalan: buka lagi dialognya dengan isian & foto yang sudah ada. */
+   private void restoreFailDraft() {
+      if (!this.failDraftRestore) return;
+      this.failDraftRestore = false;
+      long id = this.failDraftTrxId;
+      Transaction t = this.findOwnQueueTrxFromDb(id);
+      // Sedang terkirim oleh activity sebelumnya: hasilnya menyusul lewat consumeFailResult, jangan dibuka dua kali.
+      if (t == null || !this.runningIds.contains(id) || FailingStops.contains(id)) {
+         this.failDraftTrxId = -1L;
+         return;
+      }
+      Calendar resume = Calendar.getInstance();
+      resume.setTimeInMillis(this.failDraftResumeMs);
+      this.showFailedRescheduleDialog(t, resume, this.failDraftReason != null ? this.failDraftReason : "");
+   }
+
+   private void showFailedRescheduleDialog(Transaction t, Calendar resume, String reasonText) {
+      SimpleDateFormat fmt = new SimpleDateFormat("EEEE, d MMM yyyy HH:mm", new Locale("id", "ID"));
+
+      LinearLayout root = new LinearLayout(this);
+      root.setOrientation(LinearLayout.VERTICAL);
+      int pad = this.dp(16.0F);
+      root.setPadding(pad, this.dp(8.0F), pad, this.dp(4.0F));
+
+      TextView hint = new TextView(this);
+      hint.setText("Order \"" + safe(t.getCustomerName()) + "\" keluar dari rit ini dan kembali ke antrean pada:\n\n"
+            + fmt.format(resume.getTime()) + "\n\nPelanggan otomatis menerima WA berisi jadwal baru, alasan, dan foto ini.");
+      hint.setTextSize(13.0F);
+      root.addView(hint);
+
+      EditText reason = new EditText(this);
+      reason.setHint("Alasan gagal (wajib)…");
+      reason.setInputType(147457);
+      reason.setMinLines(2);
+      reason.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(255)});
+      reason.setText(reasonText);
+      LinearLayout.LayoutParams reasonLp = new LinearLayout.LayoutParams(-1, -2);
+      reasonLp.topMargin = this.dp(10.0F);
+      reason.setLayoutParams(reasonLp);
+      root.addView(reason);
+      root.addView(DeliveryVoidDialog.buildQuickReasonRow(this, reason, FAILED_REASON_PRESETS));
+      root.addView(this.buildCameraPhotoRow("📷 Ambil Foto Bukti (wajib)", "Foto ikut dikirim ke pelanggan."));
+      if (this.postponePhotoPath != null && this.postponePhotoThumb != null) {
+         this.postponePhotoThumb.setImageBitmap(com.crowja.damiupos.util.BitmapUtils.decodeSampled(this.postponePhotoPath, 600, 600));
+         this.postponePhotoThumb.setVisibility(View.VISIBLE);
+         this.postponePhotoStatus.setText("✓ Foto terlampir — ketuk tombol di atas untuk mengulang.");
+      }
+
+      ScrollView scroll = new ScrollView(this);
+      scroll.addView(root);
+      this.failDraftTrxId = t.getId();
+      this.failDraftResumeMs = resume.getTimeInMillis();
+      this.failDraftReasonField = reason;
+
+      AlertDialog dialog = (new AlertDialog.Builder(this)).setTitle(FAILED_RESCHEDULE_LABEL).setCancelable(false).setView(scroll)
+            .setPositiveButton("Gagal & Jadwalkan", (DialogInterface.OnClickListener) null)
+            .setNegativeButton("Batal", (d, w) -> {
+               FailingStops.remove(t.getId());
+               this.failKeepTrxId = t.getId();
+               this.failKeepReason = reason.getText().toString();
+               this.failKeepPhoto = this.postponePhotoPath;
+               this.clearFailDraft();
+            }).create();
+      dialog.setOnShowListener((d) -> {
+         Button pos = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+         int[] clicks = new int[]{0};
+         pos.setOnClickListener((v) -> {
+            String why = reason.getText().toString().trim();
+            if (why.isEmpty()) {
+               Toast.makeText(this, "Alasan gagal wajib diisi.", Toast.LENGTH_LONG).show();
+            } else if (this.postponePhotoPath == null) {
+               Toast.makeText(this, "Foto bukti wajib — ketuk 📷 Ambil Foto.", Toast.LENGTH_LONG).show();
+            } else if (++clicks[0] < 2) {
+               pos.setText("Ketuk sekali lagi");
+            } else {
+               this.doFailedReschedule(dialog, pos, dialog.getButton(AlertDialog.BUTTON_NEGATIVE), t, resume, why, this.postponePhotoPath, clicks);
+            }
+         });
+      });
+      dialog.show();
+   }
+
+   private void clearFailDraft() {
+      this.failDraftTrxId = -1L;
+      this.failDraftReasonField = null;
+      this.failDraftReason = null;
+      this.wizardFailId = -1L;
+   }
+
+   private void doFailedReschedule(AlertDialog dialog, Button pos, Button neg, Transaction t, Calendar resume, String reason,
+                                   String photoPath, int[] clicks) {
+      final long id = t.getId();
+      String uuid = this.dao.getSyncUuidById(id);
+      if (uuid == null || uuid.isEmpty()) {
+         Toast.makeText(this, "Order ini belum tersinkron ke server. Coba lagi sebentar.", Toast.LENGTH_LONG).show();
+         return;
+      }
+      pos.setEnabled(false);
+      pos.setText("Mengirim…");
+      if (neg != null) neg.setEnabled(false);
+      SyncSettings cfg = this.syncCfg();
+      String resumeAt = (new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)).format(resume.getTime());
+      // Sinkron yang mendarat selagi permintaan berjalan tak boleh membunyikan alarm "order hilang".
+      FailingStops.add(id);
+      (new Thread(() -> {
+         String okMsg = null;
+         String errMsg = null;
+         JSONObject wa = null;
+         boolean refused = false;   // server menjawab tegas; selain itu hasilnya belum tentu (sudah tersimpan?)
+         try {
+            byte[] bytes = java.nio.file.Files.readAllBytes(new File(photoPath).toPath());
+            JSONObject body = new JSONObject();
+            body.put("transaction_uuid", uuid);
+            body.put("resume_at", resumeAt);
+            body.put("reason", reason);
+            body.put("photo_base64", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP));
+            JSONObject r = (new SyncApi(cfg)).failDelivery(body);
+            okMsg = r.optString("message", "Order dijadwalkan ulang.");
+            wa = r.optJSONObject("wa");
+            // Ditulis di sini, bukan di utas UI: activity bisa sudah tertutup saat jawaban tiba.
+            this.dao.mirrorFailedReschedule(id, resumeAt, reason);
+            SettingsDao settings = new SettingsDao(DatabaseHelper.getInstance(this));
+            java.util.LinkedHashSet<Long> running = settings.getDeliveryRunningTrxIds();
+            if (running.remove(id)) settings.setDeliveryRunningTrxIds(running);
+         } catch (java.io.IOException e) {
+            errMsg = "Foto tidak terbaca atau koneksi terputus — coba lagi.";
+         } catch (SyncApi.SyncException se) {
+            refused = se.code >= 400 && se.code < 500;
+            errMsg = extractRouteErrorMessage(se.body);
+            if (errMsg == null) errMsg = "Gagal menjadwalkan ulang (kode " + se.code + ").";
+         } catch (Exception e) {
+            errMsg = "Gagal menjadwalkan ulang — periksa koneksi internet.";
+         }
+         final String fOk = okMsg;
+         final String fErr = errMsg;
+         final JSONObject fWa = wa;
+         final boolean fRefused = refused;
+         final android.content.Context app = this.getApplicationContext();
+         this.runOnUiThread(() -> {
+            if (this.isFinishing() || this.isDestroyed()) {
+               if (fOk != null) {
+                  sFailResult = new FailResult(id, safe(t.getCustomerName()), uuid, fOk, fWa, photoPath);
+               } else {
+                  FailingStops.remove(id);
+                  Toast.makeText(app, fErr, Toast.LENGTH_LONG).show();
+               }
+               return;
+            }
+            if (fOk != null) {
+               this.afterFailedReschedule(dialog, id, safe(t.getCustomerName()), uuid, fOk, fWa, photoPath);
+            } else {
+               if (fRefused) FailingStops.remove(id);
+               Toast.makeText(this, fErr, Toast.LENGTH_LONG).show();
+               clicks[0] = 0;
+               pos.setEnabled(true);
+               pos.setText("Gagal & Jadwalkan");
+               if (neg != null) neg.setEnabled(true);
+            }
+         });
+      })).start();
+   }
+
+   private void consumeFailResult() {
+      FailResult r = sFailResult;
+      if (r == null) return;
+      sFailResult = null;
+      this.afterFailedReschedule(null, r.id, r.name, r.uuid, r.message, r.wa, r.photoPath);
+   }
+
+   /** Sama dengan akhir alur Selesai: stop keluar dari rit, navigasi per titik lanjut, stop terakhir menutup rit. */
+   private void afterFailedReschedule(@Nullable AlertDialog dialog, long id, String name, String uuid, String message, JSONObject wa, String photoPath) {
+      boolean fromPanel = id == this.wizardFailId;
+      if (dialog != null) dialog.dismiss();
+      if (this.failDraftTrxId == id) this.clearFailDraft();
+      if (this.failKeepTrxId == id) this.failKeepTrxId = -1L;
+      this.runningIds.remove(id);
+      this.persistRunning();
+      FailingStops.remove(id);
+      forgetWizardSkip(this, id);
+      Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+      SyncScheduler.syncNow(this.getApplicationContext());
+      this.loadData();
+      this.afterPostponeWa(name, uuid, wa, photoPath);
+      if (!this.guidedMode && this.wizardActive && (fromPanel || NavigationPipActivity.isLive())) {
+         this.wizardAdvancePending = true;
+         this.tryWizardAdvance();
+      }
    }
 
    private void confirmPostpone(Transaction t, Calendar resume) {
@@ -14559,6 +14889,19 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       btnNewTrx.setLayoutParams(lp4);
       btnNewTrx.setOnClickListener((v) -> this.launchGuidedJualAirMinum());
       row2.addView(btnNewTrx);
+      Transaction guidedStop = this.findQueueTrx(trxId);
+      if (guidedStop != null && this.runningIds.contains(trxId) && canReportFailed(guidedStop)) {
+         MaterialButton btnFailed = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+         btnFailed.setText(FAILED_RESCHEDULE_LABEL);
+         btnFailed.setAllCaps(false);
+         btnFailed.setTextColor(FAILED_TEXT_COLOR);
+         btnFailed.setStrokeColor(android.content.res.ColorStateList.valueOf(FAILED_TEXT_COLOR));
+         btnFailed.setOnClickListener((v) -> {
+            Transaction t = this.findQueueTrx(trxId);
+            if (canReportFailed(t)) this.startFailedReschedule(t);
+         });
+         actionBar.addView(btnFailed, new LinearLayout.LayoutParams(-1, -2));
+      }
       this.guidedPanel.addView(actionBar);
 
       final WebView webView = webViewOut[0];
@@ -15710,6 +16053,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          h.tvCustomer.setText(voidPending ? DeliveryQueueActivity.safe(t.getCustomerName()) : (t.isVisitTask() ? "📞 " : "") + (t.isOpenDispatch() ? "\ud83c\udfb2 " : "") + (t.isSelfOrder() ? "\ud83d\udecd️ " : "") + (t.isResellerOrder() ? "🤝 " : "") + (t.requiresDeliveryProof() ? "📷 " : "") + (t.isCustomerPriority() ? "⭐ " : "") + (t.isCustomerDataIncomplete() ? "❗ " : "") + (t.isComplained() ? "\ud83d\ude20 " : "") + DeliveryQueueActivity.safe(t.getCustomerName()));
          int flags = h.tvCustomer.getPaintFlags();
          h.tvCustomer.setPaintFlags(voidPending ? flags | 16 : flags & -17);
+         boolean showFailed = full && DeliveryQueueActivity.canReportFailed(t);
+         h.btnRunFailed.setVisibility(showFailed ? View.VISIBLE : View.GONE);
+         if (showFailed) h.btnRunFailed.setOnClickListener((v) -> DeliveryQueueActivity.this.startFailedReschedule(t));
          if (voidPending) {
             h.tvPriorityBig.setVisibility(8);
             h.tvPriorityBig.clearAnimation();
@@ -15910,6 +16256,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          TextView tvOrderNote;
          MaterialButton btnMore;
          MaterialButton btnTakeOver;
+         MaterialButton btnRunFailed;
          LinearLayout productChips;
          String jarakLabel;
 
@@ -15931,6 +16278,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.tvElapsed = (TextView)v.findViewById(id.tvElapsed);
             this.btnMore = (MaterialButton)v.findViewById(id.btnMore);
             this.btnTakeOver = (MaterialButton)v.findViewById(id.btnTakeOver);
+            this.btnRunFailed = (MaterialButton)v.findViewById(id.btnRunFailed);
             this.productChips = (LinearLayout)v.findViewById(id.productChips);
          }
       }

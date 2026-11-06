@@ -1038,6 +1038,8 @@ public class NavigationPipActivity extends AppCompatActivity {
         if (btnSelesaiTitik != null) btnSelesaiTitik.setOnClickListener(v -> completeActiveStop());
         View btnLewatiTitik = findViewById(R.id.btnLewatiTitik);
         if (btnLewatiTitik != null) btnLewatiTitik.setOnClickListener(v -> skipActiveStop());
+        View btnGagalTitik = findViewById(R.id.btnGagalTitik);
+        if (btnGagalTitik != null) btnGagalTitik.setOnClickListener(v -> failActiveStop());
         findViewById(R.id.btnKembaliAntrian).setOnClickListener(v -> openQueueAndClose());
         findViewById(R.id.btnPipSettings).setOnClickListener(v -> openPipSettings());
         tvPipName.setText("Memuat…");
@@ -1213,6 +1215,8 @@ public class NavigationPipActivity extends AppCompatActivity {
             btnLanjut.setVisibility(View.GONE);
             View rowWizardGone = findViewById(R.id.rowWizard);
             if (rowWizardGone != null) rowWizardGone.setVisibility(View.GONE);
+            View btnGagalGone = findViewById(R.id.btnGagalTitik);
+            if (btnGagalGone != null) btnGagalGone.setVisibility(View.GONE);
             mediaLabel = head;
             mediaName = head;
             mediaProducts = "";
@@ -1226,6 +1230,8 @@ public class NavigationPipActivity extends AppCompatActivity {
         if (rowWizard != null) rowWizard.setVisibility(View.VISIBLE);
         View btnLewati = findViewById(R.id.btnLewatiTitik);
         if (btnLewati != null) btnLewati.setVisibility(!single && s.pendingCount > 1 ? View.VISIBLE : View.GONE);
+        View btnGagal = findViewById(R.id.btnGagalTitik);
+        if (btnGagal != null) btnGagal.setVisibility(!single && DeliveryQueueActivity.canReportFailed(t) ? View.VISIBLE : View.GONE);
 
         String name = t.getCustomerName() != null && !t.getCustomerName().trim().isEmpty()
                 ? t.getCustomerName().trim() : "Pelanggan";
@@ -1746,6 +1752,15 @@ public class NavigationPipActivity extends AppCompatActivity {
     }
 
     private void doCompleteActiveStop() {
+        openQueueForActiveStop(DeliveryQueueActivity.EXTRA_COMPLETE_TRX_ID);
+    }
+
+    /** "❌ Gagal": dialog alasan + foto ada di layar antrean, navigasi lanjut sesudah terkirim. */
+    private void failActiveStop() {
+        openQueueForActiveStop(DeliveryQueueActivity.EXTRA_FAIL_TRX_ID);
+    }
+
+    private void openQueueForActiveStop(String extra) {
         Transaction a = last != null ? last.active : null;
         if (a == null) {
             Toast.makeText(this, "Tidak ada perhentian aktif", Toast.LENGTH_SHORT).show();
@@ -1759,7 +1774,7 @@ public class NavigationPipActivity extends AppCompatActivity {
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             try {
                 app.startActivity(new Intent(app, DeliveryQueueActivity.class)
-                        .putExtra(DeliveryQueueActivity.EXTRA_COMPLETE_TRX_ID, id)
+                        .putExtra(extra, id)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
             } catch (Exception ignored) {
             }

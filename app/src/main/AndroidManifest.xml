@@ -210,7 +210,10 @@
             android:name=".AdminWebActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:windowSoftInputMode="adjustResize" />
-        <activity android:name=".DeliveryQueueActivity" />
+        <!-- configChanges: putar layar saat "Gagal & Jadwalkan Ulang" terkirim atau kamera kembali tak boleh membuang dialog & hasilnya. -->
+        <activity
+            android:name=".DeliveryQueueActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
         <!-- 🧭 Navigasi Pengiriman: ringkasan perhentian aktif MELAYANG (Picture-in-Picture) di atas
              Google Maps. taskAffinity sendiri → jendela melayang adalah task terpisah, jadi antrean
              tidak ikut mengecil; singleTask → tombol Navigasi berikutnya memakai ulang jendela yang

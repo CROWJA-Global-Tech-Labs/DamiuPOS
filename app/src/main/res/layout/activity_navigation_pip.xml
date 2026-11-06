@@ -385,6 +385,19 @@
                     android:textColor="@color/primary"
                     android:textSize="14sp" />
             </LinearLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnGagalTitik"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="6dp"
+                android:text="❌ Gagal &amp; Jadwalkan Ulang"
+                android:textAllCaps="false"
+                android:textColor="#B91C1C"
+                android:textSize="14sp"
+                android:visibility="gone"
+                app:strokeColor="#B91C1C" />
         </LinearLayout>
     </LinearLayout>
 
