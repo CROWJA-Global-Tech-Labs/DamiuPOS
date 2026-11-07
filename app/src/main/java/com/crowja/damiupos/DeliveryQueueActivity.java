@@ -6362,7 +6362,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return TransactionAdapter.paletteColor(it.productName);
    }
 
-   private static int chipTextColor(int bg) {
+   static int chipTextColor(int bg) {
       double lum = (0.299 * (double)Color.red(bg) + 0.587 * (double)Color.green(bg) + 0.114 * (double)Color.blue(bg)) / (double)255.0F;
       return lum > 0.65 ? -14735049 : -1;
    }

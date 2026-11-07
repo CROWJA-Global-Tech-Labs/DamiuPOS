@@ -64,6 +64,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
     private com.google.android.material.tabs.TabLayout deviceTabs;
     private TextView tvSummary;
     private String searchText = "";
+    private boolean salesOnly = false;
     private int filterMode = 0;   // 0 semua, 1 prioritas, 2 terlambat, 3 terbuka
     private int sortMode = 2;     // 0 jarak, 1 galon, 2 umur
     private Adapter adapter;
@@ -207,6 +208,12 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
                 applyView();
             }
         });
+        android.widget.CheckBox cbSales = new android.widget.CheckBox(this);
+        cbSales.setText("🛒 Penjualan saja");
+        cbSales.setOnCheckedChangeListener((b, on) -> { salesOnly = on; applyView(); });
+        android.widget.LinearLayout.LayoutParams clp = new android.widget.LinearLayout.LayoutParams(-2, -2);
+        clp.setMarginStart(pad);
+        header.addView(cbSales, clp);
         header.addView(chipRow(new String[]{"Semua", "⚡ Prioritas", "🚨 Terlambat", "🎲 Terbuka"}, filterMode, i -> { filterMode = i; applyView(); }));
         header.addView(chipRow(new String[]{"📍 Jarak", "🛢 Galon", "⏱ Umur"}, sortMode, i -> { sortMode = i; applyView(); }));
         tvSummary = new TextView(this);
@@ -249,6 +256,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
     }
 
     private boolean matchesView(JSONObject q) {
+        if (salesOnly && q.optBoolean("pickup_only", false)) return false;
         if (filterMode == 1 && !q.optBoolean("order_priority", false)) return false;
         if (filterMode == 2 && !isLateOrder(q)) return false;
         if (filterMode == 3 && !q.optBoolean("open_dispatch", false)) return false;
@@ -620,7 +628,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         @Override
         public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
             View v = LayoutInflater.from(parent.getContext())
-                    .inflate(R.layout.item_other_device_queue, parent, false);
+                    .inflate(R.layout.item_other_device_compact, parent, false);
             return new VH(v);
         }
 
@@ -634,132 +642,131 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
                 int pos = vh.getAdapterPosition();
                 if (pos >= 0 && pos < data.size() && vh instanceof VH) {
                     long ms = elapsedMillis(data.get(pos).optString("queued_at", null));
-                    ((VH) vh).tvQueued.setText(elapsedPrefix(ms) + formatElapsedBadge(ms));
-                    applyQueueTimerState(((VH) vh).tvQueued, ms);
+                    DeliveryQueueActivity.bindElapsedBadge(((VH) vh).tvElapsed, ms);
                 }
             }
         }
 
+        /** Kartu sama dengan tab Perangkat Lain di Antrian Delivery. */
         @Override
         public void onBindViewHolder(@NonNull VH h, int position) {
             JSONObject q = data.get(position);
-            boolean custPriority = q.optBoolean("is_priority", false);
-            boolean orderPriority = q.optBoolean("order_priority", false);
-            h.tvCustomer.setText((custPriority ? "⭐ " : "") + safe(q.optString("name", "Pelanggan")));
-
-            String phone = q.optString("phone", "");
-            if (!phone.isEmpty() && !phone.equals("null")) {
-                h.tvPhone.setText(phone);
-                h.tvPhone.setVisibility(View.VISIBLE);
-            } else {
-                h.tvPhone.setVisibility(View.GONE);
-            }
-
-            int galon = q.optInt("galon", 0);
-            double total = q.optDouble("total", 0);
-            h.tvOrder.setText(galon + " galon · Rp "
-                    + String.format(Locale.US, "%,.0f", total).replace(',', '.')
-                    + DeliveryQueueActivity.receiptSuffix(q.optString("receipt_no", ""))
-                    + DeliveryQueueActivity.orderedSuffix(q.optString("ordered_at", ""))
-                    + DeliveryQueueActivity.sourceWaSuffix(q.optString("source_wa", ""))
-                    + (q.optBoolean("in_progress", false) ? DeliveryQueueActivity.headingSuffix(q) : ""));
-
-            String items = q.optString("items", "");
-            if (!items.isEmpty() && !items.equals("null")) {
-                h.tvItems.setText(items);
-                h.tvItems.setVisibility(View.VISIBLE);
-            } else {
-                h.tvItems.setVisibility(View.GONE);
-            }
-
-            // Baris 📍 (lokasi tujuan + wilayah + jarak) di bawah nama — tujuan & jaraknya sudah
-            // di sana, jadi baris alamat tinggal menyisakan alamat jalan (order ke lokasi utama)
-            // atau penanda jemput galon.
+            DeliveryQueueActivity.bindOrderNote(h.tvOrderNote, str(q, "note"));
             String custUuid = str(q, "customer_uuid");
             Customer cust = custUuid.isEmpty() ? null : customerDao.getBySyncUuid(custUuid);
+            boolean orderPriority = q.optBoolean("order_priority", false);
+            boolean incomplete = cust != null && cust.isIncomplete();
+            h.tvCustomer.setText((orderPriority ? "⚡ " : "") + (q.optBoolean("is_priority", false) ? "⭐ " : "")
+                    + (incomplete ? "❗ " : "") + str(q, "name"));
+            bindPriority(h.tvPriorityBig, orderPriority, str(q, "order_priority_reason"));
+            DeliveryQueueActivity.bindElapsedBadge(h.tvElapsed, elapsedMillis(q.optString("queued_at", null)));
+
+            boolean delivering = q.optBoolean("in_progress", false);
+            StringBuilder meta = new StringBuilder();
+            if (delivering) meta.append("🚚 Sedang diantar").append(DeliveryQueueActivity.headingSuffix(q));
+            String dev = str(q, "device_group_label");
+            if (!dev.isEmpty()) meta.append(meta.length() > 0 ? " · " : "").append("📱 ").append(dev);
+            String phone = str(q, "phone");
+            if (!phone.isEmpty()) meta.append(meta.length() > 0 ? " · " : "").append("📞 ").append(phone);
+            meta.append(meta.length() > 0 ? " · " : "").append(q.optInt("galon", 0)).append(" galon");
+            meta.append(DeliveryQueueActivity.checkoutLegSuffix(q));
+            meta.append(DeliveryQueueActivity.receiptSuffix(str(q, "receipt_no")));
+            h.tvMeta.setText(meta.toString());
+            h.tvOngkir.setVisibility(q.optDouble("ongkir", 0) > 0 ? View.VISIBLE : View.GONE);
+            boolean pickup = q.optBoolean("pickup_only", false);
+            DeliveryQueueActivity.bindPickupOnlyBadge(h.tvPickupOnly, pickup);
+            bindChips(h.productChips, q, pickup);
             double km = distanceKmTo(q);
-            DeliveryQueueActivity.bindLocationLine(h.tvLocation, DeliveryQueueActivity.queueLocationLine(
+            DeliveryQueueActivity.bindLocationLine(h.tvAdminArea, DeliveryQueueActivity.queueLocationLine(
                     cust, q, Double.isNaN(km) ? null : formatKm(km)));
 
-            boolean pickupOnly = q.optBoolean("pickup_only", false);
-            String destName = str(q, "dest_name");
-            String address = str(q, "address");
-            StringBuilder addr = new StringBuilder();
-            if (!destName.isEmpty()) {
-                if (pickupOnly) addr.append("🪣 Ambil di: ").append(destName);
-            } else if (!address.isEmpty()) {
-                addr.append("🏠 ").append(address);
-            }
-            if (addr.length() > 0) {
-                h.tvAddress.setText(addr.toString());
-                h.tvAddress.setVisibility(View.VISIBLE);
-            } else {
-                h.tvAddress.setVisibility(View.GONE);
-            }
-
-            if (orderPriority) {
-                String why = q.optString("order_priority_reason", "");
-                h.tvPriority.setText("⚡ PRIORITAS" + (why.isEmpty() || why.equals("null") ? "" : ": " + why));
-                h.tvPriority.setVisibility(View.VISIBLE);
-            } else {
-                h.tvPriority.setVisibility(View.GONE);
-            }
-
-            // "Pesanan Terbuka" (lelang) belum diklaim — staf perangkat mana pun boleh mengambilnya
-            // via tombol Ambil Alih yang sama.
-            if (q.optBoolean("open_dispatch", false)) {
-                h.tvOpenDispatch.setText("🎲 PESANAN TERBUKA");
-                h.tvOpenDispatch.setVisibility(View.VISIBLE);
-            } else {
-                h.tvOpenDispatch.setVisibility(View.GONE);
-            }
-
-            long queuedMs = elapsedMillis(q.optString("queued_at", null));
-            h.tvQueued.setText(elapsedPrefix(queuedMs) + formatElapsedBadge(queuedMs));
-            applyQueueTimerState(h.tvQueued, queuedMs);
-
-            // Catatan order di kaki kartu — sumbernya 'note' dari server (Reports::shapeQueueRow);
-            // baris ini milik perangkat LAIN, jadi tak pernah ada salinan lokalnya di HP ini.
-            // Penyaringnya SATU dengan ketiga tab Antrian Delivery, supaya catatan yang sama tak
-            // pernah tampil beda antar layar.
-            DeliveryQueueActivity.bindOrderNote(h.tvOrderNote, str(q, "note"));
-
-            h.btnNavigasi.setOnClickListener(v -> navigateTo(q));
-            // Sedang diantar kurirnya → tak bisa diambil alih (server juga menolak).
-            boolean delivering = q.optBoolean("in_progress", false);
-            h.btnAmbilAlih.setText(delivering ? "🚚 Sedang Diantar" : "Ambil Alih");
-            // Sudah minta persetujuan pemilik antrean → "⏳ Menunggu Persetujuan" terkunci ±1 jam.
-            DeliveryQueueActivity.bindClaimRequest(h.tvClaimRequest, h.btnAmbilAlih, str(q, "uuid"), delivering, false);
-            if (delivering) h.btnAmbilAlih.setEnabled(false);
-            h.btnAmbilAlih.setOnClickListener(v -> confirmTakeOver(q));
-            boolean hasPhone = !phone.isEmpty() && !phone.equals("null");
-            h.btnWaChat.setVisibility(hasPhone ? View.VISIBLE : View.GONE);
+            h.btnMore.setOnClickListener(v -> {
+                android.widget.PopupMenu menu = new android.widget.PopupMenu(v.getContext(), v);
+                menu.getMenu().add("🧭 Navigasi");
+                menu.setOnMenuItemClickListener(i -> {
+                    navigateTo(q);
+                    return true;
+                });
+                menu.show();
+            });
+            h.btnTakeOver.setText(delivering ? "🚚" : "📥");
+            h.btnTakeOver.setAlpha(delivering ? 0.5F : 1.0F);
+            h.btnTakeOver.setOnClickListener(v -> confirmTakeOver(q));
+            DeliveryQueueActivity.bindClaimRequest(h.tvClaimRequest, h.btnTakeOver, str(q, "uuid"), delivering);
+            h.btnWaChat.setVisibility(phone.isEmpty() ? View.GONE : View.VISIBLE);
             h.btnWaChat.setOnClickListener(v -> DeliveryQueueActivity.openWhatsApp(v.getContext(), phone, ""));
+        }
+
+        private void bindPriority(TextView tv, boolean priority, String why) {
+            tv.clearAnimation();
+            tv.setAlpha(1f);
+            tv.setVisibility(priority ? View.VISIBLE : View.GONE);
+            if (!priority) return;
+            tv.setText("⚡ PRIORITAS" + (why.isEmpty() ? "" : ": " + why));
+            android.view.animation.AlphaAnimation blink = new android.view.animation.AlphaAnimation(1f, 0.35f);
+            blink.setDuration(650);
+            blink.setRepeatMode(android.view.animation.Animation.REVERSE);
+            blink.setRepeatCount(android.view.animation.Animation.INFINITE);
+            tv.startAnimation(blink);
+        }
+
+        private void bindChips(android.widget.LinearLayout box, JSONObject q, boolean pickup) {
+            box.removeAllViews();
+            JSONArray slugs = q.optJSONArray("item_slugs");
+            String type = str(q, "galon_type");
+            boolean typed = !pickup && GalonTypeUi.known(type);
+            boolean assumed = GalonTypeUi.SOURCE_DEFAULT.equals(str(q, "galon_type_source"));
+            float d = getResources().getDisplayMetrics().density;
+            for (int i = 0; slugs != null && i < slugs.length(); i++) {
+                JSONObject it = slugs.optJSONObject(i);
+                if (it == null) continue;
+                int bg = 0xFF1565C0;
+                try {
+                    if (!str(it, "color").isEmpty()) bg = android.graphics.Color.parseColor(str(it, "color"));
+                } catch (IllegalArgumentException ignored) {
+                }
+                int fg = DeliveryQueueActivity.chipTextColor(bg);
+                String label = str(it, "slug") + " ×" + Math.round(it.optDouble("qty", 0));
+                TextView chip = new TextView(box.getContext());
+                chip.setText(typed ? GalonTypeUi.tagged(label, type, assumed, fg) : label);
+                chip.setTextColor(fg);
+                chip.setTextSize(12f);
+                chip.setTypeface(chip.getTypeface(), android.graphics.Typeface.BOLD);
+                chip.setPadding(Math.round(8 * d), Math.round(3 * d), Math.round(8 * d), Math.round(3 * d));
+                android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
+                g.setCornerRadius(10 * d);
+                g.setColor(bg);
+                chip.setBackground(g);
+                android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(-2, -2);
+                lp.setMarginEnd(Math.round(6 * d));
+                box.addView(chip, lp);
+            }
+            box.setVisibility(box.getChildCount() > 0 ? View.VISIBLE : View.GONE);
         }
 
         @Override
         public int getItemCount() { return data.size(); }
 
         class VH extends RecyclerView.ViewHolder {
-            TextView tvCustomer, tvLocation, tvPhone, tvOrder, tvItems, tvAddress, tvPriority, tvOpenDispatch, tvQueued, tvOrderNote, tvClaimRequest;
-            MaterialButton btnNavigasi, btnAmbilAlih, btnWaChat;
+            final TextView tvCustomer, tvElapsed, tvMeta, tvOngkir, tvPickupOnly, tvAdminArea, tvOrderNote, tvPriorityBig, tvClaimRequest;
+            final android.widget.LinearLayout productChips;
+            final MaterialButton btnMore, btnTakeOver, btnWaChat;
 
             VH(View v) {
                 super(v);
-                tvClaimRequest = v.findViewById(R.id.tvClaimRequest);
-                btnWaChat = v.findViewById(R.id.btnWaChat);
-                tvOrderNote = v.findViewById(R.id.tvOrderNote);
                 tvCustomer = v.findViewById(R.id.tvCustomer);
-                tvLocation = v.findViewById(R.id.tvLocation);
-                tvPhone = v.findViewById(R.id.tvPhone);
-                tvOrder = v.findViewById(R.id.tvOrder);
-                tvItems = v.findViewById(R.id.tvItems);
-                tvAddress = v.findViewById(R.id.tvAddress);
-                tvPriority = v.findViewById(R.id.tvPriority);
-                tvOpenDispatch = v.findViewById(R.id.tvOpenDispatch);
-                tvQueued = v.findViewById(R.id.tvQueued);
-                btnNavigasi = v.findViewById(R.id.btnNavigasi);
-                btnAmbilAlih = v.findViewById(R.id.btnAmbilAlih);
+                tvElapsed = v.findViewById(R.id.tvElapsed);
+                tvMeta = v.findViewById(R.id.tvMeta);
+                tvOngkir = v.findViewById(R.id.tvOngkir);
+                tvPickupOnly = v.findViewById(R.id.tvPickupOnly);
+                tvAdminArea = v.findViewById(R.id.tvAdminArea);
+                tvOrderNote = v.findViewById(R.id.tvOrderNote);
+                tvPriorityBig = v.findViewById(R.id.tvPriorityBig);
+                tvClaimRequest = v.findViewById(R.id.tvClaimRequest);
+                productChips = v.findViewById(R.id.productChips);
+                btnMore = v.findViewById(R.id.btnMore);
+                btnTakeOver = v.findViewById(R.id.btnTakeOver);
+                btnWaChat = v.findViewById(R.id.btnWaChat);
             }
         }
     }
