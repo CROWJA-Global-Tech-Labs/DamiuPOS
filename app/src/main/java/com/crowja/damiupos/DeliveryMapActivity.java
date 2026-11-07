@@ -823,11 +823,20 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "var odLines=[];\n" +
                 "function buildMarkers(){\n" +
                 "markers=[]; openDispatchPts=[];\n" +
+                // Info perangkat pemegang order: nama, staf, dan jam posisi terakhirnya.
+                "function deviceInfoHtml(p){\n" +
+                "  if(p.open_dispatch) return '';\n" +
+                "  var pos=null; for(var i=0;i<positions.length;i++){ if(positions[i].device_uuid===p.device_uuid) pos=positions[i]; }\n" +
+                "  var t='📱 <b>'+escHtml(p.device_name||'Tanpa perangkat')+'</b>'+(p.mine?' (saya)':'');\n" +
+                "  if(pos&&pos.staff) t+=' • 👤 '+escHtml(pos.staff);\n" +
+                "  if(pos&&pos.at) t+='<br>📍 Posisi terakhir '+escHtml(pos.at);\n" +
+                "  return '<div class=\"pmeta\">'+t+'</div>';\n" +
+                "}\n" +
                 "pts.forEach(function(p,idx){\n" +
                 "  var m=L.marker([p.lat,p.lng],{icon:pinIcon(p.color,p.icon,p.mine,p.open_dispatch)});\n" +
                 "  m._p=p;\n" +
                 "  var rp = 'Rp '+Math.round(p.total||0).toLocaleString('id-ID');\n" +
-                "  var meta = escHtml(p.device_name)+' • '+(+p.galon)+' galon • '+rp;\n" +
+                "  var meta = (+p.galon)+' galon • '+rp;\n" +
                 // Rincian produk sebagai badge slug (item_slugs dari server, sudah digabung per slug);
                 // server lama tanpa item_slugs → teks items seperti dulu.
                 "  var itemsHtml = (p.item_slugs&&p.item_slugs.length) ? slugBadgesHtml(p.item_slugs)\n" +
@@ -839,7 +848,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 // Kurir PEMEGANG order sedang menjalankannya (▶ Jalankan ditekan di HP-nya) → jangan
                 // tawarkan Ambil Alih sama sekali (dua kurir bisa berujung di jalan yang sama untuk
                 // order yang sama); tunjukkan keterangan statusnya saja.
-                "  var progressNote = (!p.mine && p.in_progress) ? '<div class=\"pmeta inprogress\">🚚 Sedang dalam pengiriman — tidak bisa diambil alih</div>' : '';\n" +
+                "  var progressNote = (!p.mine && p.in_progress) ? '<div class=\"pmeta inprogress\">🚚 Sedang diantar oleh '+escHtml(p.device_name||'kurir')+' — tidak bisa diambil alih</div>' : '';\n" +
                 // Pesanan lelang yang masih DIJEDA ikut dipetakan (server mengirimnya) supaya tak
                 // hilang dari pandangan, tapi belum boleh diklaim sampai jadwalnya tiba — server pun
                 // menolak klaim atas order non-PENDING, jadi tombolnya sengaja tak ditampilkan.
@@ -862,7 +871,7 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "    : (p.sejalur_why ? (sejalurPick ? '<div class=\"pmeta\">🛣️ Tidak bisa jadi titik terjauh — '+escHtml(p.sejalur_why)+'</div>' : '')\n" +
                 "    : '<a class=\"claimbtn sejalurbtn\" href=\"#\" onclick=\"sejalurAt('+idx+');return false;\">🛣️ Kirim Sejalur ke sini</a>');\n" +
                 "  var actions = sejalurPick ? sejalurBtn : claimBtn+runBtn+sejalurBtn;\n" +
-                "  var html='<div class=\"pname\">'+escHtml(p.name)+mineBadge+'</div><div class=\"pmeta\">'+meta+'</div>'+ageHtml+itemsHtml+odNote+pausedNote+progressNote+actions;\n" +
+                "  var html='<div class=\"pname\">'+escHtml(p.name)+mineBadge+'</div>'+deviceInfoHtml(p)+'<div class=\"pmeta\">'+meta+'</div>'+ageHtml+itemsHtml+odNote+pausedNote+progressNote+actions;\n" +
                 "  m.bindPopup(html);\n" +
                 "  markers.push(m);\n" +
                 "  if(p.open_dispatch){ openDispatchPts.push(p); }\n" +
