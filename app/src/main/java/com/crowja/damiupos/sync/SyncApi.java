@@ -343,6 +343,11 @@ public class SyncApi {
         return post(cfg.getBaseUrl() + "/api/delivery/handover-all", new JSONObject(), cfg.getToken());
     }
 
+    /** Pengisian sementara: antrean tetap di HP ini dan antrean otomatis tetap masuk selama 60 menit. */
+    public JSONObject fillReturn() throws Exception {
+        return post(cfg.getBaseUrl() + "/api/delivery/fill-return", new JSONObject(), cfg.getToken());
+    }
+
     public JSONObject openDispatch(JSONObject body) throws Exception {
         return post(cfg.getBaseUrl() + "/api/delivery/open", body, cfg.getToken());
     }

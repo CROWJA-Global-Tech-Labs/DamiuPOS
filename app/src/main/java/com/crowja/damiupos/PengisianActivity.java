@@ -155,6 +155,24 @@ public class PengisianActivity extends AppCompatActivity {
     private LinearLayout productsBox, othersBox;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    /** Epoch ms akhir Pengisian sementara ("akan mengirim kembali"); tanpa extra = tanpa batas. */
+    public static final String EXTRA_RETURN_UNTIL = "fill_return_until";
+    private final Runnable returnTick = new Runnable() {
+        @Override public void run() {
+            long until = getIntent().getLongExtra(EXTRA_RETURN_UNTIL, 0L);
+            if (until <= 0L) return;
+            long left = until - System.currentTimeMillis();
+            if (left <= 0L) {
+                Toast.makeText(PengisianActivity.this, "Waktu Pengisian 1 jam habis. Kembali ke mode kirim.", Toast.LENGTH_LONG).show();
+                finish();
+                return;
+            }
+            if (getSupportActionBar() != null) {
+                getSupportActionBar().setSubtitle("⏳ Kembali mengirim dalam " + (left / 60000L + 1L) + " menit");
+            }
+            handler.postDelayed(this, 30000L);
+        }
+    };
     private final Runnable ticker = new Runnable() {
         @Override
         public void run() {
@@ -296,6 +314,9 @@ public class PengisianActivity extends AppCompatActivity {
             return;
         }
         me = cur;
+        handler.removeCallbacks(returnTick);
+        returnTick.run();
+        if (isFinishing()) return;
         // Kewajiban onResume MainActivity yang dilewati peran ini: gerbang versi (dinonaktifkan +
         // wajib-update hash), sinkron + service online, popup pesan admin.
         ForegroundDuties.onResume(this);
@@ -312,6 +333,7 @@ public class PengisianActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
+        handler.removeCallbacks(returnTick);
         handler.removeCallbacks(ticker);
         if (adminReceiverRegistered) {
             try { unregisterReceiver(adminMsgReceiver); } catch (Exception ignored) { }
