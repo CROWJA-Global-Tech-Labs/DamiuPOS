@@ -476,6 +476,36 @@ public class MainActivity extends AppCompatActivity {
         }
         final int n = pending;
         new AlertDialog.Builder(this)
+                .setTitle("Masih Ada " + n + " Antrean")
+                .setMessage("Apakah kamu akan mengirim kembali setelah mengisi?" + NL_ + NL_
+                        + "YA: Pengisian dibuka 1 jam. Antrean tetap milikmu (masih bisa diambil alih), antrean baru tetap bisa "
+                        + "masuk, dan Pengisian otomatis tertutup saat waktunya habis." + NL_ + NL_
+                        + "TIDAK: antrean dilepas dan Pengisian dibuka tanpa batas waktu.")
+                .setPositiveButton("Ya, Kirim Kembali", (d, w) -> openPengisianWillReturn())
+                .setNegativeButton("Tidak", (d, w) -> confirmReleaseThenPengisian(n))
+                .setNeutralButton("Batal", null)
+                .show();
+    }
+
+    /** Pengisian 1 jam: server diberi tahu lewat latar; layar tetap dibuka walau jaringan sedang buruk. */
+    private void openPengisianWillReturn() {
+        com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
+        final android.content.Context app = getApplicationContext();
+        if (cfg.isEnrolled()) {
+            new Thread(() -> {
+                try {
+                    new com.crowja.damiupos.sync.SyncApi(cfg).fillReturn();
+                } catch (Exception e) {
+                    runOnUiThread(() -> Toast.makeText(app, "Server belum menerima: antrean baru bisa tertahan selama kamu mengisi.", Toast.LENGTH_LONG).show());
+                }
+            }).start();
+        }
+        startActivity(new Intent(this, PengisianActivity.class)
+                .putExtra(PengisianActivity.EXTRA_RETURN_UNTIL, System.currentTimeMillis() + 3600000L));
+    }
+
+    private void confirmReleaseThenPengisian(int n) {
+        new AlertDialog.Builder(this)
                 .setCancelable(false)
                 .setIcon(android.R.drawable.ic_dialog_alert)
                 .setTitle("Masih Ada " + n + " Antrean Belum Selesai")
