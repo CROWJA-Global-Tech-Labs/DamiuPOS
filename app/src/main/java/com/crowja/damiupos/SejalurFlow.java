@@ -777,6 +777,8 @@ final class SejalurFlow {
 
    /** Permintaan rencana sedang berjalan — tekan beruntun (Cari / Perlebar jalur) diabaikan. */
    private boolean planning;
+   /** Dipakai sekali: mengembalikan centang bila rencana gagal dihitung ulang. */
+   private Runnable planFailed;
 
    /**
     * @param prev        dialog yang ditutup begitu rencana datang (dialog galon / pratinjau lama)
@@ -823,7 +825,10 @@ final class SejalurFlow {
             this.planning = false;
             if (this.gone()) return;
             for (Button b : lock) b.setEnabled(true);
+            Runnable onFail = this.planFailed;
+            this.planFailed = null;
             if (fp == null) {
+               if (onFail != null) onFail.run();
                (new AlertDialog.Builder(this.act)).setTitle("🛣️ Kirim Sejalur").setMessage(fErr)
                      .setPositiveButton("OK", (DialogInterface.OnClickListener) null).show();
                return;
@@ -1064,6 +1069,28 @@ final class SejalurFlow {
       final AlertDialog[] dlgRef = new AlertDialog[1];
       final Button[] actRef = new Button[2];   // {Mulai, Batal}
       final List<Button> widenBtns = new ArrayList<>();
+      // Hitung ulang rencana: penjualan saja (lepas) atau beserta ambil galon (centang).
+      final CheckBox cbWithPickup = new CheckBox(this.act);
+      cbWithPickup.setText("↩ Beserta ambil galon (lepas = penjualan saja)");
+      cbWithPickup.setTextColor(C_TEXT);
+      cbWithPickup.setChecked(req.includePickup);
+      cbWithPickup.setOnCheckedChangeListener((b, on) -> {
+         Button pos = actRef[0];
+         if (dlgRef[0] == null || this.planning || (pos != null && !pos.isEnabled())) {
+            b.setChecked(!on);
+            return;
+         }
+         List<Button> lock = new ArrayList<>(widenBtns);
+         for (Button x : actRef) if (x != null) lock.add(x);
+         Set<String> shown = new HashSet<>();
+         for (PlanRow r : everything) shown.add(r.uuid);
+         this.planFailed = () -> {
+            cbWithPickup.setOnCheckedChangeListener(null);
+            cbWithPickup.setChecked(!on);
+         };
+         this.requestPlan(new PlanReq(req.t, req.galon, on, req.includeOther, req.widen), dlgRef[0], lock, shown, new HashSet<>(checked));
+      });
+      box.addView(cbWithPickup);
       if (!choices.isEmpty()) {
          box.addView(this.smallNote(main.size() <= 1
                ? "Belum ada order lain di jalur ini — perlebar jalur untuk mencari order di sekitar rute."
