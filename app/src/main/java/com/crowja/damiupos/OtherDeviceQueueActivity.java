@@ -682,9 +682,18 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
 
             h.btnMore.setOnClickListener(v -> {
                 android.widget.PopupMenu menu = new android.widget.PopupMenu(v.getContext(), v);
-                menu.getMenu().add("🧭 Navigasi");
+                menu.getMenu().add(0, 20, 0, "🧭 Navigasi");
+                DeliveryQueueActivity.fillOtherDeviceMenu(menu.getMenu(), q, DeliveryQueueActivity.otherDeviceCompleteLabel(v.getContext(), q));
                 menu.setOnMenuItemClickListener(i -> {
-                    navigateTo(q);
+                    if (i.getItemId() == 20) {
+                        navigateTo(q);
+                        return true;
+                    }
+                    startActivity(new Intent(OtherDeviceQueueActivity.this, DeliveryQueueActivity.class)
+                            .putExtra(DeliveryQueueActivity.EXTRA_OTHER_ACTION, i.getItemId())
+                            .putExtra(DeliveryQueueActivity.EXTRA_OTHER_ROW, q.toString())
+                            .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+                    finish();
                     return true;
                 });
                 menu.show();

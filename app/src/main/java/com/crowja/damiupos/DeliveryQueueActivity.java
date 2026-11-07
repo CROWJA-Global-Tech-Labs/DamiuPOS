@@ -2770,6 +2770,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.openPendingFocus();
       this.openPendingComplete();
       this.openPendingFail();
+      this.readOtherAction(this.getIntent());
+      this.openPendingOtherAction();
       this.consumeFailResult();
       this.restoreFailDraft();
       this.openPendingNearbyPickup();
@@ -3888,55 +3890,95 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       box.setVisibility(shown > 0 ? 0 : 8);
    }
 
-   private void showOtherDeviceMoreMenu(View anchor, JSONObject q) {
-      PopupMenu menu = new PopupMenu(this, anchor);
-      menu.getMenu().add(0, 1, 0, "\ud83d\udc64 Detail Pelanggan");
-      menu.getMenu().add(0, 2, 1, "\ud83d\udd52 Jadwalkan Ulang");
-      // 💬 Chat Pesanan — seperti Antrian Saya: setiap order jual berpelanggan (server membuka chat-nya saat
-      // pertama dibuka), bukan hanya yang sesinya sudah ada.
+   /** Isi menu kartu perangkat lain; dipakai tab Perangkat Lain dan layar antrean perangkat. */
+   static void fillOtherDeviceMenu(android.view.Menu m, JSONObject q, @Nullable String rcLabel) {
+      m.add(0, 1, 0, "👤 Detail Pelanggan");
+      m.add(0, 2, 1, "🕒 Jadwalkan Ulang");
       if (OrderChatEntry.available(q.optBoolean("chat_session", false), null,
             q.optBoolean("pickup_only", false), strJson(q, "customer_uuid"))) {
-         menu.getMenu().add(0, 3, 2, "\ud83d\udcac Chat Pesanan");
+         m.add(0, 3, 2, "💬 Chat Pesanan");
       }
-      if (q.optBoolean("complained", false)) {
-         menu.getMenu().add(0, 7, 2, "\ud83d\ude20 Lihat Chat Komplain");
+      if (q.optBoolean("complained", false)) m.add(0, 7, 2, "😠 Lihat Chat Komplain");
+      if (rcLabel != null) m.add(0, 8, 0, rcLabel);
+      m.add(0, 4, 3, "📤 Kirim ke Perangkat Lain");
+      if (!q.optBoolean("pickup_only", false)) {
+         m.add(0, 5, 4, "🚰 Jenis Galon");
+         m.add(0, 6, 5, "✏️ Ubah Item");
       }
-      menu.setOnMenuItemClickListener((item) -> {
-         switch (item.getItemId()) {
-            case 7:
-               this.openComplaintChatUuid(q.optString("uuid", ""), q.optString("name", ""));
-               return true;
-            case 1:
-               this.openOtherDeviceCustomerDetail(q);
-               return true;
-            case 2:
-               this.showPostponeSchedulePickerOther(q);
-               return true;
-            case 3:
-               this.openOrderChatUuid(q.optString("uuid", ""), q.optString("name", ""));
-               return true;
-            case 4:
-               this.showForwardOtherPicker(q);
-               return true;
-            case 5:
-               this.showGalonTypeDialog(q);
-               return true;
-            case 6:
-               this.showEditItemsDialog(q.optString("uuid", ""), safe(q.optString("name", "")), this.slugQtyOf(q));
-               return true;
-            case 8:
-               this.onRemoteCompleteOther(q);
-               return true;
-            default:
-               return false;
-         }
-      });
-      String rcLabel = RemoteCompleteLogic.menuLabel(this.remoteCompleteOffer(q.optString("uuid", ""), isBeingDelivered(q), true));
-      if (rcLabel != null) menu.getMenu().add(0, 8, 0, rcLabel);
-      menu.getMenu().add(0, 4, 3, "📤 Kirim ke Perangkat Lain");
-      if (!q.optBoolean("pickup_only", false)) menu.getMenu().add(0, 5, 4, "🚰 Jenis Galon");
-      if (!q.optBoolean("pickup_only", false)) menu.getMenu().add(0, 6, 5, "✏️ Ubah Item");
+   }
+
+   static String otherDeviceCompleteLabel(android.content.Context ctx, JSONObject q) {
+      DatabaseHelper db = DatabaseHelper.getInstance(ctx);
+      SettingsDao settings = new SettingsDao(db);
+      SyncSettings cfg = new SyncSettings(settings);
+      long uid = settings.getCurrentUserId();
+      User u = uid > 0L ? new UserDao(db).getById(uid) : null;
+      String uuid = q.optString("uuid", "");
+      boolean hasUuid = !uuid.isEmpty() && !"null".equals(uuid);
+      return RemoteCompleteLogic.menuLabel(RemoteCompleteLogic.offer(cfg.isEnrolled(), cfg.isDeliveryDevice(), u != null && u.isViewer(), hasUuid,
+            q.optBoolean("in_progress", false), hasUuid && ClaimRequests.blocks(uuid)));
+   }
+
+   private boolean runOtherMenuAction(int action, JSONObject q) {
+      switch (action) {
+         case 7:
+            this.openComplaintChatUuid(q.optString("uuid", ""), q.optString("name", ""));
+            return true;
+         case 1:
+            this.openOtherDeviceCustomerDetail(q);
+            return true;
+         case 2:
+            this.showPostponeSchedulePickerOther(q);
+            return true;
+         case 3:
+            this.openOrderChatUuid(q.optString("uuid", ""), q.optString("name", ""));
+            return true;
+         case 4:
+            this.showForwardOtherPicker(q);
+            return true;
+         case 5:
+            this.showGalonTypeDialog(q);
+            return true;
+         case 6:
+            this.showEditItemsDialog(q.optString("uuid", ""), safe(q.optString("name", "")), this.slugQtyOf(q));
+            return true;
+         case 8:
+            this.onRemoteCompleteOther(q);
+            return true;
+         default:
+            return false;
+      }
+   }
+
+   private void showOtherDeviceMoreMenu(View anchor, JSONObject q) {
+      PopupMenu menu = new PopupMenu(this, anchor);
+      fillOtherDeviceMenu(menu.getMenu(), q, otherDeviceCompleteLabel(this, q));
+      menu.setOnMenuItemClickListener((item) -> this.runOtherMenuAction(item.getItemId(), q));
       menu.show();
+   }
+
+   /** Aksi menu dari layar antrean perangkat: dijalankan di sini, pada tab Perangkat Lain. */
+   static final String EXTRA_OTHER_ACTION = "other_action";
+   static final String EXTRA_OTHER_ROW = "other_row";
+   private int pendingOtherAction;
+   private String pendingOtherRow;
+
+   private void readOtherAction(@Nullable Intent intent) {
+      if (intent == null || intent.getIntExtra(EXTRA_OTHER_ACTION, 0) == 0) return;
+      this.pendingOtherAction = intent.getIntExtra(EXTRA_OTHER_ACTION, 0);
+      this.pendingOtherRow = intent.getStringExtra(EXTRA_OTHER_ROW);
+      intent.removeExtra(EXTRA_OTHER_ACTION);
+   }
+
+   private void openPendingOtherAction() {
+      int action = this.pendingOtherAction;
+      if (action == 0) return;
+      this.pendingOtherAction = 0;
+      try {
+         if (this.tabs != null && this.tabs.getTabAt(1) != null) this.tabs.getTabAt(1).select();
+         this.runOtherMenuAction(action, new JSONObject(this.pendingOtherRow));
+      } catch (Exception ignored) {
+      }
    }
 
    // ============ ✓ Selesai dari Perangkat Lain / Pesanan Terbuka (RemoteCompleteLogic) ============
@@ -10860,6 +10902,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (done > 0L) this.pendingCompleteTrxId = done;
       long failed = intent != null ? intent.getLongExtra(EXTRA_FAIL_TRX_ID, -1L) : -1L;
       if (failed > 0L) this.pendingFailTrxId = failed;
+      this.readOtherAction(intent);
       Bundle nearby = nearbyPickupExtras(intent);
       if (nearby != null) this.pendingNearbyPickup = nearby;   // diproses di onResume berikutnya
       Bundle sejalur = sejalurExtras(intent);
