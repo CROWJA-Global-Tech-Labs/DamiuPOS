@@ -80,6 +80,28 @@ public final class FillText {
         return sb.toString();
     }
 
+    /**
+     * Instruksi penempatan: galon yang perlu diisi dibagi ke tempat menurut urutan dan kapasitas; stok siap
+     * dianggap sudah mengisi tempat dari yang pertama (cermin GalonStoragePlan di server, dihitung dari
+     * angka overlay HP). Null bila tak ada yang perlu diisi / server belum mengirim daftar tempat.
+     */
+    public static String placementLine(FillPlan plan) {
+        if (plan.storages.isEmpty() || plan.totals.toFill <= 0) return null;
+        int left = plan.totals.toFill;
+        int stock = Math.max(0, plan.totals.ready);
+        StringBuilder sb = new StringBuilder();
+        for (FillPlan.Storage s : plan.storages) {
+            int occupied = Math.min(s.capacity, stock);
+            stock -= occupied;
+            int put = Math.min(s.capacity - occupied, left);
+            left -= put;
+            if (put > 0) sb.append(sb.length() > 0 ? " · " : "").append(s.name).append(' ').append(put);
+        }
+        if (sb.length() == 0) return "📍 Semua tempat penuh";
+        if (left > 0) sb.append(" (sisa ").append(left).append(" tak muat)");
+        return "📍 Taruh: " + sb;
+    }
+
     /** Peringatan pesanan yang produknya tak terpetakan, atau null. */
     public static String unmappedWarning(FillPlan plan) {
         if (plan.unmappedPcs <= 0 && plan.unmappedOrders <= 0) return null;
