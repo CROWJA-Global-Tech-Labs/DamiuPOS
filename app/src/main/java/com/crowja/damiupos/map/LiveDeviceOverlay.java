@@ -264,7 +264,7 @@ public final class LiveDeviceOverlay {
             // jadi tanpa ini titik sebenarnya akan hilang setelah penyegaran pertama.
             + "    m._true=L.latLng(p.lat,p.lng);\n"
             + "    m.bindPopup('<div class=\"ldevname\">'+esc(p.device_name)+'</div>'"
-            + "+'<div class=\"ldevmeta\">'+esc(p.staff||'')+(p.at?' • '+esc(p.at):'')+'</div>');\n"
+            + "+'<div class=\"ldevmeta\">'+esc(p.staff||'')+(p.at?' • '+esc(p.at):'')+(p.heading_name?'<br>🧭 Menuju '+esc(p.heading_name):'')+'</div>');\n"
             + "  });\n"
             + "  Object.keys(markers).forEach(function(k){\n"
             + "    if(!seen[k]){ layer.removeLayer(markers[k]); delete markers[k]; }\n"

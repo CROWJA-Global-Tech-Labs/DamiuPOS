@@ -830,6 +830,8 @@ public class DeliveryMapActivity extends AppCompatActivity {
                 "  var t='📱 <b>'+escHtml(p.device_name||'Tanpa perangkat')+'</b>'+(p.mine?' (saya)':'');\n" +
                 "  if(pos&&pos.staff) t+=' • 👤 '+escHtml(pos.staff);\n" +
                 "  if(pos&&pos.at) t+='<br>📍 Posisi terakhir '+escHtml(pos.at);\n" +
+                "  if(p.heading_here) t+='<br><b>🧭 Sedang menuju ke sini</b>';\n" +
+                "  else if(p.device_heading_name) t+='<br>🧭 Sekarang menuju '+escHtml(p.device_heading_name);\n" +
                 "  return '<div class=\"pmeta\">'+t+'</div>';\n" +
                 "}\n" +
                 "pts.forEach(function(p,idx){\n" +

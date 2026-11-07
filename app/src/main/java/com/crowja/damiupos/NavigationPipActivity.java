@@ -883,6 +883,8 @@ public class NavigationPipActivity extends AppCompatActivity {
         s.order = list;
         int a = DeliveryNavLogic.activeIndex(states);
         s.active = a >= 0 ? rows.get(a) : null;
+        new SettingsDao(db).set(com.crowja.damiupos.sync.LocationReporter.KEY_NAV_ACTIVE,
+                String.valueOf(s.active != null ? s.active.getId() : -1L));
         int nx = DeliveryNavLogic.nextPendingIndex(states, a);
         s.next = a >= 0 && nx >= 0 ? rows.get(nx) : null;
         s.k = DeliveryNavLogic.progressNumber(states);
