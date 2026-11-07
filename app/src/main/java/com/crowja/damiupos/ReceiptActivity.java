@@ -364,6 +364,20 @@ public class ReceiptActivity extends AppCompatActivity {
         }
     }
 
+    private void showPaymentProofButton(com.crowja.damiupos.model.Transaction t) {
+        View btn = findViewById(R.id.btnProof);
+        String url = t.isPaymentConfirmed() ? t.getPaymentProofUrl() : null;
+        if (btn == null || url == null || !url.startsWith("http")) return;
+        btn.setVisibility(View.VISIBLE);
+        btn.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)));
+            } catch (Exception e) {
+                Toast.makeText(this, "Tidak ada aplikasi untuk membuka bukti bayar", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
     private void hydrateFromTransaction(long id) {
         TransactionDao dao = new TransactionDao(DatabaseHelper.getInstance(this));
         com.crowja.damiupos.model.Transaction t = dao.getById(id);
@@ -372,6 +386,8 @@ public class ReceiptActivity extends AppCompatActivity {
             finish();
             return;
         }
+        // Bukti bayar QRIS/Transfer yang sudah dikonfirmasi (mis. order reseller) → tombol buka foto/PDF-nya.
+        showPaymentProofButton(t);
         // 🧺 Leg checkout multi-lokasi yang saudaranya juga ada di HP ini (HP pembuat) → struk
         // GABUNGAN semua leg. HP yang hanya memegang leg ini (kurir) jatuh ke struk tunggal di bawah,
         // diberi baris pengenal "📍 Kedai · Lokasi 2/2" — saudaranya tak pernah diasumsikan ada lokal.

@@ -1620,7 +1620,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
             if (ongkir > 0) sb.append("Ongkir: ").append(rupiah(ongkir)).append('\n');
             sb.append("Total: ").append(rupiah(t.optDouble("total", 0))).append('\n');
             String pay = payLabel(str(t, "payment_method"));
-            if (!pay.isEmpty()) sb.append("Pembayaran: ").append(pay).append('\n');
+            if (!pay.isEmpty()) sb.append("Pembayaran: ").append(pay).append(t.optBoolean("payment_confirmed", false) ? " · LUNAS" : "").append('\n');
         }
         sb.append('\n');
         long ms = com.crowja.damiupos.util.Ts.millis(str(t, "tanggal"));
@@ -1657,6 +1657,17 @@ public class CustomerDetailActivity extends AppCompatActivity {
         android.widget.LinearLayout col = new android.widget.LinearLayout(this);
         col.setOrientation(android.widget.LinearLayout.VERTICAL);
         col.addView(body);
+        // Bukti bayar QRIS/Transfer (mis. order reseller) — buka foto/PDF-nya.
+        final String proofUrl = str(t, "payment_proof_url");
+        if (proofUrl.startsWith("http")) {
+            android.widget.TextView pf = new android.widget.TextView(this);
+            pf.setText("🧾 Lihat Bukti Bayar →");
+            pf.setTextSize(15);
+            pf.setTextColor(0xFF1565C0);
+            pf.setPadding(dp(22), dp(12), dp(22), dp(4));
+            pf.setOnClickListener(v -> openProof(proofUrl));
+            col.addView(pf);
+        }
         final String trxUuid = str(t, "uuid");
         if (trxUuid != null && !trxUuid.isEmpty()) {
             android.widget.TextView jl = new android.widget.TextView(this);
@@ -1705,6 +1716,15 @@ public class CustomerDetailActivity extends AppCompatActivity {
      * CASH BON lewat jalur yang sama dengan Tandai Selesai (TransactionDao.applyDeliveryAdjustment): bayar Rp0,
      * metode HUTANG, penanda [CASH BON] + alasan; totalnya masuk hutang pelanggan & tersinkron ke server.
      */
+    /** Buka foto/PDF bukti bayar di aplikasi bawaan (galeri/peramban/PDF viewer). */
+    private void openProof(String url) {
+        try {
+            startActivity(new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)));
+        } catch (Exception e) {
+            android.widget.Toast.makeText(this, "Tidak ada aplikasi untuk membuka bukti bayar", android.widget.Toast.LENGTH_SHORT).show();
+        }
+    }
+
     /** 📜 Jurnal Pesanan dari server — siapa membuat, mengedit, mengalihkan, menyelesaikan order ini. */
     private void showOrderJournal(String uuid) {
         com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
