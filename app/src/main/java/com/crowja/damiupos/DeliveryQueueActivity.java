@@ -4377,6 +4377,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    /** Order perangkat lain yang SEDANG diantar kurirnya (▶ Jalankan, kunci server {@code in_progress})
     *  — tak boleh diambil alih. Server menolaknya juga (DeliveryClaimController), ini supaya HP tak
     *  menawarkan tombolnya sama sekali. */
+   /** Tujuan kurir saat ini untuk kartu order yang sedang diantar; "" bila HP-nya belum melaporkan. */
+   static String headingSuffix(JSONObject q) {
+      if (q == null) return "";
+      if (q.optBoolean("heading_here", false)) return " · 🧭 sedang menuju ke sini";
+      String name = strJson(q, "device_heading_name");
+      return name.isEmpty() ? "" : " · 🧭 sekarang menuju " + name;
+   }
+
    private static boolean isBeingDelivered(JSONObject q) {
       return q != null && q.optBoolean("in_progress", false);
    }
@@ -8818,7 +8826,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       double lng = o.optDouble("longitude", 0.0);
       double distKm = (lat == 0.0 && lng == 0.0) ? Double.MAX_VALUE : this.distKmFromMe(lat, lng);
       StringBuilder meta = new StringBuilder();
-      if (isBeingDelivered(o)) meta.append("🚚 Sedang diantar");
+      if (isBeingDelivered(o)) meta.append("🚚 Sedang diantar").append(headingSuffix(o));
       String deviceLabel = o.optString("device_group_label", "");
       if (!deviceLabel.isEmpty()) meta.append(meta.length() > 0 ? " · " : "").append("📱 ").append(deviceLabel);
       meta.append(meta.length() > 0 ? " · " : "").append(o.optInt("galon", 0)).append(" galon");
@@ -16241,7 +16249,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          boolean delivering = DeliveryQueueActivity.isBeingDelivered(q);
          StringBuilder meta = new StringBuilder();
          if (delivering) {
-            meta.append("\ud83d\ude9a Sedang diantar");
+            meta.append("\ud83d\ude9a Sedang diantar").append(DeliveryQueueActivity.headingSuffix(q));
          }
          String dev = this.str(q, "device_group_label");
          if (!dev.isEmpty()) {
