@@ -2231,11 +2231,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (uuids.isEmpty()) {
          Toast.makeText(this, "Tidak ada perangkat lain di cabang ini", 0).show();
       } else {
-         String[] items = (String[])labels.toArray(new String[0]);
-         (new AlertDialog.Builder(this)).setTitle("Lihat Antrian Perangkat Lain").setItems(items, (dx, which) -> {
-            Intent i = (new Intent(this, OtherDeviceQueueActivity.class)).putExtra("device_uuid", (String)uuids.get(which)).putExtra("device_name", (String)labels.get(which));
-            this.startActivity(i);
-         }).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).show();
+         // Layar antrean punya tab perangkat, jadi langsung buka perangkat pertama.
+         this.startActivity((new Intent(this, OtherDeviceQueueActivity.class)).putExtra("device_uuid", uuids.get(0)).putExtra("device_name", labels.get(0)));
       }
    }
 
