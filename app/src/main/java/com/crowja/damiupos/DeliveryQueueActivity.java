@@ -1150,6 +1150,58 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    /** Dialog Ambil Antrean terakhir: dibuka lagi dengan isian utuh untuk mengatur ulang. */
    private AlertDialog takeDialog;
 
+   /** Isi dialog Ambil Antrean dengan sisa target: total galon dan jumlah per produk. */
+   private java.util.function.BiConsumer<Integer, Map<String, Integer>> takeFillRemaining;
+   /** Baris Cek Order yang dicentang, dasar hitung galon per produk yang terambil. */
+   private List<JSONObject> takePickedRows = new ArrayList<>();
+
+   /** Target belum terpenuhi sesudah Ambil: tawarkan menambah dengan sisa target terisi di dialog. */
+   private void offerTakeMore(JSONObject body, List<String> uuids, int takenGalon) {
+      if (this.takeFillRemaining == null || this.takeDialog == null) return;
+      JSONObject caps = body.optJSONObject("slug_caps");
+      int left;
+      Map<String, Integer> capsLeft = new LinkedHashMap<>();
+      String msg;
+      if (caps != null) {
+         Map<String, Integer> targets = new LinkedHashMap<>();
+         for (java.util.Iterator<String> it = caps.keys(); it.hasNext(); ) {
+            String k = it.next();
+            targets.put(k, caps.optInt(k));
+         }
+         Map<String, Integer> taken = new java.util.HashMap<>();
+         for (JSONObject row : this.takePickedRows) {
+            JSONArray slugs = row.optBoolean("pickup_only") || !uuids.contains(row.optString("uuid")) ? null : row.optJSONArray("item_slugs");
+            for (int i = 0; slugs != null && i < slugs.length(); i++) {
+               JSONObject it = slugs.optJSONObject(i);
+               if (it == null) continue;
+               String k = it.optString("slug").trim().toUpperCase(Locale.US);
+               taken.merge(k, (int) Math.ceil(it.optDouble("qty", 0)), Integer::sum);
+            }
+         }
+         capsLeft = com.crowja.damiupos.util.TakeRemainder.perSlug(targets, taken);
+         left = 0;
+         if (com.crowja.damiupos.util.TakeRemainder.sum(capsLeft) <= 0) return;
+         StringBuilder sb = new StringBuilder("Komposisi belum terpenuhi. Sisa:");
+         for (Map.Entry<String, Integer> e : capsLeft.entrySet()) {
+            if (e.getValue() > 0) sb.append("\n• ").append(e.getKey()).append(": ").append(e.getValue()).append(" galon");
+         }
+         msg = sb.append("\n\nTambah order lagi?").toString();
+      } else {
+         int target = body.optInt("max_galon", 0);
+         left = com.crowja.damiupos.util.TakeRemainder.total(target, takenGalon);
+         if (left <= 0) return;
+         msg = "Terambil " + takenGalon + " dari " + target + " galon. Sisa " + left + " galon.\n\nTambah order lagi?";
+      }
+      final int leftF = left;
+      final Map<String, Integer> capsF = capsLeft;
+      (new AlertDialog.Builder(this)).setTitle("Target belum terpenuhi").setMessage(msg)
+            .setPositiveButton("Tambah", (d, w) -> {
+               this.takeFillRemaining.accept(leftF, capsF);
+               this.reopenTakeDialog();
+            })
+            .setNegativeButton("Selesai", (DialogInterface.OnClickListener) null).show();
+   }
+
    private void reopenTakeDialog() {
       if (this.takeDialog != null && !this.isFinishing() && !this.isDestroyed()) this.takeDialog.show();
    }
@@ -1470,6 +1522,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
       dlgRef[0] = dlg;
       this.takeDialog = dlg;
+      this.takeFillRemaining = (left, caps) -> {
+         etGal.setText(left > 0 ? String.valueOf(left) : "");
+         for (Map.Entry<String, EditText> e : capInputs.entrySet()) {
+            Integer v = caps.get(e.getKey());
+            e.getValue().setText(v != null && v > 0 ? String.valueOf(v) : "");
+         }
+      };
       dlg.setOnShowListener(di -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
          if (!cbSales.isChecked() && !cbPickup.isChecked()) {
             Toast.makeText(this, "Pilih minimal satu jenis.", Toast.LENGTH_SHORT).show();
@@ -1791,6 +1850,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                body.put("only_uuids", pick);
             } catch (Exception ignored) {
             }
+            this.takePickedRows = new ArrayList<>(rows);
             dlg.dismiss();
             this.runTakeQueue(body);
          });
@@ -1834,9 +1894,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          String msg;
          boolean ok = false;
          List<String> uuids = new ArrayList<>();
+         int galonTaken = 0;
          try {
             JSONObject r = (new SyncApi(cfg)).takeQueue(body);
             ok = true;
+            galonTaken = r.optInt("galon", 0);
             msg = r.optString("message", "Antrean diambil.");
             JSONArray us = r.optJSONArray("uuids");
             for (int i = 0; us != null && i < us.length(); i++) if (!us.optString(i).isEmpty()) uuids.add(us.optString(i));
@@ -1848,10 +1910,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
          final String fm = msg;
          final boolean fok = ok;
+         final int galonF = galonTaken;
          this.runOnUiThread(() -> {
             try { wait.dismiss(); } catch (Exception ignored) {}
             if (this.isFinishing() || this.isDestroyed()) return;
             Toast.makeText(this, fm, Toast.LENGTH_LONG).show();
+            if (fok) this.offerTakeMore(body, uuids, galonF);
             // Tambah ke Rit: order diserap ke rit berjalan begitu barisnya ada di HP (pola pending-uuid).
             if (fok && forRun && !uuids.isEmpty()) {
                (new SettingsDao(DatabaseHelper.getInstance(this))).addDeliveryRunPendingUuids(uuids);
