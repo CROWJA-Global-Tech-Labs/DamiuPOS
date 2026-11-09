@@ -209,6 +209,8 @@ public class MainActivity extends AppCompatActivity {
         rvRecentTransactions = findViewById(R.id.rvRecentTransactions);
 
         adapter = new TransactionAdapter(true);
+        adapter.setProducts(new com.crowja.damiupos.db.ProductDao(
+                com.crowja.damiupos.db.DatabaseHelper.getInstance(this)).getAll());
         rvRecentTransactions.setLayoutManager(new LinearLayoutManager(this));
         rvRecentTransactions.setHasFixedSize(true);
         rvRecentTransactions.setAdapter(adapter);

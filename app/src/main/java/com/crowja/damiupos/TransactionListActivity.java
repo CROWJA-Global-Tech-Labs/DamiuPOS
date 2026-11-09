@@ -114,6 +114,14 @@ public class TransactionListActivity extends AppCompatActivity {
         cbPayTransfer.setOnCheckedChangeListener(methodListener);
 
         adapter = new TransactionAdapter(true);
+        adapter.setProducts(new com.crowja.damiupos.db.ProductDao(
+                com.crowja.damiupos.db.DatabaseHelper.getInstance(this)).getAll());
+        {
+            com.crowja.damiupos.model.User mu = new com.crowja.damiupos.db.UserDao(
+                    com.crowja.damiupos.db.DatabaseHelper.getInstance(this)).getById(new com.crowja.damiupos.db.SettingsDao(
+                    com.crowja.damiupos.db.DatabaseHelper.getInstance(this)).getCurrentUserId());
+            adapter.setShowDeliveryMetric(mu != null && (mu.isAdmin() || mu.isMarketing() || mu.isSpv()));
+        }
         rv.setLayoutManager(new LinearLayoutManager(this));
         rv.setHasFixedSize(true);
         rv.setAdapter(adapter);

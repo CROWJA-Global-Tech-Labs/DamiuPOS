@@ -166,6 +166,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
         findViewById(R.id.btnAddGift).setVisibility(canManageGift ? View.VISIBLE : View.GONE);
 
         adapter = new TransactionAdapter(false);
+        adapter.setProducts(new com.crowja.damiupos.db.ProductDao(dbHelper).getAll());
         adapter.setShowDeliveryMetric(canSeeDeliveryMetric);
         rvTransactions.setLayoutManager(new LinearLayoutManager(this));
         // Tanpa setHasFixedSize: RV riwayat ini tingginya wrap_content (di dalam ScrollView),
