@@ -1680,6 +1680,24 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 col.addView(ch);
             }
         }
+        // Foto bukti transaksi (selesai / bayar / tertunda) bila ada; ketuk untuk layar penuh.
+        android.widget.LinearLayout photos = new android.widget.LinearLayout(this);
+        photos.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        int capColor = 0xFF616161;
+        DebtDetailDialog.addPhoto(this, photos, str(t, "photo_url"), "📷 Bukti selesai", capColor);
+        DebtDetailDialog.addPhoto(this, photos, str(t, "payment_proof_url"), "💳 Bukti bayar", capColor);
+        DebtDetailDialog.addPhoto(this, photos, str(t, "tertunda_photo_url"), "⏸ Foto tertunda", capColor);
+        if (photos.getChildCount() > 0) {
+            android.widget.TextView ph = new android.widget.TextView(this);
+            ph.setText("🖼️ Foto Bukti Transaksi");
+            ph.setTextSize(15);
+            ph.setPadding(dp(22), dp(12), dp(22), dp(4));
+            col.addView(ph);
+            android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+            hs.setPadding(dp(22), dp(4), dp(22), dp(4));
+            hs.addView(photos);
+            col.addView(hs);
+        }
         sv.addView(col);
         final long localId = transactionDao.getIdBySyncUuid(str(t, "uuid"));
         if (localId > 0 && !kembali) {
