@@ -77,6 +77,8 @@ public class ReceiptActivity extends AppCompatActivity {
      *  null/kosong = tak ada bonus. Cermin popup web (App\Support\ProductBonus). */
     public static final String EXTRA_PRODUCT_BONUS_GRANTED = "product_bonus_granted";
     public static final String EXTRA_TRANSACTION_ID = "transaction_id";
+    /** Dibuka dari "Ubah Transaksi" di Detail Transaksi: langsung tampilkan dialog ubah. */
+    public static final String EXTRA_OPEN_EDIT = "open_edit";
     /** sync_uuid transaksi ini — dipakai untuk menampilkan gift yang di-klaim (redeemed) oleh
      *  transaksi ini di struk (gambar + teks WA). Diisi dari Transaksi Baru & saat re-share. */
     public static final String EXTRA_GIFT_TRX_UUID = "gift_trx_uuid";
@@ -304,6 +306,9 @@ public class ReceiptActivity extends AppCompatActivity {
         View btnExportWa = findViewById(R.id.btnExportWa);
         if (btnExportWa != null) {
             btnExportWa.setOnClickListener(v -> exportToWhatsApp());
+        }
+        if (getIntent().getBooleanExtra(EXTRA_OPEN_EDIT, false) && loadedTransactionId > 0 && currentUserCanEditLimited()) {
+            getWindow().getDecorView().post(this::showEditTransactionDialog);
         }
     }
 
