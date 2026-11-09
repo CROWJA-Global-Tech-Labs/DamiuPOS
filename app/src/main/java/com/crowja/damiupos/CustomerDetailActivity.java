@@ -1682,6 +1682,17 @@ public class CustomerDetailActivity extends AppCompatActivity {
         }
         sv.addView(col);
         final long localId = transactionDao.getIdBySyncUuid(str(t, "uuid"));
+        if (localId > 0 && !kembali) {
+            android.widget.TextView ed = new android.widget.TextView(this);
+            ed.setText("✏️ Ubah Transaksi →");
+            ed.setTextSize(15);
+            ed.setTextColor(0xFF1565C0);
+            ed.setPadding(dp(22), dp(8), dp(22), dp(4));
+            ed.setOnClickListener(v -> startActivity(new android.content.Intent(this, ReceiptActivity.class)
+                    .putExtra(ReceiptActivity.EXTRA_TRANSACTION_ID, localId)
+                    .putExtra(ReceiptActivity.EXTRA_OPEN_EDIT, true)));
+            col.addView(ed);
+        }
         androidx.appcompat.app.AlertDialog.Builder b = new androidx.appcompat.app.AlertDialog.Builder(this)
                 .setTitle(kembali ? "Detail Galon Kembali" : "Detail Transaksi")
                 .setView(sv)
