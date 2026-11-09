@@ -66,6 +66,20 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
         this.showCustomerName = showCustomerName;
     }
 
+    // id produk lokal → produk (slug + warna), dimuat sekali per setData supaya bind tetap ringan.
+    private java.util.Map<Long, com.crowja.damiupos.model.Product> productsById = new java.util.HashMap<>();
+    private java.util.Map<String, com.crowja.damiupos.model.Product> productsByName = new java.util.HashMap<>();
+
+    public void setProducts(List<com.crowja.damiupos.model.Product> products) {
+        productsById = new java.util.HashMap<>();
+        productsByName = new java.util.HashMap<>();
+        if (products == null) return;
+        for (com.crowja.damiupos.model.Product p : products) {
+            productsById.put(p.getId(), p);
+            if (p.getName() != null) productsByName.put(p.getName().trim().toLowerCase(Locale.ROOT), p);
+        }
+    }
+
     public void setData(List<Transaction> transactions) {
         this.transactions = transactions;
         notifyDataSetChanged();
@@ -200,6 +214,8 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
 
     class ViewHolder extends RecyclerView.ViewHolder {
         View cardTransaction;
+        android.view.View chipsItemsView;
+        TextView tvDoneBy;
         TextView tvTypeIcon, tvType, tvCustomerName, tvComplaintBadge, tvProductItems, tvDate, tvDeliveryTime, tvGalonCount, tvHarga;
 
         ViewHolder(@NonNull View itemView) {
@@ -212,8 +228,52 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
             tvProductItems = itemView.findViewById(R.id.tvProductItems);
             tvDate = itemView.findViewById(R.id.tvDate);
             tvDeliveryTime = itemView.findViewById(R.id.tvDeliveryTime);
+            chipsItemsView = itemView.findViewById(R.id.chipsItems);
+            tvDoneBy = itemView.findViewById(R.id.tvDoneBy);
             tvGalonCount = itemView.findViewById(R.id.tvGalonCount);
             tvHarga = itemView.findViewById(R.id.tvHarga);
+        }
+
+        private void bindChips(Transaction trx) {
+            com.google.android.material.chip.ChipGroup g = (com.google.android.material.chip.ChipGroup) chipsItemsView;
+            g.removeAllViews();
+            List<TransactionItem> items = trx.getItems();
+            List<TransactionItem> src = new ArrayList<>();
+            if (items != null && !items.isEmpty()) {
+                src.addAll(items);
+            } else {
+                TransactionItem one = new TransactionItem(0L, trx.getProductName(), trx.getJumlahGalon(), 0d);
+                src.add(one);
+            }
+            float d = itemView.getResources().getDisplayMetrics().density;
+            for (TransactionItem it : src) {
+                if (it == null) continue;
+                com.crowja.damiupos.model.Product p = productsById.get(it.productId);
+                if (p == null && it.productName != null) {
+                    p = productsByName.get(it.productName.trim().toLowerCase(Locale.ROOT));
+                }
+                String label = p != null && p.getSlug() != null && !p.getSlug().trim().isEmpty()
+                        ? p.getSlug().trim() : (it.productName != null && !it.productName.isEmpty() ? it.productName : "Produk");
+                int bg = dotColor(it.productName);
+                try {
+                    if (p != null && p.getColor() != null && !p.getColor().isEmpty()) bg = android.graphics.Color.parseColor(p.getColor());
+                } catch (IllegalArgumentException ignored) { }
+                double lum = (0.299 * android.graphics.Color.red(bg) + 0.587 * android.graphics.Color.green(bg)
+                        + 0.114 * android.graphics.Color.blue(bg)) / 255.0;
+                int fg = lum > 0.65 ? 0xFF1A1A1A : 0xFFFFFFFF;
+                TextView chip = new TextView(itemView.getContext());
+                chip.setText(label + " ×" + it.jumlah);
+                chip.setTextColor(fg);
+                chip.setTextSize(12f);
+                chip.setTypeface(chip.getTypeface(), android.graphics.Typeface.BOLD);
+                chip.setPadding(Math.round(8 * d), Math.round(3 * d), Math.round(8 * d), Math.round(3 * d));
+                android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable();
+                gd.setCornerRadius(10 * d);
+                gd.setColor(bg);
+                chip.setBackground(gd);
+                g.addView(chip);
+            }
+            g.setVisibility(g.getChildCount() > 0 ? View.VISIBLE : View.GONE);
         }
 
         void bind(Transaction trx) {
@@ -227,13 +287,15 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
                 tvTypeIcon.setBackgroundResource(R.drawable.bg_type_jual);
                 tvTypeIcon.setText("\u2191"); // arrow up
                 // Ganti daftar nama produk \u2192 titik berwarna per item + "N item".
-                tvType.setText(buildItemDots(trx));
-                tvType.setTextColor(colorPrimary);  // warna teks "N item"; titik pakai span warna sendiri
+                tvType.setText(trx.getItems() != null && trx.getItems().size() > 1
+                        ? trx.getItems().size() + " produk" : "Jual");
+                tvType.setTextColor(colorPrimary);
                 tvGalonCount.setTextColor(colorPrimary);
-                tvProductItems.setText(buildItemsSummary(trx));
-                tvProductItems.setVisibility(View.VISIBLE);
+                tvProductItems.setVisibility(View.GONE);
+                bindChips(trx);
             } else {
                 tvProductItems.setVisibility(View.GONE);
+                chipsItemsView.setVisibility(View.GONE);
                 boolean isGantiRugi = trx.getTotalHarga() > 0
                         || (trx.getCatatan() != null && trx.getCatatan().contains("[GANTI RUGI"));
                 if (isGantiRugi) {
@@ -269,6 +331,16 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
             if (pay != null && !pay.isEmpty()) dateLine += "  ·  " + pay;
             tvDate.setText(dateLine);
             tvGalonCount.setText(trx.getJumlahGalon() + " galon");
+
+            // Siapa yang menyelesaikan (semua peran); lama selesai hanya untuk peran yang boleh (lihat bawah).
+            String doneBy = trx.getCompletedByName();
+            boolean done = isJual && Transaction.DELIVERY_DONE.equals(trx.getDeliveryStatus());
+            if (done && doneBy != null && !doneBy.trim().isEmpty()) {
+                tvDoneBy.setText("✅ Selesai oleh " + doneBy.trim());
+                tvDoneBy.setVisibility(View.VISIBLE);
+            } else {
+                tvDoneBy.setVisibility(View.GONE);
+            }
 
             if (showDeliveryMetric) {
                 long secs = deliverySeconds(trx);

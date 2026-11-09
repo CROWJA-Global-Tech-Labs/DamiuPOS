@@ -78,6 +78,14 @@
                 android:textSize="12sp"
                 android:visibility="gone" />
 
+            <!-- Badge slug produk (warna produk) + jumlah galon, mis. "RO ×3". -->
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/chipsItems"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:visibility="gone" />
+
             <TextView
                 android:id="@+id/tvDate"
                 android:layout_width="wrap_content"
@@ -87,6 +95,14 @@
 
             <!-- Waktu Pengiriman (delivery_queued_at → delivery_done_at) — hanya admin/marketing/spv,
                  lihat TransactionAdapter#setShowDeliveryMetric. Gone bila order belum selesai diantar. -->
+            <TextView
+                android:id="@+id/tvDoneBy"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
             <TextView
                 android:id="@+id/tvDeliveryTime"
                 android:layout_width="wrap_content"
