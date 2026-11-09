@@ -3017,7 +3017,20 @@ public class ReceiptActivity extends AppCompatActivity {
         if (com.crowja.damiupos.model.Transaction.TYPE_KEMBALI.equals(t.getType())) {
             showEditKembaliGalon(t);
         } else {
-            showEditPaymentMethod(t);
+            // JUAL: pilih apa yang diubah. Item/harga/ongkir lewat dialog edit penuh (server memutuskan:
+            // langsung bila masih antrean, selain itu permintaan izin dengan alasan wajib).
+            final com.crowja.damiupos.model.Transaction tt = t;
+            new AlertDialog.Builder(this)
+                    .setTitle("Ubah Transaksi")
+                    .setItems(new String[]{"🧾 Item, jumlah, harga & ongkir", "💳 Metode pembayaran"}, (d, w) -> {
+                        if (w == 0) {
+                            com.crowja.damiupos.DeliveryEditDialog.show(this, tt, this::recreate);
+                        } else {
+                            showEditPaymentMethod(tt);
+                        }
+                    })
+                    .setNegativeButton("Batal", null)
+                    .show();
         }
     }
 
