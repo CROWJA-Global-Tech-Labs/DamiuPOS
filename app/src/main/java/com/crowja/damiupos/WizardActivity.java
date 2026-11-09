@@ -134,6 +134,17 @@ public class WizardActivity extends AppCompatActivity {
                 options.setOrientationLocked(false);
                 qrLauncher.launch(options);
             });
+            // Kamera bermasalah atau QR tak terbaca: ketik kode provisioning dari dashboard.
+            if (btnProvision.getParent() instanceof android.view.ViewGroup) {
+                android.view.ViewGroup parent = (android.view.ViewGroup) btnProvision.getParent();
+                com.google.android.material.button.MaterialButton btnCode = new com.google.android.material.button.MaterialButton(
+                        this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+                btnCode.setText("⌨ Input Kode Provisioning");
+                btnCode.setAllCaps(false);
+                btnCode.setOnClickListener(v -> askProvisionCode());
+                parent.addView(btnCode, parent.indexOfChild(btnProvision) + 1,
+                        new android.view.ViewGroup.LayoutParams(-1, -2));
+            }
         }
 
         updateStepUI();
@@ -361,6 +372,22 @@ public class WizardActivity extends AppCompatActivity {
      * branch's data synced. Falls back to treating the whole scan as the code and the
      * default server URL.
      */
+    private void askProvisionCode() {
+        android.widget.EditText et = new android.widget.EditText(this);
+        et.setHint("Kode dari dashboard (Perangkat → Provisioning)");
+        et.setSingleLine(true);
+        int pad = Math.round(20 * getResources().getDisplayMetrics().density);
+        android.widget.FrameLayout box = new android.widget.FrameLayout(this);
+        box.setPadding(pad, pad / 2, pad, 0);
+        box.addView(et);
+        new android.app.AlertDialog.Builder(this).setTitle("Input Kode Provisioning").setView(box)
+                .setPositiveButton("Hubungkan", (d, w) -> {
+                    String code = et.getText().toString().trim();
+                    if (!code.isEmpty()) handleProvisionScan(code);
+                })
+                .setNegativeButton("Batal", null).show();
+    }
+
     private void handleProvisionScan(String contents) {
         com.crowja.damiupos.sync.ProvisioningQr qr =
                 com.crowja.damiupos.sync.ProvisioningQr.parse(contents);
