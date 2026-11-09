@@ -246,7 +246,7 @@ final class DebtDetailDialog {
         return sb.toString().trim();
     }
 
-    private static void addPhoto(AppCompatActivity a, LinearLayout row, String url, String label, int labelColor) {
+    static void addPhoto(AppCompatActivity a, LinearLayout row, String url, String label, int labelColor) {
         if (url.isEmpty()) return;
         LinearLayout box = new LinearLayout(a);
         box.setOrientation(LinearLayout.VERTICAL);
