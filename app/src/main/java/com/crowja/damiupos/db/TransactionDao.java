@@ -78,6 +78,12 @@ public class TransactionDao {
         values.put(DatabaseHelper.COL_JUMLAH_GALON, trx.getJumlahGalon());
         values.put(DatabaseHelper.COL_HARGA_PER_GALON, trx.getHargaPerGalon());
         values.put(DatabaseHelper.COL_TOTAL_HARGA, trx.getTotalHarga());
+        // Jenis galon pilihan staf saat order dibuat: server menerimanya HANYA pada baris baru (sumber "staff").
+        if (trx.getGalonType() != null && "staff".equals(trx.getGalonTypeSource())) {
+            values.put(DatabaseHelper.COL_GALON_TYPE, trx.getGalonType());
+            values.put(DatabaseHelper.COL_GALON_TYPE_SOURCE, "staff");
+            if (trx.getGalonSpec() != null) values.put(DatabaseHelper.COL_GALON_SPEC, trx.getGalonSpec());
+        }
         values.put(DatabaseHelper.COL_ONGKIR, trx.getOngkir());
         values.put(DatabaseHelper.COL_ONGKIR_TYPE,
                 trx.getOngkirType() != null ? trx.getOngkirType() : Transaction.ONGKIR_PER_GALON);

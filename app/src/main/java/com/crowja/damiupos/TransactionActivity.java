@@ -314,6 +314,10 @@ public class TransactionActivity extends AppCompatActivity {
     private String tertundaResumeAtDb;   // format trxDbFmt — dipakai juga sbg selectedTrxDate (tanggal ikut jadwal)
 
     private final List<TransactionItem> items = new ArrayList<>();
+    /** 🚰 Jenis galon pilihan staf saat membuat order (null = bawaan Keran, tidak dikirim sebagai pilihan). */
+    private String galonTypePick;
+    private String galonSpecPick;
+    private TextView tvGalonTypeRow;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -380,6 +384,7 @@ public class TransactionActivity extends AppCompatActivity {
         etJumlahKembali = findViewById(R.id.etJumlahKembali);
         etOngkir = findViewById(R.id.etOngkir);
         etCatatan = findViewById(R.id.etCatatan);
+        addGalonTypeRow();
         tilOngkir = findViewById(R.id.tilOngkir);
         tilJumlahKembali = findViewById(R.id.tilJumlahKembali);
         toggleOngkirMode = findViewById(R.id.toggleOngkirMode);
@@ -531,6 +536,7 @@ public class TransactionActivity extends AppCompatActivity {
         toggleType.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
             if (!isChecked) return;
             updateTypeUI();
+            refreshGalonTypeRow();
             // Gerbang anti-order-ganda hanya berlaku untuk JUAL, dan dijalankan saat pelanggan
             // DIPILIH — kalau jenisnya baru diubah ke JUAL SETELAH memilih pelanggan, keduanya
             // sudah terlewat. Jalankan ulang di sini (anti-spam menjaga agar tak dobel bila tadi
@@ -1416,6 +1422,85 @@ public class TransactionActivity extends AppCompatActivity {
         if (btnKembaliType != null) {
             btnKembaliType.setVisibility(umum ? View.GONE : View.VISIBLE);
         }
+    }
+
+    /** Baris "🚰 Jenis galon" tepat di atas Catatan — opsional, hanya untuk JUAL. */
+    private int dp(int v) {
+        return Math.round(v * getResources().getDisplayMetrics().density);
+    }
+
+    private void addGalonTypeRow() {
+        try {
+            android.view.View til = (android.view.View) etCatatan.getParent().getParent();
+            android.view.ViewGroup box = (android.view.ViewGroup) til.getParent();
+            tvGalonTypeRow = new TextView(this);
+            tvGalonTypeRow.setTextSize(14f);
+            tvGalonTypeRow.setPadding(dp(12), dp(12), dp(12), dp(12));
+            tvGalonTypeRow.setTextColor(0xFF0F5132);
+            tvGalonTypeRow.setBackgroundResource(android.R.drawable.dialog_holo_light_frame);
+            tvGalonTypeRow.setOnClickListener(v -> pickGalonType());
+            android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(-1, -2);
+            lp.topMargin = dp(8);
+            box.addView(tvGalonTypeRow, box.indexOfChild(til), lp);
+            refreshGalonTypeRow();
+        } catch (Exception ignored) {
+            tvGalonTypeRow = null;
+        }
+    }
+
+    private void refreshGalonTypeRow() {
+        if (tvGalonTypeRow == null) return;
+        tvGalonTypeRow.setVisibility(isJualSelected() ? android.view.View.VISIBLE : android.view.View.GONE);
+        String label;
+        if (galonTypePick == null) {
+            label = "Keran (bawaan)";
+        } else if (GalonTypeUi.CAMPUR.equals(galonTypePick)) {
+            label = galonSpecPick != null && !galonSpecPick.isEmpty()
+                    ? GalonTypeUi.summary(galonTypePick, "staff", galonSpecPick) : "Campur";
+        } else {
+            label = GalonTypeUi.label(galonTypePick);
+        }
+        tvGalonTypeRow.setText("🚰 Jenis galon: " + label + "  ·  ketuk untuk ubah (opsional)");
+    }
+
+    /** Jumlah galon berbayar per slug produk di keranjang (Campur wajib cocok dengan ini). */
+    private java.util.LinkedHashMap<String, Integer> currentSlugQty() {
+        java.util.LinkedHashMap<String, Integer> m = new java.util.LinkedHashMap<>();
+        com.crowja.damiupos.db.ProductDao pd = new com.crowja.damiupos.db.ProductDao(DatabaseHelper.getInstance(this));
+        for (TransactionItem it : items) {
+            if (it == null || it.jumlah <= 0) continue;
+            String slug = null;
+            com.crowja.damiupos.model.Product p = it.productId > 0 ? pd.getById(it.productId) : null;
+            if (p != null && p.getSlug() != null && !p.getSlug().trim().isEmpty()) slug = p.getSlug().trim();
+            if (slug == null) slug = it.productName != null && !it.productName.isEmpty() ? it.productName : "Produk";
+            m.merge(slug, it.jumlah, Integer::sum);
+        }
+        return m;
+    }
+
+    private void pickGalonType() {
+        java.util.LinkedHashMap<String, Integer> q = currentSlugQty();
+        GalonTypePicker.show(this, "pesanan ini", q, galonTypePick, galonSpecPick, (type, spec) -> {
+            galonTypePick = type;
+            galonSpecPick = spec;
+            refreshGalonTypeRow();
+        });
+    }
+
+    /** Campur dengan rincian yang tak lagi cocok dengan keranjang (item diubah sesudah memilih) → tanpa rincian. */
+    private String effectiveGalonSpec() {
+        if (!GalonTypeUi.CAMPUR.equals(galonTypePick) || galonSpecPick == null) return null;
+        java.util.Map<String, java.util.LinkedHashMap<String, Integer>> bySlug = GalonTypeUi.specBySlug(galonSpecPick);
+        java.util.LinkedHashMap<String, Integer> want = currentSlugQty();
+        if (bySlug.size() != want.size()) return null;
+        for (java.util.Map.Entry<String, Integer> e : want.entrySet()) {
+            java.util.LinkedHashMap<String, Integer> have = bySlug.get(e.getKey().trim().toUpperCase(java.util.Locale.US));
+            if (have == null) return null;
+            int sum = 0;
+            for (int v : have.values()) sum += v;
+            if (sum != e.getValue()) return null;
+        }
+        return galonSpecPick;
     }
 
     private boolean isJualSelected() {
@@ -4534,6 +4619,13 @@ public class TransactionActivity extends AppCompatActivity {
             trx.setCheckoutUuid(ctx.uuid);
             trx.setCheckoutSeq(ctx.seq);
             trx.setCheckoutSize(ctx.size);
+        }
+        // 🚰 Jenis galon pilihan staf: ikut ter-push bersama order baru (sumber "staff"). Rincian Campur hanya
+        // untuk order tunggal — tiap leg checkout punya item sendiri.
+        if (isJual && galonTypePick != null && (ctx == null || !GalonTypeUi.CAMPUR.equals(galonTypePick))) {
+            trx.setGalonType(galonTypePick);
+            trx.setGalonTypeSource("staff");
+            trx.setGalonSpec(ctx == null ? effectiveGalonSpec() : null);
         }
         long newTrxId = transactionDao.insert(trx);
         if (ctx != null && newTrxId <= 0) {
