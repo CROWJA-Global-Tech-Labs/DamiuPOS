@@ -152,6 +152,9 @@ public class SyncSettings {
     /** Nama armada terpilih (dari /api/me); kosong = belum memilih. */
     public String getArmadaName() { return settings.get("sync_armada_name", ""); }
     public void setArmadaName(String v) { settings.set("sync_armada_name", v != null ? v : ""); }
+    /** Nama operator pasangan pada armada "kirim bersama" (kosong = mengirim sendiri). */
+    public String getArmadaPartner() { return settings.get("sync_armada_partner", ""); }
+    public void setArmadaPartner(String v) { settings.set("sync_armada_partner", v != null ? v : ""); }
 
     /** Server: HP delivery ini belum punya armada padahal cabangnya punya. */
     public boolean isArmadaRequired() { return "1".equals(settings.get("sync_armada_required", "0")); }

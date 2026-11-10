@@ -155,7 +155,7 @@ public class LoginActivity extends AppCompatActivity {
             if (!auth.tracksAttendance()) {
                 // Admin & Viewer: login biasa tanpa absensi (tanpa clock in / selfie).
                 settingsDao.setCurrentUser(auth.getId(), auth.getName());
-                new com.crowja.damiupos.sync.SyncSettings(settingsDao).setArmadaPromptPending(true);
+                { com.crowja.damiupos.sync.SyncSettings kbCfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao); kbCfg.setArmadaPromptPending(true); kbCfg.setArmadaPartner(""); }
                 goToMain(false);
                 return;
             }
@@ -299,7 +299,7 @@ public class LoginActivity extends AppCompatActivity {
             LocationService.stampAttendanceLocation(this, attId);   // GPS clock-in untuk dashboard
             com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());   // absensi real-time
             settingsDao.setCurrentUser(pendingUser.getId(), pendingUser.getName());
-            new com.crowja.damiupos.sync.SyncSettings(settingsDao).setArmadaPromptPending(true);
+            { com.crowja.damiupos.sync.SyncSettings kbCfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao); kbCfg.setArmadaPromptPending(true); kbCfg.setArmadaPartner(""); }
             // Shift terbuka → service polling tetap aktif (background) sepanjang
             // shift, termasuk saat istirahat, sampai Pulang.
             settingsDao.setShiftActive(true);
@@ -324,7 +324,7 @@ public class LoginActivity extends AppCompatActivity {
         LocationService.stampAttendanceLocation(this, attId);    // GPS clock-in untuk dashboard/geofence
         com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());   // absensi real-time
         settingsDao.setCurrentUser(user.getId(), user.getName());
-        new com.crowja.damiupos.sync.SyncSettings(settingsDao).setArmadaPromptPending(true);
+        { com.crowja.damiupos.sync.SyncSettings kbCfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao); kbCfg.setArmadaPromptPending(true); kbCfg.setArmadaPartner(""); }
         settingsDao.setShiftActive(true);
         settingsDao.clearBreakUser();
         WorkHoursReminder.schedule(getApplicationContext(), user.getId());
