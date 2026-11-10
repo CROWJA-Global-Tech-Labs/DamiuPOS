@@ -617,8 +617,14 @@ public class SyncApi {
 
     /** Pilih armada HP ini: {ok,armada,max_load}. */
     public JSONObject selectArmada(long armadaId, @Nullable String staffUuid) throws Exception {
-        return post(cfg.getBaseUrl() + "/api/device/armada", new JSONObject().put("armada_id", armadaId),
-                cfg.getToken(), staffUuid);
+        return selectArmada(armadaId, staffUuid, null);
+    }
+
+    /** Armada "kirim bersama": {@code partnerUuid} = operator pasangan yang berbagi poin galon (null = sendiri). */
+    public JSONObject selectArmada(long armadaId, @Nullable String staffUuid, @Nullable String partnerUuid) throws Exception {
+        JSONObject body = new JSONObject().put("armada_id", armadaId);
+        if (partnerUuid != null && !partnerUuid.isEmpty()) body.put("partner_staff_uuid", partnerUuid);
+        return post(cfg.getBaseUrl() + "/api/device/armada", body, cfg.getToken(), staffUuid);
     }
 
     public JSONObject me() throws Exception {

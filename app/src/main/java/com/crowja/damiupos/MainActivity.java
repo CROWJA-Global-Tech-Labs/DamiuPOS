@@ -1184,7 +1184,8 @@ public class MainActivity extends AppCompatActivity {
         TextView tvArmada = bar.findViewById(R.id.tvToolbarArmada);
         tvArmada.setVisibility(showArmada ? View.VISIBLE : View.GONE);
         String armadaName = cfg.getArmadaName();
-        tvArmada.setText(armadaName.isEmpty() ? "Pilih armada" : armadaName + " · " + cfg.getMaxLoad() + " galon");
+        tvArmada.setText(armadaName.isEmpty() ? "Pilih armada" : armadaName + " · " + cfg.getMaxLoad() + " galon"
+                + (cfg.getArmadaPartner().isEmpty() ? "" : " · 🤝 " + cfg.getArmadaPartner()));
         View armadaInfo = bar.findViewById(R.id.toolbarArmadaInfo);
         armadaInfo.setOnClickListener(showArmada ? v -> ArmadaPicker.change(this) : null);
         armadaInfo.setClickable(showArmada);
@@ -1217,7 +1218,8 @@ public class MainActivity extends AppCompatActivity {
         com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(settingsDao);
         item.setVisible(cfg.isEnrolled() && cfg.isDeliveryDevice());
         String name = cfg.getArmadaName();
-        item.setTitle(name.isEmpty() ? "🚚 Pilih Armada" : "🚚 Armada: " + name + " · " + cfg.getMaxLoad() + " galon");
+        item.setTitle(name.isEmpty() ? "🚚 Pilih Armada" : "🚚 Armada: " + name + " · " + cfg.getMaxLoad() + " galon"
+                + (cfg.getArmadaPartner().isEmpty() ? "" : " · 🤝 " + cfg.getArmadaPartner()));
     }
 
     private void setThisDeviceDelivery(boolean on) {
