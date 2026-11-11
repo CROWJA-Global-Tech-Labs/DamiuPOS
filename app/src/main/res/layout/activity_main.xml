@@ -1129,6 +1129,61 @@
                         android:visibility="gone" />
                 </FrameLayout>
 
+                <!-- Komplain: daftar komplain pesanan perangkat ini; badge = komplain aktif (pesanan belum selesai). -->
+                <FrameLayout
+                    android:id="@+id/wrapKomplain"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    app:layout_columnWeight="1"
+                    app:layout_gravity="fill_horizontal"
+                    android:visibility="gone">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnKomplain"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="46dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:text="😠 Komplain"
+                        android:textAllCaps="false"
+                        android:textColor="#B71C1C"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        app:strokeColor="#B71C1C"
+                        app:strokeWidth="1dp"
+                        app:backgroundTint="@color/white"
+                        app:cornerRadius="12dp"
+                        app:elevation="0dp"
+                        android:stateListAnimator="@null" />
+
+                    <TextView
+                        android:id="@+id/tvKomplainBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="top|end"
+                        android:layout_marginTop="2dp"
+                        android:layout_marginEnd="2dp"
+                        android:background="@drawable/bg_followup_badge"
+                        android:minWidth="22dp"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:paddingTop="1dp"
+                        android:paddingBottom="1dp"
+                        android:elevation="6dp"
+                        android:gravity="center"
+                        android:text="0"
+                        android:textColor="#B71C1C"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+                </FrameLayout>
+
                 <!-- Kunjungan Urgent (d/h "Daftar Kunjungan Urgent") — pelanggan yang ditandai
                      "Kunjungi Urgent" dari Follow Up (web / HP admin) dan belum dikunjungi.
                      Visibilitas: marketing/admin. -->
