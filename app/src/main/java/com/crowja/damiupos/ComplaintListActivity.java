@@ -77,6 +77,8 @@ public class ComplaintListActivity extends AppCompatActivity {
     private boolean orderedKnown;
     private boolean orderedLoading;
     private MaterialButton btnClear;
+    /** Komplain SELESAI yang dibuka manual (kunci = uuid transaksi); yang selesai default diringkas. */
+    private final java.util.Set<String> expanded = new java.util.HashSet<>();
 
     /** Hari (yyyy-MM-dd lokal) → komplain hari itu; hari terbaru lebih dulu. */
     private final LinkedHashMap<String, List<Transaction>> byDay = new LinkedHashMap<>();
@@ -612,9 +614,9 @@ public class ComplaintListActivity extends AppCompatActivity {
         c.setOrientation(LinearLayout.VERTICAL);
         c.setPadding(dp(14), dp(12), dp(14), dp(10));
         android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
-        bg.setColor(0xFFFFFFFF);
+        bg.setColor(active ? 0xFFFFF3F3 : 0xFFF1F8E9);   // aktif: merah muda · selesai: hijau muda
         bg.setCornerRadius(dp(12));
-        bg.setStroke(dp(active ? 2 : 1), active ? C_RED : 0xFFBDBDBD);
+        bg.setStroke(dp(active ? 2 : 1), active ? C_RED : 0xFF81C784);
         c.setBackground(bg);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.setMargins(0, dp(4), 0, dp(4));
@@ -627,9 +629,25 @@ public class ComplaintListActivity extends AppCompatActivity {
         name.setTypeface(null, Typeface.BOLD);
         name.setPaintFlags(name.getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
         name.setOnClickListener(v -> openCustomer(t));   // → detail pelanggan
-        c.addView(name);
+        // Komplain SELESAI diringkas (nama + badge produk); aktif selalu penuh — komplain yang terpicu lagi otomatis membesar.
+        final String key = uuidOf(t) == null ? "" : uuidOf(t);
+        final boolean collapsed = !active && !expanded.contains(key);
+        LinearLayout nameRow = new LinearLayout(this);
+        nameRow.setOrientation(LinearLayout.HORIZONTAL);
+        nameRow.setGravity(Gravity.CENTER_VERTICAL);
+        nameRow.addView(name, new LinearLayout.LayoutParams(0, -2, 1f));
+        if (!active) {
+            TextView chev = new TextView(this);
+            chev.setText(collapsed ? "▾" : "▴");
+            chev.setTextSize(20f);
+            chev.setTextColor(C_GREEN);
+            chev.setPadding(dp(12), 0, dp(4), 0);
+            chev.setOnClickListener(v -> toggleExpand(key));
+            nameRow.addView(chev);
+        }
+        c.addView(nameRow);
         final String[] rm = remoteMeta.get(t);
-        if (rm != null && rm[2] != null && !rm[2].isEmpty()) {
+        if (!collapsed && rm != null && rm[2] != null && !rm[2].isEmpty()) {
             TextView dev = new TextView(this);
             dev.setText("📱 " + rm[2]);
             dev.setTextColor(C_MUTED);
@@ -638,6 +656,10 @@ public class ComplaintListActivity extends AppCompatActivity {
         }
 
         c.addView(slugBadges(t));
+        if (collapsed) {
+            c.setOnClickListener(v -> toggleExpand(key));   // ketuk kartu ringkas untuk membuka
+            return c;
+        }
         String time = Ts.hm(TransactionDao.complaintActivityAt(t));
         TextView meta = new TextView(this);
         meta.setText("Rp " + nf.format(Math.round(t.getTotalHarga()))
@@ -660,14 +682,15 @@ public class ComplaintListActivity extends AppCompatActivity {
             oi.setPadding(0, 0, 0, dp(2));
             c.addView(oi);
         }
-        TextView status = new TextView(this);
-        status.setText(active ? (pendingOrder ? "⏳ Aktif — selesaikan pesanan ini untuk menutup komplain"
-                : "🔁 Aktif — pelanggan komplain setelah pesanan selesai")
-                : "✅ Selesai — pesanan sudah diselesaikan");
-        status.setTextColor(active ? C_RED : C_GREEN);
-        status.setTextSize(13f);
-        status.setTypeface(null, Typeface.BOLD);
-        c.addView(status);
+        if (active) {
+            TextView status = new TextView(this);
+            status.setText(pendingOrder ? "⏳ Aktif — selesaikan pesanan ini untuk menutup komplain"
+                    : "🔁 Aktif — pelanggan komplain setelah pesanan selesai");
+            status.setTextColor(C_RED);
+            status.setTextSize(13f);
+            status.setTypeface(null, Typeface.BOLD);
+            c.addView(status);
+        }
 
         // Aksi: 2 × 2 tombol.
         LinearLayout row1 = new LinearLayout(this);
@@ -693,6 +716,11 @@ public class ComplaintListActivity extends AppCompatActivity {
 
         c.setOnClickListener(v -> openComplaintChat(t));
         return c;
+    }
+
+    private void toggleExpand(String key) {
+        if (!expanded.remove(key)) expanded.add(key);
+        render();
     }
 
     private LinearLayout.LayoutParams weight() {
