@@ -7,6 +7,12 @@ import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.text.Editable;
+import com.crowja.damiupos.model.Product;
+import com.crowja.damiupos.db.ProductDao;
+import java.util.Locale;
+import android.widget.RadioGroup;
+import android.widget.RadioButton;
+import android.text.InputFilter;
 import android.text.InputType;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
@@ -179,7 +185,7 @@ final class SejalurFlow {
             .setMessage(msg.toString())
             .setPositiveButton("Buat Rute", (d, w) -> {
                if (maxLoad > 0) {
-                  this.requestPlan(new PlanReq(t, maxLoad, true, true, 0), null,
+                  this.requestPlan(new PlanReq(t, maxLoad, true, true, 0, null), null,
                         Collections.<Button>emptyList(), null, null);
                } else {
                   this.askGalon(t);
@@ -706,6 +712,82 @@ final class SejalurFlow {
       lbl.setTypeface(null, Typeface.BOLD);
       lbl.setPadding(0, this.dp(12f), 0, 0);
       box.addView(lbl);
+      // Pilih salah satu: jumlah bebas (total) atau komposisi (jumlah tiap produk).
+      final RadioButton rbFree = new RadioButton(this.act);
+      rbFree.setText("Jumlah bebas");
+      rbFree.setTextColor(C_TEXT);
+      rbFree.setId(View.generateViewId());
+      final RadioButton rbMix = new RadioButton(this.act);
+      rbMix.setText("Dengan komposisi");
+      rbMix.setTextColor(C_TEXT);
+      rbMix.setId(View.generateViewId());
+      final RadioGroup rgQty = new RadioGroup(this.act);
+      rgQty.setOrientation(LinearLayout.HORIZONTAL);
+      rgQty.addView(rbFree);
+      rgQty.addView(rbMix);
+      final LinearLayout freeBox = new LinearLayout(this.act);
+      freeBox.setOrientation(LinearLayout.VERTICAL);
+      final LinearLayout mixBox = new LinearLayout(this.act);
+      mixBox.setOrientation(LinearLayout.VERTICAL);
+      mixBox.setVisibility(View.GONE);
+      final LinkedHashMap<String, EditText> capInputs = new LinkedHashMap<>();
+      final TextView tvMixSum = new TextView(this.act);
+      tvMixSum.setTextSize(13f);
+      tvMixSum.setTextColor(C_PRIMARY);
+      tvMixSum.setVisibility(View.GONE);
+      final TextWatcher mixWatch = new TextWatcher() {
+         public void beforeTextChanged(CharSequence c, int a, int b, int d) { }
+         public void onTextChanged(CharSequence c, int a, int b, int d) { }
+         public void afterTextChanged(Editable e) {
+            int sum = 0;
+            for (EditText et : capInputs.values()) {
+               String v = et.getText().toString().trim();
+               if (!v.isEmpty()) sum += Math.min(100000, Integer.parseInt(v));
+            }
+            tvMixSum.setVisibility(sum > 0 ? View.VISIBLE : View.GONE);
+            tvMixSum.setText("Total: " + sum + " galon");
+         }
+      };
+      TextView lblMix = new TextView(this.act);
+      lblMix.setText("Isi jumlah tiap produk (kosong = produk itu tidak ikut):");
+      lblMix.setTextColor(C_TEXT2);
+      lblMix.setTextSize(13f);
+      mixBox.addView(lblMix);
+      for (Product pr : (new ProductDao(DatabaseHelper.getInstance(this.act))).getAll()) {
+         String slug = pr.getSlug() != null ? pr.getSlug().trim() : "";
+         String key = slug.toUpperCase(Locale.US);
+         if (slug.isEmpty() || capInputs.containsKey(key)) continue;
+         LinearLayout cell = new LinearLayout(this.act);
+         cell.setOrientation(LinearLayout.HORIZONTAL);
+         cell.setGravity(Gravity.CENTER_VERTICAL);
+         TextView chip = new TextView(this.act);
+         chip.setText(slug);
+         chip.setTypeface(null, Typeface.BOLD);
+         int bg = 0xFF1565C0;
+         try {
+            if (pr.getColor() != null && !pr.getColor().isEmpty()) bg = android.graphics.Color.parseColor(pr.getColor());
+         } catch (IllegalArgumentException ignored) {
+         }
+         double lum = (0.299 * android.graphics.Color.red(bg) + 0.587 * android.graphics.Color.green(bg)
+               + 0.114 * android.graphics.Color.blue(bg)) / 255.0;
+         chip.setTextColor(lum > 0.65 ? 0xFF1A1A1A : 0xFFFFFFFF);
+         chip.setBackground(this.rounded(bg, bg, 10f));
+         chip.setPadding(this.dp(10f), this.dp(4f), this.dp(10f), this.dp(4f));
+         cell.addView(chip, new LinearLayout.LayoutParams(this.dp(86f), -2));
+         EditText et = new EditText(this.act);
+         et.setInputType(InputType.TYPE_CLASS_NUMBER);
+         et.setFilters(new InputFilter[]{new InputFilter.LengthFilter(4)});
+         et.setHint("–");
+         et.setTextColor(C_TEXT);
+         et.setHintTextColor(C_MUTED);
+         et.setMinWidth(this.dp(64f));
+         et.setGravity(Gravity.CENTER);
+         et.addTextChangedListener(mixWatch);
+         cell.addView(et);
+         mixBox.addView(cell);
+         capInputs.put(key, et);
+      }
+      mixBox.addView(tvMixSum);
       final EditText etGal = new EditText(this.act);
       etGal.setInputType(InputType.TYPE_CLASS_NUMBER);
       etGal.setTextColor(C_TEXT);
@@ -713,13 +795,21 @@ final class SejalurFlow {
       etGal.setHintTextColor(C_MUTED);
       int maxLoad = this.cfg().getMaxLoad();
       if (maxLoad > 0) etGal.setText(String.valueOf(maxLoad));
-      box.addView(etGal);
+      freeBox.addView(etGal);
       TextView capNote = new TextView(this.act);
       capNote.setText(maxLoad > 0 ? "Kapasitas armada: " + maxLoad + " galon (boleh diubah)."
             : "Armada belum dipilih — isi jumlah galon yang dibawa.");
       capNote.setTextColor(C_MUTED);
       capNote.setTextSize(12f);
-      box.addView(capNote);
+      freeBox.addView(capNote);
+      if (!capInputs.isEmpty() && !t.returnDepot || !capInputs.isEmpty()) box.addView(rgQty);
+      box.addView(freeBox);
+      box.addView(mixBox);
+      rgQty.setOnCheckedChangeListener((g, id) -> {
+         freeBox.setVisibility(id == rbMix.getId() ? View.GONE : View.VISIBLE);
+         mixBox.setVisibility(id == rbMix.getId() ? View.VISIBLE : View.GONE);
+      });
+      rbFree.setChecked(true);
 
       final CheckBox cbPickup = new CheckBox(this.act);
       cbPickup.setText("Ikut ambil galon kosong (KEMBALI) yang sejalur");
@@ -749,22 +839,41 @@ final class SejalurFlow {
          });
          pos.setOnClickListener((v) -> {
             int galon;
-            try {
+            LinkedHashMap<String, Integer> caps = null;
+            if (rbMix.isChecked()) {
+               // Komposisi: total = jumlah semua produk; produk kosong dibatasi 0 supaya order yang membawanya tak ikut.
+               caps = new LinkedHashMap<>();
+               int sum = 0;
+               for (Map.Entry<String, EditText> e : capInputs.entrySet()) {
+                  String cv = e.getValue().getText().toString().trim();
+                  int q = cv.isEmpty() ? 0 : Integer.parseInt(cv);
+                  caps.put(e.getKey(), q);
+                  sum += q;
+               }
+               if (sum <= 0) {
+                  Toast.makeText(this.act, "Isi jumlah minimal satu produk.", 1).show();
+                  return;
+               }
+               galon = sum;
+            } else try {
                galon = Integer.parseInt(etGal.getText().toString().trim());
             } catch (NumberFormatException e) {
                galon = 0;
             }
-            if (galon <= 0) {
+            if (!rbMix.isChecked() && galon <= 0) {
                etGal.setError("Isi jumlah galon");
                etGal.requestFocus();
                return;
             }
             if (galon > 1000) {
-               etGal.setError("Maksimal 1000 galon");
-               etGal.requestFocus();
+               if (rbMix.isChecked()) Toast.makeText(this.act, "Maksimal 1000 galon", 1).show();
+               else {
+                  etGal.setError("Maksimal 1000 galon");
+                  etGal.requestFocus();
+               }
                return;
             }
-            this.requestPlan(new PlanReq(t, galon, cbPickup.isChecked(), cbOther.isChecked(), 0), dlg,
+            this.requestPlan(new PlanReq(t, galon, cbPickup.isChecked(), cbOther.isChecked(), 0, caps), dlg,
                   Collections.singletonList(pos), null, null);
          });
       });
@@ -786,17 +895,20 @@ final class SejalurFlow {
       final boolean includePickup;
       final boolean includeOther;
       final int widen;
+      /** Komposisi produk (slug → galon); null = jumlah bebas. */
+      @Nullable final Map<String, Integer> slugCaps;
 
-      PlanReq(Target t, int galon, boolean includePickup, boolean includeOther, int widen) {
+      PlanReq(Target t, int galon, boolean includePickup, boolean includeOther, int widen, @Nullable Map<String, Integer> slugCaps) {
          this.t = t;
          this.galon = galon;
          this.includePickup = includePickup;
          this.includeOther = includeOther;
          this.widen = widen;
+         this.slugCaps = slugCaps;
       }
 
       PlanReq withWiden(int w) {
-         return new PlanReq(this.t, this.galon, this.includePickup, this.includeOther, w);
+         return new PlanReq(this.t, this.galon, this.includePickup, this.includeOther, w, this.slugCaps);
       }
    }
 
@@ -833,6 +945,11 @@ final class SejalurFlow {
             if (req.t.returnDepot) body.put("return_depot", true);
             else body.put("target_uuid", req.t.uuid);
             body.put("max_galon", req.galon);
+            if (req.slugCaps != null && !req.slugCaps.isEmpty()) {
+               JSONObject caps = new JSONObject();
+               for (Map.Entry<String, Integer> e : req.slugCaps.entrySet()) caps.put(e.getKey(), e.getValue());
+               body.put("slug_caps", caps);
+            }
             body.put("include_pickup", req.includePickup);
             body.put("include_other", req.includeOther);
             if (req.widen > 0) body.put("widen", req.widen);
@@ -1115,7 +1232,7 @@ final class SejalurFlow {
             cbWithPickup.setOnCheckedChangeListener(null);
             cbWithPickup.setChecked(!on);
          };
-         this.requestPlan(new PlanReq(req.t, req.galon, on, req.includeOther, req.widen), dlgRef[0], lock, shown, new HashSet<>(checked));
+         this.requestPlan(new PlanReq(req.t, req.galon, on, req.includeOther, req.widen, req.slugCaps), dlgRef[0], lock, shown, new HashSet<>(checked));
       });
       box.addView(cbWithPickup);
       if (!choices.isEmpty()) {
