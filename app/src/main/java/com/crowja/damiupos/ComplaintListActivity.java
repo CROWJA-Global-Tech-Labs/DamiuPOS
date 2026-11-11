@@ -72,6 +72,11 @@ public class ComplaintListActivity extends AppCompatActivity {
     /** Baris dari server: uuid transaksi, uuid pelanggan, nama perangkat pemegang (kunci = identitas objek). */
     private final java.util.IdentityHashMap<Transaction, String[]> remoteMeta = new java.util.IdentityHashMap<>();
     private final Map<String, Integer> slugColors = new java.util.HashMap<>();
+    /** uuid transaksi yang pelanggannya SUDAH order lagi hari ini (jawaban server); orderedKnown = jawaban sudah ada. */
+    private final java.util.Set<String> orderedToday = new java.util.HashSet<>();
+    private boolean orderedKnown;
+    private boolean orderedLoading;
+    private MaterialButton btnClear;
 
     /** Hari (yyyy-MM-dd lokal) → komplain hari itu; hari terbaru lebih dulu. */
     private final LinkedHashMap<String, List<Transaction>> byDay = new LinkedHashMap<>();
@@ -104,8 +109,12 @@ public class ComplaintListActivity extends AppCompatActivity {
             scope.setPadding(dp(12), dp(2), dp(12), dp(2));
             btnLocal = smallButton("📱 Perangkat ini");
             btnRemote = smallButton("🌐 Semua perangkat");
+            btnClear = smallButton("🧹 Bersihkan");
+            btnClear.setTextColor(C_RED);
             scope.addView(btnLocal, new LinearLayout.LayoutParams(0, -2, 1f));
             scope.addView(btnRemote, new LinearLayout.LayoutParams(0, -2, 1f));
+            scope.addView(btnClear, new LinearLayout.LayoutParams(0, -2, 1f));
+            btnClear.setOnClickListener(v -> chooseClear());
             root.addView(scope);
             btnLocal.setOnClickListener(v -> setRemote(false));
             btnRemote.setOnClickListener(v -> setRemote(true));
@@ -179,6 +188,7 @@ public class ComplaintListActivity extends AppCompatActivity {
         load();
         render();
         if (remoteMode) loadRemote();
+        fetchOrderedToday();
     }
 
     @Override
@@ -419,6 +429,7 @@ public class ComplaintListActivity extends AppCompatActivity {
                 }
                 load();
                 render();
+                fetchOrderedToday();
             });
         }).start();
     }
@@ -639,6 +650,16 @@ public class ComplaintListActivity extends AppCompatActivity {
 
         final boolean pendingOrder = Transaction.DELIVERY_PENDING.equals(t.getDeliveryStatus())
                 || Transaction.DELIVERY_TERTUNDA.equals(t.getDeliveryStatus());
+        if (orderedKnown) {
+            boolean ordered = orderedToday.contains(uuidOf(t));
+            TextView oi = new TextView(this);
+            oi.setText(ordered ? "🛒 Sudah order hari ini" : "⚪ Belum order hari ini");
+            oi.setTextColor(ordered ? C_GREEN : C_MUTED);
+            oi.setTextSize(13f);
+            oi.setTypeface(null, Typeface.BOLD);
+            oi.setPadding(0, 0, 0, dp(2));
+            c.addView(oi);
+        }
         TextView status = new TextView(this);
         status.setText(active ? (pendingOrder ? "⏳ Aktif — selesaikan pesanan ini untuk menutup komplain"
                 : "🔁 Aktif — pelanggan komplain setelah pesanan selesai")
@@ -663,7 +684,7 @@ public class ComplaintListActivity extends AppCompatActivity {
             row2.addView(actionButton("🛣️ Kirim Sejalur", pending, v -> sejalur(t)), weight());
             c.addView(row2);
         }
-        if (active && !pendingOrder) {
+        if (active) {
             LinearLayout row3 = new LinearLayout(this);
             row3.setOrientation(LinearLayout.HORIZONTAL);
             row3.addView(actionButton("✅ Tandai Ditangani", true, v -> resolve(t)), weight());
@@ -696,6 +717,141 @@ public class ComplaintListActivity extends AppCompatActivity {
     }
 
     // ------------------------------------------------------------------ aksi
+
+    /** Tanya server pelanggan mana yang sudah order lagi hari ini (lintas perangkat); gagal = indikator tak tampil. */
+    private void fetchOrderedToday() {
+        if (orderedLoading) return;
+        final com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
+        if (!cfg.isEnrolled()) return;
+        final org.json.JSONArray rows = new org.json.JSONArray();
+        com.crowja.damiupos.db.CustomerDao cd = new com.crowja.damiupos.db.CustomerDao(DatabaseHelper.getInstance(this));
+        List<Transaction> source = new ArrayList<>();
+        for (List<Transaction> l : byDay.values()) source.addAll(l);
+        for (Transaction t : source) {
+            String[] rm = remoteMeta.get(t);
+            String tu = uuidOf(t);
+            String cu = rm != null ? rm[1] : (t.getCustomerId() > 0 ? cd.getSyncUuidById(t.getCustomerId()) : null);
+            if (tu == null || tu.isEmpty() || rows.length() >= 600) continue;
+            try {
+                rows.put(new org.json.JSONObject().put("t", tu).put("c", cu == null ? "" : cu));
+            } catch (Exception ignored) {
+            }
+        }
+        if (rows.length() == 0) return;
+        orderedLoading = true;
+        new Thread(() -> {
+            java.util.Set<String> got = null;
+            try {
+                org.json.JSONObject res = new com.crowja.damiupos.sync.SyncApi(cfg).complaintsOrderedToday(rows);
+                org.json.JSONArray a = res.optJSONArray("ordered");
+                got = new java.util.HashSet<>();
+                for (int i = 0; a != null && i < a.length(); i++) got.add(a.optString(i));
+            } catch (Exception ignored) {
+            }
+            final java.util.Set<String> fGot = got;
+            runOnUiThread(() -> {
+                orderedLoading = false;
+                if (isFinishing() || isDestroyed() || fGot == null) return;
+                orderedToday.clear();
+                orderedToday.addAll(fGot);
+                orderedKnown = true;
+                render();
+            });
+        }).start();
+    }
+
+    // ------------------------------------------------------------------ admin: bersihkan komplain
+
+    private void chooseClear() {
+        final String[] opts = {"Hari ini", "Pilih tanggal…", "Rentang tanggal…", "Semua waktu"};
+        new AlertDialog.Builder(this).setTitle("🧹 Bersihkan komplain aktif")
+                .setItems(opts, (d, which) -> {
+                    SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+                    if (which == 0) {
+                        String today = f.format(new Date());
+                        confirmClear("range", today, today, "hari ini");
+                    } else if (which == 1) {
+                        pickDate("Pilih tanggal", ymd -> confirmClear("range", ymd, ymd, ymd));
+                    } else if (which == 2) {
+                        pickDate("Dari tanggal", from -> pickDate("Sampai tanggal", to -> {
+                            if (to.compareTo(from) < 0) {
+                                Toast.makeText(this, "Tanggal akhir sebelum tanggal awal.", Toast.LENGTH_SHORT).show();
+                                return;
+                            }
+                            confirmClear("range", from, to, from + " s/d " + to);
+                        }));
+                    } else {
+                        confirmClear("all", null, null, "SEMUA waktu");
+                    }
+                })
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    private interface DatePicked { void on(String ymd); }
+
+    private void pickDate(String title, final DatePicked cb) {
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        android.app.DatePickerDialog dlg = new android.app.DatePickerDialog(this, (view, y, m, d) ->
+                cb.on(String.format(Locale.US, "%04d-%02d-%02d", y, m + 1, d)),
+                c.get(java.util.Calendar.YEAR), c.get(java.util.Calendar.MONTH), c.get(java.util.Calendar.DAY_OF_MONTH));
+        dlg.setTitle(title);
+        dlg.show();
+    }
+
+    /** Dua langkah: hitung dulu (pratinjau), lalu minta konfirmasi sebelum membersihkan. */
+    private void confirmClear(final String scope, final String from, final String to, final String label) {
+        final com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
+        if (!cfg.isEnrolled()) {
+            Toast.makeText(this, "Perangkat belum terhubung ke server.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final String staffUuid = com.crowja.damiupos.sync.LocationReporter.currentStaffUuid(this);
+        callClear(cfg, scope, from, to, true, staffUuid, count -> {
+            if (count <= 0) {
+                Toast.makeText(this, "Tidak ada komplain aktif untuk " + label + ".", Toast.LENGTH_LONG).show();
+                return;
+            }
+            new AlertDialog.Builder(this)
+                    .setTitle("Bersihkan " + count + " komplain?")
+                    .setMessage(count + " komplain aktif (" + label + ") ditandai ditangani di SEMUA perangkat. "
+                            + "Komplain tidak dihapus dan aktif lagi bila pelanggan menulis lagi.")
+                    .setPositiveButton("Ya, bersihkan", (d, w) -> callClear(cfg, scope, from, to, false, staffUuid, n -> {
+                        Toast.makeText(this, "🧹 " + n + " komplain dibersihkan.", Toast.LENGTH_LONG).show();
+                        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                        if (remoteMode) loadRemote();
+                        load();
+                        render();
+                    }))
+                    .setNegativeButton("Batal", null)
+                    .show();
+        });
+    }
+
+    private interface CountCb { void on(int count); }
+
+    private void callClear(final com.crowja.damiupos.sync.SyncSettings cfg, final String scope, final String from, final String to,
+                           final boolean preview, final String staffUuid, final CountCb cb) {
+        new Thread(() -> {
+            int count = -1;
+            String err = null;
+            try {
+                count = new com.crowja.damiupos.sync.SyncApi(cfg).adminComplaintsClear(scope, from, to, preview, staffUuid).optInt("count", 0);
+            } catch (com.crowja.damiupos.sync.SyncApi.SyncException se) {
+                String m = se.serverMessage();
+                err = m != null && !m.isEmpty() ? m : "Gagal (kode " + se.code + ").";
+            } catch (Exception e) {
+                err = "Gagal — periksa koneksi internet.";
+            }
+            final int fc = count;
+            final String fe = err;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (fe != null) Toast.makeText(this, fe, Toast.LENGTH_LONG).show();
+                else cb.on(fc);
+            });
+        }).start();
+    }
 
     private String uuidOf(Transaction t) {
         String[] rm = remoteMeta.get(t);
@@ -759,9 +915,32 @@ public class ComplaintListActivity extends AppCompatActivity {
 
     /** 💬 Chat: pilih Chat Pesanan (chat WA order lewat server, bisa dibalas) atau Chat WA (aplikasi WhatsApp). */
     private void chooseChat(final Transaction t) {
+        // Baris pilihan: "Chat WA" memakai ikon resmi WhatsApp.
+        final String[] labels = {"Chat Pesanan", "Chat WA"};
+        android.widget.ArrayAdapter<String> ad = new android.widget.ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, labels) {
+            @Override
+            public View getView(int position, View convertView, android.view.ViewGroup parent) {
+                TextView tv = (TextView) super.getView(position, convertView, parent);
+                tv.setTextSize(16f);
+                tv.setCompoundDrawablePadding(dp(12));
+                if (position == 1) {
+                    android.graphics.drawable.Drawable ic = androidx.core.content.ContextCompat.getDrawable(ComplaintListActivity.this, R.drawable.ic_whatsapp);
+                    if (ic != null) {
+                        ic = ic.mutate();
+                        ic.setBounds(0, 0, dp(26), dp(26));
+                        tv.setCompoundDrawables(ic, null, null, null);
+                    }
+                    tv.setText("Chat WA");
+                } else {
+                    tv.setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0);
+                    tv.setText("💬 Chat Pesanan");
+                }
+                return tv;
+            }
+        };
         new AlertDialog.Builder(this)
                 .setTitle("💬 Chat — " + (t.getCustomerName() != null ? t.getCustomerName() : "Pelanggan"))
-                .setItems(new String[]{"💬 Chat Pesanan", "📱 Chat WA"}, (d, which) -> {
+                .setAdapter(ad, (d, which) -> {
                     if (which == 0) {
                         String uuid = uuidOf(t);
                         if (uuid == null || uuid.isEmpty()) {

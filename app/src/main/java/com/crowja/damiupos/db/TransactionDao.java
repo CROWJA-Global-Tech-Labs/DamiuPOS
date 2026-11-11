@@ -1083,10 +1083,13 @@ public class TransactionDao {
      */
     public static boolean isComplaintActive(Transaction t) {
         String s = t.getDeliveryStatus();
-        if (Transaction.DELIVERY_PENDING.equals(s) || Transaction.DELIVERY_TERTUNDA.equals(s)) return true;
+        boolean pending = Transaction.DELIVERY_PENDING.equals(s) || Transaction.DELIVERY_TERTUNDA.equals(s);
+        long resolved = Ts.millisOrMin(t.getComplaintResolvedAt());
+        // Pesanan belum selesai: aktif, kecuali sudah ditandai ditangani / dibersihkan admin (aktif lagi bila pelanggan menulis lagi).
+        if (pending && resolved == Long.MIN_VALUE) return true;
         long last = Ts.millisOrMin(t.getComplaintLastInboundAt());
         if (last == Long.MIN_VALUE) return false;
-        long floor = Math.max(Ts.millisOrMin(t.getDeliveryDoneAt()), Ts.millisOrMin(t.getComplaintResolvedAt()));
+        long floor = Math.max(pending ? Long.MIN_VALUE : Ts.millisOrMin(t.getDeliveryDoneAt()), resolved);
         return last > floor;
     }
 
