@@ -1076,54 +1076,73 @@ public class TransactionDao {
                 DatabaseHelper.COL_ID + " = ?", new String[]{String.valueOf(trxId)});
     }
 
-    /** Komplain AKTIF = pesanan dikomplain yang BELUM diselesaikan (PENDING/Tertunda); selesai = pesanannya sudah DONE. */
+    /**
+     * Komplain AKTIF (perlu ditangani): pesanan BELUM selesai (PENDING/Tertunda), ATAU pelanggan menulis lagi SESUDAH
+     * pesanan diselesaikan dan sesudah komplain ditandai ditangani (produk tak sesuai, salah lokasi, galon bocor, …).
+     * Cermin App\Support\ComplaintWindow::isActive di server.
+     */
     public static boolean isComplaintActive(Transaction t) {
         String s = t.getDeliveryStatus();
-        return Transaction.DELIVERY_PENDING.equals(s) || Transaction.DELIVERY_TERTUNDA.equals(s);
+        if (Transaction.DELIVERY_PENDING.equals(s) || Transaction.DELIVERY_TERTUNDA.equals(s)) return true;
+        long last = Ts.millisOrMin(t.getComplaintLastInboundAt());
+        if (last == Long.MIN_VALUE) return false;
+        long floor = Math.max(Ts.millisOrMin(t.getDeliveryDoneAt()), Ts.millisOrMin(t.getComplaintResolvedAt()));
+        return last > floor;
     }
-
-    /** Pesanan JUAL yang dikomplain, dengan kolom berawalan alias "t." (dipakai query berjoin & hitungan). */
-    private static final String T_COMPLAINED = "t.type='JUAL' AND COALESCE(t." + DatabaseHelper.COL_COMPLAINED_AT + ", '') != ''";
-    private static final String T_COMPLAINT_ACTIVE = T_COMPLAINED + " AND t." + DatabaseHelper.COL_DELIVERY_STATUS
-            + " IN ('" + Transaction.DELIVERY_PENDING + "','" + Transaction.DELIVERY_TERTUNDA + "')";
 
     /** Jumlah komplain aktif di perangkat ini (badge menu Komplain) — definisi SAMA dengan {@link #isComplaintActive}. */
     public int countActiveComplaints() {
-        try (Cursor c = dbHelper.getReadableDatabase().rawQuery(
-                "SELECT COUNT(*) FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t WHERE " + T_COMPLAINT_ACTIVE, null)) {
-            return c.moveToFirst() ? c.getInt(0) : 0;
-        } catch (Exception e) {
-            return 0;
-        }
+        int n = 0;
+        for (Transaction t : getComplaintOrders(600)) if (isComplaintActive(t)) n++;
+        return n;
+    }
+
+    /** Waktu kegiatan komplain terakhir (pesan masuk terakhir, kalau tak ada saat ditandai) — dasar pengelompokan hari. */
+    public static String complaintActivityAt(Transaction t) {
+        String last = t.getComplaintLastInboundAt();
+        return last != null && !last.trim().isEmpty() ? last : t.getComplainedAt();
     }
 
     /**
-     * Semua komplain pesanan di perangkat ini: yang AKTIF dulu (semuanya), lalu yang sudah selesai terbaru dulu (maks
-     * {@code resolvedLimit}). Transaksi terisolasi per perangkat di lapisan sync, jadi baris lokal = milik perangkat ini.
+     * Semua pesanan yang pernah dikomplain di perangkat ini, kegiatan terbaru dulu (maks {@code limit}). Aktif/selesai
+     * ditentukan pemanggil lewat {@link #isComplaintActive}. Transaksi terisolasi per perangkat di lapisan sync, jadi
+     * baris lokal = milik perangkat ini.
      */
-    public List<Transaction> getComplaintOrders(int resolvedLimit) {
+    public List<Transaction> getComplaintOrders(int limit) {
         List<Transaction> list = new ArrayList<>();
-        SQLiteDatabase db = dbHelper.getReadableDatabase();
-        String from = "SELECT t.*, c." + DatabaseHelper.COL_NAME + " AS cust_name FROM " + DatabaseHelper.TABLE_TRANSACTIONS
+        String sql = "SELECT t.*, c." + DatabaseHelper.COL_NAME + " AS cust_name, c." + DatabaseHelper.COL_PHONE
+                + " AS cust_phone, c." + DatabaseHelper.COL_ADDRESS + " AS cust_addr, c." + DatabaseHelper.COL_LATITUDE
+                + " AS cust_lat, c." + DatabaseHelper.COL_LONGITUDE + " AS cust_lng FROM " + DatabaseHelper.TABLE_TRANSACTIONS
                 + " t LEFT JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c ON t." + DatabaseHelper.COL_CUSTOMER_ID
-                + " = c." + DatabaseHelper.COL_ID + " WHERE ";
-        String order = " ORDER BY t." + DatabaseHelper.COL_COMPLAINED_AT + " DESC";
-        String[] queries = {
-                from + T_COMPLAINT_ACTIVE + order,
-                from + T_COMPLAINED + " AND NOT (" + T_COMPLAINT_ACTIVE + ")" + order + " LIMIT " + Math.max(1, resolvedLimit)};
-        for (String sql : queries) {
-            try (Cursor c = db.rawQuery(sql, null)) {
-                while (c.moveToNext()) {
-                    Transaction t = cursorToTransaction(c);
-                    t.setCustomerName(getStr(c, "cust_name"));
-                    // cursorToTransaction tak memetakan status pengiriman: tanpa ini semua komplain terbaca "Selesai".
-                    t.setDeliveryStatus(getStr(c, DatabaseHelper.COL_DELIVERY_STATUS));
-                    list.add(t);
-                }
-            } catch (Exception ignored) {
+                + " = c." + DatabaseHelper.COL_ID + " WHERE t.type='JUAL' AND COALESCE(t." + DatabaseHelper.COL_COMPLAINED_AT
+                + ", '') != '' ORDER BY COALESCE(t." + DatabaseHelper.COL_COMPLAINT_LAST_INBOUND_AT + ", t."
+                + DatabaseHelper.COL_COMPLAINED_AT + ") DESC LIMIT " + Math.max(1, limit);
+        try (Cursor c = dbHelper.getReadableDatabase().rawQuery(sql, null)) {
+            while (c.moveToNext()) {
+                Transaction t = cursorToTransaction(c);
+                t.setCustomerName(getStr(c, "cust_name"));
+                t.setCustomerPhone(getStr(c, "cust_phone"));
+                t.setCustomerAddress(getStr(c, "cust_addr"));
+                t.setCustomerLat(getDouble(c, "cust_lat"));
+                t.setCustomerLng(getDouble(c, "cust_lng"));
+                // cursorToTransaction tak memetakan kolom-kolom ini: tanpa itu semua komplain terbaca "Selesai".
+                t.setDeliveryStatus(getStr(c, DatabaseHelper.COL_DELIVERY_STATUS));
+                t.setDeliveryDoneAt(getStr(c, DatabaseHelper.COL_DELIVERY_DONE_AT));
+                t.setComplaintLastInboundAt(getStr(c, DatabaseHelper.COL_COMPLAINT_LAST_INBOUND_AT));
+                t.setComplaintResolvedAt(getStr(c, DatabaseHelper.COL_COMPLAINT_RESOLVED_AT));
+                list.add(t);
             }
+        } catch (Exception ignored) {
         }
         return list;
+    }
+
+    /** Cermin lokal penandaan "ditangani" (server-authoritative: tak menandai baris kotor / edited_at). */
+    public void setComplaintResolvedLocal(long trxId, String isoUtc) {
+        ContentValues v = new ContentValues();
+        v.put(DatabaseHelper.COL_COMPLAINT_RESOLVED_AT, isoUtc);
+        dbHelper.getWritableDatabase().update(DatabaseHelper.TABLE_TRANSACTIONS, v,
+                DatabaseHelper.COL_ID + " = ?", new String[]{String.valueOf(trxId)});
     }
 
     /** Pembaca kolom per NAMA (absen/NULL → null / 0) — Cursor di produksi, Map di uji JVM. */

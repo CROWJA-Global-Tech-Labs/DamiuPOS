@@ -1099,6 +1099,12 @@ public class SyncApi {
                 new JSONObject().put("text", text).put("client_id", clientId), cfg.getToken(), staffUuid);
     }
 
+    /** Tandai komplain ini sudah ditangani (tak aktif lagi sampai pelanggan menulis lagi): {ok, message}. */
+    public JSONObject complaintResolve(String transactionUuid, @Nullable String staffUuid) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/transactions/" + android.net.Uri.encode(transactionUuid) + "/complaint-resolve",
+                new JSONObject(), cfg.getToken(), staffUuid);
+    }
+
     public JSONObject complaintLog(String transactionUuid) throws Exception {
         String url = cfg.getBaseUrl() + "/api/transactions/" + transactionUuid + "/complaint-log";
         return get(url, cfg.getToken());

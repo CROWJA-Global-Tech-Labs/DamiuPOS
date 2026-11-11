@@ -10,21 +10,35 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.crowja.damiupos.db.DatabaseHelper;
+import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.db.TransactionDao;
 import com.crowja.damiupos.model.Transaction;
 import com.crowja.damiupos.model.TransactionItem;
+import com.crowja.damiupos.util.SejalurPlanLogic;
+import com.crowja.damiupos.util.Ts;
+import com.google.android.material.button.MaterialButton;
 
 import java.text.NumberFormat;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
- * 😠 Daftar komplain pesanan untuk perangkat ini. Komplain AKTIF = pesanan yang dikomplain pelanggan dan BELUM
- * diselesaikan (PENDING/Tertunda); komplain SELESAI = pesanan terkait sudah diselesaikan. Jumlah aktif = badge
- * menu Komplain di dashboard ({@link TransactionDao#countActiveComplaints}). Ketuk kartu → chat komplain pesanan itu.
+ * 😠 Daftar komplain pesanan untuk perangkat ini, dihalaman PER HARI (hari komplain, waktu lokal). Komplain AKTIF =
+ * pesanan dikomplain yang BELUM diselesaikan (PENDING/Tertunda); SELESAI = pesanannya sudah diselesaikan. Jumlah aktif
+ * = badge menu Komplain ({@link TransactionDao#countActiveComplaints}).
+ *
+ * <p>Tiap kartu: 🧾 Preview pesanan, ➕ Tambah ke rit berjalan, 🛣️ Kirim Sejalur ke order ini, 💬 Chat WA (aplikasi
+ * WhatsApp). Ketuk kartu → log komplain (bisa dibalas).</p>
  */
 public class ComplaintListActivity extends AppCompatActivity {
 
@@ -32,11 +46,21 @@ public class ComplaintListActivity extends AppCompatActivity {
     private static final int C_MUTED = 0xFF616161;
     private static final int C_RED = 0xFFB71C1C;
     private static final int C_GREEN = 0xFF1B5E20;
+    private static final int C_BLUE = 0xFF1565C0;
 
     private TransactionDao dao;
     private LinearLayout box;
     private TextView summary;
+    private TextView dayLabel;
+    private TextView otherDays;
+    private MaterialButton btnOlder;
+    private MaterialButton btnNewer;
     private final NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
+
+    /** Hari (yyyy-MM-dd lokal) → komplain hari itu; hari terbaru lebih dulu. */
+    private final LinkedHashMap<String, List<Transaction>> byDay = new LinkedHashMap<>();
+    private List<String> days = new ArrayList<>();
+    private String currentDay;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -48,11 +72,40 @@ public class ComplaintListActivity extends AppCompatActivity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(0xFFF5F5F5);
+
         summary = new TextView(this);
         summary.setTextSize(14f);
         summary.setTypeface(null, Typeface.BOLD);
-        summary.setPadding(dp(16), dp(12), dp(16), dp(6));
+        summary.setPadding(dp(16), dp(10), dp(16), dp(2));
         root.addView(summary);
+
+        otherDays = new TextView(this);
+        otherDays.setTextSize(13f);
+        otherDays.setTextColor(C_RED);
+        otherDays.setTypeface(null, Typeface.BOLD);
+        otherDays.setPadding(dp(16), dp(2), dp(16), dp(4));
+        otherDays.setVisibility(View.GONE);
+        root.addView(otherDays);
+
+        // Pager hari: ◀ lebih lama · tanggal · lebih baru ▶
+        LinearLayout pager = new LinearLayout(this);
+        pager.setOrientation(LinearLayout.HORIZONTAL);
+        pager.setGravity(Gravity.CENTER_VERTICAL);
+        pager.setPadding(dp(8), dp(4), dp(8), dp(4));
+        btnOlder = smallButton("◀");
+        btnNewer = smallButton("▶");
+        dayLabel = new TextView(this);
+        dayLabel.setGravity(Gravity.CENTER);
+        dayLabel.setTextColor(C_TEXT);
+        dayLabel.setTextSize(15f);
+        dayLabel.setTypeface(null, Typeface.BOLD);
+        pager.addView(btnOlder, new LinearLayout.LayoutParams(dp(56), -2));
+        pager.addView(dayLabel, new LinearLayout.LayoutParams(0, -2, 1f));
+        pager.addView(btnNewer, new LinearLayout.LayoutParams(dp(56), -2));
+        root.addView(pager);
+        btnOlder.setOnClickListener(v -> step(+1));
+        btnNewer.setOnClickListener(v -> step(-1));
+
         ScrollView sv = new ScrollView(this);
         box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -65,6 +118,7 @@ public class ComplaintListActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        load();
         render();
     }
 
@@ -74,14 +128,84 @@ public class ComplaintListActivity extends AppCompatActivity {
         return true;
     }
 
+    private MaterialButton smallButton(String text) {
+        MaterialButton b = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextColor(C_BLUE);
+        b.setInsetTop(0);
+        b.setInsetBottom(0);
+        return b;
+    }
+
+    // ------------------------------------------------------------------ data & halaman
+
+    private void load() {
+        byDay.clear();
+        Map<String, List<Transaction>> tmp = new LinkedHashMap<>();
+        loadProducts();
+        for (Transaction t : dao.getComplaintOrders(600)) {
+            String local = Ts.local(TransactionDao.complaintActivityAt(t));
+            String day = local.length() >= 10 ? local.substring(0, 10) : "—";
+            List<Transaction> l = tmp.get(day);
+            if (l == null) tmp.put(day, l = new ArrayList<>());
+            l.add(t);
+        }
+        days = new ArrayList<>(tmp.keySet());
+        Collections.sort(days, Collections.reverseOrder());   // hari terbaru dulu
+        for (String d : days) {
+            List<Transaction> l = tmp.get(d);
+            // Aktif dulu, lalu yang lebih baru.
+            Collections.sort(l, (a, b) -> {
+                boolean aa = TransactionDao.isComplaintActive(a);
+                boolean bb = TransactionDao.isComplaintActive(b);
+                if (aa != bb) return aa ? -1 : 1;
+                return Ts.local(TransactionDao.complaintActivityAt(b)).compareTo(Ts.local(TransactionDao.complaintActivityAt(a)));
+            });
+            byDay.put(d, l);
+        }
+        if (currentDay == null || !byDay.containsKey(currentDay)) currentDay = days.isEmpty() ? null : days.get(0);
+    }
+
+    private void step(int delta) {
+        if (currentDay == null) return;
+        int i = days.indexOf(currentDay) + delta;
+        if (i < 0 || i >= days.size()) return;
+        currentDay = days.get(i);
+        render();
+    }
+
+    private static String dayText(String day) {
+        try {
+            SimpleDateFormat in = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+            Date d = in.parse(day);
+            if (d == null) return day;
+            String today = in.format(new Date());
+            String t = new SimpleDateFormat("EEEE, d MMM yyyy", new Locale("id", "ID")).format(d);
+            return day.equals(today) ? "Hari ini · " + t : t;
+        } catch (Exception e) {
+            return day;
+        }
+    }
+
     private void render() {
         box.removeAllViews();
-        List<Transaction> all = dao.getComplaintOrders(50);
-        int active = 0;
-        for (Transaction t : all) if (TransactionDao.isComplaintActive(t)) active++;
-        summary.setText(active + " aktif · " + (all.size() - active) + " selesai");
-        summary.setTextColor(active > 0 ? C_RED : C_GREEN);
-        if (all.isEmpty()) {
+        int totalActive = 0;
+        int totalAll = 0;
+        for (List<Transaction> l : byDay.values()) {
+            for (Transaction t : l) {
+                totalAll++;
+                if (TransactionDao.isComplaintActive(t)) totalActive++;
+            }
+        }
+        summary.setText(totalActive + " aktif · " + (totalAll - totalActive) + " selesai (semua hari)");
+        summary.setTextColor(totalActive > 0 ? C_RED : C_GREEN);
+
+        if (currentDay == null) {
+            dayLabel.setText("—");
+            btnOlder.setEnabled(false);
+            btnNewer.setEnabled(false);
+            otherDays.setVisibility(View.GONE);
             TextView empty = new TextView(this);
             empty.setText("Belum ada komplain pesanan di perangkat ini.");
             empty.setTextColor(C_MUTED);
@@ -90,16 +214,49 @@ public class ComplaintListActivity extends AppCompatActivity {
             box.addView(empty);
             return;
         }
-        boolean headedResolved = false;
+
+        List<Transaction> list = byDay.get(currentDay);
+        int dayActive = 0;
+        for (Transaction t : list) if (TransactionDao.isComplaintActive(t)) dayActive++;
+        int idx = days.indexOf(currentDay);
+        dayLabel.setText(dayText(currentDay) + "\n" + list.size() + " komplain" + (dayActive > 0 ? " · " + dayActive + " aktif" : ""));
+        btnOlder.setEnabled(idx < days.size() - 1);
+        btnNewer.setEnabled(idx > 0);
+
+        // Komplain aktif di hari LAIN: jangan sampai terlewat — ketuk untuk melompat ke harinya.
+        String jump = null;
+        int otherActive = 0;
+        for (String d : days) {
+            if (d.equals(currentDay)) continue;
+            int a = 0;
+            for (Transaction t : byDay.get(d)) if (TransactionDao.isComplaintActive(t)) a++;
+            if (a > 0) {
+                otherActive += a;
+                if (jump == null) jump = d;   // hari terbaru yang punya komplain aktif
+            }
+        }
+        if (jump != null) {
+            final String target = jump;
+            otherDays.setText("⏳ " + otherActive + " komplain aktif di hari lain — ketuk untuk melihat");
+            otherDays.setVisibility(View.VISIBLE);
+            otherDays.setOnClickListener(v -> {
+                currentDay = target;
+                render();
+            });
+        } else {
+            otherDays.setVisibility(View.GONE);
+        }
+
         boolean headedActive = false;
-        for (Transaction t : all) {
+        boolean headedResolved = false;
+        for (Transaction t : list) {
             boolean act = TransactionDao.isComplaintActive(t);
             if (act && !headedActive) {
-                box.addView(header("⏳ Aktif — pesanan belum selesai"));
+                box.addView(header("⏳ Aktif — perlu ditangani"));
                 headedActive = true;
             }
             if (!act && !headedResolved) {
-                box.addView(header("✅ Selesai — pesanan sudah diselesaikan"));
+                box.addView(header("✅ Selesai"));
                 headedResolved = true;
             }
             box.addView(card(t, act));
@@ -116,10 +273,81 @@ public class ComplaintListActivity extends AppCompatActivity {
         return h;
     }
 
-    private View card(final Transaction t, boolean active) {
+    // ------------------------------------------------------------------ kartu
+
+    private final Map<Long, com.crowja.damiupos.model.Product> productsById = new java.util.HashMap<>();
+    private final Map<String, com.crowja.damiupos.model.Product> productsByName = new java.util.HashMap<>();
+
+    private void loadProducts() {
+        productsById.clear();
+        productsByName.clear();
+        for (com.crowja.damiupos.model.Product p : new com.crowja.damiupos.db.ProductDao(DatabaseHelper.getInstance(this)).getAll()) {
+            productsById.put(p.getId(), p);
+            if (p.getName() != null) productsByName.put(p.getName().trim().toLowerCase(Locale.ROOT), p);
+        }
+    }
+
+    /** Baris badge slug produk berwarna ("MIN ×2") — sama dengan kartu transaksi. */
+    private View slugBadges(Transaction t) {
+        android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+        hs.setHorizontalScrollBarEnabled(false);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(0, dp(6), 0, dp(2));
+        List<TransactionItem> items = t.getItems();
+        if (items == null || items.isEmpty()) {
+            items = new ArrayList<>();
+            items.add(new TransactionItem(0L, null, t.getJumlahGalon(), 0d));
+        }
+        int[] palette = {0xFF1976D2, 0xFF388E3C, 0xFFE64A19, 0xFF7B1FA2, 0xFF00838F, 0xFFC2185B, 0xFFF9A825, 0xFF5D4037};
+        for (TransactionItem it : items) {
+            if (it == null) continue;
+            com.crowja.damiupos.model.Product p = productsById.get(it.productId);
+            if (p == null && it.productName != null) p = productsByName.get(it.productName.trim().toLowerCase(Locale.ROOT));
+            String label = p != null && p.getSlug() != null && !p.getSlug().trim().isEmpty() ? p.getSlug().trim()
+                    : (it.productName != null && !it.productName.isEmpty() ? it.productName : "Galon");
+            int bg = palette[((it.productName == null ? "" : it.productName).hashCode() & 0x7fffffff) % palette.length];
+            try {
+                if (p != null && p.getColor() != null && !p.getColor().isEmpty()) bg = android.graphics.Color.parseColor(p.getColor());
+            } catch (IllegalArgumentException ignored) {
+            }
+            double lum = (0.299 * android.graphics.Color.red(bg) + 0.587 * android.graphics.Color.green(bg)
+                    + 0.114 * android.graphics.Color.blue(bg)) / 255.0;
+            TextView chip = new TextView(this);
+            chip.setText(label + " ×" + it.jumlah);
+            chip.setTextSize(12f);
+            chip.setTypeface(null, Typeface.BOLD);
+            chip.setTextColor(lum > 0.65 ? 0xFF1A1A1A : 0xFFFFFFFF);
+            chip.setPadding(dp(8), dp(3), dp(8), dp(3));
+            android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable();
+            gd.setCornerRadius(dp(10));
+            gd.setColor(bg);
+            chip.setBackground(gd);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+            lp.setMarginEnd(dp(6));
+            row.addView(chip, lp);
+        }
+        hs.addView(row);
+        return hs;
+    }
+
+    private String itemsText(Transaction t) {
+        StringBuilder items = new StringBuilder();
+        if (t.getItems() != null) {
+            for (TransactionItem it : t.getItems()) {
+                if (it == null) continue;
+                if (items.length() > 0) items.append(", ");
+                items.append(it.productName != null ? it.productName : "Produk").append(" ×").append(it.jumlah);
+            }
+        }
+        if (items.length() == 0) items.append(t.getJumlahGalon()).append(" galon");
+        return items.toString();
+    }
+
+    private View card(final Transaction t, final boolean active) {
         LinearLayout c = new LinearLayout(this);
         c.setOrientation(LinearLayout.VERTICAL);
-        c.setPadding(dp(14), dp(12), dp(14), dp(12));
+        c.setPadding(dp(14), dp(12), dp(14), dp(10));
         android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
         bg.setColor(0xFFFFFFFF);
         bg.setCornerRadius(dp(12));
@@ -136,60 +364,214 @@ public class ComplaintListActivity extends AppCompatActivity {
         name.setTypeface(null, Typeface.BOLD);
         c.addView(name);
 
-        StringBuilder items = new StringBuilder();
-        if (t.getItems() != null) {
-            for (TransactionItem it : t.getItems()) {
-                if (it == null) continue;
-                if (items.length() > 0) items.append(", ");
-                items.append(it.productName != null ? it.productName : "Produk").append(" ×").append(it.jumlah);
-            }
-        }
-        if (items.length() == 0) items.append(t.getJumlahGalon()).append(" galon");
+        c.addView(slugBadges(t));
+        String time = Ts.hm(TransactionDao.complaintActivityAt(t));
         TextView meta = new TextView(this);
-        meta.setText(items + " · Rp " + nf.format(Math.round(t.getTotalHarga()))
-                + (t.getReceiptNo() != null && !t.getReceiptNo().isEmpty() ? "\n🧾 " + t.getReceiptNo() : "")
-                + "\n🕒 Komplain: " + shortTime(t.getComplainedAt()));
+        meta.setText("Rp " + nf.format(Math.round(t.getTotalHarga()))
+                + (t.getReceiptNo() != null && !t.getReceiptNo().isEmpty() ? " · 🧾 " + t.getReceiptNo() : "")
+                + (time.isEmpty() ? "" : "\n🕒 Komplain terakhir jam " + time));
         meta.setTextColor(C_MUTED);
         meta.setTextSize(13f);
         meta.setPadding(0, dp(4), 0, dp(4));
         c.addView(meta);
 
+        final boolean pendingOrder = Transaction.DELIVERY_PENDING.equals(t.getDeliveryStatus())
+                || Transaction.DELIVERY_TERTUNDA.equals(t.getDeliveryStatus());
         TextView status = new TextView(this);
-        status.setText(active ? "⏳ Aktif — selesaikan pesanan ini untuk menutup komplain"
+        status.setText(active ? (pendingOrder ? "⏳ Aktif — selesaikan pesanan ini untuk menutup komplain"
+                : "🔁 Aktif — pelanggan komplain setelah pesanan selesai")
                 : "✅ Selesai — pesanan sudah diselesaikan");
         status.setTextColor(active ? C_RED : C_GREEN);
         status.setTextSize(13f);
         status.setTypeface(null, Typeface.BOLD);
         c.addView(status);
 
-        TextView open = new TextView(this);
-        open.setText("💬 Ketuk untuk membuka chat komplain");
-        open.setTextColor(0xFF1565C0);
-        open.setTextSize(12f);
-        open.setPadding(0, dp(4), 0, 0);
-        c.addView(open);
+        // Aksi: 2 × 2 tombol.
+        LinearLayout row1 = new LinearLayout(this);
+        row1.setOrientation(LinearLayout.HORIZONTAL);
+        row1.setPadding(0, dp(8), 0, 0);
+        row1.addView(actionButton("🧾 Preview", true, v -> showPreview(t)), weight());
+        row1.addView(actionButton("💬 Chat WA", t.getCustomerPhone() != null && !t.getCustomerPhone().isEmpty(),
+                v -> DeliveryQueueActivity.openWhatsApp(this, t.getCustomerPhone(), "")), weight());
+        c.addView(row1);
+        LinearLayout row2 = new LinearLayout(this);
+        row2.setOrientation(LinearLayout.HORIZONTAL);
+        boolean pending = Transaction.DELIVERY_PENDING.equals(t.getDeliveryStatus());
+        row2.addView(actionButton("➕ Tambah ke Rit", pending, v -> addToRit(t)), weight());
+        row2.addView(actionButton("🛣️ Kirim Sejalur", pending, v -> sejalur(t)), weight());
+        c.addView(row2);
+        if (active && !pendingOrder) {
+            LinearLayout row3 = new LinearLayout(this);
+            row3.setOrientation(LinearLayout.HORIZONTAL);
+            row3.addView(actionButton("✅ Tandai Ditangani", true, v -> resolve(t)), weight());
+            c.addView(row3);
+        }
 
-        c.setOnClickListener(v -> {
-            String uuid = dao.getSyncUuidById(t.getId());
-            if (uuid == null || uuid.isEmpty()) {
-                Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            startActivity(new Intent(this, ChatLogActivity.class)
-                    .putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid)
-                    .putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, t.getCustomerName() != null ? t.getCustomerName() : ""));
-        });
+        c.setOnClickListener(v -> openComplaintChat(t));
         return c;
     }
 
-    /** "2026-11-11T09:30:00Z" / "2026-11-11 09:30:00" → "11/11 09:30" (apa adanya bila tak dikenal). */
-    private static String shortTime(String raw) {
-        if (raw == null) return "";
-        String s = raw.trim().replace('T', ' ');
-        if (s.length() >= 16 && s.charAt(4) == '-') {
-            return s.substring(8, 10) + "/" + s.substring(5, 7) + " " + s.substring(11, 16);
+    private LinearLayout.LayoutParams weight() {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, -2, 1f);
+        p.setMargins(dp(2), 0, dp(2), 0);
+        return p;
+    }
+
+    private MaterialButton actionButton(String text, boolean enabled, View.OnClickListener l) {
+        MaterialButton b = new MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextSize(12f);
+        b.setTextColor(C_BLUE);
+        b.setInsetTop(0);
+        b.setInsetBottom(0);
+        b.setMaxLines(1);
+        b.setEnabled(enabled);
+        b.setAlpha(enabled ? 1f : 0.45f);
+        b.setOnClickListener(l);
+        return b;
+    }
+
+    // ------------------------------------------------------------------ aksi
+
+    /** ✅ Komplain pada pesanan yang sudah selesai ditandai ditangani; aktif lagi bila pelanggan menulis lagi. */
+    private void resolve(final Transaction t) {
+        final String uuid = dao.getSyncUuidById(t.getId());
+        if (uuid == null || uuid.isEmpty()) {
+            Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
+            return;
         }
-        return s;
+        final com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
+        if (!cfg.isEnrolled()) {
+            Toast.makeText(this, "Perangkat belum terhubung ke server.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final String staffUuid = com.crowja.damiupos.sync.LocationReporter.currentStaffUuid(this);
+        new Thread(() -> {
+            String err = null;
+            try {
+                new com.crowja.damiupos.sync.SyncApi(cfg).complaintResolve(uuid, staffUuid);
+            } catch (com.crowja.damiupos.sync.SyncApi.SyncException se) {
+                String m = se.serverMessage();
+                err = m != null && !m.isEmpty() ? m : "Gagal menandai (kode " + se.code + ").";
+            } catch (Exception e) {
+                err = "Gagal menandai — periksa koneksi internet.";
+            }
+            final String fErr = err;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (fErr != null) {
+                    Toast.makeText(this, fErr, Toast.LENGTH_LONG).show();
+                    return;
+                }
+                SimpleDateFormat iso = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US);
+                iso.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+                dao.setComplaintResolvedLocal(t.getId(), iso.format(new Date()));
+                Toast.makeText(this, "✅ Komplain ditandai ditangani", Toast.LENGTH_SHORT).show();
+                load();
+                render();
+            });
+        }).start();
+    }
+
+    private void openComplaintChat(Transaction t) {
+        String uuid = dao.getSyncUuidById(t.getId());
+        if (uuid == null || uuid.isEmpty()) {
+            Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        startActivity(new Intent(this, ChatLogActivity.class)
+                .putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid)
+                .putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, t.getCustomerName() != null ? t.getCustomerName() : ""));
+    }
+
+    /** Ringkasan lengkap pesanan yang dikomplain. */
+    private void showPreview(final Transaction t) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("👤 ").append(t.getCustomerName() != null ? t.getCustomerName() : "Pelanggan").append('\n');
+        if (t.getCustomerPhone() != null && !t.getCustomerPhone().isEmpty()) sb.append("📞 ").append(t.getCustomerPhone()).append('\n');
+        if (t.getCustomerAddress() != null && !t.getCustomerAddress().isEmpty()) sb.append("📍 ").append(t.getCustomerAddress()).append('\n');
+        if (t.getDeliveryDestName() != null && !t.getDeliveryDestName().isEmpty()) sb.append("🚩 Kirim ke: ").append(t.getDeliveryDestName()).append('\n');
+        if (t.getReceiptNo() != null && !t.getReceiptNo().isEmpty()) sb.append("🧾 ").append(t.getReceiptNo()).append('\n');
+        String ordered = Ts.local(t.getTanggal());
+        if (!ordered.isEmpty()) sb.append("🕒 Dipesan: ").append(ordered).append('\n');
+        String complained = Ts.local(t.getComplainedAt());
+        if (!complained.isEmpty()) sb.append("😠 Dikomplain: ").append(complained).append('\n');
+        String lastMsg = Ts.local(t.getComplaintLastInboundAt());
+        if (!lastMsg.isEmpty() && !lastMsg.equals(complained)) sb.append("💬 Pesan terakhir pelanggan: ").append(lastMsg).append('\n');
+        sb.append("\nPesanan:\n");
+        if (t.getItems() != null && !t.getItems().isEmpty()) {
+            for (TransactionItem it : t.getItems()) {
+                if (it == null) continue;
+                sb.append("• ").append(it.productName != null ? it.productName : "Produk").append("  ").append(it.jumlah)
+                        .append(" × Rp ").append(nf.format(Math.round(it.hargaPerGalon)))
+                        .append(" = Rp ").append(nf.format(Math.round(it.jumlah * it.hargaPerGalon))).append('\n');
+            }
+        } else {
+            sb.append("• ").append(t.getJumlahGalon()).append(" galon\n");
+        }
+        if (t.getOngkir() > 0) sb.append("Ongkir: Rp ").append(nf.format(Math.round(t.getOngkir()))).append('\n');
+        sb.append("Total: Rp ").append(nf.format(Math.round(t.getTotalHarga()))).append('\n');
+        String pay = t.getPaymentMethodLabel();
+        if (pay != null && !pay.isEmpty()) sb.append("Pembayaran: ").append(pay).append('\n');
+        String gt = GalonTypeUi.label(t.getGalonType());
+        if (!gt.isEmpty()) sb.append("Jenis galon: ").append(gt).append('\n');
+        boolean active = TransactionDao.isComplaintActive(t);
+        boolean pend = Transaction.DELIVERY_PENDING.equals(t.getDeliveryStatus()) || Transaction.DELIVERY_TERTUNDA.equals(t.getDeliveryStatus());
+        sb.append("\nStatus: ").append(active ? (pend ? "⏳ Aktif (pesanan belum selesai)" : "🔁 Aktif (komplain setelah pesanan selesai)")
+                : "✅ Selesai").append('\n');
+        if (t.getCatatan() != null && !t.getCatatan().trim().isEmpty()) sb.append("\nCatatan:\n").append(t.getCatatan().trim());
+        new AlertDialog.Builder(this)
+                .setTitle("Preview Pesanan")
+                .setMessage(sb.toString())
+                .setPositiveButton("Tutup", null)
+                .setNeutralButton("💬 Log Komplain", (d, w) -> openComplaintChat(t))
+                .show();
+    }
+
+    /** ➕ Titipkan order ini ke rit yang sedang berjalan (diserap layar Antrian Delivery begitu terbuka). */
+    private void addToRit(Transaction t) {
+        SettingsDao settings = new SettingsDao(DatabaseHelper.getInstance(this));
+        if (settings.getDeliveryRunningTrxIds().isEmpty()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Belum ada rit berjalan")
+                    .setMessage("Mulai rit dulu dari Antrian Saya (▶), lalu tambahkan komplain ini ke rit. "
+                            + "Atau pakai 🛣️ Kirim Sejalur untuk menyusun rit baru.")
+                    .setPositiveButton("OK", null)
+                    .show();
+            return;
+        }
+        String uuid = dao.getSyncUuidById(t.getId());
+        if (uuid == null || uuid.isEmpty()) {
+            Toast.makeText(this, "Order ini belum tersinkron ke server — coba lagi sebentar.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        settings.addDeliveryRunPendingUuids(Collections.singletonList(uuid));
+        Toast.makeText(this, "➕ " + (t.getCustomerName() != null ? t.getCustomerName() : "Order")
+                + " ditambahkan ke rit berjalan.", Toast.LENGTH_LONG).show();
+        startActivity(new Intent(this, DeliveryQueueActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+    }
+
+    /** 🛣️ Buka Kirim Sejalur dengan order ini sebagai titik terjauh. */
+    private void sejalur(Transaction t) {
+        String uuid = dao.getSyncUuidById(t.getId());
+        if (uuid == null || uuid.isEmpty()) {
+            Toast.makeText(this, "Order ini belum tersinkron ke server — coba lagi sebentar.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent i = new Intent(this, DeliveryQueueActivity.class);
+        i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_TARGET, uuid);
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_NAME, t.getCustomerName() == null ? "" : t.getCustomerName());
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_GALON, t.getJumlahGalon());
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_PICKUP, false);
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_LAT, t.getCustomerLat());
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_LNG, t.getCustomerLng());
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_AGE_MIN, SejalurPlanLogic.AGE_UNKNOWN);
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_SOURCE, SejalurPlanLogic.SRC_MINE);
+        i.putExtra(DeliveryQueueActivity.EXTRA_SEJALUR_DEVICE, "");
+        startActivity(i);
     }
 
     private int dp(int v) {
