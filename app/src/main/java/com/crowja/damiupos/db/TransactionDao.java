@@ -1116,6 +1116,8 @@ public class TransactionDao {
                 while (c.moveToNext()) {
                     Transaction t = cursorToTransaction(c);
                     t.setCustomerName(getStr(c, "cust_name"));
+                    // cursorToTransaction tak memetakan status pengiriman: tanpa ini semua komplain terbaca "Selesai".
+                    t.setDeliveryStatus(getStr(c, DatabaseHelper.COL_DELIVERY_STATUS));
                     list.add(t);
                 }
             } catch (Exception ignored) {

@@ -217,7 +217,65 @@ public class ChatLogActivity extends AppCompatActivity {
             restoreAttachment(savedInstanceState);
         } else {
             loadMessages(transactionUuid);
+            setupComplaintReply(transactionUuid);
         }
+    }
+
+    private String complaintClientId;
+    private boolean complaintSending;
+
+    /** Log Komplain: kolom balasan teks (tanpa lampiran) — dikirim server lewat WA Bridge ke pelanggan. */
+    private void setupComplaintReply(final String trxUuid) {
+        final View bar = findViewById(R.id.composeBar);
+        final EditText et = findViewById(R.id.etMessage);
+        final Button send = findViewById(R.id.btnSend);
+        if (bar == null || et == null || send == null) return;
+        View attach = findViewById(R.id.btnAttach);
+        if (attach != null) attach.setVisibility(View.GONE);
+        bar.setVisibility(View.VISIBLE);
+        send.setOnClickListener(v -> {
+            if (complaintSending) return;
+            final String text = et.getText().toString().trim();
+            if (text.isEmpty()) {
+                et.setError("Tulis balasan dulu");
+                return;
+            }
+            SyncSettings cfg2 = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
+            if (!cfg2.isEnrolled()) {
+                Toast.makeText(this, "Perangkat belum terhubung ke server.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            complaintSending = true;
+            send.setEnabled(false);
+            // client_id tetap sama sampai berhasil: ulang karena jaringan tak mengirim dobel.
+            if (complaintClientId == null) complaintClientId = java.util.UUID.randomUUID().toString();
+            final String cid = complaintClientId;
+            final String staffUuid = com.crowja.damiupos.sync.LocationReporter.currentStaffUuid(this);
+            new Thread(() -> {
+                String err = null;
+                try {
+                    new SyncApi(cfg2).complaintReply(trxUuid, text, cid, staffUuid);
+                } catch (SyncApi.SyncException se) {
+                    String m = se.serverMessage();
+                    err = m != null && !m.isEmpty() ? m : "Gagal mengirim (kode " + se.code + ").";
+                } catch (Exception e) {
+                    err = "Gagal mengirim — periksa koneksi internet.";
+                }
+                final String fErr = err;
+                runOnUiThread(() -> {
+                    complaintSending = false;
+                    send.setEnabled(true);
+                    if (isFinishing() || isDestroyed()) return;
+                    if (fErr != null) {
+                        Toast.makeText(this, fErr, Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    complaintClientId = null;
+                    et.setText("");
+                    loadMessages(trxUuid);   // pesan terkirim muncul di log
+                });
+            }).start();
+        });
     }
 
     @Override

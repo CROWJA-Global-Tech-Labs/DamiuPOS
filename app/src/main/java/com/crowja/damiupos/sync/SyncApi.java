@@ -1093,6 +1093,12 @@ public class SyncApi {
      * wa_message_id, direction, wa_account, sender_name, type, text, media_url, media_mimetype,
      * wa_timestamp}, ...]}}, terurut wa_timestamp. Lihat ChatLogActivity untuk pemakainya.
      */
+    /** Balas pelanggan yang mengomplain lewat WA Bridge: {ok, message}. {@code clientId} mencegah kirim dobel. */
+    public JSONObject complaintReply(String transactionUuid, String text, String clientId, @Nullable String staffUuid) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/transactions/" + android.net.Uri.encode(transactionUuid) + "/complaint-reply",
+                new JSONObject().put("text", text).put("client_id", clientId), cfg.getToken(), staffUuid);
+    }
+
     public JSONObject complaintLog(String transactionUuid) throws Exception {
         String url = cfg.getBaseUrl() + "/api/transactions/" + transactionUuid + "/complaint-log";
         return get(url, cfg.getToken());
