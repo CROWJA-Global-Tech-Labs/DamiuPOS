@@ -231,6 +231,17 @@ final class SejalurFlow {
       intro.setPadding(this.dp(14f), this.dp(10f), this.dp(14f), this.dp(2f));
       root.addView(intro);
 
+      // 🏠 Pulang ke depot: tanpa memilih titik terjauh — order di jalan pulang dari posisi sekarang ke depot ikut dibawa.
+      MaterialButton btnHome = this.toggleButton("🏠 Pulang ke Depot (kirim sejalur pulang)");
+      LinearLayout.LayoutParams hLp = new LinearLayout.LayoutParams(-1, -2);
+      hLp.setMargins(this.dp(12f), this.dp(8f), this.dp(12f), this.dp(0f));
+      btnHome.setLayoutParams(hLp);
+      btnHome.setOnClickListener((v) -> {
+         dialog.dismiss();
+         this.askGalon(this.depotTarget());
+      });
+      root.addView(btnHome);
+
       final EditText search = new EditText(this.act);
       search.setHint("🔎 Cari nama / area / produk / perangkat…");
       search.setSingleLine(true);
@@ -627,6 +638,15 @@ final class SejalurFlow {
 
    // ================================================================== 2. galon yang dibawa
 
+   /** Titik semu "🏠 Depot" untuk Kirim Sejalur pulang (uuid kosong: server memakai return_depot). */
+   private Target depotTarget() {
+      Target d = new Target();
+      d.returnDepot = true;
+      d.uuid = "";
+      d.name = "🏠 Depot";
+      return d;
+   }
+
    void askGalon(final Target t) {
       if (this.gone() || t == null) return;
       if (!t.selectable()) {
@@ -645,12 +665,17 @@ final class SejalurFlow {
       head.setTypeface(null, Typeface.BOLD);
       box.addView(head);
       StringBuilder meta = new StringBuilder();
+      if (t.returnDepot) {
+         meta.append("Pulang dari posisi HP sekarang ke depot — order di jalan pulang ikut dibawa.");
+      }
       long ageMin = t.elapsedMs / 60000L;
       String ageTxt = SejalurPlanLogic.ageText(t.elapsedMs < 0L && !t.scheduled() ? 0L : ageMin);
-      if (!ageTxt.isEmpty()) meta.append("⏱ ").append(ageTxt);
-      String km = SejalurPlanLogic.kmText(t.distKm);
-      if (!km.isEmpty()) meta.append(meta.length() > 0 ? " · " : "").append("📍 ").append(km).append(' ').append(this.fromLabel());
-      meta.append(meta.length() > 0 ? " · " : "").append(galonText(t.galon, t.pickupOnly));
+      if (!t.returnDepot) {
+         if (!ageTxt.isEmpty()) meta.append("⏱ ").append(ageTxt);
+         String km = SejalurPlanLogic.kmText(t.distKm);
+         if (!km.isEmpty()) meta.append(meta.length() > 0 ? " · " : "").append("📍 ").append(km).append(' ').append(this.fromLabel());
+         meta.append(meta.length() > 0 ? " · " : "").append(galonText(t.galon, t.pickupOnly));
+      }
       TextView tvMeta = new TextView(this.act);
       tvMeta.setText(meta.toString());
       tvMeta.setTextColor(C_TEXT2);
@@ -805,7 +830,8 @@ final class SejalurFlow {
          String err = null;
          try {
             JSONObject body = new JSONObject();
-            body.put("target_uuid", req.t.uuid);
+            if (req.t.returnDepot) body.put("return_depot", true);
+            else body.put("target_uuid", req.t.uuid);
             body.put("max_galon", req.galon);
             body.put("include_pickup", req.includePickup);
             body.put("include_other", req.includeOther);
@@ -1057,7 +1083,8 @@ final class SejalurFlow {
       final List<CheckBox> optional = new ArrayList<>();
       JSONObject origin = plan.optJSONObject("origin");
       String src = origin != null ? str(origin, "source", "") : "";
-      box.addView(this.smallNote("Dihitung dari " + ("gps".equals(src) ? "posisi HP (lokasi depot belum diatur)"
+      box.addView(this.smallNote("Dihitung dari " + (plan.optBoolean("return_depot", false) ? "posisi HP sekarang menuju depot"
+            : "gps".equals(src) ? "posisi HP (lokasi depot belum diatur)"
             : ("last_ping".equals(src) ? "posisi HP terakhir (lokasi depot belum diatur)" : "depot cabang"))
             + ("driving".equals(method) ? " lewat jalan." : " — garis lurus (rute jalan tak tersedia)."), C_MUTED));
       if (overCap) {
@@ -1112,7 +1139,8 @@ final class SejalurFlow {
          }
       }
 
-      box.addView(this.sectionHeader("Urutan rute (dekat → jauh, titik terjauh terakhir)"));
+      box.addView(this.sectionHeader(t.returnDepot ? "Urutan rute pulang (dekat → depot)"
+            : "Urutan rute (dekat → jauh, titik terjauh terakhir)"));
       final Runnable recompute = () -> {
          int g = SejalurPlanLogic.checkedGalon(everything, checked);
          int n = SejalurPlanLogic.checkedCount(everything, checked);
@@ -1150,7 +1178,8 @@ final class SejalurFlow {
          box.addView(this.planRowView(cb, r));
       }
       if (main.size() == 1 && alts.isEmpty()) {
-         box.addView(this.smallNote("Tidak ada antrean lain yang searah — rit hanya ke titik terjauh.", C_MUTED));
+         box.addView(this.smallNote(t.returnDepot ? "Tidak ada antrean yang searah dengan jalan pulang ke depot."
+               : "Tidak ada antrean lain yang searah — rit hanya ke titik terjauh.", C_MUTED));
       }
       if (!alts.isEmpty()) {
          box.addView(this.sectionHeader("Sejalur tapi tidak muat (" + alts.size() + ")"));
@@ -1249,7 +1278,8 @@ final class SejalurFlow {
          boolean held = false;
          try {
             JSONObject body = new JSONObject();
-            body.put("target_uuid", targetUuid);
+            if (targetUuid == null || targetUuid.isEmpty()) body.put("return_depot", true);
+            else body.put("target_uuid", targetUuid);
             body.put("uuids", new JSONArray(uuids));
             if (widen > 0) body.put("widen", widen);   // hanya dicatat server (start tak menilai ulang koridor)
             this.putFix(body);
@@ -1331,7 +1361,7 @@ final class SejalurFlow {
       String m = str(resp, "message", "");
       if (!m.isEmpty()) msg.append(m).append("\n\n");
       msg.append("🚚 ").append(ritCount).append(" order · ").append(resp.optInt("galon", 0)).append(" galon masuk rit");
-      if (targetHeld) msg.append(", titik terjauh diantar paling akhir");
+      if (targetHeld) msg.append(targetName != null && targetName.startsWith("🏠") ? ", lalu pulang ke depot" : ", titik terjauh diantar paling akhir");
       msg.append('.');
       if (waiting > 0) {
          msg.append("\n⏳ ").append(waiting).append(" order dari perangkat lain masuk rit otomatis begitu tersinkron ke HP ini.");

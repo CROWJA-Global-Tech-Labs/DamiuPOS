@@ -210,6 +210,8 @@ public final class SejalurPlanLogic {
         public boolean pickupOnly;
         public boolean priority;
         public boolean complained;
+        /** 🏠 Pulang ke depot: tujuan = depot (bukan sebuah order), asal = posisi HP sekarang. */
+        public boolean returnDepot;
         public String source = SRC_MINE;
         public String deviceLabel = "";
         public double lat;
@@ -232,7 +234,7 @@ public final class SejalurPlanLogic {
 
         /** Bisa dijadikan titik terjauh: punya koordinat & bukan Pesanan Terjadwal. */
         public boolean selectable() {
-            return hasGeo() && !scheduled();
+            return returnDepot || (hasGeo() && !scheduled());
         }
 
         /** Alasan baris tak bisa dipilih ("" = bisa). */
