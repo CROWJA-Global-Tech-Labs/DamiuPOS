@@ -1110,6 +1110,20 @@ public class SyncApi {
         return get(cfg.getBaseUrl() + "/api/admin/complaints", cfg.getToken(), staffUuid);
     }
 
+    /** Indikator "sudah order hari ini": rows = [{t: uuid transaksi, c: uuid pelanggan}] → {ok, ordered: [uuid transaksi]}. */
+    public JSONObject complaintsOrderedToday(org.json.JSONArray rows) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/complaints/ordered-today", new JSONObject().put("rows", rows), cfg.getToken(), null);
+    }
+
+    /** Admin: bersihkan komplain aktif. scope all | range (from..to, yyyy-MM-dd); preview = hanya hitung. */
+    public JSONObject adminComplaintsClear(String scope, @Nullable String from, @Nullable String to, boolean preview,
+                                           @Nullable String staffUuid) throws Exception {
+        JSONObject b = new JSONObject().put("scope", scope).put("preview", preview);
+        if (from != null) b.put("from", from);
+        if (to != null) b.put("to", to);
+        return post(cfg.getBaseUrl() + "/api/admin/complaints/clear", b, cfg.getToken(), staffUuid);
+    }
+
     public JSONObject complaintLog(String transactionUuid) throws Exception {
         String url = cfg.getBaseUrl() + "/api/transactions/" + transactionUuid + "/complaint-log";
         return get(url, cfg.getToken());
