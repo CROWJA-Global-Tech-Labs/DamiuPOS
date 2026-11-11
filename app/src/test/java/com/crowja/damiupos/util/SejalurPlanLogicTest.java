@@ -673,4 +673,18 @@ public class SejalurPlanLogicTest {
         seen.put("t", 999L);
         assertNull(SejalurPlanLogic.pickComplaint(rows, seen, 1000L));
     }
+
+    @Test
+    public void returnToDepotTargetIsSelectableWithoutCoordinatesAndAddsNoTargetUuid() {
+        Target depot = new Target();
+        depot.returnDepot = true;
+        assertTrue(depot.selectable());
+
+        PlanRow a = row("a", 2, 1.0, false);
+        PlanRow b = row("b", 2, 2.0, false);
+        PlanRow end = row("", true);   // baris depot semu: titik akhir, tak ikut dikirim
+        java.util.List<PlanRow> main = new java.util.ArrayList<>(java.util.Arrays.asList(a, b, end));
+        java.util.Set<String> checked = new java.util.HashSet<>(java.util.Arrays.asList("a", "b", ""));
+        assertEquals(java.util.Arrays.asList("a", "b"), SejalurPlanLogic.startUuids(main, new java.util.ArrayList<>(), checked, ""));
+    }
 }
