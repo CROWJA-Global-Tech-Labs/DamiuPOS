@@ -390,7 +390,7 @@ public class ComplaintListActivity extends AppCompatActivity {
         LinearLayout row1 = new LinearLayout(this);
         row1.setOrientation(LinearLayout.HORIZONTAL);
         row1.setPadding(0, dp(8), 0, 0);
-        row1.addView(actionButton("🧾 Preview", true, v -> showPreview(t)), weight());
+        row1.addView(actionButton("🔍 Detail", true, v -> openOrderDetail(t)), weight());
         row1.addView(actionButton("💬 Chat WA", t.getCustomerPhone() != null && !t.getCustomerPhone().isEmpty(),
                 v -> DeliveryQueueActivity.openWhatsApp(this, t.getCustomerPhone(), "")), weight());
         c.addView(row1);
@@ -485,48 +485,11 @@ public class ComplaintListActivity extends AppCompatActivity {
                 .putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, t.getCustomerName() != null ? t.getCustomerName() : ""));
     }
 
-    /** Ringkasan lengkap pesanan yang dikomplain. */
-    private void showPreview(final Transaction t) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("👤 ").append(t.getCustomerName() != null ? t.getCustomerName() : "Pelanggan").append('\n');
-        if (t.getCustomerPhone() != null && !t.getCustomerPhone().isEmpty()) sb.append("📞 ").append(t.getCustomerPhone()).append('\n');
-        if (t.getCustomerAddress() != null && !t.getCustomerAddress().isEmpty()) sb.append("📍 ").append(t.getCustomerAddress()).append('\n');
-        if (t.getDeliveryDestName() != null && !t.getDeliveryDestName().isEmpty()) sb.append("🚩 Kirim ke: ").append(t.getDeliveryDestName()).append('\n');
-        if (t.getReceiptNo() != null && !t.getReceiptNo().isEmpty()) sb.append("🧾 ").append(t.getReceiptNo()).append('\n');
-        String ordered = Ts.local(t.getTanggal());
-        if (!ordered.isEmpty()) sb.append("🕒 Dipesan: ").append(ordered).append('\n');
-        String complained = Ts.local(t.getComplainedAt());
-        if (!complained.isEmpty()) sb.append("😠 Dikomplain: ").append(complained).append('\n');
-        String lastMsg = Ts.local(t.getComplaintLastInboundAt());
-        if (!lastMsg.isEmpty() && !lastMsg.equals(complained)) sb.append("💬 Pesan terakhir pelanggan: ").append(lastMsg).append('\n');
-        sb.append("\nPesanan:\n");
-        if (t.getItems() != null && !t.getItems().isEmpty()) {
-            for (TransactionItem it : t.getItems()) {
-                if (it == null) continue;
-                sb.append("• ").append(it.productName != null ? it.productName : "Produk").append("  ").append(it.jumlah)
-                        .append(" × Rp ").append(nf.format(Math.round(it.hargaPerGalon)))
-                        .append(" = Rp ").append(nf.format(Math.round(it.jumlah * it.hargaPerGalon))).append('\n');
-            }
-        } else {
-            sb.append("• ").append(t.getJumlahGalon()).append(" galon\n");
-        }
-        if (t.getOngkir() > 0) sb.append("Ongkir: Rp ").append(nf.format(Math.round(t.getOngkir()))).append('\n');
-        sb.append("Total: Rp ").append(nf.format(Math.round(t.getTotalHarga()))).append('\n');
-        String pay = t.getPaymentMethodLabel();
-        if (pay != null && !pay.isEmpty()) sb.append("Pembayaran: ").append(pay).append('\n');
-        String gt = GalonTypeUi.label(t.getGalonType());
-        if (!gt.isEmpty()) sb.append("Jenis galon: ").append(gt).append('\n');
-        boolean active = TransactionDao.isComplaintActive(t);
-        boolean pend = Transaction.DELIVERY_PENDING.equals(t.getDeliveryStatus()) || Transaction.DELIVERY_TERTUNDA.equals(t.getDeliveryStatus());
-        sb.append("\nStatus: ").append(active ? (pend ? "⏳ Aktif (pesanan belum selesai)" : "🔁 Aktif (komplain setelah pesanan selesai)")
-                : "✅ Selesai").append('\n');
-        if (t.getCatatan() != null && !t.getCatatan().trim().isEmpty()) sb.append("\nCatatan:\n").append(t.getCatatan().trim());
-        new AlertDialog.Builder(this)
-                .setTitle("Preview Pesanan")
-                .setMessage(sb.toString())
-                .setPositiveButton("Tutup", null)
-                .setNeutralButton("💬 Log Komplain", (d, w) -> openComplaintChat(t))
-                .show();
+    /** Detail Order yang SAMA dengan Antrian Delivery (dialog lengkap: Ubah, Alihkan, Chat Pesanan, Lihat Chat Komplain, …). */
+    private void openOrderDetail(Transaction t) {
+        startActivity(new Intent(this, DeliveryQueueActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(DeliveryQueueActivity.EXTRA_FOCUS_TRX_ID, t.getId()));
     }
 
     /** ➕ Titipkan order ini ke rit yang sedang berjalan (diserap layar Antrian Delivery begitu terbuka). */

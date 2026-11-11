@@ -10931,6 +10931,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (t != null) {
          this.scrollToOrder(t);
          this.showOrderDetail(t);
+      } else if ((t = findById(this.dao.getComplaintOrders(600), id)) != null) {
+         // Dibuka dari daftar Komplain: pesanan yang sudah selesai tak ada di antrean, tapi Detail Order tetap bisa dilihat.
+         this.showOrderDetail(t);
       } else {
          Toast.makeText(this, "Pesanan ini tidak ada di antrean perangkat ini — mungkin sudah selesai, "
                + "dibatalkan, atau dipegang perangkat lain.", Toast.LENGTH_LONG).show();
