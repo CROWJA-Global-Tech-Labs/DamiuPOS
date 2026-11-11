@@ -318,6 +318,12 @@ public final class OnlineTasks {
             case "message": {
                 String title = payload != null ? payload.optString("title", "DAMIU POS") : "DAMIU POS";
                 String body = payload != null ? payload.optString("body", "") : "";
+                if (payload != null && "complaint".equals(payload.optString("kind", ""))) {
+                    // 😠 Komplain pelanggan: sirene nyaring + teks komplain + transaksi, ketuk → chat komplain.
+                    ComplaintAlert.deliver(ctx, title, body, payload.optString("trx_uuid", ""),
+                            payload.optString("customer_name", ""), 7872 + (payload.optString("trx_uuid", "").hashCode() & 0xFFF));
+                    break;
+                }
                 OnlineNotifier.deliverAdminMessage(ctx, title, body, 7871);   // notif + popup in-app
                 break;
             }
