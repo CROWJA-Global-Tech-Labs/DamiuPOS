@@ -687,6 +687,29 @@ public class ResellerDetailActivity extends AppCompatActivity {
         }
     }
 
+    /** Detail satu pendapatan komisi: siapa affiliate-nya, transaksinya, dan komisi per baris. */
+    private void showKomisiDetail(ResellerKomisiCalculator.Entry e) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("👤 ").append(e.selfPurchase ? "Pembelian sendiri (reseller)"
+                : (e.customerName.isEmpty() ? "Affiliate tidak diketahui" : e.customerName)).append("\n");
+        if (!e.customerPhone.isEmpty()) sb.append("📞 ").append(e.customerPhone).append("\n");
+        sb.append("📅 ").append(formatDate(e.tanggal)).append("\n");
+        if (!e.receiptNo.isEmpty()) sb.append("🧾 ").append(e.receiptNo).append("\n");
+        if (!e.payment.isEmpty()) sb.append("💳 ").append(e.payment).append("\n");
+        sb.append("\nRincian komisi:\n");
+        for (String l : e.lines) sb.append("• ").append(l).append("\n");
+        sb.append("\nTotal ").append(e.totalGalon).append(" galon · komisi Rp ").append(NF.format(Math.round(e.komisi)));
+        androidx.appcompat.app.AlertDialog.Builder b = new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Detail Komisi")
+                .setMessage(sb.toString())
+                .setPositiveButton("Tutup", null);
+        if (e.trxId > 0) {
+            b.setNeutralButton("Buka Struk", (d, w) -> startActivity(new android.content.Intent(this, ReceiptActivity.class)
+                    .putExtra("transaction_id", e.trxId)));
+        }
+        b.show();
+    }
+
     // =======================================================================
     // Riwayat pendapatan komisi adapter
     // =======================================================================
@@ -708,8 +731,11 @@ public class ResellerDetailActivity extends AppCompatActivity {
         public void onBindViewHolder(@NonNull VH h, int position) {
             ResellerKomisiCalculator.Entry e = data.get(position);
             h.tvDetail.setText(e.detail);
-            h.tvDate.setText(formatDate(e.tanggal));
+            String who = e.selfPurchase ? "Pembelian sendiri"
+                    : (e.customerName.isEmpty() ? "Affiliate tidak diketahui" : e.customerName);
+            h.tvDate.setText("👤 " + who + " · " + formatDate(e.tanggal));
             h.tvAmount.setText("+ Rp " + NF.format(Math.round(e.komisi)));
+            h.itemView.setOnClickListener(v -> showKomisiDetail(e));
         }
 
         @Override

@@ -30,6 +30,15 @@ public final class ResellerKomisiCalculator {
         public double komisi;
         /** Ringkasan item, mis. "3× Galon RO @1.500 + 2× Mineral @1.000". */
         public String detail;
+        /** Affiliate yang memesan (pelanggan transaksi); sama dengan reseller = pembelian sendiri. */
+        public long customerId;
+        public String customerName = "";
+        public String customerPhone = "";
+        public boolean selfPurchase;
+        public String receiptNo = "";
+        public String payment = "";
+        /** Rincian per baris: "2× FREZOXY @1.000 = Rp 2.000". */
+        public final List<String> lines = new ArrayList<>();
     }
 
     /** Hasil perhitungan keseluruhan. */
@@ -59,6 +68,8 @@ public final class ResellerKomisiCalculator {
         List<Transaction> trxs = trxDao.getJualForResellerSince(
                 reseller.getId(), reseller.getResellerSince());
 
+        CustomerDao customerDao = new CustomerDao(dbHelper);
+        Map<Long, Customer> custCache = new java.util.HashMap<>();
         for (Transaction t : trxs) {
             // Lewati transaksi yang BUKAN sumber komisi:
             //  • botol kosong (bukan air minum)
@@ -74,6 +85,21 @@ public final class ResellerKomisiCalculator {
             Entry e = new Entry();
             e.trxId = t.getId();
             e.tanggal = t.getTanggal();
+            e.customerId = t.getCustomerId();
+            e.selfPurchase = t.getCustomerId() == reseller.getId();
+            Customer buyer = custCache.get(t.getCustomerId());
+            if (buyer == null && t.getCustomerId() > 0) {
+                buyer = customerDao.getById(t.getCustomerId());
+                custCache.put(t.getCustomerId(), buyer);
+            }
+            if (buyer != null) {
+                e.customerName = buyer.getName() != null ? buyer.getName() : "";
+                e.customerPhone = buyer.getPhone() != null ? buyer.getPhone() : "";
+            } else if (t.getCustomerName() != null) {
+                e.customerName = t.getCustomerName();
+            }
+            e.receiptNo = t.getReceiptNo() != null ? t.getReceiptNo() : "";
+            e.payment = t.getPaymentMethodLabel() != null ? t.getPaymentMethodLabel() : "";
 
             List<TransactionItem> items = t.getItems();
             if (items != null && !items.isEmpty()) {
@@ -83,6 +109,8 @@ public final class ResellerKomisiCalculator {
                             ? rates.get(it.productId) : globalRate;
                     e.komisi += it.jumlah * rate;
                     e.totalGalon += it.jumlah;
+                    e.lines.add(it.jumlah + "× " + (it.productName != null ? it.productName : "Air")
+                            + " @" + NF.format(Math.round(rate)) + " = Rp " + NF.format(Math.round(it.jumlah * rate)));
                     if (detail.length() > 0) detail.append(" + ");
                     detail.append(it.jumlah).append("× ")
                             .append(it.productName != null ? it.productName : "Air")
@@ -96,6 +124,7 @@ public final class ResellerKomisiCalculator {
                 e.komisi = t.getJumlahGalon() * rate;
                 e.totalGalon = t.getJumlahGalon();
                 e.detail = t.getJumlahGalon() + "× galon @" + NF.format(Math.round(rate));
+                e.lines.add(e.detail + " = Rp " + NF.format(Math.round(e.komisi)));
             }
 
             if (e.komisi > 0 || e.totalGalon > 0) {
