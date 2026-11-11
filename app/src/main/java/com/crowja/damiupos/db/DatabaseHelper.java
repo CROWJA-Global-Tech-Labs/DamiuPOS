@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 106;
+    private static final int DATABASE_VERSION = 107;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -327,6 +327,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
      *  menulisnya sendiri -- hanya membaca via pull, sama seperti dua kolom di atas. Log
      *  percakapannya sendiri diambil on-demand (lihat SyncApi.complaintLog), bukan disinkron. */
     public static final String COL_COMPLAINED_AT = "complained_at";
+    /** Pesan MASUK terakhir pelanggan di log komplain & penandaan "ditangani" (server-authoritative, pull-only): komplain pada
+     *  pesanan yang sudah selesai AKTIF selama pesan terakhir lebih baru dari penyelesaian & penandaan — lihat
+     *  TransactionDao.isComplaintActive. */
+    public static final String COL_COMPLAINT_LAST_INBOUND_AT = "complaint_last_inbound_at";
+    public static final String COL_COMPLAINT_RESOLVED_AT = "complaint_resolved_at";
     /** Tombol "💬 Chat Pesanan": non-null bila order ini (dibuat FREZ AI Agent) punya sesi chat WA
      *  AKTIF di server (transaction_chat_sessions). Server-authoritative & pull-only, sama persis
      *  dengan {@link #COL_COMPLAINED_AT}; isi chat-nya diambil on-demand (SyncApi.orderChat). */
@@ -698,6 +703,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_LAST_MANUAL_EDIT_AT + " TEXT, " +
                     COL_VOID_REQUEST_PENDING_AT + " TEXT, " +
                     COL_COMPLAINED_AT + " TEXT, " +
+                    COL_COMPLAINT_LAST_INBOUND_AT + " TEXT, " +
+                    COL_COMPLAINT_RESOLVED_AT + " TEXT, " +
                     COL_CHAT_SESSION_AT + " TEXT, " +
                     COL_DELIVERY_PROOF_REQUIRED + " INTEGER DEFAULT 0, " +
                     COL_GALON_TYPE + " TEXT, " +
@@ -1815,6 +1822,12 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             // reseller yang sudah ada di HP tetap tergerbang lewat penanda [ORDER RESELLER] di catatan
             // sampai pull berikutnya membawa flag-nya.
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_PROOF_REQUIRED + " INTEGER DEFAULT 0");
+        }
+        if (oldVersion < 107) {
+            // Komplain yang muncul kembali sesudah pesanan selesai (lihat COL_COMPLAINT_LAST_INBOUND_AT); baris lama terisi
+            // lewat tarik-ulang transaksi 30 hari sekali di SyncEngine.pull (kunci v107).
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_COMPLAINT_LAST_INBOUND_AT + " TEXT");
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_COMPLAINT_RESOLVED_AT + " TEXT");
         }
         if (oldVersion < 106) {
             // ⏰ Batas Antar + jam berangkat paling lambat (lihat COL_DELIVERY_DUE_AT). Aditif; baris lama

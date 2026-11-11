@@ -213,6 +213,8 @@ public class SyncEngine {
                     // Badge 😠 "Komplain" (Agen AI WhatsApp) — server-authoritative, sama pola dengan
                     // dua kolom di atas: di-skip dari fillColumns push, HP hanya membaca via pull.
                     DatabaseHelper.COL_COMPLAINED_AT,
+                    // Komplain muncul kembali / ditandai ditangani — server-authoritative, pull-only (sama pola complained_at).
+                    DatabaseHelper.COL_COMPLAINT_LAST_INBOUND_AT, DatabaseHelper.COL_COMPLAINT_RESOLVED_AT,
                     // Tombol "💬 Chat Pesanan" — server-authoritative, pola sama persis dengan
                     // complained_at: di-skip dari fillColumns push, HP hanya membaca via pull.
                     DatabaseHelper.COL_CHAT_SESSION_AT,
@@ -1238,6 +1240,7 @@ public class SyncEngine {
     private static final String K_REPULL_AFFILIATE_PRICES_V104 = "sync_repull_affiliate_prices_v104";
     private static final String K_REPULL_GALON_TYPE_V105 = "sync_repull_galon_type_v105";
     private static final String K_REPULL_DEADLINE_V106 = "sync_repull_deadline_v106";
+    private static final String K_REPULL_COMPLAINT_V107 = "sync_repull_complaint_v107";
 
     private int pull() throws Exception {
         SQLiteDatabase db = dbHelper.getWritableDatabase();
@@ -1309,6 +1312,14 @@ public class SyncEngine {
             String back = SyncSettings.trxLookbackCursor(cfg.getCursor("transactions"), 7 * 24);
             if (back != null) cfg.setCursor("transactions", back);
             settingsDao.set(K_REPULL_GALON_TYPE_V105, "1");
+        }
+
+        // DB v107 (komplain muncul kembali), SEKALI: APK lama membuang kolom complaint_last_inbound_at/complaint_resolved_at dari
+        // pull. Mundurkan kursor transaksi 30 hari supaya komplain yang ada ikut terisi.
+        if (!"1".equals(settingsDao.get(K_REPULL_COMPLAINT_V107, "0"))) {
+            String back = SyncSettings.trxLookbackCursor(cfg.getCursor("transactions"), 30 * 24);
+            if (back != null) cfg.setCursor("transactions", back);
+            settingsDao.set(K_REPULL_COMPLAINT_V107, "1");
         }
 
         // DB v106 (⏰ batas antar + jam berangkat paling lambat), SEKALI: APK lama membuang kolom

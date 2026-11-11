@@ -125,6 +125,8 @@ public class Transaction {
      *  tak pernah menulisnya sendiri. Log percakapannya sendiri diambil on-demand (lihat
      *  SyncApi.complaintLog / ChatLogActivity), bukan disinkron sebagai kolom. */
     private String complainedAt;
+    private String complaintLastInboundAt;
+    private String complaintResolvedAt;
     /** Tombol "💬 Chat Pesanan" — non-null bila order ini punya sesi chat WA aktif di server
      *  (order dari FREZ AI Agent). Server-authoritative, pull-only; isi chat-nya diambil on-demand
      *  (SyncApi.orderChat / ChatLogActivity mode order). */
@@ -386,6 +388,10 @@ public class Transaction {
         return voidRequestPendingAt != null && !voidRequestPendingAt.trim().isEmpty();
     }
 
+    public String getComplaintLastInboundAt() { return complaintLastInboundAt; }
+    public void setComplaintLastInboundAt(String v) { this.complaintLastInboundAt = v; }
+    public String getComplaintResolvedAt() { return complaintResolvedAt; }
+    public void setComplaintResolvedAt(String v) { this.complaintResolvedAt = v; }
     public String getComplainedAt() { return complainedAt; }
     public void setComplainedAt(String v) { this.complainedAt = v; }
 
