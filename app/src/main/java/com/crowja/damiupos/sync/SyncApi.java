@@ -1105,6 +1105,11 @@ public class SyncApi {
                 new JSONObject(), cfg.getToken(), staffUuid);
     }
 
+    /** Admin: komplain pesanan SEMUA perangkat cabang ({ok, complaints[]}). */
+    public JSONObject adminComplaints(@Nullable String staffUuid) throws Exception {
+        return get(cfg.getBaseUrl() + "/api/admin/complaints", cfg.getToken(), staffUuid);
+    }
+
     public JSONObject complaintLog(String transactionUuid) throws Exception {
         String url = cfg.getBaseUrl() + "/api/transactions/" + transactionUuid + "/complaint-log";
         return get(url, cfg.getToken());
