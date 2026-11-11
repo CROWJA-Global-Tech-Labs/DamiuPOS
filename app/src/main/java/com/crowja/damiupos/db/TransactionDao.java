@@ -1076,6 +1076,54 @@ public class TransactionDao {
                 DatabaseHelper.COL_ID + " = ?", new String[]{String.valueOf(trxId)});
     }
 
+    /** Komplain AKTIF = pesanan dikomplain yang BELUM diselesaikan (PENDING/Tertunda); selesai = pesanannya sudah DONE. */
+    public static boolean isComplaintActive(Transaction t) {
+        String s = t.getDeliveryStatus();
+        return Transaction.DELIVERY_PENDING.equals(s) || Transaction.DELIVERY_TERTUNDA.equals(s);
+    }
+
+    /** Pesanan JUAL yang dikomplain, dengan kolom berawalan alias "t." (dipakai query berjoin & hitungan). */
+    private static final String T_COMPLAINED = "t.type='JUAL' AND COALESCE(t." + DatabaseHelper.COL_COMPLAINED_AT + ", '') != ''";
+    private static final String T_COMPLAINT_ACTIVE = T_COMPLAINED + " AND t." + DatabaseHelper.COL_DELIVERY_STATUS
+            + " IN ('" + Transaction.DELIVERY_PENDING + "','" + Transaction.DELIVERY_TERTUNDA + "')";
+
+    /** Jumlah komplain aktif di perangkat ini (badge menu Komplain) — definisi SAMA dengan {@link #isComplaintActive}. */
+    public int countActiveComplaints() {
+        try (Cursor c = dbHelper.getReadableDatabase().rawQuery(
+                "SELECT COUNT(*) FROM " + DatabaseHelper.TABLE_TRANSACTIONS + " t WHERE " + T_COMPLAINT_ACTIVE, null)) {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Semua komplain pesanan di perangkat ini: yang AKTIF dulu (semuanya), lalu yang sudah selesai terbaru dulu (maks
+     * {@code resolvedLimit}). Transaksi terisolasi per perangkat di lapisan sync, jadi baris lokal = milik perangkat ini.
+     */
+    public List<Transaction> getComplaintOrders(int resolvedLimit) {
+        List<Transaction> list = new ArrayList<>();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String from = "SELECT t.*, c." + DatabaseHelper.COL_NAME + " AS cust_name FROM " + DatabaseHelper.TABLE_TRANSACTIONS
+                + " t LEFT JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c ON t." + DatabaseHelper.COL_CUSTOMER_ID
+                + " = c." + DatabaseHelper.COL_ID + " WHERE ";
+        String order = " ORDER BY t." + DatabaseHelper.COL_COMPLAINED_AT + " DESC";
+        String[] queries = {
+                from + T_COMPLAINT_ACTIVE + order,
+                from + T_COMPLAINED + " AND NOT (" + T_COMPLAINT_ACTIVE + ")" + order + " LIMIT " + Math.max(1, resolvedLimit)};
+        for (String sql : queries) {
+            try (Cursor c = db.rawQuery(sql, null)) {
+                while (c.moveToNext()) {
+                    Transaction t = cursorToTransaction(c);
+                    t.setCustomerName(getStr(c, "cust_name"));
+                    list.add(t);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return list;
+    }
+
     /** Pembaca kolom per NAMA (absen/NULL → null / 0) — Cursor di produksi, Map di uji JVM. */
     interface ColumnReader {
         String str(String col);

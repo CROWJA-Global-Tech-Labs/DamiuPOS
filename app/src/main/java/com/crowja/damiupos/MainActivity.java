@@ -269,6 +269,9 @@ public class MainActivity extends AppCompatActivity {
         View btnKunjungan = findViewById(R.id.btnKunjungan);
         if (btnKunjungan != null) btnKunjungan.setOnClickListener(v ->
                 startActivity(new Intent(this, VisitListActivity.class)));
+        View btnKomplain = findViewById(R.id.btnKomplain);
+        if (btnKomplain != null) btnKomplain.setOnClickListener(v ->
+                startActivity(new Intent(this, ComplaintListActivity.class)));
 
         btnFollowUp = findViewById(R.id.btnFollowUp);
         originalFollowUpTint = btnFollowUp.getBackgroundTintList();
@@ -794,6 +797,8 @@ public class MainActivity extends AppCompatActivity {
         // Daftar Kunjungan Urgent: Marketing & Admin. Visibilitas dipasang pada PEMBUNGKUS
         // (FrameLayout tombol + badge) — kalau dipasang di tombolnya saja, badge jumlah tetap
         // melayang di layar meski tombolnya sudah disembunyikan.
+        View wrapKomplain = findViewById(R.id.wrapKomplain);
+        if (wrapKomplain != null) wrapKomplain.setVisibility(show ? View.VISIBLE : View.GONE);
         View wrapKunjungan = findViewById(R.id.wrapKunjungan);
         if (wrapKunjungan != null) {
             wrapKunjungan.setVisibility(show && (isMarketing || isAdmin) ? View.VISIBLE : View.GONE);
@@ -1528,11 +1533,25 @@ public class MainActivity extends AppCompatActivity {
      * sinkron membawa tanda baru dari web).
      */
     private void updateVisitUrgentIndicator() {
+        updateComplaintBadge();
         TextView badge = findViewById(R.id.tvKunjunganBadge);
         if (badge == null) return;
         int n = customerDao.countVisitUrgent();
         if (n > 0) {
             badge.setText(String.valueOf(n));
+            badge.setVisibility(View.VISIBLE);
+        } else {
+            badge.setVisibility(View.GONE);
+        }
+    }
+
+    /** Badge menu Komplain = jumlah komplain pesanan AKTIF (belum diselesaikan) di perangkat ini. */
+    private void updateComplaintBadge() {
+        TextView badge = findViewById(R.id.tvKomplainBadge);
+        if (badge == null) return;
+        int n = new TransactionDao(DatabaseHelper.getInstance(this)).countActiveComplaints();
+        if (n > 0) {
+            badge.setText(n > 99 ? "99+" : String.valueOf(n));
             badge.setVisibility(View.VISIBLE);
         } else {
             badge.setVisibility(View.GONE);
