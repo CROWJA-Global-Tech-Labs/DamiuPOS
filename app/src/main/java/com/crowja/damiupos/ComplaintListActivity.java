@@ -391,8 +391,7 @@ public class ComplaintListActivity extends AppCompatActivity {
         row1.setOrientation(LinearLayout.HORIZONTAL);
         row1.setPadding(0, dp(8), 0, 0);
         row1.addView(actionButton("🔍 Detail", true, v -> openOrderDetail(t)), weight());
-        row1.addView(actionButton("💬 Chat WA", t.getCustomerPhone() != null && !t.getCustomerPhone().isEmpty(),
-                v -> DeliveryQueueActivity.openWhatsApp(this, t.getCustomerPhone(), "")), weight());
+        row1.addView(actionButton("💬 Chat", true, v -> chooseChat(t)), weight());
         c.addView(row1);
         LinearLayout row2 = new LinearLayout(this);
         row2.setOrientation(LinearLayout.HORIZONTAL);
@@ -483,6 +482,29 @@ public class ComplaintListActivity extends AppCompatActivity {
         startActivity(new Intent(this, ChatLogActivity.class)
                 .putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid)
                 .putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, t.getCustomerName() != null ? t.getCustomerName() : ""));
+    }
+
+    /** 💬 Chat: pilih Chat Pesanan (chat WA order lewat server, bisa dibalas) atau Chat WA (aplikasi WhatsApp). */
+    private void chooseChat(final Transaction t) {
+        new AlertDialog.Builder(this)
+                .setTitle("💬 Chat — " + (t.getCustomerName() != null ? t.getCustomerName() : "Pelanggan"))
+                .setItems(new String[]{"💬 Chat Pesanan", "📱 Chat WA"}, (d, which) -> {
+                    if (which == 0) {
+                        String uuid = dao.getSyncUuidById(t.getId());
+                        if (uuid == null || uuid.isEmpty()) {
+                            Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
+                            return;
+                        }
+                        startActivity(new Intent(this, ChatLogActivity.class)
+                                .putExtra(ChatLogActivity.EXTRA_MODE, ChatLogActivity.MODE_ORDER)
+                                .putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid)
+                                .putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, t.getCustomerName() != null ? t.getCustomerName() : ""));
+                    } else {
+                        DeliveryQueueActivity.openWhatsApp(this, t.getCustomerPhone(), "");
+                    }
+                })
+                .setNegativeButton("Batal", null)
+                .show();
     }
 
     /** Detail Order yang SAMA dengan Antrian Delivery (dialog lengkap: Ubah, Alihkan, Chat Pesanan, Lihat Chat Komplain, …). */
