@@ -1563,6 +1563,14 @@ public class MainActivity extends AppCompatActivity {
     /** Badge menu Komplain = jumlah komplain pesanan AKTIF (belum diselesaikan) di perangkat ini. */
     private void updateComplaintBadge() {
         IssueReminder.check(this);
+        // Baris kartu TRX / galon / CUST / Masalah: kolom terlihat selalu mengisi penuh baris (3 kolom bila satu kartu tersembunyi).
+        View rowRef = findViewById(R.id.cardTransaksi);
+        if (rowRef != null && rowRef.getParent() instanceof android.widget.LinearLayout) {
+            android.widget.LinearLayout row = (android.widget.LinearLayout) rowRef.getParent();
+            int vis = 0;
+            for (int i = 0; i < row.getChildCount(); i++) if (row.getChildAt(i).getVisibility() == View.VISIBLE) vis++;
+            if (vis > 0) row.setWeightSum(vis);
+        }
         TextView badge = findViewById(R.id.tvKomplainBadge);
         if (badge == null) return;
         int n = new TransactionDao(DatabaseHelper.getInstance(this)).countActiveComplaints();
