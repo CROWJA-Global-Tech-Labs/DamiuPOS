@@ -807,7 +807,14 @@ public class MainActivity extends AppCompatActivity {
         View cardKomplainV = findViewById(R.id.cardKomplain);
         if (cardKomplainV != null) {
             cardKomplainV.setVisibility(komplainCard ? View.VISIBLE : View.GONE);
-            ((android.widget.LinearLayout) cardKomplainV.getParent()).setWeightSum(komplainCard ? 4f : 3f);
+            // Tanpa weightSum tetap: kolom terlihat berbagi lebar sama rata (kartu GONE tak dihitung).
+            ((android.widget.LinearLayout) cardKomplainV.getParent()).setWeightSum(0f);
+            View custCard = findViewById(R.id.cardTotalPelanggan);
+            if (custCard != null && custCard.getLayoutParams() instanceof android.widget.LinearLayout.LayoutParams) {
+                android.widget.LinearLayout.LayoutParams lp = (android.widget.LinearLayout.LayoutParams) custCard.getLayoutParams();
+                lp.setMarginEnd(komplainCard ? (int) (4 * getResources().getDisplayMetrics().density) : 0);
+                custCard.setLayoutParams(lp);
+            }
         }
         View wrapKunjungan = findViewById(R.id.wrapKunjungan);
         if (wrapKunjungan != null) {
@@ -1576,7 +1583,7 @@ public class MainActivity extends AppCompatActivity {
             android.widget.LinearLayout row = (android.widget.LinearLayout) rowRef.getParent();
             int vis = 0;
             for (int i = 0; i < row.getChildCount(); i++) if (row.getChildAt(i).getVisibility() == View.VISIBLE) vis++;
-            if (vis > 0) row.setWeightSum(vis);
+            row.setWeightSum(0f);
         }
         TextView badge = findViewById(R.id.tvKomplainBadge);
         if (badge == null) return;
