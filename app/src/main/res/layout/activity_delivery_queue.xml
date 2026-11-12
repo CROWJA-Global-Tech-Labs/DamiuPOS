@@ -101,6 +101,18 @@
                 app:strokeColor="@color/white" />
             </LinearLayout>
 
+            <!-- Order BARU yang masuk perangkat ini otomatis ikut rit berjalan (applyRunModeChrome / autoAddNewOrders). -->
+            <CheckBox
+                android:id="@+id/cbRunAutoAdd"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:buttonTint="@color/white"
+                android:text="Order baru masuk rit otomatis"
+                android:textColor="@color/white"
+                android:textSize="12sp"
+                android:visibility="gone" />
+
             <TextView
                 android:id="@+id/tvSummaryCaption"
                 android:layout_width="match_parent"
