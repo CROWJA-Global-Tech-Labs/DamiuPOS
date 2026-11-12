@@ -1562,6 +1562,13 @@ public class MainActivity extends AppCompatActivity {
 
     /** Badge menu Komplain = jumlah komplain pesanan AKTIF (belum diselesaikan) di perangkat ini. */
     private void updateComplaintBadge() {
+        IssueReminder.refreshAsync(this, false, () -> runOnUiThread(() -> {   // eskalasi AI dari server (maks 1x/menit)
+            if (!isFinishing() && !isDestroyed()) renderComplaintBadge();
+        }));
+        renderComplaintBadge();
+    }
+
+    private void renderComplaintBadge() {
         IssueReminder.check(this);
         // Baris kartu TRX / galon / CUST / Masalah: kolom terlihat selalu mengisi penuh baris (3 kolom bila satu kartu tersembunyi).
         View rowRef = findViewById(R.id.cardTransaksi);

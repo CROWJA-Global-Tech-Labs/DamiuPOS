@@ -1105,6 +1105,16 @@ public class SyncApi {
                 new JSONObject(), cfg.getToken(), staffUuid);
     }
 
+    /** Eskalasi AI aktif untuk perangkat ini ({issues:[{uuid, summary, summary_at}]}). */
+    public JSONObject issues() throws Exception {
+        return get(cfg.getBaseUrl() + "/api/issues", cfg.getToken());
+    }
+
+    public JSONObject issueResolve(String transactionUuid, @Nullable String staffUuid) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/transactions/" + android.net.Uri.encode(transactionUuid) + "/issue-resolve",
+                new JSONObject(), cfg.getToken(), staffUuid);
+    }
+
     /** Admin: komplain pesanan SEMUA perangkat cabang ({ok, complaints[]}). */
     public JSONObject adminComplaints(@Nullable String staffUuid) throws Exception {
         return get(cfg.getBaseUrl() + "/api/admin/complaints", cfg.getToken(), staffUuid);

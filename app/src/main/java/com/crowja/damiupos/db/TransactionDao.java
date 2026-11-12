@@ -1157,13 +1157,18 @@ public class TransactionDao {
      */
     public List<Transaction> getProblemOrders(int limit) {
         List<Transaction> list = new ArrayList<>();
+        // MASALAH = eskalasi AI terkait transaksi (ringkasan dari server, cache IssueReminder.escalations).
+        final java.util.Map<String, String> esc = com.crowja.damiupos.IssueReminder.escalations(new SettingsDao(dbHelper));
+        if (esc.isEmpty()) return list;
+        StringBuilder in = new StringBuilder();
+        for (String u : esc.keySet()) {
+            if (in.length() > 0) in.append(',');
+            in.append('\'').append(u.replace("'", "")).append('\'');
+        }
         String sql = "SELECT t.*, c." + DatabaseHelper.COL_NAME + " AS cust_name, c." + DatabaseHelper.COL_PHONE
-                + " AS cust_phone, c." + DatabaseHelper.COL_ADDRESS + " AS cust_addr, c." + DatabaseHelper.COL_ISSUE_FLAGS
-                + " AS cust_iflags, c." + DatabaseHelper.COL_ISSUE_NOTE + " AS cust_inote, c." + DatabaseHelper.COL_ISSUE_REPORTED_AT
-                + " AS cust_irep, c." + DatabaseHelper.COL_ISSUE_RESOLVED_AT + " AS cust_ires FROM " + DatabaseHelper.TABLE_TRANSACTIONS
+                + " AS cust_phone, c." + DatabaseHelper.COL_ADDRESS + " AS cust_addr FROM " + DatabaseHelper.TABLE_TRANSACTIONS
                 + " t LEFT JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c ON t." + DatabaseHelper.COL_CUSTOMER_ID
-                + " = c." + DatabaseHelper.COL_ID + " WHERE t.type='JUAL' AND t." + DatabaseHelper.COL_DELIVERY_STATUS
-                + " IN ('" + Transaction.DELIVERY_PENDING + "','" + Transaction.DELIVERY_TERTUNDA + "') ORDER BY t._id DESC LIMIT "
+                + " = c." + DatabaseHelper.COL_ID + " WHERE t." + DatabaseHelper.COL_SYNC_UUID + " IN (" + in + ") LIMIT "
                 + Math.max(1, limit);
         try (Cursor c = dbHelper.getReadableDatabase().rawQuery(sql, null)) {
             while (c.moveToNext()) {
@@ -1174,29 +1179,13 @@ public class TransactionDao {
                 t.setDeliveryStatus(getStr(c, DatabaseHelper.COL_DELIVERY_STATUS));
                 t.setDeliveryQueuedAt(getStr(c, DatabaseHelper.COL_DELIVERY_QUEUED_AT));
                 t.setDeliveryTertundaAt(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_AT));
-                t.setDeliveryTertundaReason(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_REASON));
-                t.setVoidRequestPendingAt(getStr(c, DatabaseHelper.COL_VOID_REQUEST_PENDING_AT));
+                t.setDeliveryDoneAt(getStr(c, DatabaseHelper.COL_DELIVERY_DONE_AT));
                 t.setComplaintLastInboundAt(getStr(c, DatabaseHelper.COL_COMPLAINT_LAST_INBOUND_AT));
                 t.setComplaintResolvedAt(getStr(c, DatabaseHelper.COL_COMPLAINT_RESOLVED_AT));
-                StringBuilder sb = new StringBuilder();
-                if (t.hasPendingVoidRequest()) sb.append("🗑 Permintaan void menunggu keputusan");
-                if (Transaction.DELIVERY_TERTUNDA.equals(t.getDeliveryStatus())) {
-                    if (sb.length() > 0) sb.append('\n');
-                    String why = t.getDeliveryTertundaReason();
-                    sb.append("⏸ Tertunda").append(why != null && !why.trim().isEmpty() ? ": " + why.trim() : "");
-                }
-                com.crowja.damiupos.model.Customer cu = new com.crowja.damiupos.model.Customer();
-                cu.setIssueFlags(getStr(c, "cust_iflags"));
-                cu.setIssueReportedAt(getStr(c, "cust_irep"));
-                cu.setIssueResolvedAt(getStr(c, "cust_ires"));
-                if (cu.hasOpenIssue()) {
-                    if (sb.length() > 0) sb.append('\n');
-                    sb.append("⚠️ Data pelanggan bermasalah: ").append(android.text.TextUtils.join(", ", cu.issueLabelList()));
-                    String note = getStr(c, "cust_inote");
-                    if (note != null && !note.trim().isEmpty()) sb.append(" (").append(note.trim()).append(')');
-                }
-                if (sb.length() == 0) continue;
-                t.setProblemNote(sb.toString());
+                String sum = esc.get(getStr(c, DatabaseHelper.COL_SYNC_UUID));
+                sum = sum == null ? "" : sum.replaceAll("\\s+", " ").trim();
+                if (sum.length() > 200) sum = sum.substring(0, 200) + "…";
+                t.setProblemNote("🤖 Eskalasi AI" + (sum.isEmpty() ? "" : ": " + sum));
                 list.add(t);
             }
         } catch (Exception ignored) {
