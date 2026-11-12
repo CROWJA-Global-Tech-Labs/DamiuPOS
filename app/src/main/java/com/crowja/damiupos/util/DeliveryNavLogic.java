@@ -276,6 +276,36 @@ public final class DeliveryNavLogic {
         }
     }
 
+    private static final String[] BULAN = {"Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"};
+
+    /** "2026-11-08 10:00:00" (waktu lokal) → "8 Nov"; "" bila tak bisa dibaca. */
+    public static String dayMonth(String local) {
+        if (local == null || local.length() < 10) return "";
+        try {
+            int mo = Integer.parseInt(local.substring(5, 7));
+            int d = Integer.parseInt(local.substring(8, 10));
+            if (mo < 1 || mo > 12 || d < 1 || d > 31) return "";
+            return d + " " + BULAN[mo - 1];
+        } catch (NumberFormatException e) {
+            return "";
+        }
+    }
+
+    /**
+     * Satu baris tagihan total di kartu antar: "💰 Tagih Rp 24.000 (pesanan Rp 12.000 + hutang 8 Nov
+     * Rp 12.000)". "" bila tak ada hutang lama yang ikut ditagih (kartu biasa tak berubah).
+     *
+     * @param debtDay tanggal hutang ("8 Nov"), boleh kosong → "hutang lama"
+     */
+    public static String collectSummary(DoorMoney m, String debtDay) {
+        double debt = m.debtDue();
+        if (Math.round(debt) <= 0) return "";
+        double sale = m.saleAfterRefund();
+        String day = debtDay != null && !debtDay.trim().isEmpty() ? debtDay.trim() : "lama";
+        if (Math.round(sale) <= 0) return "💰 Tagih hutang " + day + " " + rupiah(debt);
+        return "💰 Tagih " + rupiah(sale + debt) + " (pesanan " + rupiah(sale) + " + hutang " + day + " " + rupiah(debt) + ")";
+    }
+
     /**
      * Rupiah yang DITAGIH kurir di pintu ini: penjualan setelah refund (hanya bila memang ditagih
      * sekarang) + hutang lama pintu ini. HUTANG / CASH BON → 0: pelanggan tak membayar sekarang.
