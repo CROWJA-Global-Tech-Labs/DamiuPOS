@@ -1290,7 +1290,13 @@ public class NavigationPipActivity extends AppCompatActivity {
         tvFullGalon.setText(galon);
         tvFullProducts.setText(s.products);
         tvFullProducts.setVisibility(s.products.isEmpty() ? View.GONE : View.VISIBLE);
-        tvFullPay.setText(pay);
+        String fullPay = pay;
+        if (kind == PayKind.COLLECT) {
+            // Total tagihan jelas: pesanan + hutang lama (dengan tanggalnya) dalam satu baris.
+            String cs = DeliveryNavLogic.collectSummary(money, DeliveryQueueActivity.debtDayLabel(DatabaseHelper.getInstance(this), t));
+            if (!cs.isEmpty()) fullPay = cs;
+        }
+        tvFullPay.setText(fullPay);
         tvFullPay.setTextColor(fullPayColor(shown));
         StringBuilder hintSb = new StringBuilder(DeliveryNavLogic.payHint(kind, money));
         // 🧺 Leg checkout: hutang lama ditagih di pintu lain / tagih hanya lokasi ini — kalimat yang

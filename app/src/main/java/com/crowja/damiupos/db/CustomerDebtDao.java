@@ -393,6 +393,30 @@ public class CustomerDebtDao {
     }
 
     /**
+     * created_at baris hutang TERBARU orang ini di luar transaksi {@code excludeTrxUuid} (apa adanya,
+     * null bila tak ada) — untuk label tanggal "hutang 8 Nov" di tagihan kurir.
+     */
+    public String latestDebtDate(long customerId, String excludeTrxUuid) {
+        if (customerId <= 0) return null;
+        String[] g = groupArgs(customerId);
+        String[] args = new String[g.length + 1];
+        System.arraycopy(g, 0, args, 0, g.length);
+        args[g.length] = excludeTrxUuid == null ? "" : excludeTrxUuid;
+        Cursor c = dbHelper.getReadableDatabase().rawQuery(
+                "SELECT " + DatabaseHelper.COL_CREATED_AT + " FROM " + DatabaseHelper.TABLE_CUSTOMER_DEBTS +
+                        " WHERE " + DatabaseHelper.COL_DEBT_CUSTOMER_ID + " IN (" + placeholders(g.length) + ") AND " +
+                        DatabaseHelper.COL_DEBT_KIND + "='" + KIND_DEBT + "' AND COALESCE(" +
+                        DatabaseHelper.COL_DEBT_TRX_UUID + ",'')<>?" +
+                        " ORDER BY " + DatabaseHelper.COL_CREATED_AT + " DESC, " + DatabaseHelper.COL_ID + " DESC LIMIT 1",
+                args);
+        try {
+            return c.moveToFirst() ? c.getString(0) : null;
+        } finally {
+            c.close();
+        }
+    }
+
+    /**
      * Buang hutang milik sebuah transaksi — dipakai saat pembuatan transaksi GAGAL setelah
      * hutangnya terlanjur tercatat, supaya pelanggan tak ditagih untuk penjualan yang tak jadi.
      * Baris di-hard delete: ia belum pernah ter-push (masih dirty) pada alur kegagalan itu.

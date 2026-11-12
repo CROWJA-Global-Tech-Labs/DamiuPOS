@@ -9608,7 +9608,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       boolean isPickup = "KEMBALI".equals(t.getType());
       String msg = (isPickup ? "Galon kembali dari \"" + safe(t.getCustomerName()) + "\" sudah diambil (pickup)?" : "Order \"" + safe(t.getCustomerName()) + "\" sudah selesai diantar?") + "\n\nLama proses: " + formatDuration(ms);
       if (!isPickup) {
-         msg = msg + "\n\n" + this.orderDetailText(t);
+         String banner = this.collectBanner(t);
+         msg = msg + "\n\n" + (banner.isEmpty() ? "" : banner + "\n\n") + this.orderDetailText(t);
       }
 
       boolean allocatable = "JUAL".equals(t.getType()) && t.getJumlahGalon() >= 1;
@@ -9933,6 +9934,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          this.doComplete(t, revokeCredit);
          return;
       }
+      // Hutang LAMA yang ditagih di pintu ini: satu langkah "Terima Rp X" melunasi pesanan + hutangnya.
+      final PriorDebt pdoor = priorDebtFor(DatabaseHelper.getInstance(this), t);
+      final double prior = pdoor.here() ? pdoor.amount : 0.0;
+      final double collect = total + prior;
+      final String debtDay = debtDayLabel(DatabaseHelper.getInstance(this), t);
       float dn = this.getResources().getDisplayMetrics().density;
       int pad = (int)(20.0F * dn);
       int gap = (int)(8.0F * dn);
@@ -9946,7 +9952,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       box.addView(lbl);
       EditText amt = new EditText(this);
       amt.setInputType(2);
-      amt.setText(String.valueOf(Math.round(total)));
+      amt.setText(String.valueOf(Math.round(collect)));
       amt.setSelectAllOnFocus(true);
       box.addView(amt);
 
@@ -9978,9 +9984,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       sv.addView(box);
       AlertDialog dlg = (new AlertDialog.Builder(this))
             .setTitle("💰 Pembayaran — " + safe(t.getCustomerName()))
-            .setMessage("Tagihan pesanan: " + this.rp(total) + (pm.isEmpty() ? "" : " · " + pm))
+            .setMessage(prior > 0.0
+                  ? DeliveryNavLogic.collectSummary(new DeliveryNavLogic.DoorMoney(total, 0, prior, true), debtDay)
+                        + (pm.isEmpty() ? "" : " · " + pm)
+                  : "Tagihan pesanan: " + this.rp(total) + (pm.isEmpty() ? "" : " · " + pm))
             .setView(sv)
-            .setPositiveButton("SELESAI", (DialogInterface.OnClickListener)null)
+            .setPositiveButton(prior > 0.0 ? "TERIMA " + this.rp(collect) : "SELESAI", (DialogInterface.OnClickListener)null)
             .setNegativeButton("Batal", (DialogInterface.OnClickListener)null)
             .create();
       dlg.setOnShowListener((shown) -> dlg.getButton(-1).setOnClickListener((btn) -> {
@@ -10016,11 +10025,83 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             String by = (new SettingsDao(DatabaseHelper.getInstance(this))).getCurrentUserName();
             this.dao.applyDeliveryAdjustment(t.getId(), null, returnQty, pm, isBon, paid, why, by);
          }
+         // Pesanan + SEMUA hutang lama lunas sekaligus → pelanggan otomatis dikabari "Lunas, terima kasih".
+         double toOld = !isBon && prior > 0.0 ? Math.min(Math.max(0.0, paid - total), prior) : 0.0;
+         if (toOld > 0.0 && t.getCustomerId() > 0L
+               && Math.round(new CustomerDebtDao(DatabaseHelper.getInstance(this)).balanceFor(t.getCustomerId())) <= 0L) {
+            this.lunasNotice.put(t.getId(), new double[]{total, toOld, paid});
+         }
          dlg.dismiss();
          Transaction fresh = this.dao.getById(t.getId());
          this.doComplete(fresh != null ? fresh : t, revokeCredit);
       }));
       dlg.show();
+      if (prior > 0.0) {
+         // Label tombol mengikuti nominal yang diketik: "TERIMA Rp 24.000".
+         final android.widget.Button ok = dlg.getButton(-1);
+         amt.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void onTextChanged(CharSequence s, int a, int b, int c) {
+            }
+
+            public void afterTextChanged(Editable e) {
+               try {
+                  double v = Double.parseDouble(e.toString().trim());
+                  ok.setText(v > 0 ? "TERIMA " + rp(v) : "SELESAI");
+               } catch (Exception ex) {
+                  ok.setText("SELESAI");
+               }
+            }
+         });
+      }
+   }
+
+   /** uang diterima kurir yang melunasi pesanan + seluruh hutang lama: {pesanan, pelunasan hutang, total diterima}. */
+   private final java.util.Map<Long, double[]> lunasNotice = new java.util.HashMap<>();
+
+   /** Baris "💰 Tagih Rp 24.000 (pesanan … + hutang 8 Nov …)" untuk popup Tandai Selesai; "" bila tak ada hutang lama. */
+   private String collectBanner(Transaction t) {
+      if (t == null || t.getCustomerId() <= 0L || !"JUAL".equals(t.getType())) return "";
+      DeliveryNavLogic.PayKind kind = DeliveryNavLogic.payKind(t.getTotalHarga(), t.getPaymentMethod(), t.isMarkedLunas(), this.isCashBon(t));
+      if (kind != DeliveryNavLogic.PayKind.COLLECT) return "";
+      DatabaseHelper db = DatabaseHelper.getInstance(this);
+      PriorDebt pd = priorDebtFor(db, t);
+      DeliveryNavLogic.DoorMoney m = new DeliveryNavLogic.DoorMoney(t.getTotalHarga(), refundUsedFor(db, t), pd.amount, pd.here());
+      return DeliveryNavLogic.collectSummary(m, debtDayLabel(db, t));
+   }
+
+   /** "8 Nov" — tanggal hutang terbaru pelanggan di luar order ini; "" untuk leg checkout / tak ada. */
+   static String debtDayLabel(DatabaseHelper db, Transaction t) {
+      if (t == null || t.getCustomerId() <= 0L || legCheckoutUuid(t) != null) return "";
+      String uuid = (new TransactionDao(db)).getSyncUuidById(t.getId());
+      return DeliveryNavLogic.dayMonth(Ts.local((new CustomerDebtDao(db)).latestDebtDate(t.getCustomerId(), uuid)));
+   }
+
+   /** Struk penutup positif: pesanan + hutang lunas, tanpa foto/bukti. Bridge dulu, gagal → WhatsApp HP (teks saja). */
+   private void sendLunasNoticeWa(Transaction t, double[] ln) {
+      String phone = t.getCustomerPhone();
+      if (!WaShare.hasUsablePhone(phone)) {
+         Toast.makeText(this, "Pelanggan belum punya nomor WA — struk lunas tak terkirim.", Toast.LENGTH_LONG).show();
+         return;
+      }
+      StringBuilder sb = new StringBuilder();
+      String nm = safe(t.getCustomerName());
+      sb.append("Terima kasih").append(nm.isEmpty() ? "" : ", " + nm).append(" 🙏\n\n");
+      sb.append("Pembayaran ").append(this.rp(ln[2])).append(" sudah kami terima:\n");
+      sb.append("• Pesanan ini: ").append(this.rp(ln[0])).append("\n");
+      sb.append("• Pelunasan hutang sebelumnya: ").append(this.rp(ln[1])).append("\n\n");
+      sb.append("✅ LUNAS — tidak ada tagihan tersisa.");
+      String rno = t.getReceiptNo();
+      if (rno != null && !rno.isEmpty()) sb.append("\n🧾 ").append(rno);
+      sb.append("\n\nTerima kasih sudah berlangganan. Salam sehat 🙏");
+      final String text = sb.toString();
+      com.crowja.damiupos.wa.WaBridgeSend.sendOrFallback(this,
+            com.crowja.damiupos.wa.WaBridgeSend.Msg.to(phone, text).type("struk")
+                  .customerId(t.getCustomerId()).transactionId(t.getId()),
+            null,
+            () -> com.crowja.damiupos.wa.WaShare.openTextOnly(this, phone, text));
    }
 
    private String rp(double v) {
@@ -11101,6 +11182,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       Toast.makeText(this, "Order selesai • " + formatDuration(ms), 0).show();
       if (notifyUnpaid) {
          this.sendCashBonNoticeWa(t, proofPath);
+      }
+      double[] lunas = this.lunasNotice.remove(t.getId());
+      if (lunas != null && !notifyUnpaid) {
+         this.sendLunasNoticeWa(t, lunas);
       }
       boolean fromPanel = t.getId() == this.wizardCompleteId;
       if (fromPanel) this.wizardCompleteId = -1L;
