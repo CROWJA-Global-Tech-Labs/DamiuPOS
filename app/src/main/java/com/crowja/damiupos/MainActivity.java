@@ -827,6 +827,11 @@ public class MainActivity extends AppCompatActivity {
         // Stok Galon & Reseller: khusus Admin. Non-admin (Staf/SPV/Marketing/Viewer) tak perlu
         // melihat angka stok gudang atau data reseller/komisi — sembunyikan tile & kartu statistiknya.
         boolean adminOnly = show && isAdmin;
+        // Staf (bukan Admin) tak melihat Report & Grafik, Export, dan Pengaturan.
+        for (int vid : new int[]{R.id.btnLaporan, R.id.btnExport, R.id.btnPengaturan}) {
+            View hv = findViewById(vid);
+            if (hv != null) hv.setVisibility(show && !isAdmin ? View.GONE : View.VISIBLE);
+        }
         View cardGalonBeredar = findViewById(R.id.cardGalonBeredar);
         if (cardGalonBeredar != null) {
             cardGalonBeredar.setVisibility(!show || adminOnly ? View.VISIBLE : View.GONE);
@@ -1557,6 +1562,7 @@ public class MainActivity extends AppCompatActivity {
 
     /** Badge menu Komplain = jumlah komplain pesanan AKTIF (belum diselesaikan) di perangkat ini. */
     private void updateComplaintBadge() {
+        IssueReminder.check(this);
         TextView badge = findViewById(R.id.tvKomplainBadge);
         if (badge == null) return;
         int n = new TransactionDao(DatabaseHelper.getInstance(this)).countActiveComplaints();
