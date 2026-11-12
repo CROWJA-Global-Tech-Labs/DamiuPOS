@@ -526,7 +526,7 @@ public class SyncEngine {
             catch (Throwable ignored) {}
             cfg.setLastSyncAt(DatabaseHelper.nowIso());
             res.ok = true;
-            try { com.crowja.damiupos.IssueReminder.check(appCtx); } catch (Throwable ignored) {}   // komplain/masalah baru belum dibaca
+            try { com.crowja.damiupos.IssueReminder.refreshSync(appCtx); com.crowja.damiupos.IssueReminder.check(appCtx); } catch (Throwable ignored) {}   // komplain/masalah baru belum dibaca
             // Tell open screens to refresh (e.g. clock-in staff list + badge Follow Up) when the
             // pull brought new/changed rows from the dashboard.
             if (res.pulled > 0) {

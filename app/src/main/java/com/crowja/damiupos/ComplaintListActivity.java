@@ -208,6 +208,11 @@ public class ComplaintListActivity extends AppCompatActivity {
         super.onResume();
         load();
         render();
+        IssueReminder.refreshAsync(this, true, () -> runOnUiThread(() -> {   // eskalasi AI terbaru dari server
+            if (isFinishing() || isDestroyed()) return;
+            load();
+            render();
+        }));
         if (remoteMode) loadRemote();
         fetchOrderedToday();
     }
@@ -778,6 +783,12 @@ public class ComplaintListActivity extends AppCompatActivity {
             row2.addView(actionButton("🛣️ Kirim Sejalur", pending, v -> sejalur(t)), weight());
             c.addView(row2);
         }
+        if (t.getProblemNote() != null && !t.getProblemNote().isEmpty() && remoteMeta.get(t) == null) {
+            LinearLayout rowP = new LinearLayout(this);
+            rowP.setOrientation(LinearLayout.HORIZONTAL);
+            rowP.addView(actionButton("✅ Masalah Selesai", true, v -> resolveEscalation(t)), weight());
+            c.addView(rowP);
+        }
         if (active && isComplaintOrder(t) && TransactionDao.isComplaintActive(t)) {
             LinearLayout row3 = new LinearLayout(this);
             row3.setOrientation(LinearLayout.HORIZONTAL);
@@ -995,6 +1006,38 @@ public class ComplaintListActivity extends AppCompatActivity {
                     t.setComplaintResolvedAt(iso.format(new Date()));   // cermin langsung; server tetap sumber kebenaran
                     loadRemote();
                 }
+                load();
+                render();
+            });
+        }).start();
+    }
+
+    /** ✅ Eskalasi AI pada pesanan ini sudah ditangani. */
+    private void resolveEscalation(final Transaction t) {
+        final String uuid = uuidOf(t);
+        if (uuid == null || uuid.isEmpty()) return;
+        final com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
+        final String staffUuid = com.crowja.damiupos.sync.LocationReporter.currentStaffUuid(this);
+        new Thread(() -> {
+            String err = null;
+            try {
+                new com.crowja.damiupos.sync.SyncApi(cfg).issueResolve(uuid, staffUuid);
+            } catch (com.crowja.damiupos.sync.SyncApi.SyncException se) {
+                String m = se.serverMessage();
+                err = m != null && !m.isEmpty() ? m : "Gagal menandai (kode " + se.code + ").";
+            } catch (Exception e) {
+                err = "Gagal menandai — periksa koneksi internet.";
+            }
+            final String fErr = err;
+            if (fErr == null) IssueReminder.dropEscalation(getApplicationContext(), uuid);
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (fErr != null) {
+                    Toast.makeText(this, fErr, Toast.LENGTH_LONG).show();
+                    return;
+                }
+                t.setProblemNote(null);
+                Toast.makeText(this, "✅ Masalah ditandai selesai", Toast.LENGTH_SHORT).show();
                 load();
                 render();
             });

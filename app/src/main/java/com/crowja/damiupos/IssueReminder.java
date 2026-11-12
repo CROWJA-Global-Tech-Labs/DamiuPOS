@@ -79,6 +79,72 @@ public final class IssueReminder {
         }
     }
 
+    private static final String K_ESC = "issue_escalations_cache";
+    private static long lastRefreshAt = 0L;
+
+    /** Eskalasi AI aktif perangkat ini dari cache terakhir: uuid pesanan -> ringkasan. */
+    public static java.util.Map<String, String> escalations(Context ctx) {
+        return escalations(new SettingsDao(DatabaseHelper.getInstance(ctx)));
+    }
+
+    public static java.util.Map<String, String> escalations(SettingsDao sd) {
+        java.util.Map<String, String> out = new java.util.LinkedHashMap<>();
+        try {
+            String v = sd.get(K_ESC, "");
+            if (v == null || v.isEmpty()) return out;
+            org.json.JSONArray a = new org.json.JSONArray(v);
+            for (int i = 0; i < a.length(); i++) {
+                org.json.JSONObject o = a.optJSONObject(i);
+                if (o != null && !o.optString("uuid").isEmpty()) out.put(o.optString("uuid"), o.optString("summary", ""));
+            }
+        } catch (Throwable ignored) {
+        }
+        return out;
+    }
+
+    /** Ambil eskalasi AI dari server dan simpan (panggil dari thread latar). true bila berhasil. */
+    public static boolean refreshSync(Context ctx) {
+        try {
+            com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(DatabaseHelper.getInstance(ctx)));
+            if (!cfg.isEnrolled()) return false;
+            org.json.JSONArray arr = new com.crowja.damiupos.sync.SyncApi(cfg).issues().optJSONArray("issues");
+            if (arr == null) return false;
+            new SettingsDao(DatabaseHelper.getInstance(ctx)).set(K_ESC, arr.toString());
+            lastRefreshAt = System.currentTimeMillis();
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** Segarkan di thread latar (dibatasi 1x/menit kecuali force), lalu jalankan onDone di thread itu. */
+    public static void refreshAsync(final Context ctx, boolean force, final Runnable onDone) {
+        if (!force && System.currentTimeMillis() - lastRefreshAt < 60_000L) {
+            if (onDone != null) onDone.run();
+            return;
+        }
+        final Context app = ctx.getApplicationContext();
+        new Thread(() -> {
+            refreshSync(app);
+            check(app);
+            if (onDone != null) onDone.run();
+        }).start();
+    }
+
+    /** Hapus satu eskalasi dari cache (setelah ditandai ditangani). */
+    public static void dropEscalation(Context ctx, String uuid) {
+        try {
+            java.util.Map<String, String> m = escalations(ctx);
+            m.remove(uuid);
+            org.json.JSONArray a = new org.json.JSONArray();
+            for (java.util.Map.Entry<String, String> e : m.entrySet()) {
+                a.put(new org.json.JSONObject().put("uuid", e.getKey()).put("summary", e.getValue()));
+            }
+            new SettingsDao(DatabaseHelper.getInstance(ctx)).set(K_ESC, a.toString());
+        } catch (Throwable ignored) {
+        }
+    }
+
     /** Periksa & bunyikan bila perlu; dijadwalkan ulang tiap 10 menit. Aman dipanggil dari mana saja / sering. */
     public static void check(Context ctx) {
         final Context app = ctx.getApplicationContext();
