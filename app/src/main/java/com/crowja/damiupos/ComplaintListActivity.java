@@ -785,7 +785,7 @@ public class ComplaintListActivity extends AppCompatActivity {
             c.addView(row3);
         }
 
-        c.setOnClickListener(v -> openComplaintChat(t));
+        c.setOnClickListener(v -> showIssueDetail(t));   // area kosong kartu → popup detail masalah/komplain
         return c;
     }
 
