@@ -697,7 +697,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="😠 KELUH"
+                            android:text="⚠️ MASALAH"
                             android:textColor="#E0FFFFFF"
                             android:textSize="11sp"
                             android:textStyle="bold" />
@@ -1192,7 +1192,7 @@
                         android:paddingEnd="6dp"
                         android:maxLines="1"
                         android:ellipsize="end"
-                        android:text="😠 Komplain"
+                        android:text="😠 Komplain &amp; Masalah"
                         android:textAllCaps="false"
                         android:textColor="#B71C1C"
                         android:textSize="13sp"

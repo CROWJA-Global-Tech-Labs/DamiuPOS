@@ -1095,9 +1095,10 @@ public class TransactionDao {
 
     /** Jumlah komplain aktif di perangkat ini (badge menu Komplain) — definisi SAMA dengan {@link #isComplaintActive}. */
     public int countActiveComplaints() {
-        int n = 0;
-        for (Transaction t : getComplaintOrders(600)) if (isComplaintActive(t)) n++;
-        return n;
+        java.util.HashSet<Long> ids = new java.util.HashSet<>();
+        for (Transaction t : getComplaintOrders(600)) if (isComplaintActive(t)) ids.add(t.getId());
+        for (Transaction t : getProblemOrders(600)) ids.add(t.getId());   // + masalah terbuka (Komplain & Masalah)
+        return ids.size();
     }
 
     /** Waktu kegiatan komplain terakhir (pesan masuk terakhir, kalau tak ada saat ditandai) — dasar pengelompokan hari. */
@@ -1133,6 +1134,60 @@ public class TransactionDao {
                 t.setDeliveryDoneAt(getStr(c, DatabaseHelper.COL_DELIVERY_DONE_AT));
                 t.setComplaintLastInboundAt(getStr(c, DatabaseHelper.COL_COMPLAINT_LAST_INBOUND_AT));
                 t.setComplaintResolvedAt(getStr(c, DatabaseHelper.COL_COMPLAINT_RESOLVED_AT));
+                list.add(t);
+            }
+        } catch (Exception ignored) {
+        }
+        return list;
+    }
+
+    /**
+     * MASALAH terbuka pada antrean perangkat ini (selain komplain): permintaan void menunggu keputusan, pesanan tertunda
+     * (beserta alasannya), dan data pelanggan yang ditandai bermasalah. Hanya order JUAL yang masih PENDING/TERTUNDA;
+     * ringkasannya di {@link Transaction#getProblemNote()}. Aktif selama kondisinya ada.
+     */
+    public List<Transaction> getProblemOrders(int limit) {
+        List<Transaction> list = new ArrayList<>();
+        String sql = "SELECT t.*, c." + DatabaseHelper.COL_NAME + " AS cust_name, c." + DatabaseHelper.COL_PHONE
+                + " AS cust_phone, c." + DatabaseHelper.COL_ADDRESS + " AS cust_addr, c." + DatabaseHelper.COL_ISSUE_FLAGS
+                + " AS cust_iflags, c." + DatabaseHelper.COL_ISSUE_NOTE + " AS cust_inote, c." + DatabaseHelper.COL_ISSUE_REPORTED_AT
+                + " AS cust_irep, c." + DatabaseHelper.COL_ISSUE_RESOLVED_AT + " AS cust_ires FROM " + DatabaseHelper.TABLE_TRANSACTIONS
+                + " t LEFT JOIN " + DatabaseHelper.TABLE_CUSTOMERS + " c ON t." + DatabaseHelper.COL_CUSTOMER_ID
+                + " = c." + DatabaseHelper.COL_ID + " WHERE t.type='JUAL' AND t." + DatabaseHelper.COL_DELIVERY_STATUS
+                + " IN ('" + Transaction.DELIVERY_PENDING + "','" + Transaction.DELIVERY_TERTUNDA + "') ORDER BY t._id DESC LIMIT "
+                + Math.max(1, limit);
+        try (Cursor c = dbHelper.getReadableDatabase().rawQuery(sql, null)) {
+            while (c.moveToNext()) {
+                Transaction t = cursorToTransaction(c);
+                t.setCustomerName(getStr(c, "cust_name"));
+                t.setCustomerPhone(getStr(c, "cust_phone"));
+                t.setCustomerAddress(getStr(c, "cust_addr"));
+                t.setDeliveryStatus(getStr(c, DatabaseHelper.COL_DELIVERY_STATUS));
+                t.setDeliveryQueuedAt(getStr(c, DatabaseHelper.COL_DELIVERY_QUEUED_AT));
+                t.setDeliveryTertundaAt(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_AT));
+                t.setDeliveryTertundaReason(getStr(c, DatabaseHelper.COL_DELIVERY_TERTUNDA_REASON));
+                t.setVoidRequestPendingAt(getStr(c, DatabaseHelper.COL_VOID_REQUEST_PENDING_AT));
+                t.setComplaintLastInboundAt(getStr(c, DatabaseHelper.COL_COMPLAINT_LAST_INBOUND_AT));
+                t.setComplaintResolvedAt(getStr(c, DatabaseHelper.COL_COMPLAINT_RESOLVED_AT));
+                StringBuilder sb = new StringBuilder();
+                if (t.hasPendingVoidRequest()) sb.append("🗑 Permintaan void menunggu keputusan");
+                if (Transaction.DELIVERY_TERTUNDA.equals(t.getDeliveryStatus())) {
+                    if (sb.length() > 0) sb.append('\n');
+                    String why = t.getDeliveryTertundaReason();
+                    sb.append("⏸ Tertunda").append(why != null && !why.trim().isEmpty() ? ": " + why.trim() : "");
+                }
+                com.crowja.damiupos.model.Customer cu = new com.crowja.damiupos.model.Customer();
+                cu.setIssueFlags(getStr(c, "cust_iflags"));
+                cu.setIssueReportedAt(getStr(c, "cust_irep"));
+                cu.setIssueResolvedAt(getStr(c, "cust_ires"));
+                if (cu.hasOpenIssue()) {
+                    if (sb.length() > 0) sb.append('\n');
+                    sb.append("⚠️ Data pelanggan bermasalah: ").append(android.text.TextUtils.join(", ", cu.issueLabelList()));
+                    String note = getStr(c, "cust_inote");
+                    if (note != null && !note.trim().isEmpty()) sb.append(" (").append(note.trim()).append(')');
+                }
+                if (sb.length() == 0) continue;
+                t.setProblemNote(sb.toString());
                 list.add(t);
             }
         } catch (Exception ignored) {

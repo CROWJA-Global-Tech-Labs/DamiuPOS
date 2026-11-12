@@ -388,6 +388,11 @@ public class Transaction {
         return voidRequestPendingAt != null && !voidRequestPendingAt.trim().isEmpty();
     }
 
+    /** Ringkasan MASALAH terbuka order ini (void menunggu, tertunda, data pelanggan bermasalah) untuk menu Komplain & Masalah; null = tak ada. */
+    private String problemNote;
+    public String getProblemNote() { return problemNote; }
+    public void setProblemNote(String v) { this.problemNote = v; }
+
     public String getComplaintLastInboundAt() { return complaintLastInboundAt; }
     public void setComplaintLastInboundAt(String v) { this.complaintLastInboundAt = v; }
     public String getComplaintResolvedAt() { return complaintResolvedAt; }
