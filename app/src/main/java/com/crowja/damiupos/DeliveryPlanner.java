@@ -351,11 +351,13 @@ public final class DeliveryPlanner {
     public static List<Transaction> runRouteOrder(List<Transaction> stops) {
         List<Transaction> out = new ArrayList<>(stops);
         Collections.sort(out, (a, b) -> {
-            boolean pa = isPickupOnly(a), pb = isPickupOnly(b);
-            if (pa != pb) return pa ? 1 : -1;
+            // Ambil galon saja yang BERDEKATAN dengan pemberhentian antar diberi nomor rute oleh server (diurutkan
+            // bersama, dilewati sekalian) — ikut delivery_seq; yang tanpa nomor menyusul, pickup paling akhir.
             int sa = a.getDeliverySeq(), sb = b.getDeliverySeq();
             if ((sa > 0) != (sb > 0)) return sa > 0 ? -1 : 1;
-            return sa > 0 ? Integer.compare(sa, sb) : 0;
+            if (sa > 0) return Integer.compare(sa, sb);
+            boolean pa = isPickupOnly(a), pb = isPickupOnly(b);
+            return pa != pb ? (pa ? 1 : -1) : 0;
         });
         return out;
     }
