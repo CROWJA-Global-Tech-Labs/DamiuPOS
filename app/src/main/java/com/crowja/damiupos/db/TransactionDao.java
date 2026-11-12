@@ -1095,10 +1095,19 @@ public class TransactionDao {
 
     /** Jumlah komplain aktif di perangkat ini (badge menu Komplain) — definisi SAMA dengan {@link #isComplaintActive}. */
     public int countActiveComplaints() {
-        java.util.HashSet<Long> ids = new java.util.HashSet<>();
-        for (Transaction t : getComplaintOrders(600)) if (isComplaintActive(t)) ids.add(t.getId());
-        for (Transaction t : getProblemOrders(600)) ids.add(t.getId());   // + masalah terbuka (Komplain & Masalah)
-        return ids.size();
+        return getActiveIssues().size();
+    }
+
+    /** Komplain aktif + masalah terbuka (digabung per order; catatan masalah menempel di komplain yang sama). */
+    public List<Transaction> getActiveIssues() {
+        java.util.LinkedHashMap<Long, Transaction> m = new java.util.LinkedHashMap<>();
+        for (Transaction t : getComplaintOrders(600)) if (isComplaintActive(t)) m.put(t.getId(), t);
+        for (Transaction p : getProblemOrders(600)) {
+            Transaction same = m.get(p.getId());
+            if (same != null) same.setProblemNote(p.getProblemNote());
+            else m.put(p.getId(), p);
+        }
+        return new ArrayList<>(m.values());
     }
 
     /** Waktu kegiatan komplain terakhir (pesan masuk terakhir, kalau tak ada saat ditandai) — dasar pengelompokan hari. */

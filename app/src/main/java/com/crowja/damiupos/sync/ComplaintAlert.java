@@ -31,15 +31,24 @@ public final class ComplaintAlert {
 
     private ComplaintAlert() {}
 
+    /** Sirene + popup untuk tujuan bebas (mis. daftar Komplain & Masalah) — pengingat berulang item belum dibaca. */
+    public static void deliverTo(Context ctx, Intent open, String title, String body, int notifId) {
+        post(ctx, open, title, body, notifId);
+    }
+
     public static void deliver(Context ctx, String title, String body, @Nullable String trxUuid,
                                @Nullable String customerName, int notifId) {
-        ensureChannel(ctx);
         Intent open = new Intent(ctx, ChatLogActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         if (trxUuid != null && !trxUuid.isEmpty()) {
             open.putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, trxUuid);
             open.putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, customerName != null ? customerName : "");
         }
+        post(ctx, open, title, body, notifId);
+    }
+
+    private static void post(Context ctx, Intent open, String title, String body, int notifId) {
+        ensureChannel(ctx);
         PendingIntent pi = PendingIntent.getActivity(ctx, notifId, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Uri sound = soundUri(ctx);

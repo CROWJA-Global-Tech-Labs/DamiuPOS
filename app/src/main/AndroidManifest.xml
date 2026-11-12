@@ -337,6 +337,10 @@
             mencapai target harian → notifikasi bersuara.
         -->
         <receiver
+            android:name=".IssueReminder$Receiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".WorkHoursReminderReceiver"
             android:exported="false" />
 

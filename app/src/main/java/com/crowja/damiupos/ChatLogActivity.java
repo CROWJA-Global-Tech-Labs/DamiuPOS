@@ -207,6 +207,7 @@ public class ChatLogActivity extends AppCompatActivity {
         rvMessages.setAdapter(adapter);
 
         String transactionUuid = getIntent().getStringExtra(EXTRA_TRANSACTION_UUID);
+        IssueReminder.markSeenUuid(this, transactionUuid);   // dibuka = dibaca (pengingat komplain/masalah)
         if (transactionUuid == null || transactionUuid.isEmpty()) {
             showEmpty("Transaksi tidak valid.");
             pollStopped = true;

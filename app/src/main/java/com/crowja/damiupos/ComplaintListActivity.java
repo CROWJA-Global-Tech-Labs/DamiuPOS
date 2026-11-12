@@ -546,6 +546,7 @@ public class ComplaintListActivity extends AppCompatActivity {
 
     /** Nama pelanggan diketuk → detail pelanggan (kalau pelanggannya belum ada di HP ini, diberi tahu). */
     private void openCustomer(Transaction t) {
+        IssueReminder.markSeen(this, t);
         long id = t.getCustomerId();
         String[] rm = remoteMeta.get(t);
         if (rm != null) {
@@ -683,7 +684,8 @@ public class ComplaintListActivity extends AppCompatActivity {
         c.setLayoutParams(lp);
 
         TextView name = new TextView(this);
-        name.setText((isComplaintOrder(t) ? "😠 " : "⚠️ ") + (t.getCustomerName() != null && !t.getCustomerName().isEmpty() ? t.getCustomerName() : "Pelanggan"));
+        final boolean unseen = !remoteMode && IssueReminder.isUnseen(this, t);
+        name.setText((unseen ? "🆕 " : "") + (isComplaintOrder(t) ? "😠 " : "⚠️ ") + (t.getCustomerName() != null && !t.getCustomerName().isEmpty() ? t.getCustomerName() : "Pelanggan"));
         name.setTextColor(C_BLUE);
         name.setTextSize(16f);
         name.setTypeface(null, Typeface.BOLD);
@@ -1000,6 +1002,7 @@ public class ComplaintListActivity extends AppCompatActivity {
     }
 
     private void openComplaintChat(Transaction t) {
+        IssueReminder.markSeen(this, t);
         String uuid = uuidOf(t);
         if (uuid == null || uuid.isEmpty()) {
             Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
@@ -1012,6 +1015,7 @@ public class ComplaintListActivity extends AppCompatActivity {
 
     /** 💬 Chat: pilih Chat Pesanan (chat WA order lewat server, bisa dibalas) atau Chat WA (aplikasi WhatsApp). */
     private void chooseChat(final Transaction t) {
+        IssueReminder.markSeen(this, t);
         // Baris pilihan: "Chat WA" memakai ikon resmi WhatsApp.
         final String[] labels = {"Chat Pesanan", "Chat WA"};
         android.widget.ArrayAdapter<String> ad = new android.widget.ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, labels) {
@@ -1058,6 +1062,7 @@ public class ComplaintListActivity extends AppCompatActivity {
 
     /** Detail Order yang SAMA dengan Antrian Delivery (dialog lengkap: Ubah, Alihkan, Chat Pesanan, Lihat Chat Komplain, …). */
     private void openOrderDetail(Transaction t) {
+        IssueReminder.markSeen(this, t);
         if (remoteMeta.get(t) != null) {
             showRemoteDetail(t);   // order perangkat lain: tak ada di antrean HP ini
             return;
