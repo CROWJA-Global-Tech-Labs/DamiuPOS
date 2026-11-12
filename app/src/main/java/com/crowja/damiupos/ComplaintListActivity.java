@@ -1044,9 +1044,17 @@ public class ComplaintListActivity extends AppCompatActivity {
         }).start();
     }
 
+    /** Chat komplain = percakapan TERBARU pelanggan → chat order terbarunya (bukan order lama yang jendelanya sudah tutup). */
+    private String chatUuidOf(Transaction t) {
+        String own = uuidOf(t);
+        if (remoteMeta.get(t) != null) return own;
+        String latest = dao.getLatestSaleUuidForCustomer(t.getCustomerId());
+        return latest != null && !latest.isEmpty() ? latest : own;
+    }
+
     private void openComplaintChat(Transaction t) {
         IssueReminder.markSeen(this, t);
-        String uuid = uuidOf(t);
+        String uuid = chatUuidOf(t);
         if (uuid == null || uuid.isEmpty()) {
             Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
             return;
@@ -1087,7 +1095,7 @@ public class ComplaintListActivity extends AppCompatActivity {
                 .setTitle("💬 Chat — " + (t.getCustomerName() != null ? t.getCustomerName() : "Pelanggan"))
                 .setAdapter(ad, (d, which) -> {
                     if (which == 0) {
-                        String uuid = uuidOf(t);
+                        String uuid = chatUuidOf(t);
                         if (uuid == null || uuid.isEmpty()) {
                             Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
                             return;
