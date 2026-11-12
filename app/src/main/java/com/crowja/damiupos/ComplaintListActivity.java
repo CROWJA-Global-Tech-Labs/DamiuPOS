@@ -767,7 +767,7 @@ public class ComplaintListActivity extends AppCompatActivity {
         LinearLayout row1 = new LinearLayout(this);
         row1.setOrientation(LinearLayout.HORIZONTAL);
         row1.setPadding(0, dp(8), 0, 0);
-        row1.addView(actionButton("🔍 Detail", true, v -> openOrderDetail(t)), weight());
+        row1.addView(actionButton("🔍 Detail", true, v -> showIssueDetail(t)), weight());
         row1.addView(actionButton("💬 Chat", true, v -> chooseChat(t)), weight());
         c.addView(row1);
         LinearLayout row2 = new LinearLayout(this);
@@ -1059,6 +1059,56 @@ public class ComplaintListActivity extends AppCompatActivity {
                 })
                 .setNegativeButton("Batal", null)
                 .show();
+    }
+
+    /**
+     * 🔍 Detail masalah/komplain: popup ringkasan kesimpulan (ditulis Agen AI; bila belum ada, pesan masuk terakhir
+     * pelanggan) + catatan masalah. Tombol "Detail Transaksi" membuka detail order seperti dulu.
+     */
+    private void showIssueDetail(final Transaction t) {
+        IssueReminder.markSeen(this, t);
+        final StringBuilder head = new StringBuilder();
+        if (t.getProblemNote() != null && !t.getProblemNote().isEmpty()) head.append(t.getProblemNote()).append("\n\n");
+        final String headText = head.toString();
+        final AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle((isComplaintOrder(t) ? "😠 " : "⚠️ ") + (t.getCustomerName() != null ? t.getCustomerName() : "Pelanggan"))
+                .setMessage(headText + "⏳ Memuat ringkasan…")
+                .setPositiveButton("🧾 Detail Transaksi", (d, w) -> openOrderDetail(t))
+                .setNegativeButton("Tutup", null)
+                .show();
+        final String uuid = uuidOf(t);
+        if (uuid == null || uuid.isEmpty()) {
+            dlg.setMessage(headText + "Transaksi ini belum tersinkron ke server.");
+            return;
+        }
+        final com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
+        new Thread(() -> {
+            String text;
+            try {
+                org.json.JSONObject r = new com.crowja.damiupos.sync.SyncApi(cfg).complaintLog(uuid);
+                String sum = r.optString("summary", "");
+                if ("null".equals(sum)) sum = "";
+                if (!sum.trim().isEmpty()) {
+                    text = "🤖 Ringkasan Agen AI:\n" + sum.trim();
+                } else {
+                    StringBuilder sb = new StringBuilder();
+                    org.json.JSONArray ms = r.optJSONArray("messages");
+                    int shown = 0;
+                    for (int i = ms == null ? -1 : ms.length() - 1; i >= 0 && shown < 3; i--) {
+                        org.json.JSONObject m = ms.optJSONObject(i);
+                        if (m == null || !"in".equals(m.optString("direction")) || m.optString("text").trim().isEmpty()) continue;
+                        sb.insert(0, "• " + m.optString("text").trim() + "\n");
+                        shown++;
+                    }
+                    text = sb.length() > 0 ? "Belum ada ringkasan Agen AI. Pesan terakhir pelanggan:\n" + sb.toString().trim()
+                            : "Belum ada ringkasan dari Agen AI untuk pesanan ini.";
+                }
+            } catch (Exception e) {
+                text = "Ringkasan gagal dimuat. Periksa koneksi.";
+            }
+            final String shownText = headText + text;
+            runOnUiThread(() -> { if (dlg.isShowing()) dlg.setMessage(shownText); });
+        }).start();
     }
 
     /** Detail Order yang SAMA dengan Antrian Delivery (dialog lengkap: Ubah, Alihkan, Chat Pesanan, Lihat Chat Komplain, …). */
