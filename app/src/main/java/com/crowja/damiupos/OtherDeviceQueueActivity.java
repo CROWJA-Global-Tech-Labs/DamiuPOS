@@ -66,7 +66,18 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
     private String searchText = "";
     private boolean salesOnly = false;
     private int filterMode = 0;   // 0 semua, 1 prioritas, 2 terlambat, 3 terbuka
-    private int sortMode = 2;     // 0 jarak, 1 galon, 2 umur
+    private int sortMode = 0;     // 0 urutan di HP perangkat itu (bawaan), 1 jarak, 2 galon, 3 umur
+    /** Penyegaran otomatis (real time): tiap 5 detik selama layar tampil. */
+    private static final long LIVE_MS = 5000L;
+    private boolean loading;
+    private long lastRefreshMs;
+    private final Handler poller = new Handler(Looper.getMainLooper());
+    private final Runnable pollRun = new Runnable() {
+        @Override public void run() {
+            if (peekDeviceUuid != null && !isFinishing() && !isDestroyed()) load(peekDeviceUuid, true);
+            poller.postDelayed(this, LIVE_MS);
+        }
+    };
     private Adapter adapter;
     /** Perangkat yang antriannya sedang dilihat — dipakai ulang saat memuat ulang setelah ambil alih. */
     private String peekDeviceUuid;
@@ -147,6 +158,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         DeliveryQueueActivity.DestAreaCache.addListener(destAreaRefresh);
         ClaimRequests.addListener(claimRequestRefresh);
         tick.postDelayed(ticker, 1000);
+        poller.postDelayed(pollRun, LIVE_MS);   // real time: antrean perangkat itu disegarkan tiap 5 detik
     }
 
     @Override
@@ -155,6 +167,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         DeliveryQueueActivity.DestAreaCache.removeListener(destAreaRefresh);
         ClaimRequests.removeListener(claimRequestRefresh);
         tick.removeCallbacks(ticker);
+        poller.removeCallbacks(pollRun);
     }
 
     /** Tab perangkat (roster cabang), kotak cari, saringan, urutan, dan ringkasan. */
@@ -215,7 +228,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         clp.setMarginStart(pad);
         header.addView(cbSales, clp);
         header.addView(chipRow(new String[]{"Semua", "⚡ Prioritas", "🚨 Terlambat", "🎲 Terbuka"}, filterMode, i -> { filterMode = i; applyView(); }));
-        header.addView(chipRow(new String[]{"📍 Jarak", "🛢 Galon", "⏱ Umur"}, sortMode, i -> { sortMode = i; applyView(); }));
+        header.addView(chipRow(new String[]{"📱 Urutan HP", "📍 Jarak", "🛢 Galon", "⏱ Umur"}, sortMode, i -> { sortMode = i; applyView(); }));
         tvSummary = new TextView(this);
         tvSummary.setTextColor(0xFF37474F);
         tvSummary.setTextSize(13f);
@@ -270,9 +283,11 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
     private void applyView() {
         data.clear();
         for (JSONObject q : all) if (matchesView(q)) data.add(q);
-        if (sortMode == 1) {
-            data.sort((a, b) -> Integer.compare(b.optInt("galon", 0), a.optInt("galon", 0)));
+        if (sortMode == 0) {
+            // Urutan PERSIS seperti di HP perangkat itu (urutan antrean server = kanon web): tanpa pengurutan ulang.
         } else if (sortMode == 2) {
+            data.sort((a, b) -> Integer.compare(b.optInt("galon", 0), a.optInt("galon", 0)));
+        } else if (sortMode == 3) {
             data.sort((a, b) -> Long.compare(elapsedMillis(b.optString("queued_at", null)), elapsedMillis(a.optString("queued_at", null))));
         } else {
             data.sort((a, b) -> {
@@ -288,7 +303,8 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         }
         if (tvSummary != null) {
             tvSummary.setText((data.size() < all.size() ? data.size() + " dari " + all.size() : String.valueOf(all.size())) + " order · " + galon + " galon"
-                    + (priority > 0 ? " · ⚡ " + priority : "") + (late > 0 ? " · 🚨 " + late : ""));
+                    + (priority > 0 ? " · ⚡ " + priority : "") + (late > 0 ? " · 🚨 " + late : "")
+                    + (lastRefreshMs > 0 ? "\n🔄 Live · diperbarui " + new java.text.SimpleDateFormat("HH:mm:ss", Locale.US).format(new java.util.Date(lastRefreshMs)) : ""));
         }
         adapter.notifyDataSetChanged();
     }
@@ -302,8 +318,17 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
     }
 
     private void load(String deviceUuid) {
-        progress.setVisibility(View.VISIBLE);
-        tvEmpty.setVisibility(View.GONE);
+        load(deviceUuid, false);
+    }
+
+    /** @param silent penyegaran otomatis: tanpa spinner/toast, kegagalan diam (coba lagi 5 detik kemudian). */
+    private void load(String deviceUuid, boolean silent) {
+        if (loading) return;
+        loading = true;
+        if (!silent) {
+            progress.setVisibility(View.VISIBLE);
+            tvEmpty.setVisibility(View.GONE);
+        }
         SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
         new Thread(() -> {
             JSONArray queue = null;
@@ -317,8 +342,10 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
             final JSONArray finalQueue = queue;
             final String finalError = error;
             runOnUiThread(() -> {
+                loading = false;
                 if (isFinishing() || isDestroyed() || !deviceUuid.equals(peekDeviceUuid)) return;   // tab sudah berganti
                 progress.setVisibility(View.GONE);
+                if (finalError != null && silent) return;   // penyegaran otomatis gagal: biarkan daftar terakhir
                 if (finalError != null) {
                     Toast.makeText(this, finalError, Toast.LENGTH_LONG).show();
                     tvEmpty.setText(finalError);
@@ -332,6 +359,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
                         if (o != null) all.add(o);
                     }
                 }
+                lastRefreshMs = System.currentTimeMillis();
                 showLoadedCount(deviceUuid, all.size());
                 applyView();
                 tvEmpty.setText(all.isEmpty() ? "Antrian perangkat ini kosong 🎉" : "Tidak ada order yang cocok");
@@ -656,7 +684,7 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
             Customer cust = custUuid.isEmpty() ? null : customerDao.getBySyncUuid(custUuid);
             boolean orderPriority = q.optBoolean("order_priority", false);
             boolean incomplete = cust != null && cust.isIncomplete();
-            h.tvCustomer.setText((orderPriority ? "⚡ " : "") + (q.optBoolean("is_priority", false) ? "⭐ " : "")
+            h.tvCustomer.setText((sortMode == 0 ? "#" + (all.indexOf(q) + 1) + "  " : "") + (orderPriority ? "⚡ " : "") + (q.optBoolean("is_priority", false) ? "⭐ " : "")
                     + (incomplete ? "❗ " : "") + str(q, "name"));
             bindPriority(h.tvPriorityBig, orderPriority, str(q, "order_priority_reason"));
             DeliveryQueueActivity.bindElapsedBadge(h.tvElapsed, elapsedMillis(q.optString("queued_at", null)));
