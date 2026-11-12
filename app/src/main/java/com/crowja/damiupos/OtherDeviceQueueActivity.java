@@ -229,6 +229,16 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         header.addView(cbSales, clp);
         header.addView(chipRow(new String[]{"Semua", "⚡ Prioritas", "🚨 Terlambat", "🎲 Terbuka"}, filterMode, i -> { filterMode = i; applyView(); }));
         header.addView(chipRow(new String[]{"📱 Urutan HP", "📍 Jarak", "🛢 Galon", "⏱ Umur"}, sortMode, i -> { sortMode = i; applyView(); }));
+        // 🗺 Peta real-time perangkat yang sedang dilihat: posisi + pin antrean + garis animasi ke order yang dituju.
+        android.widget.Button btnMap = new android.widget.Button(this);
+        btnMap.setText("🗺 Peta real-time perangkat ini");
+        btnMap.setAllCaps(false);
+        btnMap.setOnClickListener(v -> startActivity(new Intent(this, OtherDeviceMapActivity.class)
+                .putExtra(OtherDeviceMapActivity.EXTRA_DEVICE_UUID, peekDeviceUuid)
+                .putExtra(OtherDeviceMapActivity.EXTRA_DEVICE_NAME, peekDeviceName)));
+        android.widget.LinearLayout.LayoutParams mlp = new android.widget.LinearLayout.LayoutParams(-1, -2);
+        mlp.setMargins(pad, pad / 3, pad, 0);
+        header.addView(btnMap, mlp);
         tvSummary = new TextView(this);
         tvSummary.setTextColor(0xFF37474F);
         tvSummary.setTextSize(13f);

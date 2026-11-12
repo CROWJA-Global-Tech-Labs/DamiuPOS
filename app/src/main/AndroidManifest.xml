@@ -230,6 +230,7 @@
             android:supportsPictureInPicture="true"
             android:taskAffinity="com.crowja.damiupos.navpip" />
         <activity android:name=".OtherDeviceQueueActivity" />
+        <activity android:name=".OtherDeviceMapActivity" />
         <activity android:name=".SalesAchievementActivity" />
         <activity android:name=".GalonGrowthActivity" />
         <activity android:name=".IntroWaActivity" />
