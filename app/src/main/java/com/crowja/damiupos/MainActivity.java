@@ -1562,6 +1562,16 @@ public class MainActivity extends AppCompatActivity {
         int n = new TransactionDao(DatabaseHelper.getInstance(this)).countActiveComplaints();
         TextView cardCount = findViewById(R.id.tvKomplainCard);
         if (cardCount != null) cardCount.setText(n > 99 ? "99+" : String.valueOf(n));
+        // Menu berkedip selama masih ada komplain / masalah yang belum selesai (animasi tak diulang bila sudah jalan).
+        for (int vid : new int[]{R.id.btnKomplain, R.id.cardKomplain}) {
+            View v = findViewById(vid);
+            if (v == null) continue;
+            if (n > 0) {
+                if (v.getAnimation() == null) startBlink(v);
+            } else {
+                v.clearAnimation();
+            }
+        }
         if (n > 0) {
             badge.setText(n > 99 ? "99+" : String.valueOf(n));
             badge.setVisibility(View.VISIBLE);
