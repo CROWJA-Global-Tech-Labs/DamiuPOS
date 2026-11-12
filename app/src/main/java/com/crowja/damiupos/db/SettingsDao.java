@@ -461,6 +461,7 @@ public class SettingsDao {
     }
 
     private static final String K_DLV_RUN_PENDING = "dlv_run_pending_uuids";
+    private static final String K_DLV_RUN_AUTO_ADD = "dlv_run_auto_add";
     /** Umur maksimum titipan "masukkan ke rit" — lewat dari ini dianggap basi & dibuang. */
     private static final long RUN_PENDING_TTL_MS = 2L * 60 * 60 * 1000;
 
@@ -469,6 +470,15 @@ public class SettingsDao {
      * order diambil alih dari perangkat lain / Peta Delivery (id lokalnya baru ada setelah sinkron).
      * Disimpan "uuid@epochMs"; titipan lebih dari 2 jam dibuang.
      */
+    /** Order BARU yang masuk perangkat ini otomatis ikut rit berjalan (checkbox di header rit). Bawaan MATI. */
+    public boolean isDeliveryRunAutoAdd() {
+        return "1".equals(get(K_DLV_RUN_AUTO_ADD, "0"));
+    }
+
+    public void setDeliveryRunAutoAdd(boolean on) {
+        set(K_DLV_RUN_AUTO_ADD, on ? "1" : "0");
+    }
+
     public java.util.LinkedHashSet<String> getDeliveryRunPendingUuids() {
         java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
         long now = System.currentTimeMillis();

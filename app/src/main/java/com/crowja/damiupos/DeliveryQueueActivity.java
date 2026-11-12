@@ -774,8 +774,12 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       View btnJalankanRit = this.findViewById(id.btnJalankanRit);
       if (btnJalankanRit != null) {
          btnJalankanRit.setOnClickListener((v) -> {
-            if (this.strategyPage > 0) this.confirmStartTripKhusus();
-            else this.runStrategyTrip();
+            Runnable go = () -> {
+               if (this.strategyPage > 0) this.confirmStartTripKhusus();
+               else this.runStrategyTrip();
+            };
+            if (this.isRunning()) go.run();
+            else this.askAutoAddNewOrders(go);
          });
       }
 
@@ -6284,6 +6288,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       // tak ada rit berjalan) dan menyerap sendiri order sejalur yang baru tersinkron — tanpa reroute otomatis.
       boolean sejalurAdded = this.absorbSejalurPlan(list);
       boolean absorbed = this.absorbPendingRunAdds(list);
+      if (this.autoAddNewOrders(list)) absorbed = true;
       List<Transaction> ordered = this.buildStrategyOrderedList(list);
       this.adapter.setData(ordered);
       this.renderStrategy(ordered);
@@ -7149,12 +7154,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          if (!this.isRunning() && this.releaseSejalur()) {
             Toast.makeText(this, "🛣️ Rencana Kirim Sejalur yang menunggu sinkron dibatalkan — order-nya tetap di Antrian Saya.", 1).show();
          }
+         final boolean wasRunning = this.isRunning();
          for(Transaction t : list) {
             if (t != null) {
                this.dao.startDelivery(t.getId());
                this.runningIds.add(t.getId());
             }
          }
+         if (!wasRunning) this.markAutoAddBaseline(this.adapter.data);
 
          this.persistRunning();
          this.adapter.notifyDataSetChanged();
@@ -7408,6 +7415,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
 
       this.clearRunning();
+      this.autoAddSeen = null;
       this.adapter.notifyDataSetChanged();
       this.renderStrategy(this.adapter.data);
       this.applyRunModeChrome(this.adapter.data);
@@ -7449,6 +7457,56 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.persistRunning();
       SyncScheduler.syncNow(this.getApplicationContext());
       Toast.makeText(this, added + " order masuk rit berjalan.", 0).show();
+      return true;
+   }
+
+   /** Order menunggu yang SUDAH ada sebelum rit dimulai / fitur dinyalakan — tak dianggap baru. null = belum dicatat. */
+   private HashSet<Long> autoAddSeen;
+
+   /** Dialog ya/tidak saat ▶ Jalankan Rit: nyalakan masuk-otomatis order baru ke rit berjalan? Jawaban disimpan. */
+   private void askAutoAddNewOrders(Runnable then) {
+      final SettingsDao sdao = new SettingsDao(DatabaseHelper.getInstance(this));
+      (new AlertDialog.Builder(this)).setTitle("Order baru masuk rit otomatis?")
+         .setMessage("Nyalakan agar order BARU yang masuk perangkat ini selama rit berjalan langsung ikut rit dan rutenya disusun ulang.\n\nBisa diubah kapan saja lewat centang di header rit.")
+         .setPositiveButton("Ya, nyalakan", (d, w) -> { sdao.setDeliveryRunAutoAdd(true); then.run(); })
+         .setNegativeButton("Tidak", (d, w) -> { sdao.setDeliveryRunAutoAdd(false); then.run(); })
+         .show();
+   }
+
+   private void markAutoAddBaseline(List<Transaction> list) {
+      HashSet<Long> seen = new HashSet<>();
+      if (list != null) {
+         for (Transaction t : list) {
+            if (t != null && !this.runningIds.contains(t.getId())) seen.add(t.getId());
+         }
+      }
+      this.autoAddSeen = seen;
+   }
+
+   /** Checkbox aktif: order baru (belum pernah terlihat menunggu sejak rit dimulai) masuk rit berjalan. */
+   private boolean autoAddNewOrders(List<Transaction> list) {
+      if (!this.isRunning() || list == null) {
+         this.autoAddSeen = null;
+         return false;
+      }
+      SettingsDao sdao = new SettingsDao(DatabaseHelper.getInstance(this));
+      if (this.autoAddSeen == null || !sdao.isDeliveryRunAutoAdd()) {
+         this.markAutoAddBaseline(list);
+         return false;
+      }
+      int added = 0;
+      for (Transaction t : list) {
+         if (t == null || this.runningIds.contains(t.getId()) || this.autoAddSeen.contains(t.getId())) continue;
+         this.autoAddSeen.add(t.getId());
+         if (t.isOpenDispatch() || t.hasPendingVoidRequest() || DeliveryPlanner.isPickupOnly(t)) continue;
+         this.dao.startDelivery(t.getId());
+         this.runningIds.add(t.getId());
+         added++;
+      }
+      if (added == 0) return false;
+      this.persistRunning();
+      SyncScheduler.syncNow(this.getApplicationContext());
+      Toast.makeText(this, added + " order baru otomatis masuk rit.", 0).show();
       return true;
    }
 
@@ -8312,6 +8370,17 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          // HANYA setelah server menulis urutan baru; gagal / offline → urutan koridor (titik terjauh
          // terakhir) tetap dipakai, tak jatuh ke kelompok planner.
          btnRunReroute.setOnClickListener((v) -> this.refreshRunRoute(v, () -> this.releaseSejalur()));
+      }
+
+      android.widget.CheckBox cbAuto = this.findViewById(id.cbRunAutoAdd);
+      if (cbAuto != null) {
+         cbAuto.setVisibility(run != null ? 0 : 8);
+         cbAuto.setOnCheckedChangeListener(null);
+         cbAuto.setChecked(new SettingsDao(DatabaseHelper.getInstance(this)).isDeliveryRunAutoAdd());
+         cbAuto.setOnCheckedChangeListener((b, on) -> {
+            new SettingsDao(DatabaseHelper.getInstance(this)).setDeliveryRunAutoAdd(on);
+            if (on) this.markAutoAddBaseline(this.adapter.data);   // yang sudah menunggu tetap menunggu
+         });
       }
 
       View btnRunAdd = this.findViewById(id.btnRunAdd);
