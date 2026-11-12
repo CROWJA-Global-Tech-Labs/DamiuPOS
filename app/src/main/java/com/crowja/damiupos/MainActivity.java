@@ -269,6 +269,9 @@ public class MainActivity extends AppCompatActivity {
         View btnKunjungan = findViewById(R.id.btnKunjungan);
         if (btnKunjungan != null) btnKunjungan.setOnClickListener(v ->
                 startActivity(new Intent(this, VisitListActivity.class)));
+        View cardKomplain = findViewById(R.id.cardKomplain);
+        if (cardKomplain != null) cardKomplain.setOnClickListener(v ->
+                startActivity(new Intent(this, ComplaintListActivity.class)));
         View btnKomplain = findViewById(R.id.btnKomplain);
         if (btnKomplain != null) btnKomplain.setOnClickListener(v ->
                 startActivity(new Intent(this, ComplaintListActivity.class)));
@@ -798,7 +801,14 @@ public class MainActivity extends AppCompatActivity {
         // (FrameLayout tombol + badge) — kalau dipasang di tombolnya saja, badge jumlah tetap
         // melayang di layar meski tombolnya sudah disembunyikan.
         View wrapKomplain = findViewById(R.id.wrapKomplain);
-        if (wrapKomplain != null) wrapKomplain.setVisibility(show ? View.VISIBLE : View.GONE);
+        // Staf biasa: Komplain jadi kartu di samping CUST; Admin/Marketing tetap tombol Aksi Cepat.
+        boolean komplainCard = show && !isAdmin && !isMarketing;
+        if (wrapKomplain != null) wrapKomplain.setVisibility(show && !komplainCard ? View.VISIBLE : View.GONE);
+        View cardKomplainV = findViewById(R.id.cardKomplain);
+        if (cardKomplainV != null) {
+            cardKomplainV.setVisibility(komplainCard ? View.VISIBLE : View.GONE);
+            ((android.widget.LinearLayout) cardKomplainV.getParent()).setWeightSum(komplainCard ? 4f : 3f);
+        }
         View wrapKunjungan = findViewById(R.id.wrapKunjungan);
         if (wrapKunjungan != null) {
             wrapKunjungan.setVisibility(show && (isMarketing || isAdmin) ? View.VISIBLE : View.GONE);
@@ -1550,6 +1560,8 @@ public class MainActivity extends AppCompatActivity {
         TextView badge = findViewById(R.id.tvKomplainBadge);
         if (badge == null) return;
         int n = new TransactionDao(DatabaseHelper.getInstance(this)).countActiveComplaints();
+        TextView cardCount = findViewById(R.id.tvKomplainCard);
+        if (cardCount != null) cardCount.setText(n > 99 ? "99+" : String.valueOf(n));
         if (n > 0) {
             badge.setText(n > 99 ? "99+" : String.valueOf(n));
             badge.setVisibility(View.VISIBLE);
