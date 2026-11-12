@@ -364,10 +364,12 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
                 }
                 all.clear();
                 if (finalQueue != null) {
+                    List<JSONObject> raw = new ArrayList<>();
                     for (int i = 0; i < finalQueue.length(); i++) {
                         JSONObject o = finalQueue.optJSONObject(i);
-                        if (o != null) all.add(o);
+                        if (o != null) raw.add(o);
                     }
+                    all.addAll(bySeq(raw));   // nomor & urutan mengikuti delivery_seq seperti di HP perangkat itu
                 }
                 lastRefreshMs = System.currentTimeMillis();
                 showLoadedCount(deviceUuid, all.size());
@@ -376,6 +378,21 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
                 tvEmpty.setVisibility(data.isEmpty() ? View.VISIBLE : View.GONE);
             });
         }).start();
+    }
+
+    /**
+     * Urutan seperti di HP perangkat itu: order ber-delivery_seq (urutan rit / Strategi Pengiriman) dulu menurut seq naik,
+     * lalu sisanya menurut urutan antrean server (kanon web). Stabil — seq sama / kosong mempertahankan urutan server.
+     * Dipakai NOMOR daftar dan NOMOR pin peta ({@link OtherDeviceMapActivity}).
+     */
+    static List<JSONObject> bySeq(List<JSONObject> rows) {
+        List<JSONObject> out = new ArrayList<>(rows);
+        java.util.Collections.sort(out, (a, b) -> Long.compare(seqOf(a), seqOf(b)));   // sort Java stabil
+        return out;
+    }
+
+    private static long seqOf(JSONObject q) {
+        return q.isNull("delivery_seq") || !q.has("delivery_seq") ? Long.MAX_VALUE : q.optLong("delivery_seq", Long.MAX_VALUE);
     }
 
     /** Milidetik sejak order masuk antrian; 0 kalau tidak bisa di-parse. Cermin PERSIS

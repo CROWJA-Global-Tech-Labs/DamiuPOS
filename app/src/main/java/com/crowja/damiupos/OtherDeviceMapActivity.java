@@ -118,9 +118,15 @@ public class OtherDeviceMapActivity extends AppCompatActivity {
                     }
                 }
                 JSONArray orders = new JSONArray();
+                java.util.List<JSONObject> raw = new java.util.ArrayList<>();
                 for (int i = 0; queue != null && i < queue.length(); i++) {
                     JSONObject q = queue.optJSONObject(i);
-                    if (q == null) continue;
+                    if (q != null) raw.add(q);
+                }
+                // Nomor pin = urutan di HP perangkat itu (delivery_seq lebih dulu), sama dengan nomor di daftar.
+                java.util.List<JSONObject> sorted = OtherDeviceQueueActivity.bySeq(raw);
+                for (int i = 0; i < sorted.size(); i++) {
+                    JSONObject q = sorted.get(i);
                     JSONObject o = new JSONObject();
                     o.put("n", i + 1);
                     o.put("name", q.optString("name", "Pelanggan"));
