@@ -118,11 +118,22 @@ final class ArmadaPicker {
     private static void showList(Activity a, SyncSettings cfg, JSONArray list, @Nullable JSONArray candidates,
                                  long currentId, boolean mandatory,
                                  @Nullable Runnable onReady, @Nullable Runnable onCancel) {
-        String[] labels = new String[list.length()];
+        String[] labels = new String[list.length() + 1];
         for (int i = 0; i < list.length(); i++) labels[i] = label(list.optJSONObject(i), currentId);
+        labels[list.length()] = (cfg.isArmadaNonDelivery() ? "✓ " : "") + "🚫 Non Delivery\nTidak ikut membantu pengiriman";
         AlertDialog.Builder b = new AlertDialog.Builder(a)
                 .setTitle("🚚 Pilih armada yang dipakai")
-                .setItems(labels, (d, which) -> chooseArmada(a, cfg, list.optJSONObject(which), candidates, mandatory, onReady, onCancel))
+                .setItems(labels, (d, which) -> {
+                    if (which == list.length()) {
+                        try {
+                            select(a, cfg, new JSONObject().put("id", 0L).put("name", "Non Delivery").put("capacity", 0),
+                                    null, null, mandatory, onReady, onCancel);
+                        } catch (org.json.JSONException ignored) {
+                        }
+                    } else {
+                        chooseArmada(a, cfg, list.optJSONObject(which), candidates, mandatory, onReady, onCancel);
+                    }
+                })
                 .setCancelable(!mandatory);
         if (!mandatory) {
             b.setNegativeButton("Batal", (d, w) -> { if (onCancel != null) onCancel.run(); });
@@ -207,6 +218,7 @@ final class ArmadaPicker {
                 JSONObject r = new SyncApi(cfg).selectArmada(armada.optLong("id"), staffUuid, partnerUuid);
                 cfg.setMaxLoad(r.optInt("max_load", armada.optInt("capacity")));
                 cfg.setArmadaName(armada.optString("name"));
+                cfg.setArmadaNonDelivery(armada.optLong("id") == 0L);
                 cfg.setArmadaPartner(partnerUuid != null && !partnerUuid.isEmpty() && partnerName != null ? partnerName : "");
                 cfg.setArmadaRequired(false);
                 cfg.setArmadaPromptPending(false);
@@ -221,7 +233,9 @@ final class ArmadaPicker {
                 flowEnd();
                 if (a.isFinishing() || a.isDestroyed()) return;
                 if (okF) {
-                    Toast.makeText(a, "Armada: " + armada.optString("name") + " · "
+                    if (armada.optLong("id") == 0L) {
+                        Toast.makeText(a, "Non Delivery: tidak ikut membantu pengiriman.", Toast.LENGTH_LONG).show();
+                    } else Toast.makeText(a, "Armada: " + armada.optString("name") + " · "
                             + armada.optInt("capacity") + " galon"
                             + (partnerName != null && partnerUuid != null ? " · bersama " + partnerName : ""),
                             Toast.LENGTH_LONG).show();
