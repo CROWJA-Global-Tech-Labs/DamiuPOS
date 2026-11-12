@@ -344,6 +344,23 @@ public class TransactionDao {
         }
     }
 
+    /**
+     * sync_uuid order JUAL TERBARU pelanggan ini di HP — Chat Pesanan dipotong per order (jendela order lama
+     * berhenti saat order berikutnya mulai), jadi percakapan terbaru ada di order terbaru. null bila tak ada.
+     */
+    public String getLatestSaleUuidForCustomer(long customerId) {
+        if (customerId <= 0) return null;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        try (Cursor c = db.query(DatabaseHelper.TABLE_TRANSACTIONS,
+                new String[]{DatabaseHelper.COL_SYNC_UUID},
+                DatabaseHelper.COL_CUSTOMER_ID + "=? AND " + DatabaseHelper.COL_TYPE + "=? AND "
+                        + DatabaseHelper.COL_SYNC_UUID + " IS NOT NULL AND " + DatabaseHelper.COL_SYNC_UUID + "<>''",
+                new String[]{String.valueOf(customerId), Transaction.TYPE_JUAL}, null, null,
+                DatabaseHelper.COL_ID + " DESC", "1")) {
+            return c.moveToFirst() ? c.getString(0) : null;
+        }
+    }
+
     // ----------------------------------------------------------- Antrian Delivery
 
     /**
