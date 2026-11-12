@@ -1009,6 +1009,7 @@ public class ComplaintListActivity extends AppCompatActivity {
             return;
         }
         startActivity(new Intent(this, ChatLogActivity.class)
+                .putExtra(ChatLogActivity.EXTRA_MODE, ChatLogActivity.MODE_ORDER)   // area kosong kartu → Chat Pesanan
                 .putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid)
                 .putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, t.getCustomerName() != null ? t.getCustomerName() : ""));
     }
