@@ -386,9 +386,22 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
      * Dipakai NOMOR daftar dan NOMOR pin peta ({@link OtherDeviceMapActivity}).
      */
     static List<JSONObject> bySeq(List<JSONObject> rows) {
+        // Order MENUNGGU yang berdekatan dengan pemberhentian rit (server: rit_after = uuid acuan) menyelip tepat sesudahnya.
+        final java.util.Map<String, Long> seqByUuid = new java.util.HashMap<>();
+        for (JSONObject r : rows) {
+            long sq = seqOf(r);
+            if (sq != Long.MAX_VALUE) seqByUuid.put(r.optString("uuid", ""), sq);
+        }
         List<JSONObject> out = new ArrayList<>(rows);
-        java.util.Collections.sort(out, (a, b) -> Long.compare(seqOf(a), seqOf(b)));   // sort Java stabil
+        java.util.Collections.sort(out, (a, b) -> Double.compare(sortKey(a, seqByUuid), sortKey(b, seqByUuid)));   // sort Java stabil
         return out;
+    }
+
+    private static double sortKey(JSONObject q, java.util.Map<String, Long> seqByUuid) {
+        long sq = seqOf(q);
+        if (sq != Long.MAX_VALUE) return sq;
+        Long anchor = seqByUuid.get(q.optString("rit_after", ""));
+        return anchor != null ? anchor + 0.5 : Double.MAX_VALUE;
     }
 
     private static long seqOf(JSONObject q) {
