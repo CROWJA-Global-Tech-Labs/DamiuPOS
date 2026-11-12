@@ -88,7 +88,7 @@ public class ComplaintListActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setTitle("😠 Komplain Pesanan");
+        setTitle("😠 Komplain & Masalah");
         if (getSupportActionBar() != null) getSupportActionBar().setDisplayHomeAsUpEnabled(true);
         dao = new TransactionDao(DatabaseHelper.getInstance(this));
 
@@ -122,6 +122,25 @@ public class ComplaintListActivity extends AppCompatActivity {
             btnRemote.setOnClickListener(v -> setRemote(true));
             styleScope();
         }
+
+        LinearLayout kinds = new LinearLayout(this);
+        kinds.setOrientation(LinearLayout.HORIZONTAL);
+        kinds.setPadding(dp(12), dp(2), dp(12), dp(2));
+        final String[] kindNames = {"Semua", "😠 Komplain", "⚠️ Masalah"};
+        final MaterialButton[] kindBtns = new MaterialButton[3];
+        for (int i = 0; i < 3; i++) {
+            final int k = i;
+            kindBtns[i] = smallButton(kindNames[i]);
+            kindBtns[i].setOnClickListener(v -> {
+                kindFilter = k;
+                for (int j = 0; j < 3; j++) kindBtns[j].setBackgroundTintList(android.content.res.ColorStateList.valueOf(j == k ? 0xFFBBDEFB : 0x00FFFFFF));
+                load();
+                render();
+            });
+            kinds.addView(kindBtns[i], new LinearLayout.LayoutParams(0, -2, 1f));
+        }
+        kindBtns[0].setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFFBBDEFB));
+        root.addView(kinds);
 
         final EditText et = new EditText(this);
         et.setHint("🔎 Cari nama / struk / produk / telepon…");
@@ -211,14 +230,55 @@ public class ComplaintListActivity extends AppCompatActivity {
 
     // ------------------------------------------------------------------ data & halaman
 
+    /** Filter jenis: 0 semua · 1 komplain · 2 masalah (void menunggu, tertunda, data pelanggan bermasalah). */
+    private int kindFilter = 0;
+
+    private static boolean isComplaintOrder(Transaction t) {
+        return t.getComplainedAt() != null && !t.getComplainedAt().trim().isEmpty();
+    }
+
+    /** Aktif: komplain yang belum ditangani, ATAU masalah terbuka (selama kondisinya masih ada). */
+    static boolean isActive(Transaction t) {
+        if (t.getProblemNote() != null && !t.getProblemNote().isEmpty()) return true;
+        return isComplaintOrder(t) && TransactionDao.isComplaintActive(t);
+    }
+
+    static String activityAt(Transaction t) {
+        if (isComplaintOrder(t)) return TransactionDao.complaintActivityAt(t);
+        String at = t.getDeliveryTertundaAt();
+        return at != null && !at.trim().isEmpty() ? at : t.getDeliveryQueuedAt();
+    }
+
+    private List<Transaction> localSource() {
+        List<Transaction> out = new ArrayList<>();
+        java.util.Map<Long, Transaction> byId = new java.util.HashMap<>();
+        if (kindFilter != 2) {
+            for (Transaction t : dao.getComplaintOrders(600)) {
+                out.add(t);
+                byId.put(t.getId(), t);
+            }
+        }
+        if (kindFilter != 1) {
+            for (Transaction p : dao.getProblemOrders(600)) {
+                Transaction same = byId.get(p.getId());
+                if (same != null) same.setProblemNote(p.getProblemNote());   // satu kartu: komplain + masalahnya
+                else out.add(p);
+            }
+        } else {
+            // Filter "Komplain": catatan masalah tak ikut ditampilkan sebagai aktif.
+            for (Transaction t : out) t.setProblemNote(null);
+        }
+        return out;
+    }
+
     private void load() {
         byDay.clear();
         Map<String, List<Transaction>> tmp = new LinkedHashMap<>();
         loadProducts();
-        List<Transaction> source = remoteMode ? remoteAll : dao.getComplaintOrders(600);
+        List<Transaction> source = remoteMode ? remoteAll : localSource();
         for (Transaction t : source) {
             if (!query.isEmpty() && !matches(t)) continue;
-            String local = Ts.local(TransactionDao.complaintActivityAt(t));
+            String local = Ts.local(activityAt(t));
             String day = local.length() >= 10 ? local.substring(0, 10) : "—";
             List<Transaction> l = tmp.get(day);
             if (l == null) tmp.put(day, l = new ArrayList<>());
@@ -230,10 +290,10 @@ public class ComplaintListActivity extends AppCompatActivity {
             List<Transaction> l = tmp.get(d);
             // Aktif dulu, lalu yang lebih baru.
             Collections.sort(l, (a, b) -> {
-                boolean aa = TransactionDao.isComplaintActive(a);
-                boolean bb = TransactionDao.isComplaintActive(b);
+                boolean aa = isActive(a);
+                boolean bb = isActive(b);
                 if (aa != bb) return aa ? -1 : 1;
-                return Ts.local(TransactionDao.complaintActivityAt(b)).compareTo(Ts.local(TransactionDao.complaintActivityAt(a)));
+                return Ts.local(activityAt(b)).compareTo(Ts.local(activityAt(a)));
             });
             byDay.put(d, l);
         }
@@ -268,7 +328,7 @@ public class ComplaintListActivity extends AppCompatActivity {
         for (List<Transaction> l : byDay.values()) {
             for (Transaction t : l) {
                 totalAll++;
-                if (TransactionDao.isComplaintActive(t)) totalActive++;
+                if (isActive(t)) totalActive++;
             }
         }
         summary.setText((remoteMode ? "🌐 Semua perangkat · " : "") + totalActive + " aktif · " + (totalAll - totalActive)
@@ -292,7 +352,7 @@ public class ComplaintListActivity extends AppCompatActivity {
             }
             for (String d : days) {
                 box.addView(header("📅 " + dayText(d)));
-                for (Transaction t : byDay.get(d)) box.addView(card(t, TransactionDao.isComplaintActive(t)));
+                for (Transaction t : byDay.get(d)) box.addView(card(t, isActive(t)));
             }
             return;
         }
@@ -314,7 +374,7 @@ public class ComplaintListActivity extends AppCompatActivity {
 
         List<Transaction> list = byDay.get(currentDay);
         int dayActive = 0;
-        for (Transaction t : list) if (TransactionDao.isComplaintActive(t)) dayActive++;
+        for (Transaction t : list) if (isActive(t)) dayActive++;
         int idx = days.indexOf(currentDay);
         dayLabel.setText(dayText(currentDay) + "\n" + list.size() + " komplain" + (dayActive > 0 ? " · " + dayActive + " aktif" : ""));
         btnOlder.setEnabled(idx < days.size() - 1);
@@ -326,7 +386,7 @@ public class ComplaintListActivity extends AppCompatActivity {
         for (String d : days) {
             if (d.equals(currentDay)) continue;
             int a = 0;
-            for (Transaction t : byDay.get(d)) if (TransactionDao.isComplaintActive(t)) a++;
+            for (Transaction t : byDay.get(d)) if (isActive(t)) a++;
             if (a > 0) {
                 otherActive += a;
                 if (jump == null) jump = d;   // hari terbaru yang punya komplain aktif
@@ -347,7 +407,7 @@ public class ComplaintListActivity extends AppCompatActivity {
         boolean headedActive = false;
         boolean headedResolved = false;
         for (Transaction t : list) {
-            boolean act = TransactionDao.isComplaintActive(t);
+            boolean act = isActive(t);
             if (act && !headedActive) {
                 box.addView(header("⏳ Aktif — perlu ditangani"));
                 headedActive = true;
@@ -623,7 +683,7 @@ public class ComplaintListActivity extends AppCompatActivity {
         c.setLayoutParams(lp);
 
         TextView name = new TextView(this);
-        name.setText("😠 " + (t.getCustomerName() != null && !t.getCustomerName().isEmpty() ? t.getCustomerName() : "Pelanggan"));
+        name.setText((isComplaintOrder(t) ? "😠 " : "⚠️ ") + (t.getCustomerName() != null && !t.getCustomerName().isEmpty() ? t.getCustomerName() : "Pelanggan"));
         name.setTextColor(C_BLUE);
         name.setTextSize(16f);
         name.setTypeface(null, Typeface.BOLD);
@@ -660,11 +720,11 @@ public class ComplaintListActivity extends AppCompatActivity {
             c.setOnClickListener(v -> toggleExpand(key));   // ketuk kartu ringkas untuk membuka
             return c;
         }
-        String time = Ts.hm(TransactionDao.complaintActivityAt(t));
+        String time = Ts.hm(activityAt(t));
         TextView meta = new TextView(this);
         meta.setText("Rp " + nf.format(Math.round(t.getTotalHarga()))
                 + (t.getReceiptNo() != null && !t.getReceiptNo().isEmpty() ? " · 🧾 " + t.getReceiptNo() : "")
-                + (time.isEmpty() ? "" : "\n🕒 Komplain terakhir jam " + time));
+                + (time.isEmpty() ? "" : "\n🕒 " + (isComplaintOrder(t) ? "Komplain terakhir" : "Sejak") + " jam " + time));
         meta.setTextColor(C_MUTED);
         meta.setTextSize(13f);
         meta.setPadding(0, dp(4), 0, dp(4));
@@ -682,7 +742,16 @@ public class ComplaintListActivity extends AppCompatActivity {
             oi.setPadding(0, 0, 0, dp(2));
             c.addView(oi);
         }
-        if (active) {
+        if (t.getProblemNote() != null && !t.getProblemNote().isEmpty()) {
+            TextView pn = new TextView(this);
+            pn.setText(t.getProblemNote());
+            pn.setTextColor(0xFFE65100);
+            pn.setTextSize(13f);
+            pn.setTypeface(null, Typeface.BOLD);
+            pn.setPadding(0, dp(2), 0, dp(4));
+            c.addView(pn);
+        }
+        if (active && isComplaintOrder(t) && TransactionDao.isComplaintActive(t)) {
             TextView status = new TextView(this);
             status.setText(pendingOrder ? "⏳ Aktif — selesaikan pesanan ini untuk menutup komplain"
                     : "🔁 Aktif — pelanggan komplain setelah pesanan selesai");
@@ -707,7 +776,7 @@ public class ComplaintListActivity extends AppCompatActivity {
             row2.addView(actionButton("🛣️ Kirim Sejalur", pending, v -> sejalur(t)), weight());
             c.addView(row2);
         }
-        if (active) {
+        if (active && isComplaintOrder(t) && TransactionDao.isComplaintActive(t)) {
             LinearLayout row3 = new LinearLayout(this);
             row3.setOrientation(LinearLayout.HORIZONTAL);
             row3.addView(actionButton("✅ Tandai Ditangani", true, v -> resolve(t)), weight());
