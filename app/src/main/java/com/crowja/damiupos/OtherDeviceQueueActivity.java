@@ -60,6 +60,72 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
     /** Yang tampil (hasil cari/saring/urut) dari {@link #all}, antrean perangkat terpilih. */
     private final List<JSONObject> data = new ArrayList<>();
     private final List<JSONObject> all = new ArrayList<>();
+    /** Mode-pilih: ketuk kartu = pilih; "Aksi" membawa pilihan ke menu aksi massal Antrian Delivery. */
+    private boolean selectMode = false;
+    private final java.util.LinkedHashSet<String> selected = new java.util.LinkedHashSet<>();
+
+    @Override
+    public boolean onCreateOptionsMenu(android.view.Menu menu) {
+        menu.add(0, 901, 0, "☑ Pilih").setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS);
+        menu.add(0, 902, 1, "Semua").setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_IF_ROOM);
+        menu.add(0, 903, 2, "Aksi").setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS);
+        return true;
+    }
+
+    @Override
+    public boolean onPrepareOptionsMenu(android.view.Menu menu) {
+        android.view.MenuItem pick = menu.findItem(901);
+        if (pick != null) pick.setTitle(selectMode ? "✖ Batal" : "☑ Pilih");
+        android.view.MenuItem all = menu.findItem(902);
+        if (all != null) all.setVisible(selectMode);
+        android.view.MenuItem act = menu.findItem(903);
+        if (act != null) {
+            act.setVisible(selectMode);
+            act.setTitle("Aksi (" + selected.size() + ")");
+        }
+        return super.onPrepareOptionsMenu(menu);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(android.view.MenuItem item) {
+        int id = item.getItemId();
+        if (id == 901) {
+            setSelectMode(!selectMode);
+            return true;
+        }
+        if (id == 902) {
+            boolean allOn = selected.size() >= data.size();
+            selected.clear();
+            if (!allOn) for (JSONObject q : data) { String u = str(q, "uuid"); if (!u.isEmpty()) selected.add(u); }
+            refreshSelection();
+            return true;
+        }
+        if (id == 903) {
+            if (selected.isEmpty()) {
+                Toast.makeText(this, "Belum ada order yang dipilih.", Toast.LENGTH_SHORT).show();
+                return true;
+            }
+            startActivity(new Intent(this, DeliveryQueueActivity.class)
+                    .putStringArrayListExtra(DeliveryQueueActivity.EXTRA_OTHER_BULK, new ArrayList<>(selected))
+                    .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+            finish();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    private void setSelectMode(boolean on) {
+        selectMode = on;
+        selected.clear();
+        refreshSelection();
+    }
+
+    private void refreshSelection() {
+        if (adapter != null) adapter.notifyDataSetChanged();
+        invalidateOptionsMenu();
+        androidx.appcompat.app.ActionBar ab = getSupportActionBar();
+        if (ab != null) ab.setSubtitle(selectMode ? selected.size() + " dipilih" : null);
+    }
     private final java.util.Map<String, Integer> tabCounts = new java.util.HashMap<>();
     private com.google.android.material.tabs.TabLayout deviceTabs;
     private TextView tvSummary;
@@ -719,6 +785,21 @@ public class OtherDeviceQueueActivity extends AppCompatActivity {
         @Override
         public void onBindViewHolder(@NonNull VH h, int position) {
             JSONObject q = data.get(position);
+            final String selUuid = str(q, "uuid");
+            h.itemView.setBackgroundColor(selectMode && selected.contains(selUuid) ? 0x553F8CFF : 0x00000000);
+            h.itemView.setOnClickListener(selectMode ? v -> {
+                if (selUuid.isEmpty()) return;
+                if (!selected.remove(selUuid)) selected.add(selUuid);
+                refreshSelection();
+            } : null);
+            h.itemView.setClickable(selectMode);
+            h.itemView.setOnLongClickListener(v -> {
+                if (selUuid.isEmpty()) return false;
+                if (!selectMode) { selectMode = true; selected.clear(); }
+                selected.add(selUuid);
+                refreshSelection();
+                return true;
+            });
             DeliveryQueueActivity.bindOrderNote(h.tvOrderNote, str(q, "note"));
             String custUuid = str(q, "customer_uuid");
             Customer cust = custUuid.isEmpty() ? null : customerDao.getBySyncUuid(custUuid);
