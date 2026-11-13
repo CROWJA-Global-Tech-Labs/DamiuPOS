@@ -398,6 +398,8 @@ public class SyncEngine {
     // catatan di applyRows). Diisi HANYA di cabang UPDATE (localId != -1); dibaca &amp; dikosongkan di
     // sync() untuk notifikasi ⚠.
     private final java.util.List<String> pulledRoutedAway = new java.util.ArrayList<>();
+    /** Subset pulledRoutedAway yang SEDANG DIANTAR HP ini saat direbut (Admin) → notifikasi "JANGAN DIANTAR". */
+    private final java.util.Set<String> pulledRoutedAwayRunning = new java.util.HashSet<>();
     private final java.util.List<String[]> pulledCompletedElsewhere = new java.util.ArrayList<>();   // {nama, completedByName}
     /** Order antrean HP ini yang baru DIJADWALKAN ULANG (Tertunda) pihak lain: {nama, alasan, sedangDiantar?"1":"0"}. */
     private final java.util.List<String[]> pulledRescheduled = new java.util.ArrayList<>();
@@ -507,6 +509,7 @@ public class SyncEngine {
             pulledPromoConversions.clear();
             pulledIncompleteQueueCustomers.clear();
             pulledRoutedAway.clear();
+            pulledRoutedAwayRunning.clear();
             pulledCompletedElsewhere.clear();
             pulledRescheduled.clear();
             pulledPromoIntroArrivals.clear();
@@ -585,8 +588,12 @@ public class SyncEngine {
             for (int i = 0; !pengisian && i < pulledRoutedAway.size(); i++) {
                 String name = pulledRoutedAway.get(i);
                 try {
-                    OnlineNotifier.postNotif(appCtx, "⚠ Order Dipindahkan",
-                            "Order \"" + name + "\" dipindahkan ke perangkat lain.", 7930 + (i % 10));
+                    boolean wasRunning = pulledRoutedAwayRunning.contains(name);
+                    OnlineNotifier.postNotif(appCtx,
+                            wasRunning ? "⛔ JANGAN DIANTAR \u2014 Order Diambil Admin" : "⚠ Order Dipindahkan",
+                            wasRunning
+                                    ? "Order \"" + name + "\" diambil alih Admin dan sudah dikeluarkan dari rit Anda \u2014 JANGAN dikirim."
+                                    : "Order \"" + name + "\" dipindahkan ke perangkat lain.", 7930 + (i % 10));
                 } catch (Throwable ignored) {}
             }
             // Order yang tadinya ada di antrian PERANGKAT INI diselesaikan oleh perangkat/pihak lain
@@ -1783,6 +1790,15 @@ public class SyncEngine {
                             if (custName == null) custName = "Pelanggan";
                             if (newDev != null && !newDev.trim().isEmpty() && !newDev.equals(myUuid)) {
                                 pulledRoutedAway.add(custName);
+                                try {
+                                    java.util.Set<Long> runIds = settingsDao.getDeliveryRunningTrxIds();
+                                    if (runIds.contains(localId)) {
+                                        pulledRoutedAwayRunning.add(custName);
+                                        java.util.LinkedHashSet<Long> keep = new java.util.LinkedHashSet<>(runIds);
+                                        keep.remove(localId);   // keluar dari rit berjalan
+                                        settingsDao.setDeliveryRunningTrxIds(keep);
+                                    }
+                                } catch (Throwable ignored) {}
                             } else if (com.crowja.damiupos.model.Transaction.DELIVERY_DONE.equals(newStatus)) {
                                 pulledCompletedElsewhere.add(new String[]{custName,
                                         v.getAsString(DatabaseHelper.COL_COMPLETED_BY_NAME)});

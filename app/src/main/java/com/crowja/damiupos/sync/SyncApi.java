@@ -250,6 +250,14 @@ public class SyncApi {
      * berpindah, sehingga dua kurir yang menekan bersamaan tak sama-sama merasa menang.
      * Balas {@code {"ok":true,"message":"…"}} atau 422/409. Branch-scoped by the token.
      */
+    /** Admin merebut order yang SEDANG DIANTAR perangkat lain (server: X-Staff-Uuid harus Admin aktif). */
+    public JSONObject claimDeliveryForce(JSONObject body, @Nullable String staffUuid) throws Exception {
+        body.put("force_running", true);
+        body.put("region_confirm_supported", true);
+        body.put("confirm_out_of_region", true);
+        return post(cfg.getBaseUrl() + "/api/delivery/claim", body, cfg.getToken(), staffUuid);
+    }
+
     public JSONObject claimDelivery(JSONObject body) throws Exception {
         try {
             return postRegionGated("/api/delivery/claim", body);
