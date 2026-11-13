@@ -254,6 +254,50 @@ public class ComplaintListActivity extends AppCompatActivity {
         return at != null && !at.trim().isEmpty() ? at : t.getDeliveryQueuedAt();
     }
 
+    /**
+     * Siapa yang WAJIB menangani + posisinya di antrean: rit berjalan → "antrean rit ke-K dari N", belum jalan →
+     * "antrean ke-K dari N", sudah selesai → diantar oleh siapa. Pemegangnya = perangkat/kurir order itu.
+     */
+    private String handlerLine(Transaction t) {
+        String[] rm = remoteMeta.get(t);
+        String who;
+        if (rm != null) who = rm[2] != null ? rm[2].trim() : "";
+        else { String cu = new SettingsDao(DatabaseHelper.getInstance(this)).getCurrentUserName(); who = cu != null ? cu.trim() : ""; }
+        boolean done = t.getDeliveryDoneAt() != null && !t.getDeliveryDoneAt().trim().isEmpty();
+        if (done) {
+            String by = t.getCompletedByName() != null && !t.getCompletedByName().trim().isEmpty() ? t.getCompletedByName().trim() : who;
+            return by.isEmpty() ? "" : "👤 Yang menangani: " + by + " (pesanan sudah diantar)";
+        }
+        String head = "👤 Wajib ditangani: " + (who.isEmpty() ? "kurir pemegang pesanan ini" : who);
+        if (rm != null) return head;
+        int k = ritIds.indexOf(t.getId());
+        if (k >= 0) return head + "
+🚚 Antrean rit ke-" + (k + 1) + " dari " + ritIds.size();
+        int q = queueIds.indexOf(t.getId());
+        if (q >= 0) return head + "
+📋 Antrean ke-" + (q + 1) + " dari " + queueIds.size() + " (belum masuk rit berjalan)";
+        return head;
+    }
+
+    private List<Long> ritIds = new ArrayList<>();
+    private List<Long> queueIds = new ArrayList<>();
+
+    private void loadQueuePositions() {
+        ritIds = new ArrayList<>();
+        queueIds = new ArrayList<>();
+        try {
+            List<Transaction> q = dao.getDeliveryQueue();
+            java.util.Set<Long> run = new SettingsDao(DatabaseHelper.getInstance(this)).getDeliveryRunningTrxIds();
+            List<Transaction> pend = new ArrayList<>();
+            for (Transaction t : q) {
+                queueIds.add(t.getId());
+                if (run.contains(t.getId())) pend.add(t);
+            }
+            for (Transaction t : DeliveryPlanner.runRouteOrder(pend)) ritIds.add(t.getId());
+        } catch (Throwable ignored) {
+        }
+    }
+
     private List<Transaction> localSource() {
         List<Transaction> out = new ArrayList<>();
         java.util.Map<Long, Transaction> byId = new java.util.HashMap<>();
@@ -280,6 +324,7 @@ public class ComplaintListActivity extends AppCompatActivity {
         byDay.clear();
         Map<String, List<Transaction>> tmp = new LinkedHashMap<>();
         loadProducts();
+        if (!remoteMode) loadQueuePositions();
         List<Transaction> source = remoteMode ? remoteAll : localSource();
         final String todayKey = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
         for (Transaction t : source) {
@@ -745,6 +790,16 @@ public class ComplaintListActivity extends AppCompatActivity {
         meta.setTextSize(13f);
         meta.setPadding(0, dp(4), 0, dp(4));
         c.addView(meta);
+        String handler = handlerLine(t);
+        if (!handler.isEmpty()) {
+            TextView hv = new TextView(this);
+            hv.setText(handler);
+            hv.setTextColor(0xFF1A237E);
+            hv.setTextSize(13f);
+            hv.setTypeface(null, Typeface.BOLD);
+            hv.setPadding(0, 0, 0, dp(4));
+            c.addView(hv);
+        }
 
         final boolean pendingOrder = Transaction.DELIVERY_PENDING.equals(t.getDeliveryStatus())
                 || Transaction.DELIVERY_TERTUNDA.equals(t.getDeliveryStatus());
