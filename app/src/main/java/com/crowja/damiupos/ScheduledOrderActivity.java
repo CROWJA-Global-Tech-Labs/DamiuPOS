@@ -509,6 +509,33 @@ public class ScheduledOrderActivity extends AppCompatActivity {
         box.addView(autoBox);
         cbAuto.setOnCheckedChangeListener((b, on) -> autoBox.setVisibility(on ? View.VISIBLE : View.GONE));
 
+        // Tanya H-1: WA konfirmasi otomatis ke pelanggan sehari sebelum jatuh tempo.
+        final CheckBox cbH1 = new CheckBox(this);
+        cbH1.setText("💬 Tanya H-1: kirim WA konfirmasi otomatis ke pelanggan");
+        cbH1.setPadding(0, dp(8), 0, 0);
+        box.addView(cbH1);
+        box.addView(hint("Sehari sebelum jadwal jatuh tempo pelanggan dikirimi WA \"besok kami antar … mohon konfirmasi\". Tidak menggantikan pengingat staf atau pesanan tertunda otomatis."));
+        final String[] h1Time = {"16:00"};
+        final Button btH1Time = new Button(this);
+        btH1Time.setAllCaps(false);
+        btH1Time.setText("🕓 Jam kirim konfirmasi: " + h1Time[0]);
+        btH1Time.setVisibility(View.GONE);
+        btH1Time.setOnClickListener(v -> {
+            int h = 16, mi = 0;
+            try {
+                String[] hm = h1Time[0].split(":");
+                h = Integer.parseInt(hm[0]);
+                mi = Integer.parseInt(hm[1]);
+            } catch (Exception ignored) {
+            }
+            new TimePickerDialog(this, (tp, hh, mm) -> {
+                h1Time[0] = String.format(Locale.US, "%02d:%02d", hh, mm);
+                btH1Time.setText("🕓 Jam kirim konfirmasi: " + h1Time[0]);
+            }, h, mi, true).show();
+        });
+        box.addView(btH1Time);
+        cbH1.setOnCheckedChangeListener((b, on) -> btH1Time.setVisibility(on ? View.VISIBLE : View.GONE));
+
         // Isi awal
         String mode = editing ? nz(str(s, "mode"), "weekly") : "weekly";
         rg.check("interval".equals(mode) ? rbInterval.getId() : "prediction".equals(mode) ? rbPred.getId() : rbWeekly.getId());
@@ -538,6 +565,12 @@ public class ScheduledOrderActivity extends AppCompatActivity {
             int di = devUuids.indexOf(str(s, "auto_tertunda_device_uuid"));
             if (di > 0) spDev.setSelection(di);
             etAutoNote.setText(nz(str(s, "auto_tertunda_note")));
+            cbH1.setChecked(s.optBoolean("confirm_h1"));
+            String h1 = str(s, "confirm_h1_time");
+            if (h1 != null) {
+                h1Time[0] = h1;
+                btH1Time.setText("🕓 Jam kirim konfirmasi: " + h1);
+            }
         } else {
             rgGal.check(rbKeran.getId());
         }
@@ -605,6 +638,8 @@ public class ScheduledOrderActivity extends AppCompatActivity {
                     if (rgGal.getCheckedRadioButtonId() == rbKeran.getId()) b.put("galon_type", "KERAN");
                     else if (rgGal.getCheckedRadioButtonId() == rbNon.getId()) b.put("galon_type", "NON_KERAN");
                     b.put("auto_tertunda", cbAuto.isChecked());
+                    b.put("confirm_h1", cbH1.isChecked());
+                    if (cbH1.isChecked()) b.put("confirm_h1_time", h1Time[0]);
                     if (cbAuto.isChecked()) {
                         if (q.length() == 0) {
                             toast("Isi minimal satu produk & jumlah untuk Pesanan Tertunda otomatis.");
@@ -758,6 +793,11 @@ public class ScheduledOrderActivity extends AppCompatActivity {
                         + (dev != null ? " → " + dev : "")
                         + (s.optBoolean("auto_tertunda_done_today") ? " · ✓ sudah dibuat hari ini" : ""));
                 line(d, "💬 ", str(s, "auto_tertunda_note"));
+            }
+            if (s.optBoolean("confirm_h1")) {
+                String last = str(s, "last_confirm_h1_for");
+                line(d, "💬 ", "Tanya H-1 jam " + nz(str(s, "confirm_h1_time"), "16:00")
+                        + (last != null ? " · ✓ terakhir untuk " + fmtDate(last) : ""));
             }
             h.detail.setText(d.toString());
             h.detail.setVisibility(d.length() > 0 ? View.VISIBLE : View.GONE);
