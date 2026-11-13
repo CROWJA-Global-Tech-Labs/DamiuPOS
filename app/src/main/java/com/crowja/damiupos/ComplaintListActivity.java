@@ -258,23 +258,77 @@ public class ComplaintListActivity extends AppCompatActivity {
      * Siapa yang WAJIB menangani + posisinya di antrean: rit berjalan → "antrean rit ke-K dari N", belum jalan →
      * "antrean ke-K dari N", sudah selesai → diantar oleh siapa. Pemegangnya = perangkat/kurir order itu.
      */
+    /** uuid order → nama perangkat PEMEGANG (dari server, antrean semua perangkat); diisi latar sekali per buka layar. */
+    private final java.util.Map<String, String> holderByTrx = new java.util.HashMap<>();
+    private boolean holdersLoading = false;
+
+    private void fetchHolders() {
+        if (holdersLoading || remoteMode) return;
+        final com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
+        if (!cfg.isEnrolled()) return;
+        holdersLoading = true;
+        new Thread(() -> {
+            java.util.Map<String, String> got = new java.util.HashMap<>();
+            try {
+                org.json.JSONArray q = new com.crowja.damiupos.sync.SyncApi(cfg).devicesQueueAll().optJSONArray("queue");
+                for (int k = 0; q != null && k < q.length(); k++) {
+                    org.json.JSONObject o = q.optJSONObject(k);
+                    if (o == null) continue;
+                    String u = o.optString("uuid", ""), lbl = o.optString("device_group_label", "");
+                    if (!u.isEmpty() && !lbl.isEmpty() && !"null".equals(lbl)) got.put(u, lbl);
+                }
+            } catch (Throwable ignored) {
+            }
+            final boolean any = !got.isEmpty();
+            runOnUiThread(() -> {
+                holdersLoading = false;
+                if (isFinishing() || isDestroyed() || !any) return;
+                holderByTrx.putAll(got);
+                render();
+            });
+        }).start();
+    }
+
+    /**
+     * Status penyelesaian pesanan + siapa yang WAJIB menanganinya (kurir/perangkat pemegang order — BUKAN pengguna yang sedang
+     * login) + urutan antrean. Belum selesai → baris pertama berupa lencana status; selesai → siapa yang mengantar.
+     */
     private String handlerLine(Transaction t) {
         String[] rm = remoteMeta.get(t);
-        String who;
-        if (rm != null) who = rm[2] != null ? rm[2].trim() : "";
-        else { String cu = new SettingsDao(DatabaseHelper.getInstance(this)).getCurrentUserName(); who = cu != null ? cu.trim() : ""; }
         boolean done = t.getDeliveryDoneAt() != null && !t.getDeliveryDoneAt().trim().isEmpty();
         if (done) {
-            String by = t.getCompletedByName() != null && !t.getCompletedByName().trim().isEmpty() ? t.getCompletedByName().trim() : who;
-            return by.isEmpty() ? "" : "👤 Yang menangani: " + by + " (pesanan sudah diantar)";
+            String by = t.getCompletedByName() != null ? t.getCompletedByName().trim() : "";
+            if (by.isEmpty() && rm != null && rm[2] != null) by = rm[2].trim();
+            return "✅ PESANAN SUDAH SELESAI" + (by.isEmpty() ? "" : " · diantar " + by);
         }
-        String head = "👤 Wajib ditangani: " + (who.isEmpty() ? "kurir pemegang pesanan ini" : who);
-        if (rm != null) return head;
+        // Pemegang: perangkat yang memegang order (nama dari server; order di antrean HP ini → "HP ini").
+        String who = "";
+        if (rm != null) {
+            who = rm[2] != null ? rm[2].trim() : "";
+        } else {
+            String u = uuidOf(t);
+            if (u != null && holderByTrx.containsKey(u)) who = holderByTrx.get(u);
+            else {
+                String hold = t.getDeliveryDeviceUuid();
+                String mine = new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this))).getDeviceUuid();
+                if (hold != null && !hold.isEmpty() && !hold.equals(mine)) who = "perangkat lain (memuat…)";
+                else if (queueIds.contains(t.getId()) || ritIds.contains(t.getId())) who = "HP ini";
+            }
+        }
+        boolean running = false;
+        try { running = new SettingsDao(DatabaseHelper.getInstance(this)).getDeliveryRunningTrxIds().contains(t.getId()); } catch (Throwable ignored) { }
+        String status = Transaction.DELIVERY_TERTUNDA.equals(t.getDeliveryStatus()) ? "⏸ PESANAN TERTUNDA — BELUM SELESAI"
+                : running ? "🚚 SEDANG DIANTAR — BELUM SELESAI" : "⏳ PESANAN BELUM SELESAI";
+        StringBuilder sb = new StringBuilder(status);
+        sb.append("\n").append("👤 Wajib ditangani: ").append(who.isEmpty() ? "kurir pemegang pesanan ini" : who);
+        if (rm != null) return sb.toString();
         int k = ritIds.indexOf(t.getId());
-        if (k >= 0) return head + "\n🚚 Antrean rit ke-" + (k + 1) + " dari " + ritIds.size();
-        int q = queueIds.indexOf(t.getId());
-        if (q >= 0) return head + "\n📋 Antrean ke-" + (q + 1) + " dari " + queueIds.size() + " (belum masuk rit berjalan)";
-        return head;
+        if (k >= 0) sb.append("\n").append("🚚 Antrean rit ke-").append(k + 1).append(" dari ").append(ritIds.size());
+        else {
+            int q = queueIds.indexOf(t.getId());
+            if (q >= 0) sb.append("\n").append("📋 Antrean ke-").append(q + 1).append(" dari ").append(queueIds.size()).append(" (belum masuk rit berjalan)");
+        }
+        return sb.toString();
     }
 
     private List<Long> ritIds = new ArrayList<>();
@@ -322,7 +376,10 @@ public class ComplaintListActivity extends AppCompatActivity {
         byDay.clear();
         Map<String, List<Transaction>> tmp = new LinkedHashMap<>();
         loadProducts();
-        if (!remoteMode) loadQueuePositions();
+        if (!remoteMode) {
+            loadQueuePositions();
+            if (holderByTrx.isEmpty()) fetchHolders();
+        }
         List<Transaction> source = remoteMode ? remoteAll : localSource();
         final String todayKey = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
         for (Transaction t : source) {
@@ -792,7 +849,7 @@ public class ComplaintListActivity extends AppCompatActivity {
         if (!handler.isEmpty()) {
             TextView hv = new TextView(this);
             hv.setText(handler);
-            hv.setTextColor(0xFF1A237E);
+            hv.setTextColor(handler.startsWith("✅") ? 0xFF2E7D32 : 0xFFBF360C);
             hv.setTextSize(13f);
             hv.setTypeface(null, Typeface.BOLD);
             hv.setPadding(0, 0, 0, dp(4));
