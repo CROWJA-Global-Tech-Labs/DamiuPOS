@@ -378,6 +378,11 @@ public class SyncApi {
     }
 
     public JSONObject openDispatch(JSONObject body) throws Exception {
+        String staff = forceStaffUuid;
+        if (staff != null && !staff.isEmpty()) {
+            body.put("force_running", true);
+            return post(cfg.getBaseUrl() + "/api/delivery/open", body, cfg.getToken(), staff);
+        }
         return post(cfg.getBaseUrl() + "/api/delivery/open", body, cfg.getToken());
     }
 
