@@ -259,6 +259,16 @@ public class SyncApi {
     }
 
     public JSONObject claimDelivery(JSONObject body) throws Exception {
+        String adminStaff = forceStaffUuid;
+        if (adminStaff != null && !adminStaff.isEmpty()) {
+            // Admin: order yang sedang diantar pun boleh diambil (server memverifikasi Admin).
+            try {
+                return claimDeliveryForce(body, adminStaff);
+            } catch (SyncException e) {
+                ClaimRequests.noteClaimError(body.optString("transaction_uuid", ""), e);
+                throw e;
+            }
+        }
         try {
             return postRegionGated("/api/delivery/claim", body);
         } catch (SyncException e) {
