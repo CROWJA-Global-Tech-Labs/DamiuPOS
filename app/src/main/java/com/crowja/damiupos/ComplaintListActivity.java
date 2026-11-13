@@ -281,10 +281,13 @@ public class ComplaintListActivity extends AppCompatActivity {
         Map<String, List<Transaction>> tmp = new LinkedHashMap<>();
         loadProducts();
         List<Transaction> source = remoteMode ? remoteAll : localSource();
+        final String todayKey = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
         for (Transaction t : source) {
             if (!query.isEmpty() && !matches(t)) continue;
             String local = Ts.local(activityAt(t));
             String day = local.length() >= 10 ? local.substring(0, 10) : "—";
+            // Belum ditandai selesai → otomatis pindah ke hari ini (terus ikut ke hari berikutnya sampai ditangani).
+            if (!remoteMode && isActive(t) && day.compareTo(todayKey) < 0) day = todayKey;
             List<Transaction> l = tmp.get(day);
             if (l == null) tmp.put(day, l = new ArrayList<>());
             l.add(t);
@@ -728,10 +731,16 @@ public class ComplaintListActivity extends AppCompatActivity {
             return c;
         }
         String time = Ts.hm(activityAt(t));
+        String actLocal = Ts.local(activityAt(t));
+        String carried = "";
+        if (!remoteMode && isActive(t) && actLocal.length() >= 10
+                && actLocal.substring(0, 10).compareTo(new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date())) < 0) {
+            carried = " · pindahan " + com.crowja.damiupos.util.DeliveryNavLogic.dayMonth(actLocal);
+        }
         TextView meta = new TextView(this);
         meta.setText("Rp " + nf.format(Math.round(t.getTotalHarga()))
                 + (t.getReceiptNo() != null && !t.getReceiptNo().isEmpty() ? " · 🧾 " + t.getReceiptNo() : "")
-                + (time.isEmpty() ? "" : "\n🕒 " + (isComplaintOrder(t) ? "Komplain terakhir" : "Sejak") + " jam " + time));
+                + (time.isEmpty() ? "" : "\n🕒 " + (isComplaintOrder(t) ? "Komplain terakhir" : "Sejak") + " jam " + time + carried));
         meta.setTextColor(C_MUTED);
         meta.setTextSize(13f);
         meta.setPadding(0, dp(4), 0, dp(4));
