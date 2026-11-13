@@ -15859,8 +15859,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       for (JSONObject o : this.otherDevicesAdapter.data) {
          String uuid = o.optString("uuid", "");
          if (uuid.isEmpty() || !this.claimSelectedOther.contains(uuid)) continue;
-         // 🚚 Sedang diantar (dipilih untuk broadcast, atau keburu dijalankan kurirnya) tak ikut diklaim.
-         if (isBeingDelivered(o)) {
+         // 🚚 Sedang diantar (dipilih untuk broadcast, atau keburu dijalankan kurirnya) tak ikut diklaim — kecuali Admin.
+         if (isBeingDelivered(o) && !this.isAdminUser()) {
             delivering++;
             continue;
          }
@@ -15875,7 +15875,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             .setTitle("Ambil alih " + picked.size() + " order?")
             .setMessage("Semua order ini pindah ke Antrian Saya. Kurir yang memegangnya sekarang "
                   + "akan kehilangan order tersebut dari antriannya."
-                  + (delivering > 0 ? "\n\n🚚 " + delivering + " order terpilih sedang diantar — tidak ikut diambil alih." : ""))
+                  + (delivering > 0 ? "\n\n🚚 " + delivering + " order terpilih sedang diantar — tidak ikut diambil alih." : "")
+                  + (this.isAdminUser() ? "\n\n⛔ Order yang sedang diantar tetap diambil (Admin); kurir lamanya diberi notifikasi JANGAN DIANTAR." : ""))
             .setPositiveButton("Ambil Alih", (d, w) -> this.runBulkClaim(picked, false))
             .setNegativeButton("Batal", (DialogInterface.OnClickListener)null)
             .show();
