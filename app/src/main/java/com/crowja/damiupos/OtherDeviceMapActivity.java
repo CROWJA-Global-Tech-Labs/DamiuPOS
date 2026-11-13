@@ -43,6 +43,75 @@ public class OtherDeviceMapActivity extends AppCompatActivity {
     private boolean pageReady;
     private boolean loading;
     private String pendingJson;
+    private boolean selectMode = false;
+    private java.util.List<String> selectedUuids = new java.util.ArrayList<>();
+
+    /** Jembatan JS: daftar uuid terpilih dari peta (dipanggil saat pin diketuk di mode-pilih). */
+    private class SelBridge {
+        @android.webkit.JavascriptInterface
+        public void sel(String csv) {
+            final java.util.List<String> l = new java.util.ArrayList<>();
+            if (csv != null) for (String u : csv.split(",")) if (!u.trim().isEmpty()) l.add(u.trim());
+            runOnUiThread(() -> {
+                selectedUuids = l;
+                invalidateOptionsMenu();
+                androidx.appcompat.app.ActionBar ab = getSupportActionBar();
+                if (ab != null) ab.setSubtitle(selectMode ? l.size() + " dipilih" : null);
+            });
+        }
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(android.view.Menu menu) {
+        menu.add(0, 901, 0, "☑ Pilih").setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS);
+        menu.add(0, 902, 1, "Semua").setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_IF_ROOM);
+        menu.add(0, 903, 2, "Aksi").setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_ALWAYS);
+        return true;
+    }
+
+    @Override
+    public boolean onPrepareOptionsMenu(android.view.Menu menu) {
+        android.view.MenuItem pick = menu.findItem(901);
+        if (pick != null) pick.setTitle(selectMode ? "✖ Batal" : "☑ Pilih");
+        android.view.MenuItem all = menu.findItem(902);
+        if (all != null) all.setVisible(selectMode);
+        android.view.MenuItem act = menu.findItem(903);
+        if (act != null) {
+            act.setVisible(selectMode);
+            act.setTitle("Aksi (" + selectedUuids.size() + ")");
+        }
+        return super.onPrepareOptionsMenu(menu);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(android.view.MenuItem item) {
+        int id = item.getItemId();
+        if (id == 901) {
+            selectMode = !selectMode;
+            selectedUuids = new java.util.ArrayList<>();
+            if (pageReady) web.evaluateJavascript("window.setSel(" + selectMode + ");", null);
+            invalidateOptionsMenu();
+            androidx.appcompat.app.ActionBar ab = getSupportActionBar();
+            if (ab != null) ab.setSubtitle(selectMode ? "Ketuk pin untuk memilih" : null);
+            return true;
+        }
+        if (id == 902) {
+            if (pageReady) web.evaluateJavascript("window.selAll();", null);
+            return true;
+        }
+        if (id == 903) {
+            if (selectedUuids.isEmpty()) {
+                android.widget.Toast.makeText(this, "Belum ada order yang dipilih.", android.widget.Toast.LENGTH_SHORT).show();
+                return true;
+            }
+            startActivity(new android.content.Intent(this, DeliveryQueueActivity.class)
+                    .putStringArrayListExtra(DeliveryQueueActivity.EXTRA_OTHER_BULK, new java.util.ArrayList<>(selectedUuids))
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+            finish();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable poll = new Runnable() {
         @Override public void run() {
@@ -76,6 +145,7 @@ public class OtherDeviceMapActivity extends AppCompatActivity {
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         s.setUserAgentString(MapTiles.userAgent());
+        web.addJavascriptInterface(new SelBridge(), "Android");
         web.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
@@ -129,6 +199,7 @@ public class OtherDeviceMapActivity extends AppCompatActivity {
                     JSONObject q = sorted.get(i);
                     JSONObject o = new JSONObject();
                     o.put("n", i + 1);
+                    o.put("uuid", q.optString("uuid", ""));
                     o.put("name", q.optString("name", "Pelanggan"));
                     o.put("lat", q.isNull("latitude") ? JSONObject.NULL : q.optDouble("latitude"));
                     o.put("lng", q.isNull("longitude") ? JSONObject.NULL : q.optDouble("longitude"));
@@ -173,6 +244,7 @@ public class OtherDeviceMapActivity extends AppCompatActivity {
                 + "  .pin{width:30px;height:30px;border-radius:50%;background:#1565c0;color:#fff;font-weight:bold;font-size:14px;"
                 + "display:flex;align-items:center;justify-content:center;border:3px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.5);}\n"
                 + "  .pin.prio{background:#e65100;}\n"
+                + "  .pin.sel{background:#2e7d32;outline:4px solid #a5d6a7;}\n"
                 + "  .pin.pickup{background:#6a1b9a;}\n"
                 + "  .pin.target{background:#c62828;width:36px;height:36px;font-size:16px;animation:pulse 1.2s ease-out infinite;}\n"
                 + "  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(198,40,40,.7);}100%{box-shadow:0 0 0 18px rgba(198,40,40,0);}}\n"
@@ -189,21 +261,28 @@ public class OtherDeviceMapActivity extends AppCompatActivity {
                 + "var map=L.map('map',{zoomControl:true}).setView([-7.55,110.83],13);\n"
                 + "L.tileLayer('" + MapTiles.LEAFLET_URL + "',{subdomains:'" + MapTiles.SUBDOMAINS + "',maxZoom:19,attribution:'"
                 + MapTiles.ATTRIBUTION + "'}).addTo(map);\n"
-                + "var pins=L.layerGroup().addTo(map), veh=null, line=null, fitted=false;\n"
+                + "var pins=L.layerGroup().addTo(map), veh=null, line=null, fitted=false, selMode=false, sel={}, last=null;\n"
+                + "function notify(){var k=[];for(var u in sel){if(sel[u])k.push(u);} if(window.Android)Android.sel(k.join(','));}\n"
+                + "function icn(o,target){var cls='pin'+(o.prio?' prio':'')+(o.pickup?' pickup':'')+(target&&o.n===target.n?' target':'')+(sel[o.uuid]?' sel':'');"
+                + "var el=document.createElement('div');el.className=cls;el.textContent=o.n;return L.divIcon({className:'',html:el,iconSize:[36,36],iconAnchor:[18,18]});}\n"
+                + "window.setSel=function(on){selMode=on;sel={};notify();if(last)window.update(last);};\n"
+                + "window.selAll=function(){if(!last)return;var os=(last.orders||[]).filter(function(o){return o.uuid&&o.lat!=null&&o.lng!=null&&!(o.lat==0&&o.lng==0);});"
+                + "var allOn=os.length>0&&os.every(function(o){return sel[o.uuid];});sel={};if(!allOn){os.forEach(function(o){sel[o.uuid]=true;});}notify();window.update(last);};\n"
                 + "function km(a,b,c,d){var R=6371,p=Math.PI/180,x=(c-a)*p,y=(d-b)*p;"
                 + "var h=Math.sin(x/2)*Math.sin(x/2)+Math.cos(a*p)*Math.cos(c*p)*Math.sin(y/2)*Math.sin(y/2);return 2*R*Math.asin(Math.sqrt(h));}\n"
                 + "function esc(s){return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}\n"
                 + "window.update=function(d){\n"
-                + "  pins.clearLayers();\n"
+                + "  last=d; pins.clearLayers();\n"
                 + "  var orders=d.orders||[], withGeo=orders.filter(function(o){return o.lat!=null&&o.lng!=null&&!(o.lat==0&&o.lng==0);});\n"
                 + "  var target=null; for(var i=0;i<withGeo.length;i++){ if(withGeo[i].head){target=withGeo[i];break;} }\n"
                 + "  if(!target && withGeo.length) target=withGeo[0];\n"
                 + "  var pts=[];\n"
                 + "  withGeo.forEach(function(o){\n"
-                + "    var cls='pin'+(o.prio?' prio':'')+(o.pickup?' pickup':'')+(target&&o.n===target.n?' target':'');\n"
-                + "    var ic=L.divIcon({className:'',html:\"<div class='\"+cls+\"'>\"+o.n+\"</div>\",iconSize:[36,36],iconAnchor:[18,18]});\n"
-                + "    L.marker([o.lat,o.lng],{icon:ic,zIndexOffset:(target&&o.n===target.n)?1000:0}).addTo(pins)\n"
+                + "    var ic=icn(o,target);\n"
+                + "    var mkr=L.marker([o.lat,o.lng],{icon:ic,zIndexOffset:(target&&o.n===target.n)?1000:0}).addTo(pins);\n"
+                + "    mkr\n"
                 + "     .bindPopup('<b>#'+o.n+' '+esc(o.name)+'</b><br>'+o.galon+' galon'+(o.pickup?' · ↩ ambil':'')+(o.run?' · 🚚 sedang diantar':'')+(o.head?'<br>🧭 sedang dituju':''));\n"
+                + "    mkr.on('click',function(){ if(!selMode||!o.uuid)return; mkr.closePopup(); sel[o.uuid]=!sel[o.uuid]; mkr.setIcon(icn(o,target)); notify(); });\n"
                 + "    pts.push([o.lat,o.lng]);\n"
                 + "  });\n"
                 + "  var info='';\n"
