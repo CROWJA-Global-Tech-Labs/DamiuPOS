@@ -217,4 +217,40 @@ public class FillPlanTest {
         assertTrue(FillText.isIdentityRejection("{\"code\":\"staff_inactive\"}"));
         assertFalse(FillText.isIdentityRejection("plain 404"));
     }
-}
+
+    private static FillPlan planWithStorages(int toFill, int ready) {
+        FillPlan p = new FillPlan();
+        p.totals.toFill = toFill;
+        p.totals.ready = ready;
+        p.storages.add(new FillPlan.Storage("Kios", 100));
+        p.storages.add(new FillPlan.Storage("Panther", 80));
+        p.storages.add(new FillPlan.Storage("Viar Box", 35));
+        return p;
+    }
+
+    @Test
+    public void placementLineSplitsToFillAcrossStoragesInOrder() {
+        assertEquals("📍 Taruh: Kios 100 · Panther 50", FillText.placementLine(planWithStorages(150, 0)));
+    }
+
+    @Test
+    public void placementLineTreatsReadyStockAsOccupyingTheFirstStorages() {
+        assertEquals("📍 Taruh: Panther 50 · Viar Box 10", FillText.placementLine(planWithStorages(60, 130)));
+    }
+
+    @Test
+    public void placementLineReportsOverflowAndIsNullWhenNothingToFill() {
+        assertEquals("📍 Taruh: Kios 100 · Panther 80 · Viar Box 35 (sisa 35 tak muat)",
+                FillText.placementLine(planWithStorages(250, 0)));
+        assertNull(FillText.placementLine(planWithStorages(0, 10)));
+        assertNull(FillText.placementLine(new FillPlan()));
+    }
+
+    @Test
+    public void parseReadsPlacementStorages() {
+        FillPlan p = FillPlan.parse("{\"placement\":{\"storages\":[{\"name\":\"Kios\",\"capacity\":100,"
+                + "\"occupied\":0,\"free\":100,\"put\":7}],\"unplaced\":0,\"text\":\"Taruh: Kios 7\"}}");
+        assertEquals(1, p.storages.size());
+        assertEquals("Kios", p.storages.get(0).name);
+        assertEquals(100, p.storages.get(0).capacity);
+    }}
