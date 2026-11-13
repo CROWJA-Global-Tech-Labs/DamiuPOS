@@ -2774,6 +2774,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       this.openPendingFocus();
       this.openPendingComplete();
       this.openPendingFail();
+      this.refreshForceStaff();
       this.readOtherAction(this.getIntent());
       this.openPendingOtherAction();
       this.consumeFailResult();
@@ -4470,6 +4471,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    /** Admin (multi-user) \u2014 boleh merebut order yang sedang diantar kurir lain. */
+   private void refreshForceStaff() {
+      SyncApi.forceStaffUuid = this.isAdminUser() ? com.crowja.damiupos.sync.LocationReporter.currentStaffUuid(this) : null;
+   }
+
    private boolean isAdminUser() {
       try {
          SettingsDao sd = new SettingsDao(DatabaseHelper.getInstance(this));
@@ -15974,8 +15979,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       for (JSONObject o : this.otherDevicesAdapter.data) {
          String uuid = o.optString("uuid", "");
          if (uuid.isEmpty() || !this.claimSelectedOther.contains(uuid)) continue;
-         // 🚚 Sedang diantar: hanya ikut 📢 Broadcast, tidak ikut Lepas/Alihkan/Void (server menolaknya juga).
-         if (isBeingDelivered(o)) {
+         // 🚚 Sedang diantar: hanya ikut 📢 Broadcast, tidak ikut Lepas/Alihkan/Void (server menolaknya juga) — kecuali Admin (Alihkan paksa).
+         if (isBeingDelivered(o) && !this.isAdminUser()) {
             delivering++;
             continue;
          }

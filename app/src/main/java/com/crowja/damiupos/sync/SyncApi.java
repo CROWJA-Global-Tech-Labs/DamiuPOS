@@ -319,7 +319,28 @@ public class SyncApi {
      * bila order sudah tak lagi di antrian perangkat ini (mis. sudah diambil alih kurir lain
      * duluan). Balas {@code {"ok":true,"message":"…"}} atau 422/409. Branch-scoped by the token.
      */
+    /** Diisi layar antrean saat pengguna Admin: Alihkan boleh memindahkan order yang sedang diantar (server memverifikasi Admin). */
+    public static volatile String forceStaffUuid = null;
+
     public JSONObject routeDelivery(JSONObject body) throws Exception {
+        String staff = forceStaffUuid;
+        if (staff != null && !staff.isEmpty()) {
+            body.put("force_running", true);
+            body.put("region_confirm_supported", true);
+            try {
+                return post(cfg.getBaseUrl() + "/api/delivery/route", body, cfg.getToken(), staff);
+            } catch (SyncException e) {
+                if (e.code != 409) throw e;
+                JSONObject j;
+                try { j = new JSONObject(e.body); } catch (Exception ignored) { throw e; }
+                if (!j.optBoolean("needs_region_confirm")) throw e;
+                if (!RegionConfirm.ask(j.optString("message", ""))) {
+                    throw new SyncException(499, "{\"message\":\"Dibatalkan — order tidak dipindahkan.\"}");
+                }
+                body.put("confirm_out_of_region", true);
+                return post(cfg.getBaseUrl() + "/api/delivery/route", body, cfg.getToken(), staff);
+            }
+        }
         return postRegionGated("/api/delivery/route", body);
     }
 
