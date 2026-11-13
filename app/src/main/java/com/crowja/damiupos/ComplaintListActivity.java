@@ -260,6 +260,9 @@ public class ComplaintListActivity extends AppCompatActivity {
      */
     /** uuid order → nama perangkat PEMEGANG (dari server, antrean semua perangkat); diisi latar sekali per buka layar. */
     private final java.util.Map<String, String> holderByTrx = new java.util.HashMap<>();
+    /** uuid order → uuid perangkat pemegang; uuid perangkat → nama staf yang SEDANG login di sana. */
+    private final java.util.Map<String, String> holderDevByTrx = new java.util.HashMap<>();
+    private final java.util.Map<String, String> operatorByDevice = new java.util.HashMap<>();
     private boolean holdersLoading = false;
 
     private void fetchHolders() {
@@ -269,21 +272,38 @@ public class ComplaintListActivity extends AppCompatActivity {
         holdersLoading = true;
         new Thread(() -> {
             java.util.Map<String, String> got = new java.util.HashMap<>();
+            final java.util.Map<String, String> devOf = new java.util.HashMap<>();
+            final java.util.Map<String, String> ops = new java.util.HashMap<>();
             try {
-                org.json.JSONArray q = new com.crowja.damiupos.sync.SyncApi(cfg).devicesQueueAll().optJSONArray("queue");
+                org.json.JSONObject res = new com.crowja.damiupos.sync.SyncApi(cfg).devicesQueueAll();
+                org.json.JSONObject opj = res.optJSONObject("operators");
+                if (opj != null) {
+                    for (java.util.Iterator<String> it = opj.keys(); it.hasNext(); ) {
+                        String k0 = it.next();
+                        String nm = opj.optString(k0, "");
+                        if (!nm.isEmpty()) ops.put(k0, nm);
+                    }
+                }
+                org.json.JSONArray q = res.optJSONArray("queue");
                 for (int k = 0; q != null && k < q.length(); k++) {
                     org.json.JSONObject o = q.optJSONObject(k);
                     if (o == null) continue;
                     String u = o.optString("uuid", ""), lbl = o.optString("device_group_label", "");
                     if (!u.isEmpty() && !lbl.isEmpty() && !"null".equals(lbl)) got.put(u, lbl);
+                    String hd = o.optString("routed_uuid", "");
+                    if (hd.isEmpty() || "null".equals(hd)) hd = o.optString("device_group_uuid", "");
+                    if (!u.isEmpty() && !hd.isEmpty() && !"null".equals(hd)) devOf.put(u, hd);
                 }
             } catch (Throwable ignored) {
             }
-            final boolean any = !got.isEmpty();
+            final boolean any = !got.isEmpty() || !ops.isEmpty();
             runOnUiThread(() -> {
                 holdersLoading = false;
                 if (isFinishing() || isDestroyed() || !any) return;
                 holderByTrx.putAll(got);
+                holderDevByTrx.putAll(devOf);
+                operatorByDevice.clear();
+                operatorByDevice.putAll(ops);
                 render();
             });
         }).start();
@@ -307,12 +327,22 @@ public class ComplaintListActivity extends AppCompatActivity {
             who = rm[2] != null ? rm[2].trim() : "";
         } else {
             String u = uuidOf(t);
-            if (u != null && holderByTrx.containsKey(u)) who = holderByTrx.get(u);
-            else {
-                String hold = t.getDeliveryDeviceUuid();
-                String mine = new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this))).getDeviceUuid();
-                if (hold != null && !hold.isEmpty() && !hold.equals(mine)) who = "perangkat lain (memuat…)";
-                else if (queueIds.contains(t.getId()) || ritIds.contains(t.getId())) who = "HP ini";
+            String hold = t.getDeliveryDeviceUuid();
+            String mine = new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this))).getDeviceUuid();
+            boolean onThisPhone = queueIds.contains(t.getId()) || ritIds.contains(t.getId())
+                    || (hold != null && !hold.isEmpty() && hold.equals(mine));
+            if (onThisPhone) {
+                // Antrean di HP ini → staf yang login DI HP INI.
+                String cu = new SettingsDao(DatabaseHelper.getInstance(this)).getCurrentUserName();
+                who = (cu != null && !cu.trim().isEmpty() ? cu.trim() : "staf HP ini") + " (HP ini)";
+            } else {
+                // Antrean di perangkat lain → staf yang login di perangkat itu.
+                String devName = u != null ? holderByTrx.get(u) : null;
+                String devUuid = u != null ? holderDevByTrx.get(u) : null;
+                String op = devUuid != null ? operatorByDevice.get(devUuid) : null;
+                if (op != null) who = op + (devName != null ? " (" + devName + ")" : "");
+                else if (devName != null) who = "belum ada staf login di " + devName;
+                else if (hold != null && !hold.isEmpty()) who = "perangkat lain (memuat…)";
             }
         }
         boolean running = false;
