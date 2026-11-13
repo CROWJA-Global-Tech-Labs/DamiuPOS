@@ -1042,6 +1042,10 @@ public class NavigationPipActivity extends AppCompatActivity {
         if (btnLewatiTitik != null) btnLewatiTitik.setOnClickListener(v -> skipActiveStop());
         View btnGagalTitik = findViewById(R.id.btnGagalTitik);
         if (btnGagalTitik != null) btnGagalTitik.setOnClickListener(v -> failActiveStop());
+        View btnModeKeliling = findViewById(R.id.btnModeKelilingTitik);
+        if (btnModeKeliling != null) {
+            btnModeKeliling.setOnClickListener(v -> startActivity(new Intent(this, IderModeActivity.class)));
+        }
         View btnUpdateFoto = findViewById(R.id.btnUpdateFotoTitik);
         if (btnUpdateFoto != null) btnUpdateFoto.setOnClickListener(v -> updateActiveStopPhoto());
         findViewById(R.id.btnKembaliAntrian).setOnClickListener(v -> openQueueAndClose());

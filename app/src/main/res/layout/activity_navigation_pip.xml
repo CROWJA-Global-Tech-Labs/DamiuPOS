@@ -409,6 +409,16 @@
                 android:textSize="14sp"
                 android:visibility="gone"
                 app:strokeColor="#B91C1C" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnModeKelilingTitik"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="6dp"
+                android:text="🛵 Mode Keliling"
+                android:textAllCaps="false"
+                android:textSize="14sp" />
         </LinearLayout>
     </LinearLayout>
 
