@@ -4446,8 +4446,22 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             Toast.LENGTH_SHORT).show();
    }
 
+   /** Admin (multi-user) \u2014 boleh merebut order yang sedang diantar kurir lain. */
+   private boolean isAdminUser() {
+      try {
+         SettingsDao sd = new SettingsDao(DatabaseHelper.getInstance(this));
+         long uid = sd.getCurrentUserId();
+         if (!sd.isMultiUserEnabled() || uid <= 0) return false;
+         com.crowja.damiupos.model.User u = new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid);
+         return u != null && u.isAdmin();
+      } catch (Throwable t) {
+         return false;
+      }
+   }
+
    private void confirmTakeOverOtherDevices(JSONObject q) {
-      if (isBeingDelivered(q)) {
+      final boolean force = isBeingDelivered(q);
+      if (force && !this.isAdminUser()) {
          this.toastBeingDelivered(q);
          return;
       }
@@ -4461,7 +4475,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       String fromDevice = q.optString("device_group_label", "");
       StringBuilder msg = new StringBuilder();
       msg.append("Order \"").append(name).append("\" akan DIPINDAHKAN dari perangkat ").append(!fromDevice.isEmpty() && !fromDevice.equals("null") ? "\"" + fromDevice + "\"" : "lain").append(" ke perangkat Anda.\n\n");
-      msg.append("Perangkat asal akan diberi tahu bahwa order ini dipindahkan.\n\nKetuk \"Ambil Alih\" dua kali untuk memastikan.");
+      if (force) {
+         msg.append("⛔ Order ini SEDANG DIANTAR. Sebagai Admin Anda tetap bisa mengambilnya \u2014 perangkat asal akan diberi notifikasi \"JANGAN DIANTAR\" dan order keluar dari rit-nya.\n\nKetuk \"Ambil Alih\" dua kali untuk memastikan.");
+      } else {
+         msg.append("Perangkat asal akan diberi tahu bahwa order ini dipindahkan.\n\nKetuk \"Ambil Alih\" dua kali untuk memastikan.");
+      }
       AlertDialog dialog = (new AlertDialog.Builder(this)).setIcon(17301543).setTitle("⚠️ Ambil Alih Pengiriman?").setCancelable(false).setMessage(msg.toString()).setPositiveButton("Ambil Alih", (DialogInterface.OnClickListener)null).setNegativeButton("Batal", (DialogInterface.OnClickListener)null).create();
       dialog.setOnShowListener((d) -> {
          Button pos = dialog.getButton(-1);
@@ -4478,14 +4496,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                   neg.setEnabled(false);
                }
 
-               this.takeOverOtherDevices(dialog, pos, neg, uuid, name, strJson(q, "routed_uuid"));
+               this.takeOverOtherDevices(dialog, pos, neg, uuid, name, strJson(q, "routed_uuid"), force);
             }
          });
       });
       dialog.show();
    }
 
-   private void takeOverOtherDevices(AlertDialog dialog, Button pos, Button neg, String trxUuid, String custName, String routedUuid) {
+   private void takeOverOtherDevices(AlertDialog dialog, Button pos, Button neg, String trxUuid, String custName, String routedUuid, boolean force) {
       SyncSettings cfg = this.syncCfg();
       if (!cfg.isEnrolled()) {
          Toast.makeText(this, "Perangkat belum terhubung ke server.", 1).show();
@@ -4500,7 +4518,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                JSONObject body = new JSONObject();
                body.put("transaction_uuid", trxUuid);
                body.put("expected_device_uuid", routedUuid != null ? routedUuid : "");
-               JSONObject r = (new SyncApi(cfg)).claimDelivery(body);
+               JSONObject r = force
+                     ? (new SyncApi(cfg)).claimDeliveryForce(body, com.crowja.damiupos.sync.LocationReporter.currentStaffUuid(this))
+                     : (new SyncApi(cfg)).claimDelivery(body);
                okMsg = r.optString("message", "Order diambil alih ke perangkat ini.");
             } catch (SyncApi.SyncException var12) {
                SyncApi.SyncException se = var12;
@@ -4617,10 +4637,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       boolean awaiting = ClaimRequests.blocks(q.optString("uuid", ""));
       if (claimLine != null) text = claimLine + "\n\n" + text;
       AlertDialog.Builder b = (new AlertDialog.Builder(this)).setTitle("Detail Order \u2014 " + name)
-            .setMessage(delivering ? "\ud83d\ude9a SEDANG DIANTAR \u2014 tidak bisa diambil alih.\n\n" + text : text)
+            .setMessage(delivering ? (this.isAdminUser() ? "\ud83d\ude9a SEDANG DIANTAR \u2014 Admin tetap bisa mengambil alih.\n\n" : "\ud83d\ude9a SEDANG DIANTAR \u2014 tidak bisa diambil alih.\n\n") + text : text)
             .setNeutralButton("\ud83d\udd0d Preview", (d, w) -> this.showOtherDevicePreview(q))
             .setNegativeButton("Kembali", (DialogInterface.OnClickListener)null);
-      if (!delivering && !awaiting) {
+      if ((!delivering || this.isAdminUser()) && !awaiting) {
          b.setPositiveButton("\ud83d\udce5 Ambil Alih", (d, w) -> this.confirmTakeOverOtherDevices(q));
       }
       b.show();
@@ -9036,8 +9056,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          }
          DeliveryQueueActivity.bindLocationLine(h.tvAdminArea, row.adminAreaText);
          h.btnMore.setVisibility(View.GONE);
-         boolean delivering = row.json != null && DeliveryQueueActivity.isBeingDelivered(row.json);
-         h.btnTakeOver.setText(delivering ? "🚚" : "📥");
+         boolean deliveringRaw = row.json != null && DeliveryQueueActivity.isBeingDelivered(row.json);
+         boolean delivering = deliveringRaw && !DeliveryQueueActivity.this.isAdminUser();   // Admin tetap boleh mengambil
+         h.btnTakeOver.setText(delivering ? "🚚" : (deliveringRaw ? "⛔📥" : "📥"));
          h.btnTakeOver.setAlpha(delivering ? 0.5F : 1.0F);
          final String rowUuid = row.json != null ? row.json.optString("uuid", "") : null;
          final boolean awaiting = DeliveryQueueActivity.bindClaimRequest(h.tvClaimRequest, h.btnTakeOver, rowUuid, delivering);
