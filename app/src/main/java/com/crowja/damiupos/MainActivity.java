@@ -1211,7 +1211,7 @@ public class MainActivity extends AppCompatActivity {
         TextView tvArmada = bar.findViewById(R.id.tvToolbarArmada);
         tvArmada.setVisibility(showArmada ? View.VISIBLE : View.GONE);
         String armadaName = cfg.getArmadaName();
-        tvArmada.setText(armadaName.isEmpty() ? "Pilih armada" : armadaName + " · " + cfg.getMaxLoad() + " galon"
+        tvArmada.setText(cfg.isArmadaNonDelivery() ? "Non Delivery" : armadaName.isEmpty() ? "Pilih armada" : armadaName + " · " + cfg.getMaxLoad() + " galon"
                 + (cfg.getArmadaPartner().isEmpty() ? "" : " · 🤝 " + cfg.getArmadaPartner()));
         View armadaInfo = bar.findViewById(R.id.toolbarArmadaInfo);
         armadaInfo.setOnClickListener(showArmada ? v -> ArmadaPicker.change(this) : null);
@@ -1223,7 +1223,7 @@ public class MainActivity extends AppCompatActivity {
         sw.setThumbTintList(new ColorStateList(states, new int[]{0xFFFFFFFF, 0xFFE0E0E0}));
         sw.setTrackTintList(new ColorStateList(states, new int[]{0xFF66BB6A, 0x99FFFFFF}));
         sw.setOnCheckedChangeListener(null);
-        sw.setChecked(cfg.isDeliveryDevice());
+        sw.setChecked(cfg.isDeliveryDevice() && !cfg.isArmadaNonDelivery());   // Non Delivery = tak ikut mengantar → mati
         sw.setEnabled(!deliverySwitchBusy);
         sw.setOnCheckedChangeListener((b, on) -> {
             if (!on) {
