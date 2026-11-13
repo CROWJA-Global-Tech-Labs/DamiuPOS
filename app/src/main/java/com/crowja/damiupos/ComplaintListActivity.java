@@ -271,11 +271,9 @@ public class ComplaintListActivity extends AppCompatActivity {
         String head = "👤 Wajib ditangani: " + (who.isEmpty() ? "kurir pemegang pesanan ini" : who);
         if (rm != null) return head;
         int k = ritIds.indexOf(t.getId());
-        if (k >= 0) return head + "
-🚚 Antrean rit ke-" + (k + 1) + " dari " + ritIds.size();
+        if (k >= 0) return head + "\n🚚 Antrean rit ke-" + (k + 1) + " dari " + ritIds.size();
         int q = queueIds.indexOf(t.getId());
-        if (q >= 0) return head + "
-📋 Antrean ke-" + (q + 1) + " dari " + queueIds.size() + " (belum masuk rit berjalan)";
+        if (q >= 0) return head + "\n📋 Antrean ke-" + (q + 1) + " dari " + queueIds.size() + " (belum masuk rit berjalan)";
         return head;
     }
 
