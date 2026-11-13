@@ -3967,7 +3967,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    private int pendingOtherAction;
    private String pendingOtherRow;
 
+   /** Pilihan massal dari layar "Antrian: <perangkat>" → dibuka di tab Perangkat Lain dengan mode-pilih terisi. */
+   static final String EXTRA_OTHER_BULK = "other_bulk_uuids";
+   private java.util.ArrayList<String> pendingOtherBulk;
+
    private void readOtherAction(@Nullable Intent intent) {
+      if (intent != null && intent.hasExtra(EXTRA_OTHER_BULK)) {
+         java.util.ArrayList<String> u = intent.getStringArrayListExtra(EXTRA_OTHER_BULK);
+         if (u != null && !u.isEmpty()) this.pendingOtherBulk = u;
+         intent.removeExtra(EXTRA_OTHER_BULK);
+      }
       if (intent == null || intent.getIntExtra(EXTRA_OTHER_ACTION, 0) == 0) return;
       this.pendingOtherAction = intent.getIntExtra(EXTRA_OTHER_ACTION, 0);
       this.pendingOtherRow = intent.getStringExtra(EXTRA_OTHER_ROW);
@@ -3975,6 +3984,20 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private void openPendingOtherAction() {
+      if (this.pendingOtherBulk != null) {
+         final java.util.ArrayList<String> uuids = this.pendingOtherBulk;
+         this.pendingOtherBulk = null;
+         if (this.tabs != null && this.tabs.getTabAt(1) != null) this.tabs.getTabAt(1).select();
+         this.loadOtherDevices((ok) -> {
+            if (this.isFinishing() || this.isDestroyed()) return;
+            this.enterClaimSelect(false);
+            this.claimSelectedOther.addAll(uuids);
+            if (this.otherDevicesAdapter != null) this.otherDevicesAdapter.notifyDataSetChanged();
+            this.updateClaimSelectUi(false);
+            Toast.makeText(this, uuids.size() + " order terpilih — pakai ⋮ Aksi / Ambil Alih di bar atas daftar.", Toast.LENGTH_LONG).show();
+         });
+         return;
+      }
       int action = this.pendingOtherAction;
       if (action == 0) return;
       this.pendingOtherAction = 0;
