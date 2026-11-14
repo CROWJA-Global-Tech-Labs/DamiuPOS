@@ -10128,31 +10128,6 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return DeliveryNavLogic.dayMonth(Ts.local((new CustomerDebtDao(db)).latestDebtDate(t.getCustomerId(), uuid)));
    }
 
-   /** Struk penutup positif: pesanan + hutang lunas, tanpa foto/bukti. Bridge dulu, gagal → WhatsApp HP (teks saja). */
-   private void sendLunasNoticeWa(Transaction t, double[] ln) {
-      String phone = t.getCustomerPhone();
-      if (!WaShare.hasUsablePhone(phone)) {
-         Toast.makeText(this, "Pelanggan belum punya nomor WA — struk lunas tak terkirim.", Toast.LENGTH_LONG).show();
-         return;
-      }
-      StringBuilder sb = new StringBuilder();
-      String nm = safe(t.getCustomerName());
-      sb.append("Terima kasih").append(nm.isEmpty() ? "" : ", " + nm).append(" 🙏\n\n");
-      sb.append("Pembayaran ").append(this.rp(ln[2])).append(" sudah kami terima:\n");
-      sb.append("• Pesanan ini: ").append(this.rp(ln[0])).append("\n");
-      sb.append("• Pelunasan hutang sebelumnya: ").append(this.rp(ln[1])).append("\n\n");
-      sb.append("✅ LUNAS — tidak ada tagihan tersisa.");
-      String rno = t.getReceiptNo();
-      if (rno != null && !rno.isEmpty()) sb.append("\n🧾 ").append(rno);
-      sb.append("\n\nTerima kasih sudah berlangganan. Salam sehat 🙏");
-      final String text = sb.toString();
-      com.crowja.damiupos.wa.WaBridgeSend.sendOrFallback(this,
-            com.crowja.damiupos.wa.WaBridgeSend.Msg.to(phone, text).type("struk")
-                  .customerId(t.getCustomerId()).transactionId(t.getId()),
-            null,
-            () -> com.crowja.damiupos.wa.WaShare.openTextOnly(this, phone, text));
-   }
-
    private String rp(double v) {
       return "Rp " + NumberFormat.getNumberInstance(new Locale("in", "ID")).format(Math.round(v));
    }
@@ -11232,10 +11207,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       if (notifyUnpaid) {
          this.sendCashBonNoticeWa(t, proofPath);
       }
-      double[] lunas = this.lunasNotice.remove(t.getId());
-      if (lunas != null && !notifyUnpaid) {
-         this.sendLunasNoticeWa(t, lunas);
-      }
+      this.lunasNotice.remove(t.getId());
       boolean fromPanel = t.getId() == this.wizardCompleteId;
       if (fromPanel) this.wizardCompleteId = -1L;
       forgetWizardSkip(this, t.getId());

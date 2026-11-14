@@ -66,6 +66,8 @@ public class ComplaintListActivity extends AppCompatActivity {
     private boolean isAdmin;
     private boolean remoteMode;
     private boolean remoteLoading;
+    /** Galat terakhir muat "Semua perangkat" (null = sukses); ditampilkan permanen, bukan daftar kosong. */
+    private String remoteError;
     private MaterialButton btnLocal;
     private MaterialButton btnRemote;
     private final List<Transaction> remoteAll = new ArrayList<>();
@@ -472,6 +474,10 @@ public class ComplaintListActivity extends AppCompatActivity {
         summary.setText((remoteMode ? "🌐 Semua perangkat · " : "") + totalActive + " aktif · " + (totalAll - totalActive)
                 + " selesai (semua hari)" + (query.isEmpty() ? "" : " · hasil pencarian"));
         summary.setTextColor(totalActive > 0 ? C_RED : C_GREEN);
+        if (remoteMode && remoteError != null && !remoteLoading) {
+            summary.setText("⚠️ Gagal memuat semua perangkat — " + remoteError);
+            summary.setTextColor(C_RED);
+        }
 
         if (!query.isEmpty()) {
             // Pencarian: semua hari sekaligus (tanpa pager), dikelompokkan per tanggal.
@@ -502,8 +508,13 @@ public class ComplaintListActivity extends AppCompatActivity {
             otherDays.setVisibility(View.GONE);
             TextView empty = new TextView(this);
             empty.setText(remoteLoading ? "Memuat komplain semua perangkat…"
-                    : (remoteMode ? "Belum ada komplain pesanan di cabang ini." : "Belum ada komplain pesanan di perangkat ini."));
-            empty.setTextColor(C_MUTED);
+                    : (remoteMode && remoteError != null ? "⚠️ " + remoteError + "\n\nKetuk di sini untuk coba lagi."
+                    : (remoteMode ? "Belum ada komplain pesanan di cabang ini." : "Belum ada komplain pesanan di perangkat ini.")));
+            if (remoteMode && remoteError != null && !remoteLoading) {
+                empty.setTextColor(C_RED);
+                empty.setOnClickListener(v -> loadRemote());
+            }
+            if (!(remoteMode && remoteError != null && !remoteLoading)) empty.setTextColor(C_MUTED);
             empty.setGravity(Gravity.CENTER);
             empty.setPadding(dp(24), dp(48), dp(24), dp(24));
             box.addView(empty);
@@ -622,6 +633,7 @@ public class ComplaintListActivity extends AppCompatActivity {
             runOnUiThread(() -> {
                 remoteLoading = false;
                 if (isFinishing() || isDestroyed()) return;
+                remoteError = fErr;
                 if (fErr != null) {
                     Toast.makeText(this, fErr, Toast.LENGTH_LONG).show();
                 } else {
