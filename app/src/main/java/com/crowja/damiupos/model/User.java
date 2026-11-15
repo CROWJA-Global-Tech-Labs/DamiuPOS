@@ -145,7 +145,7 @@ public class User {
 
     /** Layar "Chat WhatsApp" (inbox semua akun WA cabang lewat Bridge): Admin, Marketing, SPV.
      *  Server memeriksa aturan yang sama dari tabel staff (WaInboxController::ROLES). */
-    public boolean canUseWaChat() { return isAdmin() || isMarketing() || isSpv(); }
+    public boolean canUseWaChat() { return isAdmin() || isMarketing() || isSpv() || isStaf(); }
 
     /** @deprecated pakai {@link #canGiveFree()} — dipertahankan untuk pemanggil lama. */
     public boolean canPromote() { return canGiveFree(); }

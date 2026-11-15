@@ -680,7 +680,7 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- Notifikasi & Inbox Pesanan -->
+            <!-- Notifikasi -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -697,7 +697,7 @@
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Notifikasi &amp; Inbox Pesanan"
+                        android:text="Notifikasi"
                         android:textColor="@color/text_primary"
                         android:textSize="16sp"
                         android:textStyle="bold" />
@@ -711,7 +711,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="16dp"
-                            android:text="Nada Dering Pesanan"
+                            android:text="Nada Dering Notifikasi"
                             android:textColor="@color/text_primary"
                             android:textSize="14sp"
                             android:textStyle="bold" />
@@ -720,7 +720,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
-                            android:text="Suara akan terus berbunyi sampai pesanan diakui (tap toolbar / buka inbox)."
+                            android:text="Nada untuk pengingat &amp; alarm aplikasi."
                             android:textColor="@color/text_secondary"
                             android:textSize="12sp" />
 
@@ -745,74 +745,6 @@
                             android:textColor="@color/text_secondary"
                             android:textSize="12sp" />
 
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="16dp"
-                            android:text="Template Pesan Balasan"
-                            android:textColor="@color/text_primary"
-                            android:textSize="14sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="2dp"
-                            android:text="Teks ini akan disalin ke clipboard saat tombol &quot;Balas&quot; ditekan di inbox."
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-
-                        <com.google.android.material.textfield.TextInputLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="8dp"
-                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                            android:hint="Template balasan"
-                            app:boxCornerRadiusBottomEnd="8dp"
-                            app:boxCornerRadiusBottomStart="8dp"
-                            app:boxCornerRadiusTopEnd="8dp"
-                            app:boxCornerRadiusTopStart="8dp">
-
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/etReplyTemplate"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:inputType="textMultiLine|textCapSentences"
-                                android:minLines="2" />
-                        </com.google.android.material.textfield.TextInputLayout>
-
-
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnViewArchive"
-                            style="@style/Widget.MaterialComponents.Button.TextButton"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:text="Arsip Pesanan"
-                            android:textAllCaps="false"
-                            app:cornerRadius="12dp"
-                            app:icon="@android:drawable/ic_menu_recent_history"
-                            app:iconGravity="textStart" />
-
-                        <com.google.android.material.textfield.TextInputLayout
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="12dp"
-                            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                            android:hint="Auto-arsip pesanan setelah"
-                            app:suffixText="jam"
-                            app:helperText="Item Selesai/Tolak akan dipindah ke Arsip otomatis. 0 = matikan."
-                            app:boxCornerRadiusBottomEnd="8dp"
-                            app:boxCornerRadiusBottomStart="8dp"
-                            app:boxCornerRadiusTopEnd="8dp"
-                            app:boxCornerRadiusTopStart="8dp">
-
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/etAutoArchiveHours"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:inputType="number" />
-                        </com.google.android.material.textfield.TextInputLayout>
                     </LinearLayout>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
