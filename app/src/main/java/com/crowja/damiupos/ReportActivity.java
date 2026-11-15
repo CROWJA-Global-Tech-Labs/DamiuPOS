@@ -15,13 +15,29 @@ import com.crowja.damiupos.adapter.FrekuensiAdapter;
 import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.TransactionDao;
+import com.crowja.damiupos.db.SettingsDao;
+import com.crowja.damiupos.db.UserDao;
 import com.crowja.damiupos.model.Customer;
+import com.crowja.damiupos.model.User;
+import com.crowja.damiupos.report.SalesTrendPanel;
 import com.crowja.damiupos.view.SimpleBarChart;
 
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Laporan. Tab "📈 Tren Penjualan" (se-cabang dari server, Admin/SPV/Marketing — {@link SalesTrendPanel})
+ * + tab "📊 Perangkat ini" (grafik & pelanggan dari DB lokal, isi Laporan lama). Ubin Beranda
+ * "Tren Penjualan" membuka tab Tren langsung lewat {@link #EXTRA_TAB} = {@link #TAB_TREN}.
+ */
 public class ReportActivity extends AppCompatActivity {
+
+    public static final String EXTRA_TAB = "report_tab";
+    public static final String TAB_TREN = "tren";
+    public static final String TAB_LOCAL = "local";
+
+    private SalesTrendPanel trendPanel;
+    private boolean localLoaded;
 
     private SimpleBarChart chartBulanan, chartHarian;
     private TextView tvEmptyBulanan, tvEmptyHarian, tvEmptyTop;
@@ -54,7 +70,77 @@ public class ReportActivity extends AppCompatActivity {
         rvFrekuensi.setLayoutManager(new LinearLayoutManager(this));
         rvTopCustomer.setLayoutManager(new LinearLayoutManager(this));
 
-        loadCharts();
+        boolean trend = canViewTrend(dbHelper);
+        String want = getIntent().getStringExtra(EXTRA_TAB);
+        if (TAB_TREN.equals(want) && !trend) {
+            android.widget.Toast.makeText(this, "Tren Penjualan hanya untuk Admin, SPV, dan Marketing.",
+                    android.widget.Toast.LENGTH_LONG).show();
+        }
+        if (!trend) {
+            showLocal();
+            return;
+        }
+        // Isi Laporan lama (DB perangkat) khusus Admin, seperti sebelumnya; SPV/Marketing hanya tab Tren.
+        boolean local = isAdminOrLegacy(dbHelper);
+        View bar = findViewById(R.id.reportTabBar);
+        bar.setVisibility(local ? View.VISIBLE : View.GONE);
+        if (local) {
+            com.google.android.material.button.MaterialButtonToggleGroup tabs = findViewById(R.id.reportTabs);
+            tabs.addOnButtonCheckedListener((g, id, checked) -> {
+                if (!checked) return;
+                if (id == R.id.btnTabTren) showTrend();
+                else showLocal();
+            });
+            tabs.check(TAB_LOCAL.equals(want) ? R.id.btnTabLocal : R.id.btnTabTren);
+        } else {
+            showTrend();
+        }
+    }
+
+    private void showTrend() {
+        if (toolbarTitle() != null) toolbarTitle().setTitle("Laporan • Tren Penjualan");
+        findViewById(R.id.scrollLocal).setVisibility(View.GONE);
+        findViewById(R.id.swipeTren).setVisibility(View.VISIBLE);
+        if (trendPanel == null) {
+            trendPanel = new SalesTrendPanel(this, findViewById(R.id.swipeTren), findViewById(R.id.trendContainer));
+            trendPanel.start();
+        }
+    }
+
+    private void showLocal() {
+        if (toolbarTitle() != null) toolbarTitle().setTitle("Laporan");
+        findViewById(R.id.swipeTren).setVisibility(View.GONE);
+        findViewById(R.id.scrollLocal).setVisibility(View.VISIBLE);
+        if (!localLoaded) {
+            localLoaded = true;
+            loadCharts();
+        }
+    }
+
+    private Toolbar toolbarTitle() {
+        return findViewById(R.id.toolbar);
+    }
+
+    @androidx.annotation.Nullable
+    private User currentUser(DatabaseHelper db) {
+        try {
+            SettingsDao s = new SettingsDao(db);
+            long uid = s.isMultiUserEnabled() ? s.getCurrentUserId() : 0;
+            return uid > 0 ? new UserDao(db).getById(uid) : null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** Self-guard: tab Tren hanya Admin/SPV/Marketing (server juga menolak peran lain). */
+    private boolean canViewTrend(DatabaseHelper db) {
+        User u = currentUser(db);
+        return u != null && u.canViewSalesTrend();
+    }
+
+    private boolean isAdminOrLegacy(DatabaseHelper db) {
+        User u = currentUser(db);
+        return u == null || u.isAdmin();
     }
 
     private void loadCharts() {

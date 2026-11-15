@@ -136,6 +136,7 @@ public class AdminHomeActivity extends AppCompatActivity {
     private static final int[] TAB_IDS = {R.id.gjTabBeranda, R.id.gjTabPesanan, R.id.gjTabChat, R.id.gjTabAkun};
 
     private SettingsDao settingsDao;
+    private boolean trendTileLoading;
     private CustomerDao customerDao;
     private TransactionDao transactionDao;
     private GalonStockDao galonStockDao;
@@ -403,6 +404,7 @@ public class AdminHomeActivity extends AppCompatActivity {
         refreshSales();
         loadSnapshot();
         refreshWaUnread();
+        refreshTrendTile();
         safe("ai", () -> {
             if (ai != null) ai.refresh();
         });
@@ -706,6 +708,7 @@ public class AdminHomeActivity extends AppCompatActivity {
         Count badge;
         boolean blink;
         boolean stockTag;
+        boolean trendTag;
 
         MenuEntry(String id, String label, String shortLabel, String emoji, int tintRes, String group,
                   Vis vis, Runnable action) {
@@ -731,6 +734,11 @@ public class AdminHomeActivity extends AppCompatActivity {
 
         MenuEntry stockTag() {
             stockTag = true;
+            return this;
+        }
+
+        MenuEntry trendTag() {
+            trendTag = true;
             return this;
         }
 
@@ -793,7 +801,11 @@ public class AdminHomeActivity extends AppCompatActivity {
                 m -> m.admin, () -> open(ResellerListActivity.class));
         // ---- Laporan
         add("laporan", "Report & Grafik", "Laporan", "📊", R.color.gj_blue_tint, G_REPORT,
-                m -> m.admin, () -> open(ReportActivity.class));
+                m -> m.admin, () -> startSafely(new Intent(this, ReportActivity.class)
+                        .putExtra(ReportActivity.EXTRA_TAB, ReportActivity.TAB_LOCAL)));
+        add("tren", "Tren Penjualan", "Tren", "📈", R.color.gj_green_tint, G_REPORT,
+                m -> m.branchSales, () -> startSafely(new Intent(this, ReportActivity.class)
+                        .putExtra(ReportActivity.EXTRA_TAB, ReportActivity.TAB_TREN))).trendTag();
         add("target", "Target Sales", null, "🏆", R.color.gj_orange_tint, G_REPORT,
                 m -> m.user != null && m.user.canViewSalesAchievement(), () -> open(SalesAchievementActivity.class));
         add("export", "Export", null, "📤", R.color.gj_blue_tint, G_REPORT,
@@ -1280,6 +1292,7 @@ public class AdminHomeActivity extends AppCompatActivity {
     private void renderGrid() {
         LinearLayout grid = findViewById(R.id.gjhGrid);
         if (grid == null) return;
+        safe("tilesMigrate", this::migrateHomeTiles);
         List<MenuEntry> pick = new ArrayList<>();
         for (String id : HomeTiles.pick(savedHomeTiles(), this::visibleId)) {
             MenuEntry e = entry(id);
@@ -1314,6 +1327,71 @@ public class AdminHomeActivity extends AppCompatActivity {
     private boolean visibleId(String id) {
         MenuEntry e = entry(id);
         return e != null && visible(e);
+    }
+
+    /**
+     * Sekali per user: ubin baru yang masuk bawaan ({@link HomeTiles#ADDED_LATER}) disisipkan ke daftar
+     * custom yang SUDAH tersimpan. Penanda per user mencegah ubin itu muncul lagi setelah user membuangnya.
+     */
+    private void migrateHomeTiles() {
+        if (ms == null || settingsDao == null) return;
+        long uid = ms.uid;
+        List<String> saved = savedHomeTiles();
+        for (String[] add : HomeTiles.ADDED_LATER) {
+            String flag = HomeTiles.migratedKey(uid, add[0]);
+            if (!settingsDao.get(flag, "").isEmpty()) continue;
+            if (!visibleId(add[0])) continue;   // belum berlaku untuk peran ini; coba lagi bila peran berubah
+            if (saved != null) {
+                List<String> next = HomeTiles.withAdded(saved, add[0], add[1]);
+                if (!next.equals(saved)) {
+                    settingsDao.set(HomeTiles.key(uid), HomeTiles.serialize(next));
+                    saved = next;
+                }
+            }
+            settingsDao.set(flag, "1");
+        }
+    }
+
+    /** Ambil tag ubin Tren (cache ≤ 10 menit) di latar lalu gambar ulang ubin. */
+    private void refreshTrendTile() {
+        if (ms == null || !ms.branchSales || settingsDao == null) return;
+        if (trendTileLoading) return;
+        if (!HomeTiles.pick(savedHomeTiles(), this::visibleId).contains("tren")) return;
+        trendTileLoading = true;
+        final SettingsDao sd = settingsDao;
+        new Thread(() -> {
+            boolean changed = false;
+            try {
+                changed = com.crowja.damiupos.report.SalesTrendPanel.refreshTileIfStale(this, sd);
+            } catch (Throwable t) {
+                Log.w(TAG, "trend tile", t);
+            }
+            final boolean c = changed;
+            runOnUiThread(() -> {
+                trendTileLoading = false;
+                if (c && !isFinishing() && !isDestroyed()) safe("gridTiles", this::updateGridTiles);
+            });
+        }, "gj-trend").start();
+    }
+
+    /** Pasang tag ▲/▼/▬ di ubin Tren; balikkan tambahan contentDescription. */
+    private String trendTileTag(TextView tag) {
+        tag.clearAnimation();
+        org.json.JSONObject t = com.crowja.damiupos.report.SalesTrendPanel.readTile(this, settingsDao);
+        if (t == null) {
+            tag.setVisibility(View.GONE);
+            return "";
+        }
+        double cur = t.optDouble("cur", 0), prev = t.optDouble("prev", 0);
+        int dir = com.crowja.damiupos.util.SalesTrendMath.direction(cur, prev);
+        Double pct = com.crowja.damiupos.util.SalesTrendMath.pctChange(cur, prev);
+        tag.setText(com.crowja.damiupos.util.SalesTrendMath.tag(dir, pct));
+        int bg = dir == com.crowja.damiupos.util.SalesTrendMath.UP ? R.color.gj_success_text
+                : dir == com.crowja.damiupos.util.SalesTrendMath.DOWN ? R.color.gj_danger_text : R.color.gj_grey_glyph;
+        tag.setBackground(rounded(col(bg), 4));
+        tag.setVisibility(View.VISIBLE);
+        return ", pendapatan 7 hari "
+                + com.crowja.damiupos.report.SalesTrendPanel.spoken(dir, pct).toLowerCase(java.util.Locale.ROOT);
     }
 
     /** Ubin Beranda pilihan user ini di perangkat ini (null = bawaan). */
@@ -1518,7 +1596,9 @@ public class AdminHomeActivity extends AppCompatActivity {
                 h.box.clearAnimation();
             }
         }
-        if (h.tag != null) {
+        if (h.tag != null && h.e.trendTag) {
+            cd += trendTileTag(h.tag);
+        } else if (h.tag != null) {
             boolean low = h.e.stockTag && snap.stockKnown && snap.stok <= snap.stockAlert;
             if (low) {
                 h.tag.setText("STOK " + snap.stok);

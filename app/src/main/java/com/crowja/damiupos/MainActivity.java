@@ -276,7 +276,8 @@ public class MainActivity extends AppCompatActivity {
                 startActivity(new Intent(this, DeliveryQueueActivity.class)));
 
         findViewById(R.id.btnLaporan).setOnClickListener(v -> {
-            startActivity(new Intent(this, ReportActivity.class));
+            startActivity(new Intent(this, ReportActivity.class)
+                    .putExtra(ReportActivity.EXTRA_TAB, ReportActivity.TAB_LOCAL));
         });
 
         findViewById(R.id.btnExport).setOnClickListener(v -> {
