@@ -801,7 +801,8 @@ public class AdminHomeActivity extends AppCompatActivity {
                 m -> m.admin, () -> open(ResellerListActivity.class));
         // ---- Laporan
         add("laporan", "Report & Grafik", "Laporan", "📊", R.color.gj_blue_tint, G_REPORT,
-                m -> m.admin, () -> open(ReportActivity.class));
+                m -> m.admin, () -> startSafely(new Intent(this, ReportActivity.class)
+                        .putExtra(ReportActivity.EXTRA_TAB, ReportActivity.TAB_LOCAL)));
         add("tren", "Tren Penjualan", "Tren", "📈", R.color.gj_green_tint, G_REPORT,
                 m -> m.branchSales, () -> startSafely(new Intent(this, ReportActivity.class)
                         .putExtra(ReportActivity.EXTRA_TAB, ReportActivity.TAB_TREN))).trendTag();
@@ -1355,6 +1356,7 @@ public class AdminHomeActivity extends AppCompatActivity {
     private void refreshTrendTile() {
         if (ms == null || !ms.branchSales || settingsDao == null) return;
         if (trendTileLoading) return;
+        if (!HomeTiles.pick(savedHomeTiles(), this::visibleId).contains("tren")) return;
         trendTileLoading = true;
         final SettingsDao sd = settingsDao;
         new Thread(() -> {
@@ -1375,7 +1377,7 @@ public class AdminHomeActivity extends AppCompatActivity {
     /** Pasang tag ▲/▼/▬ di ubin Tren; balikkan tambahan contentDescription. */
     private String trendTileTag(TextView tag) {
         tag.clearAnimation();
-        org.json.JSONObject t = com.crowja.damiupos.report.SalesTrendPanel.readTile(settingsDao);
+        org.json.JSONObject t = com.crowja.damiupos.report.SalesTrendPanel.readTile(this, settingsDao);
         if (t == null) {
             tag.setVisibility(View.GONE);
             return "";
@@ -1388,8 +1390,8 @@ public class AdminHomeActivity extends AppCompatActivity {
                 : dir == com.crowja.damiupos.util.SalesTrendMath.DOWN ? R.color.gj_danger_text : R.color.gj_grey_glyph;
         tag.setBackground(rounded(col(bg), 4));
         tag.setVisibility(View.VISIBLE);
-        return ", pendapatan 7 hari " + com.crowja.damiupos.util.SalesTrendMath.word(dir).toLowerCase(java.util.Locale.ROOT)
-                + " " + com.crowja.damiupos.util.SalesTrendMath.signed(pct);
+        return ", pendapatan 7 hari "
+                + com.crowja.damiupos.report.SalesTrendPanel.spoken(dir, pct).toLowerCase(java.util.Locale.ROOT);
     }
 
     /** Ubin Beranda pilihan user ini di perangkat ini (null = bawaan). */

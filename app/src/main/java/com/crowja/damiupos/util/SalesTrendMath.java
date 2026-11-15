@@ -22,29 +22,36 @@ public final class SalesTrendMath {
     public static final int FLAT = 0;
     public static final int UP = 1;
 
+    /** Label bila periode lalu nol (tak ada % yang bermakna). */
+    public static final String NEW_WORD = "Baru";
+    public static final String NEW_SPOKEN = "baru, belum ada pembanding";
+
     private static final String[] DOW = {"Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"};
 
     private SalesTrendMath() {
     }
 
     /**
-     * % perubahan cur terhadap prev. Basis nol: null bila keduanya nol (tak ada data), +100 bila
-     * baru muncul (prev 0, cur &gt; 0) supaya tetap terbaca "naik".
+     * % perubahan cur terhadap prev. Basis nol (prev 0) → null: tak terdefinisi. Bila cur &gt; 0
+     * itu "baru" ({@link #isNew}), arahnya tetap {@link #UP} lewat {@link #direction}.
      */
     public static Double pctChange(double cur, double prev) {
-        if (prev == 0) {
-            if (cur == 0) return null;
-            return cur > 0 ? 100.0 : -100.0;
-        }
+        if (prev == 0) return null;
         return (cur - prev) / Math.abs(prev) * 100.0;
+    }
+
+    /** Ada nilai sekarang tapi periode lalu nol: belum ada pembanding. */
+    public static boolean isNew(double cur, double prev) {
+        return prev == 0 && cur > 0;
     }
 
     public static int direction(double cur, double prev) {
         return direction(cur, prev, STAGNANT_PCT);
     }
 
-    /** Naik/turun bila |%| &gt; ambang; keduanya nol → stagnan. */
+    /** Naik/turun bila |%| &gt; ambang; keduanya nol → stagnan; basis nol → ikut tanda cur. */
     public static int direction(double cur, double prev, double thresholdPct) {
+        if (prev == 0) return cur > 0 ? UP : cur < 0 ? DOWN : FLAT;
         Double p = pctChange(cur, prev);
         if (p == null) return FLAT;
         if (p > thresholdPct) return UP;
@@ -60,9 +67,9 @@ public final class SalesTrendMath {
         return dir == UP ? "Naik" : dir == DOWN ? "Turun" : "Stagnan";
     }
 
-    /** "▲ 12%", "▼ 3%", "▬ 0%"; % dibulatkan. null pct (tak ada data) → "▬". */
+    /** "▲ 12%", "▼ 3%", "▬ 0%"; % dibulatkan. Basis nol & naik → "▲ Baru"; tanpa data → "▬". */
     public static String tag(int dir, Double pct) {
-        if (pct == null) return arrow(dir);
+        if (pct == null) return dir == UP ? arrow(dir) + " " + NEW_WORD : arrow(dir);
         return arrow(dir) + " " + Math.round(Math.abs(pct)) + "%";
     }
 
@@ -148,20 +155,21 @@ public final class SalesTrendMath {
     }
 
     /**
-     * Proyeksi total bulan bila tren berlanjut: total s/d kemarin + sisa hari × (rata-rata harian
-     * bulan berjalan + slope × jarak hari). Hasil tak pernah negatif per hari. Tak ada data → 0.
+     * Proyeksi total bulan bila tren berlanjut: total s/d kemarin + tiap sisa hari dari garis tren
+     * bulan berjalan (rata-rata ada di tengah hari terhitung, jadi hari ke-k sesudah kemarin =
+     * rata-rata + slope × ((mtdDays−1)/2 + k)). Hasil tak pernah negatif per hari. Tak ada data → 0.
      *
      * @param mtdTotal    total bulan berjalan s/d kemarin
      * @param mtdDays     jumlah hari yang sudah terhitung (s/d kemarin)
      * @param daysInMonth jumlah hari bulan ini
-     * @param slopePerDay kemiringan harian dari {@link #slope(double[])}
+     * @param slopePerDay kemiringan harian deret bulan berjalan ({@link #slope(double[])})
      */
     public static double projectMonth(double mtdTotal, int mtdDays, int daysInMonth, double slopePerDay) {
         if (mtdDays <= 0) return 0;
         double base = mtdTotal / mtdDays;
         double total = mtdTotal;
         for (int k = 1; k <= daysInMonth - mtdDays; k++) {
-            total += Math.max(0, base + slopePerDay * k);
+            total += Math.max(0, base + slopePerDay * ((mtdDays - 1) / 2.0 + k));
         }
         return total;
     }
@@ -178,6 +186,8 @@ public final class SalesTrendMath {
         public double mtdTotal;
         public int mtdDays;
         public int daysInMonth;
+        /** Deret harian bulan berjalan s/d kemarin (sumber slope proyeksi); null = server lama. */
+        public double[] mtdDaily;
     }
 
     public static List<String> analyze(Input in) {
@@ -237,12 +247,12 @@ public final class SalesTrendMath {
             }
         }
 
-        // Momentum 7 hari terakhir vs 7 hari sebelumnya (di dalam deret gabungan prev+cur)
-        double[] all = concat(in.prev, in.cur);
-        if (all.length >= 14) {
+        // Momentum 7 hari terakhir vs 7 hari sebelumnya, di dalam periode ini saja (periode 7 hari
+        // sudah tercakup kalimat arah umum).
+        if (n >= 14) {
             double last = 0, before = 0;
-            for (int i = all.length - 7; i < all.length; i++) last += all[i];
-            for (int i = all.length - 14; i < all.length - 7; i++) before += all[i];
+            for (int i = n - 7; i < n; i++) last += in.cur[i];
+            for (int i = n - 14; i < n - 7; i++) before += in.cur[i];
             Double mp = pctChange(last, before);
             int md = direction(last, before);
             if (mp != null) {
@@ -273,21 +283,16 @@ public final class SalesTrendMath {
 
         // Proyeksi
         if (in.mtdDays > 0 && in.daysInMonth >= in.mtdDays) {
-            double proj = projectMonth(in.mtdTotal, in.mtdDays, in.daysInMonth, sl);
-            out.add("Bila tren berlanjut, akhir bulan diperkirakan sekitar " + fmt(proj, in.rupiah)
+            // Slope dari bulan ini sendiri (tak bergantung chip); < 3 hari → rata-rata saja.
+            double msl = in.mtdDaily == null ? sl : in.mtdDaily.length >= 3 ? slope(in.mtdDaily) : 0;
+            double proj = projectMonth(in.mtdTotal, in.mtdDays, in.daysInMonth, msl);
+            out.add("Bila tren bulan ini berlanjut, akhir bulan diperkirakan sekitar " + fmt(proj, in.rupiah)
                     + " (s/d kemarin " + fmt(in.mtdTotal, in.rupiah) + " dalam " + in.mtdDays + " hari).");
         }
 
         if (n < SMALL_SAMPLE_DAYS) {
             out.add("Catatan: hanya " + n + " hari data, jadi pola di atas mudah berubah oleh satu-dua hari ramai/sepi.");
         }
-        return out;
-    }
-
-    private static double[] concat(double[] a, double[] b) {
-        double[] out = new double[a.length + b.length];
-        System.arraycopy(a, 0, out, 0, a.length);
-        System.arraycopy(b, 0, out, a.length, b.length);
         return out;
     }
 

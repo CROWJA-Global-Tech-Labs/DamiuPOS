@@ -16,7 +16,10 @@ public class SalesTrendMathTest {
     @Test
     public void pctChangeZeroBaseline() {
         assertNull(SalesTrendMath.pctChange(0, 0));
-        assertEquals(100.0, SalesTrendMath.pctChange(50, 0), E);
+        assertNull(SalesTrendMath.pctChange(50, 0));
+        assertTrue(SalesTrendMath.isNew(50, 0));
+        assertEquals(SalesTrendMath.UP, SalesTrendMath.direction(50, 0));
+        assertEquals("▲ Baru", SalesTrendMath.tag(SalesTrendMath.UP, SalesTrendMath.pctChange(50, 0)));
         assertEquals(-50.0, SalesTrendMath.pctChange(50, 100), E);
         assertEquals(20.0, SalesTrendMath.pctChange(120, 100), E);
     }
@@ -73,6 +76,37 @@ public class SalesTrendMathTest {
         // Slope sangat negatif: sisa hari tak pernah di bawah nol
         assertEquals(1000.0, SalesTrendMath.projectMonth(1000, 10, 30, -500), E);
         assertEquals(0.0, SalesTrendMath.projectMonth(0, 0, 30, 5), E);
+        // 10 hari 100,110..190 (rata 145, slope 10): hari ke-k sesudah kemarin = 190 + 10k
+        double exp = 1450;
+        for (int k = 1; k <= 20; k++) exp += 190 + 10 * k;
+        assertEquals(exp, SalesTrendMath.projectMonth(1450, 10, 30, 10), E);
+    }
+
+    @Test
+    public void projectionIgnoresSelectedPeriodWhenMtdDailyGiven() {
+        String a = null;
+        for (double[] cur : new double[][]{{1, 5, 9, 2, 8, 3, 7}, {50, 40, 30, 20, 10, 5, 1}}) {
+            SalesTrendMath.Input in = new SalesTrendMath.Input();
+            in.cur = cur;
+            in.prev = new double[]{3, 3, 3, 3, 3, 3, 3};
+            in.mtdTotal = 1450;
+            in.mtdDays = 10;
+            in.daysInMonth = 30;
+            in.mtdDaily = new double[]{100, 110, 120, 130, 140, 150, 160, 170, 180, 190};
+            String p = null;
+            for (String s : SalesTrendMath.analyze(in)) if (s.contains("akhir bulan")) p = s;
+            if (a == null) a = p;
+            else assertEquals(a, p);
+        }
+    }
+
+    @Test
+    public void noMomentumForSevenDays() {
+        SalesTrendMath.Input in = new SalesTrendMath.Input();
+        in.cur = new double[]{20, 21, 22, 23, 24, 25, 26};
+        in.prev = new double[]{10, 10, 10, 10, 10, 10, 10};
+        String all = String.join(" | ", SalesTrendMath.analyze(in));
+        assertTrue(all, !all.contains("Momentum"));
     }
 
     @Test

@@ -43,6 +43,12 @@ public class TrendLineChart extends View {
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();
     private final float dp;
+    private final DashPathEffect dash;
+    // Skala dihitung di setData supaya onDraw hanya menggambar.
+    private int count;
+    private double top = 1, step = 1;
+    private String[] yLabels = new String[0];
+    private float yLabelsWidth;
 
     public TrendLineChart(Context c) {
         this(c, null);
@@ -60,6 +66,7 @@ public class TrendLineChart extends View {
         text.setTextSize(11 * getResources().getDisplayMetrics().scaledDensity);
         text.setColor(0xFF4A4A4A);
         fill.setStyle(Paint.Style.FILL);
+        dash = new DashPathEffect(new float[]{6 * dp, 4 * dp}, 0);
     }
 
     public void setColors(int gridColor, int textColor) {
@@ -75,7 +82,32 @@ public class TrendLineChart extends View {
         StringBuilder cd = new StringBuilder("Grafik garis");
         for (Series s : series) cd.append(", ").append(s.name);
         setContentDescription(cd.toString());
+        computeScale();
         invalidate();
+    }
+
+    private void computeScale() {
+        int n = 0;
+        double max = 0;
+        for (Series s : series) {
+            n = Math.max(n, s.values.length);
+            for (double v : s.values) max = Math.max(max, v);
+        }
+        count = n;
+        if (max <= 0) {
+            // Semua nol: cukup garis dasar 0.
+            top = 1;
+            step = 1;
+            yLabels = new String[]{"0"};
+        } else {
+            step = Math.max(1, niceStep(max / 4));   // rupiah & galon selalu bulat
+            top = Math.ceil(max / step) * step;
+            int k = (int) Math.round(top / step);
+            yLabels = new String[k + 1];
+            for (int i = 0; i <= k; i++) yLabels[i] = compact(i * step);
+        }
+        yLabelsWidth = 0;
+        for (String l : yLabels) yLabelsWidth = Math.max(yLabelsWidth, text.measureText(l));
     }
 
     @Override
@@ -88,28 +120,20 @@ public class TrendLineChart extends View {
     @Override
     protected void onDraw(Canvas c) {
         super.onDraw(c);
-        int n = 0;
-        double max = 0;
-        for (Series s : series) {
-            n = Math.max(n, s.values.length);
-            for (double v : s.values) max = Math.max(max, v);
-        }
+        int n = count;
         if (n == 0) return;
-        if (max <= 0) max = 1;
-        double step = niceStep(max / 4);
-        double top = Math.ceil(max / step) * step;
 
-        float left = text.measureText(compact(top)) + 8 * dp;
+        float left = yLabelsWidth + 8 * dp;
         float right = getWidth() - 8 * dp;
         float tY = 8 * dp;
         float bY = getHeight() - 20 * dp;
         float h = bY - tY;
 
         // Garis bantu + label Y
-        for (double g = 0; g <= top + step / 2; g += step) {
-            float y = (float) (bY - g / top * h);
+        for (int i = 0; i < yLabels.length; i++) {
+            float y = (float) (bY - i * step / top * h);
             c.drawLine(left, y, right, y, grid);
-            String l = compact(g);
+            String l = yLabels[i];
             c.drawText(l, left - 6 * dp - text.measureText(l), y + text.getTextSize() / 3, text);
         }
         float dx = n > 1 ? (right - left) / (n - 1) : 0;
@@ -132,7 +156,7 @@ public class TrendLineChart extends View {
                 if (s.main != (pass == 1)) continue;
                 line.setColor(s.color);
                 line.setStrokeWidth((s.main ? 2.5f : 1.75f) * dp);
-                line.setPathEffect(s.dashed ? new DashPathEffect(new float[]{6 * dp, 4 * dp}, 0) : null);
+                line.setPathEffect(s.dashed ? dash : null);
                 path.reset();
                 for (int i = 0; i < s.values.length; i++) {
                     float x = left + dx * i;

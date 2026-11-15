@@ -45,9 +45,14 @@ public final class SalesTrendPanel {
 
     private static final String TAG = "SalesTrend";
     private static final String CACHE_PREFIX = "sales_trend_cache_";
-    /** Cache indikator ubin Beranda: {"at":ms,"cur":x,"prev":y}. */
+    /** Cache indikator ubin Beranda: {"at":ms,"cur":x,"prev":y,"_scope":..}. */
     public static final String TILE_KEY = "sales_trend_tile";
+    /** Waktu percobaan terakhir ambil tag ubin (berhasil atau gagal), supaya TTL juga berlaku saat gagal. */
+    private static final String TILE_TRY_KEY = "sales_trend_tile_try";
     public static final long TILE_TTL_MS = 10 * 60 * 1000L;
+    /** Tag ubin lebih tua dari ini tak ditampilkan (angka basi). */
+    public static final long TILE_MAX_AGE_MS = 24 * 60 * 60 * 1000L;
+    private static final String SCOPE = "_scope";
     private static final int[] PERIODS = {7, 30, 90};
 
     private final Activity act;
@@ -55,6 +60,8 @@ public final class SalesTrendPanel {
     private final LinearLayout root;
     private final SettingsDao settings;
     private final float dp;
+    /** Perangkat + cabang + staf saat panel dibuka; cache dari lingkup lain dibuang. */
+    private final String scope;
     private int days = 30;
     private boolean rupiah = true;
     private int seq;
@@ -68,6 +75,7 @@ public final class SalesTrendPanel {
         this.swipe = swipe;
         this.root = root;
         this.settings = new SettingsDao(DatabaseHelper.getInstance(act));
+        this.scope = scope(act, settings);
         this.dp = act.getResources().getDisplayMetrics().density;
         swipe.setOnRefreshListener(this::load);
         swipe.setColorSchemeColors(col(R.color.gj_primary));
@@ -97,17 +105,20 @@ public final class SalesTrendPanel {
         new Thread(() -> {
             JSONObject res = null;
             String err = null;
+            boolean denied = false;
             try {
                 res = new SyncApi(cfg).salesTrend(d, false, staff);
                 if (!res.optBoolean("ok", false)) err = res.optString("message", "Gagal memuat.");
             } catch (SyncApi.SyncException se) {
                 String m = se.serverMessage();
                 err = m != null ? m : "Ditolak server (kode " + se.code + ").";
+                denied = se.code == 401 || se.code == 403;
             } catch (Exception e) {
                 err = "Tidak bisa terhubung ke server.";
             }
             final JSONObject r = err == null ? res : null;
             final String e = err;
+            final boolean deny = denied;
             act.runOnUiThread(() -> {
                 if (act.isFinishing() || act.isDestroyed() || s != seq) return;
                 swipe.setRefreshing(false);
@@ -115,9 +126,11 @@ public final class SalesTrendPanel {
                     data = r;
                     notice = null;
                     writeCache(d, r);
-                    if (d == 7) writeTile(settings, r);
+                    if (d == 7) writeTile(act, settings, r);
                 } else {
-                    JSONObject cached = readCache(d);
+                    // Ditolak (peran dicabut / staf nonaktif): jangan tampilkan angka tersimpan.
+                    if (deny) clearAll(settings);
+                    JSONObject cached = deny ? null : readCache(d);
                     if (cached != null) {
                         data = cached;
                         notice = e + " Menampilkan data tersimpan " + stamp(cached) + ".";
@@ -134,7 +147,9 @@ public final class SalesTrendPanel {
     private JSONObject readCache(int d) {
         try {
             String raw = settings.get(CACHE_PREFIX + d, "");
-            return raw.isEmpty() ? null : new JSONObject(raw);
+            if (raw.isEmpty()) return null;
+            JSONObject o = new JSONObject(raw);
+            return scope.equals(o.optString(SCOPE, "")) ? o : null;
         } catch (Throwable t) {
             return null;
         }
@@ -143,6 +158,7 @@ public final class SalesTrendPanel {
     private void writeCache(int d, JSONObject r) {
         try {
             r.put("_cached_at", System.currentTimeMillis());
+            r.put(SCOPE, scope);
             settings.set(CACHE_PREFIX + d, r.toString());
         } catch (Throwable t) {
             Log.w(TAG, "cache", t);
@@ -155,13 +171,26 @@ public final class SalesTrendPanel {
         return new SimpleDateFormat("d/M HH:mm", Locale.US).format(new Date(at));
     }
 
+    /** Lingkup cache: perangkat + cabang + staf yang login. */
+    public static String scope(Activity act, SettingsDao s) {
+        SyncSettings cfg = new SyncSettings(s);
+        return cfg.getDeviceUuid() + "|" + cfg.getBranchUuid() + "|" + LocationReporter.currentStaffUuid(act);
+    }
+
+    /** Hapus semua cache tren (periode + ubin), mis. setelah server menolak. */
+    public static void clearAll(SettingsDao s) {
+        for (int p : PERIODS) s.set(CACHE_PREFIX + p, "");
+        s.set(TILE_KEY, "");
+    }
+
     // ------------------------------------------------------------------ tile (Beranda)
 
     /** Simpan pendapatan 7 hari vs 7 hari sebelumnya untuk tag ubin Beranda. */
-    public static void writeTile(SettingsDao s, JSONObject r) {
+    public static void writeTile(Activity act, SettingsDao s, JSONObject r) {
         try {
             JSONObject t = new JSONObject()
                     .put("at", System.currentTimeMillis())
+                    .put(SCOPE, scope(act, s))
                     .put("cur", r.getJSONObject("current").getJSONObject("totals").optDouble("revenue", 0))
                     .put("prev", r.getJSONObject("previous").getJSONObject("totals").optDouble("revenue", 0));
             s.set(TILE_KEY, t.toString());
@@ -170,28 +199,51 @@ public final class SalesTrendPanel {
         }
     }
 
-    /** Cache tag ubin; null = belum pernah dimuat. */
+    /** Cache tag ubin; null = belum pernah dimuat, lingkup lain, atau lebih tua dari {@link #TILE_MAX_AGE_MS}. */
     @Nullable
-    public static JSONObject readTile(SettingsDao s) {
+    public static JSONObject readTile(Activity act, SettingsDao s) {
         try {
             String raw = s.get(TILE_KEY, "");
-            return raw.isEmpty() ? null : new JSONObject(raw);
+            if (raw.isEmpty()) return null;
+            JSONObject t = new JSONObject(raw);
+            if (!scope(act, s).equals(t.optString(SCOPE, ""))) return null;
+            if (System.currentTimeMillis() - t.optLong("at", 0) > TILE_MAX_AGE_MS) return null;
+            return t;
         } catch (Throwable t) {
             return null;
         }
     }
 
-    /** Ambil ulang tag ubin (lite, 7 hari) bila cache lebih tua dari {@link #TILE_TTL_MS}. Panggil dari thread latar. */
+    /**
+     * Ambil ulang tag ubin (lite, 7 hari) bila percobaan terakhir lebih tua dari {@link #TILE_TTL_MS}
+     * (gagal pun dihitung). Ditolak server: cache tren dihapus. Panggil dari thread latar.
+     *
+     * @return true bila tag berubah (perlu gambar ulang)
+     */
     public static boolean refreshTileIfStale(Activity act, SettingsDao s) {
-        JSONObject t = readTile(s);
-        if (t != null && System.currentTimeMillis() - t.optLong("at", 0) < TILE_TTL_MS) return false;
+        long now = System.currentTimeMillis();
+        long tried = 0;
         try {
-            SyncSettings cfg = new SyncSettings(s);
-            if (!cfg.isEnrolled()) return false;
+            tried = Long.parseLong(s.get(TILE_TRY_KEY, "0"));
+        } catch (NumberFormatException ignored) {
+        }
+        JSONObject t = readTile(act, s);
+        if (t != null && now - t.optLong("at", 0) < TILE_TTL_MS) return false;
+        if (tried > 0 && tried <= now && now - tried < TILE_TTL_MS) return false;
+        SyncSettings cfg = new SyncSettings(s);
+        if (!cfg.isEnrolled()) return false;
+        s.set(TILE_TRY_KEY, String.valueOf(now));
+        try {
             JSONObject r = new SyncApi(cfg).salesTrend(7, true, LocationReporter.currentStaffUuid(act));
             if (!r.optBoolean("ok", false)) return false;
-            writeTile(s, r);
+            writeTile(act, s, r);
             return true;
+        } catch (SyncApi.SyncException se) {
+            if (se.code == 401 || se.code == 403) {
+                clearAll(s);
+                return true;
+            }
+            return false;
         } catch (Throwable e) {
             return false;
         }
@@ -329,6 +381,8 @@ public final class SalesTrendPanel {
             in.mtdTotal = mtd.optDouble(rupiah ? "revenue" : "galon", 0);
             in.mtdDays = mtd.optInt("days", 0);
             in.daysInMonth = mtd.optInt("days_in_month", 0);
+            JSONArray md = mtd.optJSONArray("daily");
+            if (md != null) in.mtdDaily = values(md, rupiah ? "revenue" : "galon");
         }
         LinearLayout ab = cardBody("🧠 Analisis");
         for (String s : SalesTrendMath.analyze(in)) ab.addView(bullet(s));
@@ -341,24 +395,47 @@ public final class SalesTrendPanel {
 
     private View chartCard(String[] labels, double[] cv, double[] pv, int n) {
         LinearLayout b = cardBody(rupiah ? "Pendapatan harian" : "Galon terjual harian");
+        if (SalesTrendMath.sum(cv) == 0 && SalesTrendMath.sum(pv) == 0) {
+            b.addView(muted("Belum ada penjualan selesai di periode ini maupun sebelumnya."));
+            return (View) b.getParent();
+        }
         TrendLineChart ch = new TrendLineChart(act);
         ch.setColors(col(R.color.gj_divider), col(R.color.gj_text_secondary));
         List<TrendLineChart.Series> s = new ArrayList<>();
         s.add(new TrendLineChart.Series("periode ini", cv, col(R.color.gj_primary), false, true));
-        if (pv.length == cv.length) {
-            s.add(new TrendLineChart.Series(n + " hari sebelumnya", pv, col(R.color.gj_text_tertiary), true, false));
+        // Garis pembanding digeser kelipatan 7 hari (hari yang sama di pekan lalu) supaya puncak
+        // pekanan sejajar; untuk 30/90 hari itu 4/12 pekan lalu, bukan persis N hari sebelumnya.
+        int weeks = n / 7;
+        String prevName = null;
+        if (weeks > 0 && pv.length == cv.length && cv.length == n) {
+            prevName = weeks == 1 ? "Pekan lalu" : weeks + " pekan lalu";
+            s.add(new TrendLineChart.Series("hari yang sama " + prevName.toLowerCase(Locale.ROOT),
+                    weekAligned(pv, cv, weeks * 7), col(R.color.gj_text_tertiary), true, false));
         }
         int w = n >= 30 ? 7 : 3;
         s.add(new TrendLineChart.Series("rata-rata " + w + " hari", SalesTrendMath.movingAverage(cv, w),
                 col(R.color.gj_orange_glyph), false, false));
         ch.setData(labels, s);
         b.addView(ch, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, px(200)));
-        LinearLayout legend = hRow();
+        ChipGroup legend = new ChipGroup(act);   // FlowLayout: pindah baris di layar sempit / huruf besar
+        legend.setChipSpacingHorizontal(px(12));
+        legend.setChipSpacingVertical(px(4));
         legend.addView(legendItem(col(R.color.gj_primary), "Periode ini", false));
-        legend.addView(legendItem(col(R.color.gj_text_tertiary), "Sebelumnya", true));
+        if (prevName != null) legend.addView(legendItem(col(R.color.gj_text_tertiary), prevName, true));
         legend.addView(legendItem(col(R.color.gj_orange_glyph), "Rata-rata " + w + "h", false));
         b.addView(legend);
         return (View) b.getParent();
+    }
+
+    /** Nilai {@code off} hari sebelum tiap hari periode ini (off &le; N), dari deret prev+cur. */
+    private static double[] weekAligned(double[] pv, double[] cv, int off) {
+        int n = cv.length;
+        double[] out = new double[n];
+        for (int i = 0; i < n; i++) {
+            int j = n + i - off;
+            out[i] = j < n ? pv[j] : cv[j - n];
+        }
+        return out;
     }
 
     private View legendItem(int color, String text, boolean dashed) {
@@ -371,7 +448,7 @@ public final class SalesTrendPanel {
         sw.setBackground(g);
         l.addView(sw, new LinearLayout.LayoutParams(px(16), px(dashed ? 4 : 3)));
         TextView t = text(text, 12, R.color.gj_text_secondary, false);
-        t.setPadding(px(6), 0, px(12), 0);
+        t.setPadding(px(6), 0, 0, 0);
         l.addView(t);
         return l;
     }
@@ -432,7 +509,7 @@ public final class SalesTrendPanel {
         int dir = SalesTrendMath.direction(c, p);
         Double pct = SalesTrendMath.pctChange(c, p);
         row.addView(pill(dir, pct, false));
-        row.setContentDescription(name + ", " + SalesTrendMath.word(dir) + " " + SalesTrendMath.signed(pct));
+        row.setContentDescription(name + ", " + spoken(dir, pct));
         return row;
     }
 
@@ -456,21 +533,28 @@ public final class SalesTrendPanel {
                 12, R.color.gj_text_tertiary, false));
         card.addView(b);
         card.setContentDescription(label + " " + (money ? compactRp(cur) : (long) cur) + ", "
-                + SalesTrendMath.word(dir) + " " + SalesTrendMath.signed(pct) + " dibanding periode sebelumnya");
+                + spoken(dir, pct) + (pct != null ? " dibanding periode sebelumnya" : ""));
         LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
         clp.setMargins(px(4), px(4), px(4), px(4));
         card.setLayoutParams(clp);
         return card;
     }
 
-    /** Indikator: panah + kata + % (tak hanya warna). Hijau naik, merah turun, abu stagnan. */
+    /** "Naik +12%" / "Stagnan" / "baru, belum ada pembanding" untuk pembaca layar. */
+    public static String spoken(int dir, Double pct) {
+        if (pct == null) return dir == SalesTrendMath.UP ? SalesTrendMath.NEW_SPOKEN : SalesTrendMath.word(dir);
+        return SalesTrendMath.word(dir) + " " + SalesTrendMath.signed(pct);
+    }
+
+    /** Indikator: panah + kata + % (tak hanya warna). Hijau naik, merah turun, abu stagnan; basis nol: "Baru". */
     private TextView pill(int dir, Double pct, boolean withWord) {
         int bg = dir == SalesTrendMath.UP ? R.color.gj_success_bg
                 : dir == SalesTrendMath.DOWN ? R.color.gj_danger_bg : R.color.gj_fill_subtle;
         int fg = dir == SalesTrendMath.UP ? R.color.gj_success_text
                 : dir == SalesTrendMath.DOWN ? R.color.gj_danger_text : R.color.gj_text_secondary;
-        String s = SalesTrendMath.arrow(dir) + (withWord ? " " + SalesTrendMath.word(dir) : "")
-                + (pct != null ? " " + SalesTrendMath.signed(pct) : "");
+        boolean fresh = pct == null && dir == SalesTrendMath.UP;
+        String s = SalesTrendMath.arrow(dir) + (fresh ? " " + SalesTrendMath.NEW_WORD
+                : (withWord ? " " + SalesTrendMath.word(dir) : "") + (pct != null ? " " + SalesTrendMath.signed(pct) : ""));
         TextView t = text(s, 12, fg, true);
         GradientDrawable g = new GradientDrawable();
         g.setColor(col(bg));
