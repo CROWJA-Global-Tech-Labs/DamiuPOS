@@ -91,6 +91,7 @@ public final class AiStatusMonitor {
 
     /** Segarkan status (aman dipanggil sering; dibatasi 30 dtk setelah ambil yang berhasil). */
     public void refresh() {
+        stopped = false;
         if (downDialog != null && downDialog.isShowing()) startSiren();   // kembali dari background
         if (busy || (fetchedAt != 0 && SystemClock.elapsedRealtime() - fetchedAt < THROTTLE_MS)) return;
         final SyncSettings cfg;
@@ -202,12 +203,15 @@ public final class AiStatusMonitor {
         startSiren();
     }
 
+    private boolean stopped;
+
     private void startSiren() {
-        if (siren != null) return;
+        if (siren != null || stopped) return;
+        MediaPlayer mp = null;
         try {
             ComplaintSirenSound.Choice ch = ComplaintSirenSound.current(activity);
             if (ch.silent()) return;   // "Tanpa suara" dari web Konfigurasi dihormati
-            MediaPlayer mp = new MediaPlayer();
+            mp = new MediaPlayer();
             mp.setAudioAttributes(new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_ALARM)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
@@ -218,6 +222,7 @@ public final class AiStatusMonitor {
             siren = mp;
         } catch (Throwable t) {
             Log.w(TAG, "sirine gagal: " + t);
+            if (mp != null) try { mp.release(); } catch (Throwable ignored) {}
             siren = null;
         }
     }
@@ -238,6 +243,7 @@ public final class AiStatusMonitor {
 
     /** Layar tak tampil: sirine berhenti (menyala lagi lewat {@link #refresh} bila popup masih terbuka). */
     public void onStop() {
+        stopped = true;
         stopSiren();
     }
 

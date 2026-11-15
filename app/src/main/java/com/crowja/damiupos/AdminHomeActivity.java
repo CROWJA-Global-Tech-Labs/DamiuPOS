@@ -626,7 +626,7 @@ public class AdminHomeActivity extends AppCompatActivity {
                     Log.w(TAG, "sales local", t);
                 }
                 // Server tak terjangkau → angka LOKAL, keterangan jujur bahwa itu bukan angka se-depot.
-                scope = enrolled ? "HP ini — offline" : "HP ini";
+                scope = enrolled ? "HP ini · offline" : "HP ini";
             }
             final double revF = rev;
             final int galonF = galon;
@@ -1852,6 +1852,7 @@ public class AdminHomeActivity extends AppCompatActivity {
         int[] pages = {R.id.gjhPPage0, R.id.gjhPPage1, R.id.gjhPPage2};
         int[] labels = {R.id.gjhPTab0Label, R.id.gjhPTab1Label, R.id.gjhPTab2Label};
         int[] lines = {R.id.gjhPTab0Line, R.id.gjhPTab1Line, R.id.gjhPTab2Line};
+        int[] tabIds = {R.id.gjhPTab0, R.id.gjhPTab1, R.id.gjhPTab2};
         for (int i = 0; i < 3; i++) {
             boolean on = i == idx;
             View p = findViewById(pages[i]);
@@ -1863,6 +1864,8 @@ public class AdminHomeActivity extends AppCompatActivity {
             }
             View line = findViewById(lines[i]);
             if (line != null) line.setVisibility(on ? View.VISIBLE : View.INVISIBLE);
+            View tab = findViewById(tabIds[i]);
+            if (tab != null) tab.setSelected(on);
         }
     }
 
@@ -2105,11 +2108,14 @@ public class AdminHomeActivity extends AppCompatActivity {
         if (sw == null) return;
         // Status selalu dari SyncSettings; jangan dipulihkan sistem (id kembar antarbaris → listener terpicu palsu).
         sw.setSaveEnabled(false);
+        sw.setFocusable(false);
+        sw.setClickable(false);
         sw.setVisibility(View.VISIBLE);
         sw.setOnCheckedChangeListener(null);
         boolean on = cfg.isDeliveryDevice() && !cfg.isArmadaNonDelivery();   // Non Delivery = tak ikut mengantar → mati
         sw.setChecked(on);
         sw.setEnabled(!deliverySwitchBusy);
+        a11ySwitchRow(row, on);
         TextView sub = row.findViewById(R.id.gjhRowSub);
         if (sub != null) {
             sub.setVisibility(View.VISIBLE);
@@ -2131,6 +2137,13 @@ public class AdminHomeActivity extends AppCompatActivity {
                 ArmadaPicker.forDeliveryOn(this, () -> setThisDeviceDelivery(true), this::rebindAkun);
             }
         });
+    }
+
+    /** ArmadaPicker melapor lewat invalidateOptionsMenu(); layar ini tak punya menu → gambar ulang Akun. */
+    @Override
+    public void invalidateOptionsMenu() {
+        super.invalidateOptionsMenu();
+        rebindAkun();
     }
 
     private void rebindAkun() {
@@ -2185,15 +2198,31 @@ public class AdminHomeActivity extends AppCompatActivity {
     }
 
     /** Sakelar "Tampilan baru": OFF → konfirmasi → preferensi mati → MainActivity (tugas baru). */
+    /** Baris = satu kontrol aksesibel bertipe Switch (sakelar sendiri tak fokus/klik). */
+    private static void a11ySwitchRow(View row, final boolean checked) {
+        androidx.core.view.ViewCompat.setAccessibilityDelegate(row, new androidx.core.view.AccessibilityDelegateCompat() {
+            @Override
+            public void onInitializeAccessibilityNodeInfo(View host, androidx.core.view.accessibility.AccessibilityNodeInfoCompat info) {
+                super.onInitializeAccessibilityNodeInfo(host, info);
+                info.setClassName("android.widget.Switch");
+                info.setCheckable(true);
+                info.setChecked(checked);
+            }
+        });
+    }
+
     private void bindLookSwitch(View row) {
         final SwitchMaterial sw = row.findViewById(R.id.gjhRowSwitch);
         View chev = row.findViewById(R.id.gjhRowChevron);
         if (chev != null) chev.setVisibility(View.GONE);
         if (sw == null) return;
         sw.setSaveEnabled(false);
+        sw.setFocusable(false);
+        sw.setClickable(false);
         sw.setVisibility(View.VISIBLE);
         sw.setOnCheckedChangeListener(null);
         sw.setChecked(true);
+        a11ySwitchRow(row, true);
         row.setOnClickListener(v -> sw.toggle());
         sw.setOnCheckedChangeListener((b, checked) -> {
             if (checked) return;
