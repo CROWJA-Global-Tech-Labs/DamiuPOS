@@ -44,9 +44,14 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
+                    android:orientation="vertical"
                     android:padding="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
                     <TextView
                         android:id="@+id/gjhAkunAvatar"
@@ -92,6 +97,7 @@
                                 android:paddingTop="2dp"
                                 android:paddingEnd="8dp"
                                 android:paddingBottom="2dp"
+                                android:id="@+id/gjhAkunRole"
                                 android:text="Admin"
                                 android:textColor="@color/white"
                                 android:textSize="11sp"
@@ -118,69 +124,62 @@
                             android:textSize="12sp" />
                     </LinearLayout>
                 </LinearLayout>
-            </com.google.android.material.card.MaterialCardView>
-        </FrameLayout>
-
-        <!-- ============ Kartu shift di Akun (peran berabsen: nama + shift, Istirahat / Pulang) ============ -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/gjhOperatorStrip"
-            style="@style/Widget.Gj.Card"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="16dp"
-            android:layout_marginEnd="16dp"
-            android:visibility="gone">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:padding="12dp">
-
+                <!-- Bagian shift (peran berabsen): jam kerja + Istirahat / Pulang, menyatu dengan kartu profil. -->
                 <LinearLayout
-                    android:layout_width="0dp"
+                    android:id="@+id/gjhOperatorStrip"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginTop="14dp"
+                        android:layout_marginBottom="12dp"
+                        android:background="@color/gj_divider" />
 
                     <TextView
                         android:id="@+id/gjhOpName"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:textColor="@color/gj_text_primary"
-                        android:textSize="15sp"
-                        android:textStyle="bold" />
+                        android:visibility="gone" />
 
                     <TextView
                         android:id="@+id/gjhOpShift"
-                        android:layout_width="wrap_content"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:textColor="@color/gj_text_secondary"
-                        android:textSize="12sp" />
+                        android:textSize="13sp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/gjhOpIstirahat"
+                            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="☕ Istirahat"
+                            android:textSize="13sp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/gjhOpPulang"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:layout_weight="1"
+                            android:text="🏠 Pulang"
+                            android:textSize="13sp" />
+                    </LinearLayout>
                 </LinearLayout>
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/gjhOpIstirahat"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:minWidth="0dp"
-                    android:text="☕ Istirahat"
-                    android:textSize="12sp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/gjhOpPulang"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:minWidth="0dp"
-                    android:text="🏠 Pulang"
-                    android:textSize="12sp" />
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+        </FrameLayout>
 
         <LinearLayout
             android:id="@+id/gjhAkunGroups"

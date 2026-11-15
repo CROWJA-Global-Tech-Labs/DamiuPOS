@@ -2002,6 +2002,19 @@ public class AdminHomeActivity extends AppCompatActivity {
     }
 
     /** Kartu grup putih 12dp (tab Akun / Chat); @return wadah baris di dalamnya. */
+    /** Sembunyikan kartu grup Akun yang kosong + judul/jarak tepat di atasnya. */
+    private void pruneEmptyGroups(LinearLayout parent) {
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            View c = parent.getChildAt(i);
+            if (!(c instanceof MaterialCardView)) continue;
+            MaterialCardView card = (MaterialCardView) c;
+            View inner = card.getChildCount() > 0 ? card.getChildAt(0) : null;
+            boolean empty = inner instanceof ViewGroup && ((ViewGroup) inner).getChildCount() == 0;
+            card.setVisibility(empty ? View.GONE : View.VISIBLE);
+            if (i > 0) parent.getChildAt(i - 1).setVisibility(empty ? View.GONE : View.VISIBLE);
+        }
+    }
+
     private LinearLayout addGroup(LinearLayout parent, String title) {
         if (title != null) parent.addView(groupHeader(title, 20, 8));
         else {
@@ -2234,10 +2247,15 @@ public class AdminHomeActivity extends AppCompatActivity {
         if (dev != null) dev.setText(ms.place());
         TextView ver = findViewById(R.id.gjhAkunVersion);
         if (ver != null) ver.setText("Versi aplikasi " + BuildConfig.VERSION_NAME);
+        // Pil peran: dulu tulisan "Admin" mati di layout — sekarang peran sebenarnya.
+        TextView role = findViewById(R.id.gjhAkunRole);
+        if (role != null) role.setText(ms.roleLabel.isEmpty() ? "Pengguna" : ms.roleLabel);
         renderHeader();
 
         LinearLayout groups = findViewById(R.id.gjhAkunGroups);
         if (groups == null) return;
+        // Grup tanpa baris (mis. "Depot" untuk non-admin) disembunyikan beserta judulnya.
+        groups.post(() -> pruneEmptyGroups(groups));
         groups.removeAllViews();
         // Status delivery dibaca segar (bisa baru berubah lewat sakelar / ArmadaPicker).
         SyncSettings cfg = new SyncSettings(settingsDao);
