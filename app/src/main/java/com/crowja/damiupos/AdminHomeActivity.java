@@ -800,10 +800,8 @@ public class AdminHomeActivity extends AppCompatActivity {
         add("reseller", "Reseller", null, "🤝", R.color.gj_purple_tint, G_CUST,
                 m -> m.admin, () -> open(ResellerListActivity.class));
         // ---- Laporan
-        add("laporan", "Report & Grafik", "Laporan", "📊", R.color.gj_blue_tint, G_REPORT,
-                m -> m.admin, () -> startSafely(new Intent(this, ReportActivity.class)
-                        .putExtra(ReportActivity.EXTRA_TAB, ReportActivity.TAB_LOCAL)));
-        add("tren", "Tren Penjualan", "Tren", "📈", R.color.gj_green_tint, G_REPORT,
+        // Satu menu saja: "Tren" (menu "Laporan" lama dihapus atas permintaan owner, 16 Nov 2026).
+        add("tren", "Tren", "Tren", "📈", R.color.gj_green_tint, G_REPORT,
                 m -> m.branchSales, () -> startSafely(new Intent(this, ReportActivity.class)
                         .putExtra(ReportActivity.EXTRA_TAB, ReportActivity.TAB_TREN))).trendTag();
         add("target", "Target Sales", null, "🏆", R.color.gj_orange_tint, G_REPORT,
@@ -1924,14 +1922,14 @@ public class AdminHomeActivity extends AppCompatActivity {
         String[][] items = {
                 {"setoran", "Catat setoran tunai hari ini"},
                 {"pengeluaran", "Catat & lihat pengeluaran"},
-                {"laporan", "Report & grafik penjualan"},
+                {"tren", "Tren & analisis penjualan"},
                 {"export", "Ekspor data ke file"},
                 {"transaksi", "Daftar semua transaksi"}};
         for (String[] it : items) {
             final MenuEntry e = entry(it[0]);
             if (e == null || !visible(e)) continue;
             if (body.getChildCount() > 0) body.addView(insetDivider());
-            String label = "laporan".equals(e.id) ? "Laporan" : e.label;
+            String label = e.label;
             body.addView(makeRow(body, e.emoji, label, it[1], v -> {
                 d.dismiss();
                 runEntry(e);

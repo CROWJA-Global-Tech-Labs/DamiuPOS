@@ -80,6 +80,12 @@ public class ReportActivity extends AppCompatActivity {
             showLocal();
             return;
         }
+        // Dibuka dari menu "Tren" (Tema v2): hanya Tren, tanpa tab Laporan.
+        if (TAB_TREN.equals(want)) {
+            findViewById(R.id.reportTabBar).setVisibility(View.GONE);
+            showTrend();
+            return;
+        }
         // Isi Laporan lama (DB perangkat) khusus Admin, seperti sebelumnya; SPV/Marketing hanya tab Tren.
         boolean local = isAdminOrLegacy(dbHelper);
         View bar = findViewById(R.id.reportTabBar);
@@ -98,7 +104,7 @@ public class ReportActivity extends AppCompatActivity {
     }
 
     private void showTrend() {
-        if (toolbarTitle() != null) toolbarTitle().setTitle("Laporan • Tren Penjualan");
+        if (toolbarTitle() != null) toolbarTitle().setTitle("Tren");
         findViewById(R.id.scrollLocal).setVisibility(View.GONE);
         findViewById(R.id.swipeTren).setVisibility(View.VISIBLE);
         if (trendPanel == null) {
