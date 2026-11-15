@@ -27,7 +27,7 @@
         android:layout_height="wrap_content"
         android:background="#E3F2FD"
         android:padding="10dp"
-        android:textColor="?attr/colorPrimary"
+        android:textColor="?attr/colorPrimaryStrong"
         android:textSize="13sp"
         android:textStyle="bold" />
 

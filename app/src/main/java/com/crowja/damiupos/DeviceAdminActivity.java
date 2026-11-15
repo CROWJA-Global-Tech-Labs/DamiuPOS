@@ -66,7 +66,7 @@ public class DeviceAdminActivity extends AppCompatActivity {
     private static final int C_TEXT = 0xFF212121;
     private static final int C_TEXT2 = 0xFF455A64;
     private static final int C_HINT = 0xFF757575;
-    private static final int C_PRIMARY = 0xFF1565C0;
+    private int C_PRIMARY = 0xFF1565C0;
     private static final int C_GREEN = 0xFF2E7D32;
     private static final int C_LINE = 0xFFCFD8DC;
 
@@ -88,6 +88,7 @@ public class DeviceAdminActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        C_PRIMARY = com.crowja.damiupos.util.ThemeColors.primary(this);
         setContentView(R.layout.activity_device_admin);
         toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);

@@ -36,6 +36,8 @@
              #006B05 — 6.9:1 di atas putih. Status bar diatur sendiri di bawah. -->
         <item name="colorPrimaryDark">@color/gj_on_primary_container</item>
         <item name="colorPrimaryVariant">@color/gj_on_primary_container</item>
+        <item name="colorPrimaryStrong">@color/gj_on_primary_container</item>
+        <item name="textColorOnPrimaryMuted">@color/white</item>
         <item name="colorOnPrimary">@color/white</item>
         <item name="colorAccent">@color/gj_primary</item>
         <item name="colorSecondary">@color/gj_primary</item>

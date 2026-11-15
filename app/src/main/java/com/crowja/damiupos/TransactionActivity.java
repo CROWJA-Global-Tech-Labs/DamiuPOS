@@ -4751,7 +4751,7 @@ public class TransactionActivity extends AppCompatActivity {
                 TextView tv = (TextView) tvSplitEntry;
                 tv.setText(on ? "🧺 Bagi ke beberapa lokasi ›" : "🧺 Bagi ke beberapa lokasi — belum aktif ⓘ");
                 tv.setBackgroundResource(on ? R.drawable.bg_pill_blue : R.drawable.bg_pill_grey);
-                tv.setTextColor(androidx.core.content.ContextCompat.getColor(this, on ? R.color.primary : R.color.text_secondary));
+                tv.setTextColor(on ? com.crowja.damiupos.util.ThemeColors.primary(this) : androidx.core.content.ContextCompat.getColor(this, R.color.text_secondary));
             }
         }
         if (cardCheckoutParts != null) {

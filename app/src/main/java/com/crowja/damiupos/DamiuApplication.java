@@ -96,7 +96,8 @@ public class DamiuApplication extends Application {
         try {
             if (a instanceof DeepLinkActivity
                     || a instanceof PortraitCaptureActivity
-                    || a instanceof AdminHomeActivity) return;
+                    || a instanceof AdminHomeActivity
+                    || a instanceof MainActivity) return;
             if (!(a instanceof androidx.appcompat.app.AppCompatActivity)) return;
             if (!a.getClass().getName().startsWith("com.crowja.damiupos.")) return;
             if (!com.crowja.damiupos.util.GojekUi.isEnabled(a)) return;

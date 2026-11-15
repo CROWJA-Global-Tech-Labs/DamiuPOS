@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Latar/teks aksen yang butuh kontras lebih: non-admin = primary, overlay Gojek = #006B05. -->
+    <attr name="colorPrimaryStrong" format="color" />
+    <!-- Teks keterangan redup di atas colorPrimary: non-admin putih 84%, overlay Gojek putih penuh. -->
+    <attr name="textColorOnPrimaryMuted" format="color" />
+</resources>
