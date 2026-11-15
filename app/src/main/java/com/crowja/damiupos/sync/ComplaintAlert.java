@@ -18,6 +18,7 @@ import com.crowja.damiupos.ChatLogActivity;
 import com.crowja.damiupos.R;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
+import com.crowja.damiupos.util.ComplaintSirenSound;
 
 /**
  * 😠 Alarm komplain: pesanan yang dikomplain pelanggan memunculkan notifikasi dengan SIRENE nyaring (suara khusus
@@ -48,11 +49,12 @@ public final class ComplaintAlert {
     }
 
     private static void post(Context ctx, Intent open, String title, String body, int notifId) {
-        ensureChannel(ctx);
+        ComplaintSirenSound.Choice choice = ComplaintSirenSound.current(ctx);
+        ensureChannel(ctx, choice);
         PendingIntent pi = PendingIntent.getActivity(ctx, notifId, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Uri sound = soundUri(ctx);
-        NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, CHANNEL_ID)
+        Uri sound = choice.uri;
+        NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, choice.channelId)
                 .setSmallIcon(R.drawable.ic_info)
                 .setContentTitle(title)
                 .setContentText(body)
@@ -63,11 +65,11 @@ public final class ComplaintAlert {
                 .setAutoCancel(true)
                 .setContentIntent(pi)
                 .setVibrate(new long[]{0, 600, 250, 600, 250, 600});
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O && sound != null) {
             b.setSound(sound, android.media.AudioManager.STREAM_ALARM);
         }
         Notification n = b.build();
-        n.flags |= Notification.FLAG_INSISTENT;   // sirene berulang sampai diketuk / digeser
+        if (choice.repeat && !choice.silent()) n.flags |= Notification.FLAG_INSISTENT;   // sirene berulang sampai diketuk / digeser
         try {
             NotificationManagerCompat.from(ctx).notify(notifId, n);
         } catch (SecurityException ignored) {
@@ -80,22 +82,40 @@ public final class ComplaintAlert {
         }
     }
 
-    private static Uri soundUri(Context ctx) {
-        return Uri.parse("android.resource://" + ctx.getPackageName() + "/" + R.raw.complaint_siren);
-    }
-
     /** Kanal dibuat sekali dengan suara sirene khusus; suara kanal tak bisa diubah aplikasi sesudahnya. */
     public static void ensureChannel(Context ctx) {
+        ensureChannel(ctx, ComplaintSirenSound.current(ctx));
+    }
+
+    /**
+     * Satu kanal per pilihan suara (id memuat pilihannya; suara kanal tak bisa diubah). Kanal sirine lain yang
+     * tak lagi dipakai dihapus supaya daftar kanal di Pengaturan HP tak menumpuk.
+     */
+    private static void ensureChannel(Context ctx, ComplaintSirenSound.Choice choice) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationManager nm = ctx.getSystemService(NotificationManager.class);
-        if (nm == null || nm.getNotificationChannel(CHANNEL_ID) != null) return;
-        NotificationChannel ch = new NotificationChannel(CHANNEL_ID,
+        if (nm == null) return;
+        try {
+            for (NotificationChannel old : nm.getNotificationChannels()) {
+                String id = old.getId();
+                if (id.startsWith(ComplaintSirenSound.BASE_CHANNEL) && !id.equals(choice.channelId)) {
+                    nm.deleteNotificationChannel(id);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        if (nm.getNotificationChannel(choice.channelId) != null) return;
+        NotificationChannel ch = new NotificationChannel(choice.channelId,
                 "Alarm komplain pelanggan", NotificationManager.IMPORTANCE_HIGH);
         ch.setDescription("Sirene nyaring saat pesanan dikomplain pelanggan");
-        ch.setSound(soundUri(ctx), new AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ALARM)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build());
+        if (choice.uri != null) {
+            ch.setSound(choice.uri, new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build());
+        } else {
+            ch.setSound(null, null);
+        }
         ch.enableVibration(true);
         ch.setVibrationPattern(new long[]{0, 600, 250, 600, 250, 600});
         ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);

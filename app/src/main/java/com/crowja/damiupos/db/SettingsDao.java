@@ -36,6 +36,10 @@ public class SettingsDao {
     /** URL logo depot (di-set di web Konfigurasi, disinkron lewat app_settings). Diunduh & di-cache
      *  lokal lalu ditampilkan di Pengaturan + struk. */
     public static final String KEY_DEPOT_LOGO_URL = "depot_logo_url";
+    /** Suara sirine komplain (diatur di web Konfigurasi, disinkron): bawaan|polisi|alarm|bel|custom|off. */
+    public static final String KEY_COMPLAINT_SIREN_SOUND = "complaint_siren_sound";
+    public static final String KEY_COMPLAINT_SIREN_URL = "complaint_siren_url";
+    public static final String KEY_COMPLAINT_SIREN_REPEAT = "complaint_siren_repeat";
     public static final String KEY_WIZARD_COMPLETED = "wizard_completed";
     public static final String KEY_FOLLOWUP_DAYS = "followup_days";
     public static final String KEY_STOCK_ALERT = "stock_alert";
@@ -242,6 +246,7 @@ public class SettingsDao {
             KEY_POINTS_ENABLED, KEY_POINTS_PER_AMOUNT, KEY_POINTS_REWARD_THRESHOLD,
             KEY_PRODUCT_BONUS_THRESHOLD,
             KEY_DEPOT_NAME, KEY_DEPOT_ADDRESS, KEY_DEPOT_PHONE, KEY_DEPOT_LOGO_URL,
+            KEY_COMPLAINT_SIREN_SOUND, KEY_COMPLAINT_SIREN_URL, KEY_COMPLAINT_SIREN_REPEAT,
             KEY_FOLLOWUP_DAYS, KEY_FOLLOWUP_TEMPLATE, KEY_PANTUN_BRAND,
             KEY_FOLLOWUP_OPENER, KEY_FOLLOWUP_CLOSER,
             KEY_OPS_CLOSE_TIME, KEY_OPS_OPEN_TIME, KEY_WA_STRUK_TEMPLATE,
@@ -715,6 +720,20 @@ public class SettingsDao {
 
     /** URL logo depot (disinkron dari web). Kosong = belum di-set. */
     public String getDepotLogoUrl() { return get(KEY_DEPOT_LOGO_URL, ""); }
+
+    /** Pilihan suara sirine komplain (disinkron dari web); kosong/tak dikenal = "bawaan". */
+    public String getComplaintSirenSound() {
+        String v = get(KEY_COMPLAINT_SIREN_SOUND, "bawaan");
+        return v == null || v.trim().isEmpty() ? "bawaan" : v.trim();
+    }
+
+    public String getComplaintSirenUrl() {
+        String v = get(KEY_COMPLAINT_SIREN_URL, "");
+        return v == null ? "" : v.trim();
+    }
+
+    /** Bunyi terus sampai notifikasi diketuk (bawaan: ya). */
+    public boolean isComplaintSirenRepeat() { return !"0".equals(get(KEY_COMPLAINT_SIREN_REPEAT, "1")); }
 
     public boolean isWizardCompleted() { return "1".equals(get(KEY_WIZARD_COMPLETED, "0")); }
     public void setWizardCompleted(boolean v) { set(KEY_WIZARD_COMPLETED, v ? "1" : "0"); }
