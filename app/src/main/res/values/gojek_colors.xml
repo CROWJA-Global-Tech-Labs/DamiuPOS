@@ -3,17 +3,19 @@
      Diambil dari referensi desain Gojek/Asphalt; hanya POLA yang ditiru, tanpa aset/logo Gojek.
      App ini light-only (Theme.DAMIUPOS, forceDarkAllowed=false) — semua pasangan teks/latar di bawah
      dipilih ≥ 4.5:1 (teks) atau ≥ 3:1 (ikon/teks besar). JANGAN beri override values-night. -->
+<!-- 2026-11-15: aksen Tampilan Tema v2 diganti BIRU atas permintaan owner (dulu hijau Gojek).
+     Putih di atas #1565C0 = 5.8:1, di atas #1976D2 = 4.6:1. Hijau tetap untuk makna "sukses" & ubin kategori. -->
 <resources>
     <!-- Hijau merek (permukaan besar: header Beranda). Teks putih di atasnya hanya 3.1:1 → pakai
          untuk teks ≥18sp tebal / ikon saja. -->
-    <color name="gj_brand">#00AA13</color>
+    <color name="gj_brand">#1976D2</color>
     <!-- Hijau interaktif (tombol terisi, tab aktif, toolbar layar dalam, switch). Putih di atasnya 4.6:1. -->
-    <color name="gj_primary">#00880D</color>
-    <color name="gj_primary_pressed">#067817</color>
+    <color name="gj_primary">#1565C0</color>
+    <color name="gj_primary_pressed">#0D47A1</color>
     <!-- Tonal: latar #EAFFEB + teks #006B05 ("Lihat semua"). -->
-    <color name="gj_primary_container">#EAFFEB</color>
-    <color name="gj_on_primary_container">#006B05</color>
-    <color name="gj_header_tint">#E5FFD0</color>
+    <color name="gj_primary_container">#E3F2FD</color>
+    <color name="gj_on_primary_container">#0D47A1</color>
+    <color name="gj_header_tint">#E3F2FD</color>
 
     <!-- Netral -->
     <color name="gj_text_primary">#1C1C1C</color>
