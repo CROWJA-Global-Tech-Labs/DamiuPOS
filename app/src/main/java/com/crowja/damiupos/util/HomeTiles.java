@@ -22,8 +22,15 @@ public final class HomeTiles {
 
     /** Urutan bawaan: 7 pertama yang tampil dipakai; sisanya cadangan bila ada yang tersembunyi. */
     public static final List<String> DEFAULT_ORDER = Collections.unmodifiableList(java.util.Arrays.asList(
-            "antrean", "pelanggan", "komplain", "followup", "chatwa",
+            "antrean", "pelanggan", "komplain", "followup", "tren", "chatwa",
             "laporan", "stok", "transaksi", "jual", "kembali", "pengeluaran", "setoran"));
+
+    /**
+     * Ubin yang masuk bawaan SETELAH user bisa menyimpan daftar sendiri: {id, sisipkan-setelah-id}.
+     * Disisipkan sekali ke daftar tersimpan (penanda {@link #migratedKey}); bila user lalu membuangnya,
+     * tidak muncul lagi.
+     */
+    public static final String[][] ADDED_LATER = {{"tren", "followup"}};
 
     public interface Visible {
         boolean ok(String id);
@@ -34,6 +41,23 @@ public final class HomeTiles {
 
     public static String key(long uid) {
         return "home_tiles_" + uid;
+    }
+
+    public static String migratedKey(long uid, String id) {
+        return "home_tiles_added_" + id + "_" + uid;
+    }
+
+    /**
+     * Daftar tersimpan + {@code id} disisipkan setelah {@code afterId} (atau di akhir). Sudah ada → tak
+     * berubah. Penuh ({@link #MAX}) → ubin terakhir tergeser supaya ubin baru tetap terlihat.
+     */
+    public static List<String> withAdded(List<String> saved, String id, String afterId) {
+        List<String> out = new ArrayList<>(saved != null ? saved : Collections.<String>emptyList());
+        if (out.contains(id)) return out;
+        int at = afterId != null ? out.indexOf(afterId) : -1;
+        out.add(at >= 0 ? at + 1 : out.size(), id);
+        while (out.size() > MAX) out.remove(out.size() - 1 == out.indexOf(id) ? out.size() - 2 : out.size() - 1);
+        return out;
     }
 
     /** null/kosong → null (= pakai bawaan). Id dirapikan, duplikat & id tak valid dibuang. */

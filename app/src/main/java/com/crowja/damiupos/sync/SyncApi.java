@@ -654,6 +654,21 @@ public class SyncApi {
         return get(b.build().toString(), cfg.getToken(), staffUuid);
     }
 
+    /**
+     * Tren Penjualan se-cabang (Laporan → Tren; Admin/SPV/Marketing, 403 untuk peran lain):
+     * {@code days} hari LENGKAP terakhir (s/d kemarin) vs {@code days} hari sebelumnya, dari perakit
+     * dashboard. Balas {@code {ok,days,current:{start,end,totals{revenue,galon,galon_promo,trx,customers},
+     * daily[{date,revenue,galon,galon_promo,trx}],products?,staff?},previous:{...},today,mtd}}.
+     *
+     * @param lite true = tanpa rincian produk/karyawan (ubin Beranda)
+     */
+    public JSONObject salesTrend(int days, boolean lite, @Nullable String staffUuid) throws Exception {
+        okhttp3.HttpUrl.Builder b = okhttp3.HttpUrl.parse(cfg.getBaseUrl() + "/api/sales/trend").newBuilder()
+                .addQueryParameter("days", String.valueOf(days));
+        if (lite) b.addQueryParameter("lite", "1");
+        return get(b.build().toString(), cfg.getToken(), staffUuid);
+    }
+
     /** Armada aktif cabang: {ok,current_id,armadas:[{id,name,capacity,used_by[]}]}. */
     public JSONObject armadas() throws Exception {
         return get(cfg.getBaseUrl() + "/api/armadas", cfg.getToken());

@@ -137,6 +137,9 @@ public class User {
      *  hanya perlu antrian & transaksinya sendiri, dan layar ini memuat omzet seluruh cabang. */
     public boolean canViewSalesAchievement() { return isAdmin() || isMarketing(); }
 
+    /** Laporan → "📈 Tren Penjualan" (omzet se-cabang dari server): Admin, SPV, Marketing. */
+    public boolean canViewSalesTrend() { return isAdmin() || isSpv() || isMarketing(); }
+
     /** Layar "Rekor Pengiriman" (hari &amp; bulan terbaik tiap perangkat): Staf, SPV, dan Admin.
      *  Beda dari {@link #canViewSalesAchievement()} yang menutup pintu bagi Staf — layar itu memuat
      *  OMZET se-cabang, sedangkan yang ini cuma hitungan order selesai, dan justru kurirlah yang

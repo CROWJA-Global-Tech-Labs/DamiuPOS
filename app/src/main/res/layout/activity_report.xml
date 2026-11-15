@@ -21,7 +21,75 @@
             app:title="Laporan" />
     </com.google.android.material.appbar.AppBarLayout>
 
+    <!-- Laporan: tab "Tren Penjualan" (se-cabang, server; Admin/SPV/Marketing) + "Perangkat ini" (DB lokal). -->
+    <LinearLayout
+        android:id="@+id/reportTabBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/gj_surface"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="8dp"
+        android:visibility="gone">
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/reportTabs"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:selectionRequired="true"
+            app:singleSelection="true">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnTabTren"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minHeight="48dp"
+                android:text="📈 Tren Penjualan"
+                android:textAllCaps="false" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnTabLocal"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minHeight="48dp"
+                android:text="📊 Perangkat ini"
+                android:textAllCaps="false" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+    </LinearLayout>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        android:id="@+id/swipeTren"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone">
+
+        <androidx.core.widget.NestedScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/gj_canvas">
+
+            <LinearLayout
+                android:id="@+id/trendContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp" />
+        </androidx.core.widget.NestedScrollView>
+    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
     <androidx.core.widget.NestedScrollView
+        android:id="@+id/scrollLocal"
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
@@ -200,4 +268,5 @@
 
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
+    </FrameLayout>
 </LinearLayout>
