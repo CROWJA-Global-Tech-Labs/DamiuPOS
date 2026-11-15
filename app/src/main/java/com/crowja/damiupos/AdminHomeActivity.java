@@ -26,6 +26,7 @@ import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -45,11 +46,9 @@ import androidx.core.widget.ImageViewCompat;
 import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.GalonStockDao;
-import com.crowja.damiupos.db.OrderInboxDao;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.db.TransactionDao;
 import com.crowja.damiupos.db.UserDao;
-import com.crowja.damiupos.model.OrderInbox;
 import com.crowja.damiupos.model.Transaction;
 import com.crowja.damiupos.model.TransactionItem;
 import com.crowja.damiupos.model.User;
@@ -57,13 +56,13 @@ import com.crowja.damiupos.sync.SyncApi;
 import com.crowja.damiupos.sync.SyncScheduler;
 import com.crowja.damiupos.sync.SyncSettings;
 import com.crowja.damiupos.sync.WaInboxApi;
+import com.crowja.damiupos.util.HomeTiles;
 import com.crowja.damiupos.util.AiStatusMonitor;
 import com.crowja.damiupos.util.ForegroundDuties;
 import com.crowja.damiupos.util.GojekUi;
 import com.crowja.damiupos.util.Ts;
 import com.crowja.damiupos.wa.NotificationAlertHelper;
 import com.crowja.damiupos.wa.OrderAlertService;
-import com.crowja.damiupos.wa.ParsedOrder;
 import com.google.android.material.bottomsheet.BottomSheetBehavior;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.card.MaterialCardView;
@@ -129,9 +128,6 @@ public class AdminHomeActivity extends AppCompatActivity {
     private static final String G_SET = "Pengaturan";
     private static final String G_INFO = "Info";
     private static final String[] GROUP_ORDER = {G_OPS, G_CUST, G_REPORT, G_WA, G_SET, G_INFO};
-    /** Urutan slot grid Beranda (7 pertama yang tampil + "Lainnya"); sisanya cadangan bila ada yang tersembunyi. */
-    private static final String[] GRID_ORDER = {"antrean", "pelanggan", "komplain", "followup", "chatwa",
-            "laporan", "stok", "transaksi", "jual", "kembali", "pengeluaran", "setoran"};
 
     private static final int[] NAV_IDS = {R.id.gjNavBeranda, R.id.gjNavPesanan, R.id.gjNavChat, R.id.gjNavAkun};
     private static final int[] NAV_ICONS = {R.drawable.gj_ic_home, R.drawable.gj_ic_receipt,
@@ -143,7 +139,6 @@ public class AdminHomeActivity extends AppCompatActivity {
     private CustomerDao customerDao;
     private TransactionDao transactionDao;
     private GalonStockDao galonStockDao;
-    private OrderInboxDao orderInboxDao;
     private UserDao userDao;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -220,7 +215,6 @@ public class AdminHomeActivity extends AppCompatActivity {
         customerDao = new CustomerDao(db);
         transactionDao = new TransactionDao(db);
         galonStockDao = new GalonStockDao(db);
-        orderInboxDao = new OrderInboxDao(db);
         userDao = new UserDao(db);
         io = Executors.newSingleThreadExecutor();
         ai = new AiStatusMonitor(this, this::paintAi);
@@ -264,6 +258,7 @@ public class AdminHomeActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        staleOrderAlertStopped = false;
         if (isFinishing()) return;
         // Login / peran / Guided Delivery / preferensi tampilan bisa berubah saat layar ini di background.
         if (redirectIfNotForMe()) return;
@@ -542,28 +537,6 @@ public class AdminHomeActivity extends AppCompatActivity {
             }
         }
 
-        // Pesanan WA pending untuk perangkat INI; Marketing/Pengisian dibisukan (refreshOrderInboxBanner lama).
-        try {
-            boolean silenced = UserDao.isCurrentUserAlertSilenced(app);
-            s.inboxPending = silenced ? 0 : orderInboxDao.countPendingForThisDevice();
-            if (s.inboxPending > 0) {
-                OrderInbox latest = orderInboxDao.getLatestPendingForThisDevice();
-                if (latest != null) {
-                    s.inboxSender = latest.getSenderName() != null ? latest.getSenderName() : "(unknown)";
-                    ParsedOrder parsed = ParsedOrder.fromJson(latest.getParsedJson());
-                    String sub;
-                    if (parsed != null && parsed.isOrder && parsed.items != null && !parsed.items.isEmpty()) {
-                        sub = parsed.shortSummary();
-                        if (parsed.urgent) sub += " ⚡";
-                    } else {
-                        sub = "Tap untuk lihat & konfirmasi";
-                    }
-                    s.inboxSummary = sub;
-                }
-            }
-        } catch (Throwable t) {
-            Log.w(TAG, "query inbox", t);
-        }
         // WA Perkenalan: hanya perangkat petugas; hitungan disaring ke wilayah tugasnya.
         try {
             if (s.menu.introWa) {
@@ -789,8 +762,6 @@ public class AdminHomeActivity extends AppCompatActivity {
                 AdminHomeActivity::queueVisible, () -> open(DeliveryQueueActivity.class)).badge(s -> s.queue);
         add("terjadwal", "Pesanan Terjadwal", "Terjadwal", "🗓️", R.color.gj_green_tint, G_OPS,
                 m -> m.admin && m.enrolled, () -> open(ScheduledOrderActivity.class));
-        add("inbox", "Pesanan dari WA", "Pesanan WA", "📨", R.color.gj_orange_tint, G_OPS,
-                m -> !m.alertSilenced, () -> open(OrderInboxActivity.class)).badge(s -> s.inboxPending);
         add("keliling", "Mode Keliling", null, "🛵", R.color.gj_green_tint, G_OPS,
                 m -> m.user == null || !m.user.isViewer(), () -> open(IderModeActivity.class));
         add("pengisian", "Pengisian Live", "Pengisian", "🚰", R.color.gj_blue_tint, G_OPS,
@@ -1010,9 +981,6 @@ public class AdminHomeActivity extends AppCompatActivity {
         int galonBeredar;
         int customers;
         int unsynced;
-        int inboxPending;
-        String inboxSender;
-        String inboxSummary;
         int introCount;
         boolean proTemp;
         long proTempUntil;
@@ -1123,7 +1091,7 @@ public class AdminHomeActivity extends AppCompatActivity {
     }
 
     private void renderNavBadges() {
-        setNavBadge(TAB_PESANAN, (ms.alertSilenced ? 0 : snap.inboxPending) + (queueVisible(ms) ? snap.queue : 0));
+        setNavBadge(TAB_PESANAN, queueVisible(ms) ? snap.queue : 0);
         setNavBadge(TAB_CHAT, ms.canWaChat ? Math.max(0, waUnread) : 0);
     }
 
@@ -1313,10 +1281,9 @@ public class AdminHomeActivity extends AppCompatActivity {
         LinearLayout grid = findViewById(R.id.gjhGrid);
         if (grid == null) return;
         List<MenuEntry> pick = new ArrayList<>();
-        for (String id : GRID_ORDER) {
-            if (pick.size() >= 7) break;
+        for (String id : HomeTiles.pick(savedHomeTiles(), this::visibleId)) {
             MenuEntry e = entry(id);
-            if (e != null && visible(e)) pick.add(e);
+            if (e != null) pick.add(e);
         }
         List<String> ids = new ArrayList<>();
         for (MenuEntry e : pick) ids.add(e.id);
@@ -1326,7 +1293,8 @@ public class AdminHomeActivity extends AppCompatActivity {
             gridIds.clear();
             gridIds.addAll(ids);
             LinearLayout row = null;
-            for (int i = 0; i < 8; i++) {
+            int cells = ((pick.size() + 1 + 3) / 4) * 4;
+            for (int i = 0; i < cells; i++) {
                 if (i % 4 == 0) {
                     row = newRow();
                     grid.addView(row);
@@ -1341,6 +1309,137 @@ public class AdminHomeActivity extends AppCompatActivity {
             }
         }
         updateGridTiles();
+    }
+
+    private boolean visibleId(String id) {
+        MenuEntry e = entry(id);
+        return e != null && visible(e);
+    }
+
+    /** Ubin Beranda pilihan user ini di perangkat ini (null = bawaan). */
+    private List<String> savedHomeTiles() {
+        try {
+            return HomeTiles.parse(settingsDao.get(HomeTiles.key(ms != null ? ms.uid : 0), ""));
+        } catch (Throwable t) {
+            Log.w(TAG, "home tiles", t);
+            return null;
+        }
+    }
+
+    /** Lembar "Atur menu": pilih menu yang tampil di Beranda + urutannya (per user per perangkat). */
+    private void showEditTilesSheet() {
+        final BottomSheetDialog d = newSheet();
+        View root = LayoutInflater.from(this).inflate(R.layout.gjh_sheet_list, null, false);
+        TextView title = root.findViewById(R.id.gjhSheetTitle);
+        if (title != null) title.setText("Atur menu Beranda");
+        LinearLayout body = root.findViewById(R.id.gjhSheetBody);
+        final List<MenuEntry> all = new ArrayList<>();
+        for (String g : GROUP_ORDER) for (MenuEntry e : registry) if (g.equals(e.group) && visible(e)) all.add(e);
+        final List<String> sel = new ArrayList<>(HomeTiles.pick(savedHomeTiles(), this::visibleId));
+        final LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        final TextView hint = new TextView(this);
+        hint.setPadding(px(16), 0, px(16), px(8));
+        hint.setTextColor(col(R.color.gj_text_secondary));
+        hint.setTextSize(13);
+        body.addView(hint);
+        body.addView(list);
+        final Runnable[] render = new Runnable[1];
+        render[0] = () -> {
+            hint.setText("Centang menu yang tampil di Beranda (" + HomeTiles.MIN + "–" + HomeTiles.MAX
+                    + "), atur urutan dengan ▲▼. Dipilih: " + sel.size() + ". \"Lainnya\" selalu di akhir.");
+            list.removeAllViews();
+            List<MenuEntry> ordered = new ArrayList<>();
+            for (String id : sel) {
+                MenuEntry e = entry(id);
+                if (e != null) ordered.add(e);
+            }
+            for (MenuEntry e : all) if (!sel.contains(e.id)) ordered.add(e);
+            for (MenuEntry e : ordered) {
+                View v = LayoutInflater.from(this).inflate(R.layout.gjh_item_tile_edit, list, false);
+                final int pos = sel.indexOf(e.id);
+                CheckBox cb = v.findViewById(R.id.gjhEditCheck);
+                TextView emoji = v.findViewById(R.id.gjhEditEmoji);
+                TextView label = v.findViewById(R.id.gjhEditLabel);
+                TextView up = v.findViewById(R.id.gjhEditUp);
+                TextView down = v.findViewById(R.id.gjhEditDown);
+                emoji.setText(e.emoji);
+                emoji.setBackground(rounded(col(e.tintRes), 10));
+                label.setText(e.label);
+                cb.setChecked(pos >= 0);
+                cb.setContentDescription("Tampilkan " + e.label + " di Beranda");
+                cb.setOnClickListener(x -> {
+                    if (sel.contains(e.id)) {
+                        sel.remove(e.id);
+                    } else if (sel.size() >= HomeTiles.MAX) {
+                        Toast.makeText(this, "Maksimal " + HomeTiles.MAX + " menu di Beranda.",
+                                Toast.LENGTH_SHORT).show();
+                    } else {
+                        sel.add(e.id);
+                    }
+                    render[0].run();
+                });
+                v.setOnClickListener(x -> cb.performClick());
+                boolean canUp = pos > 0;
+                boolean canDown = pos >= 0 && pos < sel.size() - 1;
+                up.setVisibility(pos >= 0 ? View.VISIBLE : View.INVISIBLE);
+                down.setVisibility(pos >= 0 ? View.VISIBLE : View.INVISIBLE);
+                up.setEnabled(canUp);
+                down.setEnabled(canDown);
+                up.setAlpha(canUp ? 1f : 0.3f);
+                down.setAlpha(canDown ? 1f : 0.3f);
+                up.setContentDescription("Naikkan " + e.label);
+                down.setContentDescription("Turunkan " + e.label);
+                up.setOnClickListener(x -> {
+                    if (pos > 0) {
+                        Collections.swap(sel, pos, pos - 1);
+                        render[0].run();
+                    }
+                });
+                down.setOnClickListener(x -> {
+                    if (pos >= 0 && pos < sel.size() - 1) {
+                        Collections.swap(sel, pos, pos + 1);
+                        render[0].run();
+                    }
+                });
+                list.addView(v);
+            }
+        };
+        render[0].run();
+        View footer = LayoutInflater.from(this).inflate(R.layout.gjh_sheet_tiles_footer, body, false);
+        footer.findViewById(R.id.gjhTilesReset).setOnClickListener(x -> {
+            sel.clear();
+            sel.addAll(HomeTiles.defaults(this::visibleId));
+            render[0].run();
+        });
+        footer.findViewById(R.id.gjhTilesSave).setOnClickListener(x -> {
+            if (sel.size() < HomeTiles.MIN) {
+                Toast.makeText(this, "Pilih minimal " + HomeTiles.MIN + " menu.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            List<String> known = new ArrayList<>();
+            for (MenuEntry e : registry) known.add(e.id);
+            List<String> clean = HomeTiles.sanitize(sel, known);
+            try {
+                long uid = ms != null ? ms.uid : 0;
+                boolean isDefault = clean.equals(HomeTiles.defaults(this::visibleId));
+                settingsDao.set(HomeTiles.key(uid), isDefault ? "" : HomeTiles.serialize(clean));
+            } catch (Throwable t) {
+                Log.w(TAG, "save home tiles", t);
+                Toast.makeText(this, "Gagal menyimpan.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            try {
+                d.dismiss();
+            } catch (Throwable ignored) {
+            }
+            safe("grid", this::renderGrid);
+            Toast.makeText(this, "Menu Beranda disimpan.", Toast.LENGTH_SHORT).show();
+        });
+        body.addView(footer);
+        d.setContentView(root);
+        expandOnShow(d, true);
+        d.show();
     }
 
     private void updateGridTiles() {
@@ -1387,6 +1486,12 @@ public class AdminHomeActivity extends AppCompatActivity {
             }
             runEntry(e);
         });
+        if (grid) {
+            v.setOnLongClickListener(x -> {
+                safe("editTiles", this::showEditTilesSheet);
+                return true;
+            });
+        }
         row.addView(v);
         updateTile(h);
         return h;
@@ -1444,6 +1549,10 @@ public class AdminHomeActivity extends AppCompatActivity {
         if (label != null) label.setText("Lainnya");
         v.setContentDescription("Lainnya — semua menu");
         v.setOnClickListener(x -> safe("allMenu", this::showAllMenuSheet));
+        v.setOnLongClickListener(x -> {
+            safe("editTiles", this::showEditTilesSheet);
+            return true;
+        });
         row.addView(v);
     }
 
@@ -1456,13 +1565,6 @@ public class AdminHomeActivity extends AppCompatActivity {
             l.add(new AlertItem(SEV_DANGER, "🤖", "AI MATI",
                     "AI provider mati — pantau WhatsApp manual sampai AI hidup lagi.", "Lihat",
                     () -> ai.showDownDialog(), false));
-        }
-        if (snap.inboxPending > 0) {
-            String title = snap.inboxPending > 1 ? snap.inboxPending + " pesanan WA baru" : "Pesanan WA baru";
-            String body = (snap.inboxSender != null ? snap.inboxSender : "Pelanggan")
-                    + (snap.inboxSummary != null ? " — " + snap.inboxSummary : "");
-            l.add(new AlertItem(SEV_DANGER, "📨", title, body, "Konfirmasi",
-                    () -> open(OrderInboxActivity.class), true));
         }
         if (snap.complaints > 0) {
             l.add(new AlertItem(SEV_DANGER, "⚠️", "Komplain aktif " + fmtCount(snap.complaints),
@@ -1504,30 +1606,25 @@ public class AdminHomeActivity extends AppCompatActivity {
         return l;
     }
 
+    /** Sekali per tampilan: sirine pesanan WA lama sudah dimatikan. */
+    private boolean staleOrderAlertStopped;
+
     private void renderAlerts() {
         LinearLayout row = findViewById(R.id.gjhAlertRow);
         View section = findViewById(R.id.gjhAlertSection);
         if (row == null || section == null) return;
         List<AlertItem> list = buildAlerts();
         row.removeAllViews();
-        View blinkView = null;
-        for (AlertItem a : list) {
-            View card = inflateAlert(row, a);
-            if (a.blink) blinkView = card;
-        }
+        for (AlertItem a : list) inflateAlert(row, a);
         section.setVisibility(list.isEmpty() ? View.GONE : View.VISIBLE);
         View dot = findViewById(R.id.gjhAvatarDot);
         if (dot != null) dot.setVisibility(list.isEmpty() ? View.GONE : View.VISIBLE);
-        // Alarm pesanan WA: kedip selama ada pending; 0 → hentikan kedip + service SUARA (sama dgn banner lama).
-        // Hanya dari hitungan NYATA — snapshot awal (semua 0, sebelum kueri pertama selesai) tak boleh
-        // mematikan alarm pesanan yang sedang berbunyi.
-        if (!snap.loaded) return;
-        if (snap.inboxPending > 0) {
-            if (blinkView != null) NotificationAlertHelper.startAlert(blinkView);
-        } else {
-            NotificationAlertHelper.stopAlert();
-            OrderAlertService.stop(this);
-        }
+        // Fitur "Pesanan dari WA" dihapus: matikan kedip + sirine pesanan yang mungkin tertinggal dari
+        // versi sebelum pembaruan (hanya setelah kueri pertama selesai, sama dgn perilaku lama).
+        if (!snap.loaded || staleOrderAlertStopped) return;
+        staleOrderAlertStopped = true;
+        NotificationAlertHelper.stopAlert();
+        OrderAlertService.stop(this);
     }
 
     private View inflateAlert(LinearLayout row, AlertItem a) {
@@ -1691,6 +1788,19 @@ public class AdminHomeActivity extends AppCompatActivity {
         View root = LayoutInflater.from(this).inflate(R.layout.gjh_sheet_list, null, false);
         TextView title = root.findViewById(R.id.gjhSheetTitle);
         if (title != null) title.setText("Semua menu");
+        TextView act = root.findViewById(R.id.gjhSheetAction);
+        if (act != null) {
+            act.setText("✏️ Atur menu");
+            act.setContentDescription("Atur menu Beranda");
+            act.setVisibility(View.VISIBLE);
+            act.setOnClickListener(x -> {
+                try {
+                    d.dismiss();
+                } catch (Throwable ignored) {
+                }
+                safe("editTiles", this::showEditTilesSheet);
+            });
+        }
         LinearLayout body = root.findViewById(R.id.gjhSheetBody);
         for (String g : GROUP_ORDER) {
             List<MenuEntry> es = new ArrayList<>();
@@ -1925,10 +2035,8 @@ public class AdminHomeActivity extends AppCompatActivity {
             clickable(tabs[i], v -> selectPesananPage(idx));
         }
         clickable(R.id.gjhBtnQueue, v -> open(DeliveryQueueActivity.class));
-        clickable(R.id.gjhBtnInbox, v -> open(OrderInboxActivity.class));
         clickable(R.id.gjhBtnAllTrx, v -> open(TransactionListActivity.class));
         clickable(R.id.gjhChipQueue, v -> open(DeliveryQueueActivity.class));
-        clickable(R.id.gjhChipWa, v -> open(OrderInboxActivity.class));
         selectPesananPage(0);
     }
 
@@ -1957,25 +2065,12 @@ public class AdminHomeActivity extends AppCompatActivity {
     private void renderPesanan() {
         pesananDirty = false;
         boolean qVis = queueVisible(ms);
-        boolean inVis = !ms.alertSilenced;
         for (int id : new int[]{R.id.gjhChipQueue, R.id.gjhBtnQueue}) {
             View v = findViewById(id);
             if (v != null) v.setVisibility(qVis ? View.VISIBLE : View.GONE);
         }
-        for (int id : new int[]{R.id.gjhChipWa, R.id.gjhBtnInbox}) {
-            View v = findViewById(id);
-            if (v != null) v.setVisibility(inVis ? View.VISIBLE : View.GONE);
-        }
         TextView chipQ = findViewById(R.id.gjhChipQueue);
         if (chipQ != null) chipQ.setText("🚚 " + snap.queue + " antrean di HP ini");
-        TextView chipW = findViewById(R.id.gjhChipWa);
-        if (chipW != null) chipW.setText("📨 " + snap.inboxPending + " pesanan WA baru");
-        TextView inboxBadge = findViewById(R.id.gjhBtnInboxBadge);
-        if (inboxBadge != null) {
-            inboxBadge.setVisibility(inVis && snap.inboxPending > 0 ? View.VISIBLE : View.GONE);
-            inboxBadge.setText(fmtCount(snap.inboxPending));
-        }
-
         // Berjalan: antrean delivery lokal (sama dengan badge/Antrian Delivery).
         LinearLayout q = findViewById(R.id.gjhQueueList);
         if (q != null) {
@@ -2047,11 +2142,6 @@ public class AdminHomeActivity extends AppCompatActivity {
             if (ms.canWaChat) {
                 addCircle(actions, "💬", "Chat WA", R.color.gj_green_tint, Math.max(0, waUnread),
                         () -> open(WaInboxActivity.class));
-                n++;
-            }
-            if (!ms.alertSilenced) {
-                addCircle(actions, "📨", "Pesanan WA", R.color.gj_orange_tint, snap.inboxPending,
-                        () -> open(OrderInboxActivity.class));
                 n++;
             }
             addCircle(actions, "⚠️", "Komplain", R.color.gj_red_tint, snap.complaints,

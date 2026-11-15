@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Satu baris di lembar "Atur menu Beranda": centang tampil + ikon + nama + naik/turun. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:minHeight="56dp"
+    android:orientation="horizontal"
+    android:paddingStart="8dp"
+    android:paddingEnd="8dp">
+
+    <CheckBox
+        android:id="@+id/gjhEditCheck"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:buttonTint="@color/gj_primary" />
+
+    <TextView
+        android:id="@+id/gjhEditEmoji"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_marginStart="4dp"
+        android:gravity="center"
+        android:importantForAccessibility="no"
+        android:textSize="18sp" />
+
+    <TextView
+        android:id="@+id/gjhEditLabel"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_weight="1"
+        android:textColor="@color/gj_text_primary"
+        android:textSize="15sp" />
+
+    <TextView
+        android:id="@+id/gjhEditUp"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Naikkan"
+        android:gravity="center"
+        android:text="▲"
+        android:textColor="@color/gj_text_secondary"
+        android:textSize="16sp" />
+
+    <TextView
+        android:id="@+id/gjhEditDown"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Turunkan"
+        android:gravity="center"
+        android:text="▼"
+        android:textColor="@color/gj_text_secondary"
+        android:textSize="16sp" />
+</LinearLayout>
