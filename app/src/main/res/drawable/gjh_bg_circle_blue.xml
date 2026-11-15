@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lingkaran aksi mini kartu Penjualan: glyph putih di atas #0090B8 = 3.7:1 (ikon/grafis). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="@color/gj_blue_glyph" />
+</shape>

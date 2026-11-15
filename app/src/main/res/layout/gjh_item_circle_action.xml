@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Aksi cepat tab Chat: lingkaran 48dp berwarna + emoji, badge merah, label 12sp. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:layout_weight="1"
+    android:background="?attr/selectableItemBackground"
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:paddingTop="6dp"
+    android:paddingBottom="8dp">
+
+    <FrameLayout
+        android:layout_width="64dp"
+        android:layout_height="54dp">
+
+        <TextView
+            android:id="@+id/gjhCircleEmoji"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="bottom|center_horizontal"
+            android:gravity="center"
+            android:importantForAccessibility="no"
+            android:includeFontPadding="false"
+            android:textSize="22sp" />
+
+        <TextView
+            android:id="@+id/gjhCircleBadge"
+            style="@style/GjHome.Badge"
+            android:layout_height="18dp"
+            android:layout_gravity="top|end"
+            android:minWidth="18dp"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/gjhCircleLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:ellipsize="end"
+        android:gravity="center"
+        android:maxLines="1"
+        android:textColor="@color/gj_text_primary"
+        android:textSize="12sp" />
+</LinearLayout>
