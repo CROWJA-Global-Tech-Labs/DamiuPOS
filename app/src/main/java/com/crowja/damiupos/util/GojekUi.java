@@ -10,8 +10,8 @@ import com.crowja.damiupos.db.UserDao;
 import com.crowja.damiupos.model.User;
 
 /**
- * Gerbang "Tampilan Baru (gaya Gojek)". Untuk sementara HANYA untuk sesi login Admin; peran lain tak
- * pernah mengevaluasi preferensinya sehingga tampilan mereka tak berubah sama sekali.
+ * Gerbang "Tampilan Tema v2". Berlaku untuk setiap sesi login (lihat {@link #isEligibleSession}); peran
+ * Pengisian & perangkat Guided Delivery tetap di berandanya sendiri.
  *
  * <p><b>Sesi admin</b> = multi-user AKTIF, ada pengguna login (uid &gt; 0), barisnya ada, berperan admin
  * dan aktif — cermin aturan kartu operator di beranda lama (MainActivity.refreshOperatorBar). Perangkat
@@ -38,6 +38,23 @@ public final class GojekUi {
             if (!sd.isMultiUserEnabled() || sd.getCurrentUserId() <= 0) return false;
             User u = UserDao.currentUser(ctx);
             return u != null && u.isAdmin() && u.isActive();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * Sesi yang mendapat "Tampilan Tema v2": multi-user aktif, ada yang login, pengguna aktif — peran APA
+     * PUN, kecuali yang sudah punya beranda sendiri: peran Pengisian (PengisianActivity) dan perangkat
+     * Guided Delivery (DeliveryQueueActivity). Single-user tanpa login tetap tampilan lama.
+     */
+    public static boolean isEligibleSession(Context ctx) {
+        try {
+            SettingsDao sd = new SettingsDao(DatabaseHelper.getInstance(ctx));
+            if (!sd.isMultiUserEnabled() || sd.getCurrentUserId() <= 0) return false;
+            User u = UserDao.currentUser(ctx);
+            if (u == null || !u.isActive() || u.usesPengisianHome()) return false;
+            return !new com.crowja.damiupos.sync.SyncSettings(sd).isGuidedDeliveryDevice();
         } catch (Throwable t) {
             return false;
         }
@@ -86,13 +103,13 @@ public final class GojekUi {
         cache = null;
     }
 
-    /** Tampilan baru berlaku untuk sesi ini? (admin + preferensi aktif). Di-cache ±5 dtk. */
+    /** Tampilan Tema v2 berlaku untuk sesi ini? (sesi layak + preferensi aktif). Di-cache ±5 dtk. */
     public static boolean isEnabled(Context ctx) {
         long now = System.nanoTime();
         Snapshot s = cache;
         if (s != null && s.gen == GEN.get() && now - s.atNanos < CACHE_TTL_NANOS) return s.enabled;
         long gen = GEN.get();
-        boolean on = isAdminSession(ctx) && isPreferred(ctx);
+        boolean on = isEligibleSession(ctx) && isPreferred(ctx);
         // Kalau invalidate() terjadi selagi menghitung, gen-nya sudah beda → snapshot ini tak dipakai.
         cache = new Snapshot(on, now, gen);
         return on;

@@ -405,9 +405,8 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- Tampilan baru (gaya Gojek): preferensi PERANGKAT, hanya terlihat di sesi admin
-                 (SettingsActivity membukanya bila GojekUi.isAdminSession). Bawaan GONE → non-admin
-                 tak pernah melihat kartu ini. -->
+            <!-- Tampilan Tema v2: preferensi PERANGKAT, terlihat di setiap sesi yang layak
+                 (SettingsActivity membukanya bila GojekUi.isEligibleSession). Bawaan GONE. -->
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/cardGojekUi"
                 android:layout_width="match_parent"
@@ -433,7 +432,7 @@
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="🎨 Tampilan baru (gaya Gojek)"
+                            android:text="🎨 Tampilan Tema v2"
                             android:textColor="@color/text_primary"
                             android:textSize="16sp"
                             android:textStyle="bold" />
@@ -448,7 +447,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:text="Sementara khusus admin. Matikan untuk kembali ke tampilan lama."
+                        android:text="Matikan untuk kembali ke tampilan lama."
                         android:textColor="@color/text_secondary"
                         android:textSize="13sp" />
                 </LinearLayout>

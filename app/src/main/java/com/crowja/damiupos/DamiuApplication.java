@@ -83,8 +83,8 @@ public class DamiuApplication extends Application {
     }
 
     /**
-     * "Tampilan baru (gaya Gojek)" untuk layar LAMA: saat {@link com.crowja.damiupos.util.GojekUi#isEnabled}
-     * (sesi admin + preferensi aktif) tumpuk ThemeOverlay.DAMIUPOS.Gojek ke tema activity. Callback ini
+     * "Tampilan Tema v2" untuk layar LAMA: saat {@link com.crowja.damiupos.util.GojekUi#isEnabled}
+     * (sesi layak + preferensi aktif) tumpuk ThemeOverlay.DAMIUPOS.Gojek ke tema activity. Callback ini
      * berjalan di dalam super.onCreate() — sebelum setContentView — jadi view, toolbar, dialog, dan
      * status bar ikut. Non-admin: tak ada yang berubah sama sekali.
      *
