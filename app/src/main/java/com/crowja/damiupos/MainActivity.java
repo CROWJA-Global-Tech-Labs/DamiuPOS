@@ -1592,10 +1592,11 @@ public class MainActivity extends AppCompatActivity {
         TextView cardCount = findViewById(R.id.tvKomplainCard);
         if (cardCount != null) cardCount.setText(n > 99 ? "99+" : String.valueOf(n));
         // Menu berkedip selama masih ada komplain / masalah yang belum selesai (animasi tak diulang bila sudah jalan).
+        komplainCount = n;
         for (int vid : new int[]{R.id.btnKomplain, R.id.cardKomplain}) {
             View v = findViewById(vid);
             if (v == null) continue;
-            if (n > 0) {
+            if (n > 0 || (vid == R.id.cardKomplain && aiDead)) {
                 if (v.getAnimation() == null) startBlink(v);
             } else {
                 v.clearAnimation();
@@ -1896,12 +1897,98 @@ public class MainActivity extends AppCompatActivity {
     private long aiStatusAt;
     private boolean aiStatusBusy;
     private String aiStatusText = "";
+    private boolean aiDead;
+    private int komplainCount;
+    /** Konfirmasi "AI mati" sudah diberikan di proses ini (reset saat AI hidup lagi). */
+    private static boolean aiDownAcked;
+    private android.app.Dialog aiDownDialog;
+    private android.media.MediaPlayer aiSiren;
+
+    /** Kartu Masalah berkedip bila ada komplain aktif ATAU AI mati. */
+    private void updateKomplainBlink() {
+        View card = findViewById(R.id.cardKomplain);
+        if (card == null) return;
+        if (komplainCount > 0 || aiDead) {
+            if (card.getAnimation() == null) startBlink(card);
+        } else {
+            card.clearAnimation();
+        }
+    }
+
+    private void startAiSiren() {
+        if (aiSiren != null) return;
+        try {
+            com.crowja.damiupos.util.ComplaintSirenSound.Choice ch = com.crowja.damiupos.util.ComplaintSirenSound.current(this);
+            if (ch.silent()) return;   // "Tanpa suara" dari web Konfigurasi dihormati
+            android.media.MediaPlayer mp = new android.media.MediaPlayer();
+            mp.setAudioAttributes(new android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
+            mp.setDataSource(this, ch.uri);
+            mp.setLooping(true);
+            mp.prepare();
+            mp.start();
+            aiSiren = mp;
+        } catch (Throwable ignored) {
+            aiSiren = null;
+        }
+    }
+
+    private void stopAiSiren() {
+        android.media.MediaPlayer mp = aiSiren;
+        aiSiren = null;
+        if (mp == null) return;
+        try {
+            mp.stop();
+        } catch (Throwable ignored) {
+        }
+        try {
+            mp.release();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** Popup "AI mati": sirine komplain + konfirmasi DUA ketukan bahwa staf memantau WhatsApp manual. */
+    private void showAiDownDialog(String reason) {
+        if (isFinishing() || isDestroyed()) return;
+        if (aiDownDialog != null && aiDownDialog.isShowing()) {
+            startAiSiren();
+            return;
+        }
+        StringBuilder msg = new StringBuilder("AI provider sedang MATI. Pesan WhatsApp pelanggan TIDAK dibalas otomatis.")
+                .append("\n\nDengan mengonfirmasi, Anda menyatakan staf akan memantau WhatsApp secara manual dan rutin sampai AI hidup kembali.");
+        if (reason != null && !reason.isEmpty()) msg.append("\n\nPenyebab: ").append(reason);
+        final androidx.appcompat.app.AlertDialog dlg = new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("🤖 AI MATI")
+                .setMessage(msg.toString())
+                .setCancelable(false)
+                .setPositiveButton("Saya mengerti", null)
+                .create();
+        dlg.setOnDismissListener(d -> stopAiSiren());
+        dlg.show();
+        final int[] taps = {0};
+        dlg.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            taps[0]++;
+            if (taps[0] < 2) {
+                ((android.widget.Button) v).setText("Ketuk sekali lagi untuk konfirmasi");
+                return;
+            }
+            aiDownAcked = true;
+            dlg.dismiss();
+        });
+        aiDownDialog = dlg;
+        startAiSiren();
+    }
 
     /** Indikator robot + dot di kartu Masalah: hijau = provider AI agen WA HIDUP, merah = MATI, abu = tak diketahui. */
     private void refreshAiStatus() {
         final View ll = findViewById(R.id.llAiStatus);
         if (ll == null) return;
-        ll.setOnClickListener(v -> Toast.makeText(this, aiStatusText.isEmpty() ? "Memuat status AI…" : aiStatusText, Toast.LENGTH_LONG).show());
+        ll.setOnClickListener(v -> {
+            if (aiDead) showAiDownDialog(aiReason);
+            else Toast.makeText(this, aiStatusText.isEmpty() ? "Memuat status AI…" : aiStatusText, Toast.LENGTH_LONG).show();
+        });
+        if (aiDownDialog != null && aiDownDialog.isShowing()) startAiSiren();   // kembali dari background
         if (aiStatusBusy || (aiStatusAt != 0 && android.os.SystemClock.elapsedRealtime() - aiStatusAt < 30000L)) return;
         final com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
         if (!cfg.isEnrolled()) {
@@ -1939,12 +2026,32 @@ public class MainActivity extends AppCompatActivity {
                 else if (alive && !provider.isEmpty()) sb.append(" · ").append(provider);
                 if (!alive && !reason.isEmpty()) sb.append("\n").append(reason);
                 if (!alive && !until.isEmpty()) sb.append("\nPulih sekitar: ").append(until);
-                paintAiDot(alive ? 0xFF00C853 : 0xFFFF1744, sb.toString());
+                aiReason = reason;
+                paintAiDot(alive ? 0xFF00C853 : 0xFFFF1744, sb.toString(), alive ? 1 : 2);
             });
         }).start();
     }
 
+    private String aiReason = "";
+
     private void paintAiDot(int color, String text) {
+        paintAiDot(color, text, 0);
+    }
+
+    /** state: 0 tak diketahui, 1 hidup, 2 mati. */
+    private void paintAiDot(int color, String text, int state) {
+        TextView label = findViewById(R.id.tvAiLabel);
+        if (label != null) {
+            label.setText(state == 1 ? "AI HIDUP" : state == 2 ? "AI MATI" : "AI ?");
+        }
+        aiDead = state == 2;
+        updateKomplainBlink();
+        if (state == 2) {
+            if (!aiDownAcked) showAiDownDialog(aiReason);
+        } else if (state == 1) {
+            aiDownAcked = false;
+            if (aiDownDialog != null && aiDownDialog.isShowing()) aiDownDialog.dismiss();
+        }
         aiStatusText = text;
         View dot = findViewById(R.id.vAiDot);
         if (dot != null && dot.getBackground() instanceof android.graphics.drawable.GradientDrawable) {
@@ -2162,5 +2269,6 @@ public class MainActivity extends AppCompatActivity {
         // leak). Sound tetap jalan di OrderAlertService — visual saja
         // yang pause.
         NotificationAlertHelper.stopAlert();
+        stopAiSiren();   // sirine "AI mati" berhenti saat layar tak tampil; lanjut lagi saat kembali (refreshAiStatus)
     }
 }

@@ -737,6 +737,17 @@
                                 android:layout_height="11dp"
                                 android:layout_marginStart="5dp"
                                 android:background="@drawable/bg_ai_dot" />
+
+                            <TextView
+                                android:id="@+id/tvAiLabel"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="4dp"
+                                android:maxLines="1"
+                                android:text="AI ?"
+                                android:textColor="@color/white"
+                                android:textSize="9sp"
+                                android:textStyle="bold" />
                         </LinearLayout>
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
