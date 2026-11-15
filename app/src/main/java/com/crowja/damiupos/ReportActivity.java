@@ -58,7 +58,7 @@ public class ReportActivity extends AppCompatActivity {
     }
 
     private void loadCharts() {
-        int colorPrimary = ContextCompat.getColor(this, R.color.primary);
+        int colorPrimary = com.crowja.damiupos.util.ThemeColors.primary(this);
         int colorAccent = ContextCompat.getColor(this, R.color.accent);
         int colorGreen = ContextCompat.getColor(this, R.color.green);
 

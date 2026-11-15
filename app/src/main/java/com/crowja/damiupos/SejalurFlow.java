@@ -116,7 +116,7 @@ final class SejalurFlow {
    static final int C_TEXT = 0xFF212121;
    static final int C_TEXT2 = 0xFF424242;
    static final int C_MUTED = 0xFF616161;
-   static final int C_PRIMARY = 0xFF1565C0;
+   final int C_PRIMARY;
    static final int C_PRIMARY_DARK = 0xFF0D47A1;
    static final int C_DANGER = 0xFFB71C1C;
    static final int C_OK = 0xFF1B5E20;
@@ -134,6 +134,7 @@ final class SejalurFlow {
 
    SejalurFlow(AppCompatActivity act, Host host) {
       this.act = act;
+      this.C_PRIMARY = com.crowja.damiupos.util.ThemeColors.primary(act);
       this.host = host;
    }
 

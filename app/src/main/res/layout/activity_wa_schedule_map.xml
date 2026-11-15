@@ -16,7 +16,7 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="@color/primary"
+            android:background="?attr/colorPrimary"
             android:theme="@style/DAMIUToolbarOverlay"
             app:navigationIcon="@drawable/ic_arrow_back"
             app:popupTheme="@style/ThemeOverlay.MaterialComponents.Light"
@@ -139,7 +139,7 @@
                     android:layout_height="wrap_content"
                     android:text="🗺️ Batas: Desa"
                     android:textAllCaps="false"
-                    android:textColor="#0D47A1"
+                    android:textColor="?attr/colorPrimaryDark"
                     android:textSize="13sp" />
             </LinearLayout>
         </HorizontalScrollView>

@@ -8,6 +8,8 @@
         <item name="android:forceDarkAllowed">false</item>
         <item name="colorPrimary">@color/primary</item>
         <item name="colorPrimaryDark">@color/primary_dark</item>
+        <item name="colorPrimaryStrong">@color/primary</item>
+        <item name="textColorOnPrimaryMuted">#D6FFFFFF</item>
         <item name="colorAccent">@color/accent</item>
         <item name="android:statusBarColor">@color/primary_dark</item>
         <!-- Default toolbar title color: white on primary background -->
@@ -82,7 +84,7 @@
     <style name="PromoStatLabel">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:textColor">#D6FFFFFF</item>
+        <item name="android:textColor">?attr/textColorOnPrimaryMuted</item>
         <item name="android:textSize">11sp</item>
     </style>
 </resources>

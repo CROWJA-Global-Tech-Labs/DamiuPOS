@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Titik merah notifikasi dengan cincin putih (terbaca di atas header hijau). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="@color/gj_badge_red" />
+    <stroke android:width="1.5dp" android:color="@color/gj_surface" />
+</shape>

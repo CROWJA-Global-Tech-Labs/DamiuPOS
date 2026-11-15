@@ -14,7 +14,7 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="@color/primary"
+            android:background="?attr/colorPrimary"
             android:titleTextColor="@color/white"
             app:navigationIcon="@drawable/ic_arrow_back"
             app:title="Pilih Lokasi" />
@@ -39,7 +39,7 @@
             android:contentDescription="Lokasi saya"
             app:srcCompat="@android:drawable/ic_menu_mylocation"
             app:tint="@color/white"
-            app:backgroundTint="@color/primary" />
+            app:backgroundTint="?attr/colorPrimary" />
     </FrameLayout>
 
     <com.google.android.material.button.MaterialButton

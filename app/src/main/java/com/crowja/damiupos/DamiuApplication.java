@@ -56,7 +56,9 @@ public class DamiuApplication extends Application {
         // interstitial di activity manapun yang sedang aktif (tidak tergantung
         // activity yang menjadwalkan iklan).
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
-            @Override public void onActivityCreated(@NonNull Activity a, @Nullable Bundle b) {}
+            @Override public void onActivityCreated(@NonNull Activity a, @Nullable Bundle b) {
+                applyGojekOverlay(a);
+            }
             @Override public void onActivityStarted(@NonNull Activity a) {
                 // Poll permintaan "Ambil Alih butuh persetujuan" hanya selama app di depan.
                 com.crowja.damiupos.util.ClaimApprovalPrompter.onActivityStarted();
@@ -78,6 +80,34 @@ public class DamiuApplication extends Application {
                 com.crowja.damiupos.util.ClaimApprovalPrompter.onActivityDestroyed(a);
             }
         });
+    }
+
+    /**
+     * "Tampilan baru (gaya Gojek)" untuk layar LAMA: saat {@link com.crowja.damiupos.util.GojekUi#isEnabled}
+     * (sesi admin + preferensi aktif) tumpuk ThemeOverlay.DAMIUPOS.Gojek ke tema activity. Callback ini
+     * berjalan di dalam super.onCreate() — sebelum setContentView — jadi view, toolbar, dialog, dan
+     * status bar ikut. Non-admin: tak ada yang berubah sama sekali.
+     *
+     * <p>Dilewati: DeepLinkActivity (tanpa UI, tema translucent), PortraitCaptureActivity (zxing, Holo),
+     * AdminHomeActivity (sudah bertema penuh Theme.DAMIUPOS.Gojek), dan activity non-AppCompat / milik
+     * pustaka (iklan, billing).</p>
+     */
+    private static void applyGojekOverlay(@NonNull Activity a) {
+        try {
+            if (a instanceof DeepLinkActivity
+                    || a instanceof PortraitCaptureActivity
+                    || a instanceof AdminHomeActivity
+                    || a instanceof MainActivity) return;
+            if (!(a instanceof androidx.appcompat.app.AppCompatActivity)) return;
+            if (!a.getClass().getName().startsWith("com.crowja.damiupos.")) return;
+            if (!com.crowja.damiupos.util.GojekUi.isEnabled(a)) return;
+            com.crowja.damiupos.util.GojekUi.applyOverlay(a);
+            // Jaga-jaga: dekor bisa saja sudah membaca android:statusBarColor sebelum overlay.
+            a.getWindow().setStatusBarColor(
+                    androidx.core.content.ContextCompat.getColor(a, R.color.gj_primary));
+        } catch (Throwable ignored) {
+            // Tema gagal ditumpuk → layar tetap tampil dengan tema lama.
+        }
     }
 
     /** Activity yang sedang aktif di foreground, atau null bila app di-background. */

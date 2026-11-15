@@ -298,7 +298,7 @@ public class WaAccountsSettingsActivity extends AppCompatActivity {
         btSave.setText("Simpan Auto-Send");
         btSave.setAllCaps(false);
         btSave.setTextColor(0xFFFFFFFF);
-        btSave.setBackgroundTintList(ColorStateList.valueOf(0xFF1565C0));   // 5,8:1 dengan teks putih
+        btSave.setBackgroundTintList(ColorStateList.valueOf(com.crowja.damiupos.util.ThemeColors.primary(this)));   // 5,8:1 dengan teks putih
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         slp.topMargin = WaAccountsUi.dp(this, 12);

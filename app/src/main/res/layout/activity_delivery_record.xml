@@ -15,7 +15,7 @@
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
-        android:background="@color/primary"
+        android:background="?attr/colorPrimary"
         app:title="🏁 Rekor Pengiriman"
         app:titleTextColor="@color/white"
         app:navigationIcon="@drawable/ic_arrow_back" />
@@ -65,7 +65,7 @@
                             android:id="@+id/tvBranchToday"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:textColor="@color/primary"
+                            android:textColor="?attr/colorPrimary"
                             android:textSize="30sp"
                             android:textStyle="bold" />
 

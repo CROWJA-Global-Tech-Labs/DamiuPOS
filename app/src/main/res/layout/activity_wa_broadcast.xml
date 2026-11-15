@@ -12,7 +12,7 @@
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
-        android:background="@color/primary"
+        android:background="?attr/colorPrimary"
         app:navigationIcon="@drawable/ic_arrow_back"
         app:title="📣 Broadcast WhatsApp"
         app:titleTextColor="@color/white" />
@@ -67,7 +67,7 @@
                         android:textAllCaps="false"
                         android:textColor="@color/white"
                         android:visibility="gone"
-                        app:backgroundTint="@color/primary" />
+                        app:backgroundTint="?attr/colorPrimary" />
                 </LinearLayout>
 
                 <LinearLayout
@@ -156,7 +156,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:textAllCaps="false"
-                            android:textColor="@color/primary"
+                            android:textColor="?attr/colorPrimary"
                             android:visibility="gone" />
                     </LinearLayout>
 
@@ -186,7 +186,7 @@
                             android:layout_marginTop="6dp"
                             android:text="📦 Pilih produk"
                             android:textAllCaps="false"
-                            android:textColor="@color/primary" />
+                            android:textColor="?attr/colorPrimary" />
 
                         <LinearLayout
                             android:layout_width="match_parent"
@@ -296,7 +296,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:textAllCaps="false"
-                            android:textColor="@color/primary"
+                            android:textColor="?attr/colorPrimary"
                             android:visibility="gone" />
                     </LinearLayout>
 

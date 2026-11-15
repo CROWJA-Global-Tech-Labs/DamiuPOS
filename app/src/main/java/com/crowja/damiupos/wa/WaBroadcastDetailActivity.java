@@ -71,7 +71,7 @@ public class WaBroadcastDetailActivity extends AppCompatActivity {
         RecyclerView rv = findViewById(R.id.rvResults);
         rv.setLayoutManager(new LinearLayoutManager(this));
         rv.setAdapter(adapter);
-        swipe.setColorSchemeColors(0xFF1565C0);
+        swipe.setColorSchemeColors(com.crowja.damiupos.util.ThemeColors.primary(this));
         swipe.setOnRefreshListener(this::load);
         btnRetry.setOnClickListener(v -> load());
         load();

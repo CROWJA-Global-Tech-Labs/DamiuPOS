@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Palet "Tampilan Baru (gaya Gojek)" — sementara KHUSUS login Admin (GojekUi.isEnabled).
+     Diambil dari referensi desain Gojek/Asphalt; hanya POLA yang ditiru, tanpa aset/logo Gojek.
+     App ini light-only (Theme.DAMIUPOS, forceDarkAllowed=false) — semua pasangan teks/latar di bawah
+     dipilih ≥ 4.5:1 (teks) atau ≥ 3:1 (ikon/teks besar). JANGAN beri override values-night. -->
+<resources>
+    <!-- Hijau merek (permukaan besar: header Beranda). Teks putih di atasnya hanya 3.1:1 → pakai
+         untuk teks ≥18sp tebal / ikon saja. -->
+    <color name="gj_brand">#00AA13</color>
+    <!-- Hijau interaktif (tombol terisi, tab aktif, toolbar layar dalam, switch). Putih di atasnya 4.6:1. -->
+    <color name="gj_primary">#00880D</color>
+    <color name="gj_primary_pressed">#067817</color>
+    <!-- Tonal: latar #EAFFEB + teks #006B05 ("Lihat semua"). -->
+    <color name="gj_primary_container">#EAFFEB</color>
+    <color name="gj_on_primary_container">#006B05</color>
+    <color name="gj_header_tint">#E5FFD0</color>
+
+    <!-- Netral -->
+    <color name="gj_text_primary">#1C1C1C</color>
+    <color name="gj_text_secondary">#4A4A4A</color>
+    <color name="gj_text_tertiary">#666666</color>
+    <color name="gj_placeholder">#757575</color>
+    <color name="gj_border_strong">#BBBBBB</color>
+    <color name="gj_divider">#EBEBEB</color>
+    <color name="gj_fill_subtle">#F5F5F5</color>
+    <color name="gj_canvas">#F1F2F4</color>
+    <color name="gj_surface">#FFFFFF</color>
+    <color name="gj_tooltip">#1D1D1D</color>
+
+    <!-- Badge / semantik -->
+    <color name="gj_badge_red">#EA001E</color>
+    <color name="gj_danger">#D83950</color>
+    <color name="gj_danger_bg">#FEE1E7</color>
+    <color name="gj_danger_text">#BB354E</color>
+    <color name="gj_warning_bg">#FFEAD4</color>
+    <color name="gj_warning_text">#893900</color>
+    <color name="gj_info_bg">#E3EDFF</color>
+    <color name="gj_info_text">#1631A4</color>
+    <color name="gj_success_bg">#EAFFEB</color>
+    <color name="gj_success_text">#006B05</color>
+    <color name="gj_tag_black">#0A0A0A</color>
+
+    <!-- Warna kategori layanan: glyph + latar ubin (tint). Glyph dipilih ≥ 3:1 di atas tint-nya. -->
+    <color name="gj_green_glyph">#00880D</color>
+    <color name="gj_green_tint">#DFF9D2</color>
+    <color name="gj_blue_glyph">#0090B8</color>
+    <color name="gj_blue_tint">#D3F4FB</color>
+    <color name="gj_red_glyph">#D83950</color>
+    <color name="gj_red_tint">#FEDFDD</color>
+    <color name="gj_orange_glyph">#C75300</color>
+    <color name="gj_orange_tint">#FFE8D6</color>
+    <color name="gj_purple_glyph">#832A91</color>
+    <color name="gj_purple_tint">#F3E4F5</color>
+    <color name="gj_grey_glyph">#4A4A4A</color>
+    <color name="gj_grey_tint">#F1F2F4</color>
+</resources>

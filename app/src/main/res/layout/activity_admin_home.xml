@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Beranda admin "Tampilan Baru (gaya Gojek)": 4 tab (Beranda · Pesanan · Chat · Akun) yang ditukar lewat
+     visibilitas (tanpa fragment) + navigasi bawah kustom. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/gjhRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/gj_surface"
+    android:orientation="vertical">
+
+    <FrameLayout
+        android:id="@+id/gjhContent"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <include
+            android:id="@+id/gjTabBeranda"
+            layout="@layout/gj_tab_beranda"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <include
+            android:id="@+id/gjTabPesanan"
+            layout="@layout/gj_tab_pesanan"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <include
+            android:id="@+id/gjTabChat"
+            layout="@layout/gj_tab_chat"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <include
+            android:id="@+id/gjTabAkun"
+            layout="@layout/gj_tab_akun"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/gj_divider" />
+
+    <LinearLayout
+        android:id="@+id/gjhBottomNav"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="@color/gj_surface"
+        android:orientation="horizontal">
+
+        <include
+            android:id="@+id/gjNavBeranda"
+            layout="@layout/gjh_nav_tab"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_weight="1" />
+
+        <include
+            android:id="@+id/gjNavPesanan"
+            layout="@layout/gjh_nav_tab"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_weight="1" />
+
+        <include
+            android:id="@+id/gjNavChat"
+            layout="@layout/gjh_nav_tab"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_weight="1" />
+
+        <include
+            android:id="@+id/gjNavAkun"
+            layout="@layout/gjh_nav_tab"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_weight="1" />
+    </LinearLayout>
+</LinearLayout>

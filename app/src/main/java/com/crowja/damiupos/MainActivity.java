@@ -166,6 +166,9 @@ public class MainActivity extends AppCompatActivity {
         // (PengisianActivity). Sebelum setContentView, dan diulang di onResume.
         if (redirectPengisianHome()) return;
 
+        // Admin + "Tampilan Baru" aktif → beranda gaya Gojek (AdminHomeActivity). Sebelum setContentView.
+        if (redirectAdminHome()) return;
+
         setContentView(R.layout.activity_main);
 
         Toolbar toolbar = findViewById(R.id.toolbar);
@@ -1405,6 +1408,23 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
+    /**
+     * Admin dengan "Tampilan Baru (gaya Gojek)" aktif → {@link AdminHomeActivity}, lalu tutup activity ini.
+     * Bila beranda baru crash pada pembukaan sebelumnya, tampilan baru dimatikan otomatis dan admin
+     * tetap di beranda lama ini. @return true bila dialihkan (pemanggil wajib langsung return).
+     */
+    private boolean redirectAdminHome() {
+        if (!com.crowja.damiupos.util.GojekUi.isEnabled(this)) return false;
+        if (com.crowja.damiupos.util.GojekUi.recoverFromCrashedBoot(this)) {
+            Toast.makeText(this, "Tampilan baru gagal dibuka — kembali ke tampilan lama. "
+                    + "Aktifkan lagi dari Pengaturan bila sudah diperbaiki.", Toast.LENGTH_LONG).show();
+            return false;
+        }
+        startActivity(new Intent(this, AdminHomeActivity.class));
+        finish();
+        return true;
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
@@ -1434,6 +1454,8 @@ public class MainActivity extends AppCompatActivity {
         // Peran berubah jadi Pengisian saat app terbuka (staff di-pull ~60 dtk), atau Pulang
         // dibatalkan di layar selfie lalu kembali ke sini → tetap kunci ke layar Pengisian.
         if (!isFinishing() && redirectPengisianHome()) return;
+        // Login admin / preferensi "Tampilan Baru" berubah saat beranda lama terbuka.
+        if (!isFinishing() && redirectAdminHome()) return;
         refreshDashboard();
         // Kontrol Versi (popup bila versi APK ini DINONAKTIFKAN dari dashboard; HP depot bisa terbuka
         // berhari-hari, cek murah), sinkron sekali (config/versi/pesan admin), dan nyalakan service

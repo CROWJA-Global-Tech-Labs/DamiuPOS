@@ -185,7 +185,7 @@ final class DebtDetailDialog {
         // Struk hanya untuk transaksi yang ADA di HP ini (transaksi HP lain tak tersimpan lokal).
         long localId = trxDao.getIdBySyncUuid(str(t, "uuid"));
         if (localId > 0) {
-            TextView open = text(a, "🧾 Buka Struk →", 14, 0xFF1565C0, dp(a, 8));
+            TextView open = text(a, "🧾 Buka Struk →", 14, com.crowja.damiupos.util.ThemeColors.primary(a), dp(a, 8));
             open.setOnClickListener(v -> a.startActivity(new Intent(a, ReceiptActivity.class)
                     .putExtra("transaction_id", localId)));
             card.addView(open);

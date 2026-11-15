@@ -939,8 +939,18 @@ public class SettingsDao {
     public boolean isMultiUserEnabled() {
         return "1".equals(get(KEY_MULTIUSER_ENABLED, "0"));
     }
+
+    /** "Tampilan Baru (gaya Gojek)" — preferensi PERANGKAT (tidak disinkron), bawaan aktif.
+     *  Hanya berlaku untuk sesi admin (lihat util.GojekUi). */
+    public static final String KEY_UI_GOJEK = "ui_gojek";
+    public boolean isGojekUiPreferred() { return !"0".equals(get(KEY_UI_GOJEK, "1")); }
+    public void setGojekUiPreferred(boolean on) {
+        set(KEY_UI_GOJEK, on ? "1" : "0");
+        com.crowja.damiupos.util.GojekUi.invalidate();
+    }
     public void setMultiUserEnabled(boolean enabled) {
         set(KEY_MULTIUSER_ENABLED, enabled ? "1" : "0");
+        com.crowja.damiupos.util.GojekUi.invalidate();
     }
 
     /** Setting cabang "cabut kredit galon bila data pelanggan tak lengkap saat delivery selesai"
@@ -1059,6 +1069,7 @@ public class SettingsDao {
         v.put(DatabaseHelper.COL_SYNCED, 1);
         db.insertWithOnConflict(DatabaseHelper.TABLE_SETTINGS, null, v,
                 SQLiteDatabase.CONFLICT_REPLACE);
+        com.crowja.damiupos.util.GojekUi.invalidate();
     }
 
     /** Jam kerja normal per hari (ambang lembur harian + basis normalisasi bulanan). */
@@ -1139,6 +1150,8 @@ public class SettingsDao {
         set(KEY_CURRENT_USER_ID, String.valueOf(id));
         set(KEY_CURRENT_USER_NAME, name != null ? name : "");
         clearAdminWebSession();   // ganti user / logout = PIN Dashboard Web diminta lagi
+        // Satu-satunya penulis sesi user (login/logout/clearCurrentUser) → gerbang tampilan baru dihitung ulang.
+        com.crowja.damiupos.util.GojekUi.invalidate();
     }
     public void clearCurrentUser() { setCurrentUser(0, ""); }
 

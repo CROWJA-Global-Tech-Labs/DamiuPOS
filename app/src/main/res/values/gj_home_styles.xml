@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Gaya tambahan khusus Beranda admin "gaya Gojek" (AdminHomeActivity). gojek_themes.xml milik pekerjaan
+     tema global — gaya yang hanya dipakai beranda baru ditaruh di sini. Semua warna dari palet gj_*. -->
+<resources>
+
+    <!-- Lembar bawah (BottomSheetDialog): sudut atas 20dp, putih, aksen hijau interaktif. -->
+    <style name="GjHome.BottomSheetDialog" parent="Theme.MaterialComponents.Light.BottomSheetDialog">
+        <item name="colorPrimary">@color/gj_primary</item>
+        <item name="colorPrimaryDark">@color/gj_primary</item>
+        <item name="colorAccent">@color/gj_primary</item>
+        <item name="colorSecondary">@color/gj_primary</item>
+        <item name="colorControlActivated">@color/gj_primary</item>
+        <item name="android:textColorPrimary">@color/gj_text_primary</item>
+        <item name="android:textColorSecondary">@color/gj_text_secondary</item>
+        <item name="android:textColorHint">@color/gj_placeholder</item>
+        <item name="bottomSheetStyle">@style/GjHome.BottomSheet</item>
+        <item name="android:windowSoftInputMode">adjustResize</item>
+        <item name="android:navigationBarColor">@color/gj_surface</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <style name="GjHome.BottomSheet" parent="Widget.MaterialComponents.BottomSheet.Modal">
+        <item name="backgroundTint">@color/gj_surface</item>
+        <item name="shapeAppearanceOverlay">@style/GjHome.ShapeSheetTop</item>
+    </style>
+
+    <style name="GjHome.ShapeSheetTop" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSizeTopLeft">20dp</item>
+        <item name="cornerSizeTopRight">20dp</item>
+        <item name="cornerSizeBottomLeft">0dp</item>
+        <item name="cornerSizeBottomRight">0dp</item>
+    </style>
+
+    <!-- Judul seksi Beranda (18sp tebal). -->
+    <style name="GjHome.SectionTitle" parent="">
+        <item name="android:textSize">18sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/gj_text_primary</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:includeFontPadding">false</item>
+    </style>
+
+    <!-- Judul akar tab (Pesanan, Chat) 24sp tebal. -->
+    <style name="GjHome.PageTitle" parent="GjHome.SectionTitle">
+        <item name="android:textSize">24sp</item>
+    </style>
+
+    <!-- Kepala grup (13sp abu) di "Semua menu" & daftar Akun. -->
+    <style name="GjHome.GroupHeader" parent="">
+        <item name="android:textSize">13sp</item>
+        <item name="android:textColor">@color/gj_text_secondary</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <!-- Pil hitungan merah (badge). -->
+    <style name="GjHome.Badge" parent="">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">16dp</item>
+        <item name="android:minWidth">16dp</item>
+        <item name="android:paddingStart">4dp</item>
+        <item name="android:paddingEnd">4dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:background">@drawable/gjh_bg_badge</item>
+        <item name="android:textColor">@color/white</item>
+        <item name="android:textSize">10sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:maxLines">1</item>
+    </style>
+</resources>

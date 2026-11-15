@@ -73,7 +73,7 @@
                     android:id="@+id/tvToday"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:textColor="@color/primary"
+                    android:textColor="?attr/colorPrimary"
                     android:textSize="24sp"
                     android:textStyle="bold" />
 
@@ -130,7 +130,7 @@
             android:layout_width="0dp"
             android:layout_height="5dp"
             android:layout_marginTop="10dp"
-            android:background="@color/primary" />
+            android:background="?attr/colorPrimary" />
 
         <TextView
             android:id="@+id/tvMeta"
