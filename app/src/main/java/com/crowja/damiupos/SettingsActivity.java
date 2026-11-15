@@ -61,7 +61,6 @@ public class SettingsActivity extends AppCompatActivity {
     private TextInputEditText etDepotName, etDepotAddress, etDepotPhone;
     private TextInputEditText etFollowupDays, etStockAlert, etFollowUpTemplate;
     private TextInputEditText etHargaBotolGalon, etResellerKomisi;
-    private TextInputEditText etReplyTemplate, etAutoArchiveHours;
     private SwitchMaterial switchPoints, switchWaAutoSend;
     private LinearLayout pointsConfigContainer, waAutoSendConfig, trxBubbleConfig;
     private TextView tvRingtoneName;
@@ -212,17 +211,6 @@ public class SettingsActivity extends AppCompatActivity {
         updateRingtoneLabel();
         findViewById(R.id.btnPickRingtone).setOnClickListener(v -> startRingtonePicker());
 
-        // Reply template
-        etReplyTemplate = findViewById(R.id.etReplyTemplate);
-        etReplyTemplate.setText(settingsDao.getWaReplyTemplate());
-
-        // Auto-archive hours
-        etAutoArchiveHours = findViewById(R.id.etAutoArchiveHours);
-        etAutoArchiveHours.setText(String.valueOf(settingsDao.getWaAutoArchiveHours()));
-
-        findViewById(R.id.btnViewArchive).setOnClickListener(v ->
-                startActivity(new Intent(this, OrderInboxActivity.class)
-                        .putExtra(OrderInboxActivity.EXTRA_SHOW_ARCHIVE, true)));
 
         View cardUpgrade = findViewById(R.id.cardUpgradePro);
         if (cardUpgrade != null) {
@@ -247,7 +235,7 @@ public class SettingsActivity extends AppCompatActivity {
                 etDefaultOngkir, etPointsPerAmount, etPointsReward, switchPoints,
                 etDepotName, etDepotAddress, etDepotPhone,
                 etFollowupDays, etStockAlert, etHargaBotolGalon, etResellerKomisi,
-                etFollowUpTemplate, etReplyTemplate, etAutoArchiveHours);
+                etFollowUpTemplate);
     }
 
     // ==========================================================================

@@ -40,14 +40,11 @@ import com.crowja.damiupos.db.AttendanceDao;
 import com.crowja.damiupos.db.CustomerDao;
 import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.GalonStockDao;
-import com.crowja.damiupos.db.OrderInboxDao;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.db.TransactionDao;
 import com.crowja.damiupos.model.Attendance;
-import com.crowja.damiupos.model.OrderInbox;
 import com.crowja.damiupos.model.Transaction;
 import com.crowja.damiupos.wa.NotificationAlertHelper;
-import com.crowja.damiupos.wa.ParsedOrder;
 
 import java.text.NumberFormat;
 import java.text.SimpleDateFormat;
@@ -89,7 +86,6 @@ public class MainActivity extends AppCompatActivity {
     private TransactionDao transactionDao;
     private SettingsDao settingsDao;
     private GalonStockDao galonStockDao;
-    private OrderInboxDao orderInboxDao;
     private com.google.android.material.button.MaterialButton btnFollowUp;
     private ColorStateList originalFollowUpTint;
     private TextView tvToolbarTitle, tvToolbarSubtitle;
@@ -180,20 +176,10 @@ public class MainActivity extends AppCompatActivity {
         tvToolbarTitle = findViewById(R.id.tvToolbarTitle);
         tvToolbarSubtitle = findViewById(R.id.tvToolbarSubtitle);
         originalToolbarColor = getResources().getColor(R.color.primary);
-        // Tap toolbar saat ada pesanan baru → akui (acknowledge) +
-        // buka inbox; sound + blink stop.
-        toolbar.setOnClickListener(v -> {
-            if (orderInboxDao != null && orderInboxDao.countPendingForThisDevice() > 0) {
-                acknowledgeAlerts();
-                startActivity(new Intent(this, OrderInboxActivity.class));
-            }
-        });
-
         DatabaseHelper dbHelper = DatabaseHelper.getInstance(this);
         customerDao = new CustomerDao(dbHelper);
         transactionDao = new TransactionDao(dbHelper);
         galonStockDao = new GalonStockDao(dbHelper);
-        orderInboxDao = new OrderInboxDao(dbHelper);
 
         tvPendapatan = findViewById(R.id.tvPendapatan);
         tvGalonTerjual = findViewById(R.id.tvGalonTerjual);
@@ -1190,13 +1176,6 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onPrepareOptionsMenu(Menu menu) {
-        // Ikon amplop (inbox Pesanan Terjadwal) tampil hanya untuk peran yang menerima notifikasi
-        // operasional saat ada pengingat pending. Marketing/Pengisian tidak menangani Pesanan
-        // Terjadwal → ikon disembunyikan.
-        MenuItem inbox = menu.findItem(R.id.action_inbox);
-        if (inbox != null) inbox.setVisible(
-                !com.crowja.damiupos.db.UserDao.isCurrentUserAlertSilenced(this)
-                        && orderInboxDao != null && orderInboxDao.countPendingForThisDevice() > 0);
         bindDeliverySwitch(menu.findItem(R.id.action_delivery));
         bindArmadaItem(menu.findItem(R.id.action_armada));
         return super.onPrepareOptionsMenu(menu);
@@ -1316,12 +1295,6 @@ public class MainActivity extends AppCompatActivity {
         }
         if (item.getItemId() == R.id.action_info) {
             showAboutDialog();
-            return true;
-        }
-        if (item.getItemId() == R.id.action_inbox) {
-            // Buka inbox + acknowledge supaya alert sound stop
-            acknowledgeAlerts();
-            startActivity(new Intent(this, OrderInboxActivity.class));
             return true;
         }
         if (item.getItemId() == R.id.action_sync) {
@@ -2237,64 +2210,13 @@ public class MainActivity extends AppCompatActivity {
      * SEMUA pesanan di inbox.
      */
     private void refreshOrderInboxBanner() {
-        if (tvToolbarTitle == null || orderInboxDao == null) return;
-        // Karyawan marketing tidak menangani pesanan → jangan tampilkan/bunyikan alert pesanan
-        // (order baru dari WA/web). Perlakukan seperti tidak ada pesanan pending.
-        // Hanya pesanan yang DITUGASKAN ke perangkat ini (penugasan pelanggan / wilayah) — HP lain
-        // tak ikut berkedip & berbunyi untuk order yang bukan tanggung jawabnya.
-        int pendingCount = com.crowja.damiupos.db.UserDao.isCurrentUserAlertSilenced(this)
-                ? 0 : orderInboxDao.countPendingForThisDevice();
-        if (pendingCount == 0) {
-            // Reset ke tampilan default + matikan alert
-            tvToolbarTitle.setText(R.string.app_name);
-            tvToolbarSubtitle.setText(DEFAULT_TOOLBAR_SUBTITLE);
-            mainToolbar.setBackgroundColor(originalToolbarColor);
-            NotificationAlertHelper.stopAlert();
-            // Hentikan juga service SUARA pesanan (OrderAlertService) — untuk marketing pendingCount
-            // dipaksa 0, jadi cabang ini mematikan alarm yang mungkin tertinggal jalan dari sesi user
-            // sebelumnya (non-marketing) saat kini yang login marketing / saat pesanan sudah beres.
-            com.crowja.damiupos.wa.OrderAlertService.stop(this);
-            return;
-        }
-        OrderInbox latest = orderInboxDao.getLatestPendingForThisDevice();
-        if (latest == null) return;
-        ParsedOrder parsed = ParsedOrder.fromJson(latest.getParsedJson());
-
-        String sender = latest.getSenderName() != null
-                ? latest.getSenderName() : "(unknown)";
-        String prefix = pendingCount > 1
-                ? "📨 " + pendingCount + " pesanan baru — " : "📨 ";
-        tvToolbarTitle.setText(prefix + sender);
-
-        String sub;
-        if (parsed.isOrder && !parsed.items.isEmpty()) {
-            sub = parsed.shortSummary();
-            if (parsed.urgent) sub += " ⚡";
-            sub += " — Tap untuk konfirmasi";
-        } else {
-            sub = "Tap untuk lihat & konfirmasi";
-        }
-        tvToolbarSubtitle.setText(sub);
-        // Warna accent supaya menonjol
-        mainToolbar.setBackgroundColor(getResources().getColor(R.color.accent));
-
-        // Blink toolbar — visual saja. Sound di-handle OrderAlertService
-        // yang berjalan sebagai foreground service supaya tetap bunyi
-        // di background.
-        NotificationAlertHelper.startAlert(mainToolbar);
-    }
-
-    /**
-     * "Akui" — dipanggil saat user tap toolbar atau action Inbox di menu.
-     * Sebelumnya menyetop sound, sekarang HANYA membuka Inbox; sound &
-     * blink terus jalan sampai SEMUA pending di-approve / tolak (per
-     * permintaan user, supaya alert benar-benar mengikat).
-     */
-    private void acknowledgeAlerts() {
-        // No-op — sound stop hanya kalau pending count benar-benar 0
-        // (refreshOrderInboxBanner). Method dipertahankan supaya pemanggil
-        // (toolbar click / menu action) tetap bisa dipakai untuk hook
-        // analytics atau perilaku tambahan kalau perlu nanti.
+        // Fitur "Pesanan dari WA" sudah dihapus: toolbar selalu judul normal. Tetap matikan kedip +
+        // sirine pesanan yang mungkin tertinggal jalan dari versi sebelum pembaruan.
+        if (tvToolbarTitle != null) tvToolbarTitle.setText(R.string.app_name);
+        if (tvToolbarSubtitle != null) tvToolbarSubtitle.setText(DEFAULT_TOOLBAR_SUBTITLE);
+        if (mainToolbar != null) mainToolbar.setBackgroundColor(originalToolbarColor);
+        NotificationAlertHelper.stopAlert();
+        com.crowja.damiupos.wa.OrderAlertService.stop(this);
     }
 
     @Override
