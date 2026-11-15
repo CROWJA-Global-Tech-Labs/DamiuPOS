@@ -2185,15 +2185,10 @@ public class AdminHomeActivity extends AppCompatActivity {
         addGroupRow(g, "ℹ️", "Tentang", "v" + BuildConfig.VERSION_NAME, v -> showAboutDialog());
         addGroupRow(g, "📜", "Riwayat versi", null, v -> open(ChangelogActivity.class));
 
-        // ---- Shift (peran berabsen) / Keluar
+        // ---- Keluar (peran berabsen memakai kartu shift Istirahat/Pulang di atas tab Akun)
+        if (ms.tracksAttendance) return;
         g = addGroup(groups, null);
-        View out;
-        if (ms.tracksAttendance) {
-            addGroupRow(g, "☕", "Istirahat", "Catat istirahat & kunci HP", v -> doIstirahat());
-            out = addGroupRow(g, "🏠", "Pulang", "Akhiri shift (selfie pulang)", v -> doPulang());
-        } else {
-            out = addGroupRow(g, "🚪", "Keluar", null, v -> doAdminLogout());
-        }
+        View out = addGroupRow(g, "🚪", "Keluar", null, v -> doAdminLogout());
         TextView outTitle = out.findViewById(R.id.gjhRowTitle);
         if (outTitle != null) {
             outTitle.setTextColor(col(R.color.gj_danger));
