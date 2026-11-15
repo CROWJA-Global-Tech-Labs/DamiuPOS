@@ -1419,7 +1419,14 @@ public class AdminHomeActivity extends AppCompatActivity {
             }
             List<String> known = new ArrayList<>();
             for (MenuEntry e : registry) known.add(e.id);
-            List<String> clean = HomeTiles.sanitize(sel, known);
+            List<String> clean = new ArrayList<>(HomeTiles.sanitize(sel, known));
+            // Keep saved tiles that are hidden right now (role/Pro/toggle) at their old spot.
+            List<String> saved = savedHomeTiles();
+            for (int i = 0; i < saved.size(); i++) {
+                String id = saved.get(i);
+                if (!known.contains(id) || visibleId(id) || clean.contains(id)) continue;
+                clean.add(Math.min(i, clean.size()), id);
+            }
             try {
                 long uid = ms != null ? ms.uid : 0;
                 boolean isDefault = clean.equals(HomeTiles.defaults(this::visibleId));
