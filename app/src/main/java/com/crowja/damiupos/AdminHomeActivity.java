@@ -2173,10 +2173,12 @@ public class AdminHomeActivity extends AppCompatActivity {
             addGroupRow(g, "💬", "WhatsApp", "Akun, broadcast, status", v -> open(WhatsAppMenuActivity.class));
         }
 
-        // ---- Tampilan
-        g = addGroup(groups, "Tampilan");
-        View look = addGroupRow(g, "✨", "Tampilan Tema v2", "Matikan untuk kembali ke tampilan lama.", null);
-        safe("lookSwitch", () -> bindLookSwitch(look));
+        // ---- Tampilan (admin saja: setelan berlaku untuk seluruh HP)
+        if (ms.admin) {
+            g = addGroup(groups, "Tampilan");
+            View look = addGroupRow(g, "✨", "Tampilan Tema v2", "Matikan untuk kembali ke tampilan lama.", null);
+            safe("lookSwitch", () -> bindLookSwitch(look));
+        }
 
         // ---- Info
         g = addGroup(groups, "Info");
