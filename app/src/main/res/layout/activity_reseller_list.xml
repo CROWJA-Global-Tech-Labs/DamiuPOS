@@ -15,7 +15,7 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="@color/primary"
+            android:background="?attr/colorPrimary"
             android:titleTextColor="@color/white"
             app:navigationIcon="@drawable/ic_arrow_back"
             app:title="Reseller" />
@@ -27,7 +27,7 @@
         android:layout_height="wrap_content"
         android:background="#E3F2FD"
         android:padding="10dp"
-        android:textColor="@color/primary"
+        android:textColor="?attr/colorPrimaryStrong"
         android:textSize="13sp"
         android:textStyle="bold" />
 
@@ -63,7 +63,7 @@
             android:layout_margin="16dp"
             android:contentDescription="Tambah reseller"
             android:src="@android:drawable/ic_input_add"
-            app:backgroundTint="@color/primary"
+            app:backgroundTint="?attr/colorPrimary"
             app:tint="@android:color/white" />
     </FrameLayout>
 </LinearLayout>

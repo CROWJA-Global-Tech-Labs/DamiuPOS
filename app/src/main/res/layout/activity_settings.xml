@@ -15,7 +15,7 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="@color/primary"
+            android:background="?attr/colorPrimary"
             android:titleTextColor="@color/white"
             app:navigationIcon="@drawable/ic_arrow_back"
             app:title="Pengaturan" />
@@ -50,7 +50,7 @@
                 android:focusable="true"
                 app:cardCornerRadius="12dp"
                 app:cardElevation="3dp"
-                app:cardBackgroundColor="@color/primary">
+                app:cardBackgroundColor="?attr/colorPrimaryStrong">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -371,7 +371,7 @@
                         android:layout_marginEnd="12dp"
                         android:contentDescription="Multi User &amp; Absensi"
                         android:src="@android:drawable/ic_menu_my_calendar"
-                        app:tint="@color/primary" />
+                        app:tint="?attr/colorPrimary" />
 
                     <LinearLayout
                         android:layout_width="0dp"
@@ -402,6 +402,55 @@
                         android:contentDescription="Buka"
                         android:src="@android:drawable/ic_media_play"
                         app:tint="@color/grey_medium" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Tampilan baru (gaya Gojek): preferensi PERANGKAT, hanya terlihat di sesi admin
+                 (SettingsActivity membukanya bila GojekUi.isAdminSession). Bawaan GONE → non-admin
+                 tak pernah melihat kartu ini. -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardGojekUi"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:visibility="gone"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="2dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="🎨 Tampilan baru (gaya Gojek)"
+                            android:textColor="@color/text_primary"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/switchGojekUi"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="Sementara khusus admin. Matikan untuk kembali ke tampilan lama."
+                        android:textColor="@color/text_secondary"
+                        android:textSize="13sp" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 

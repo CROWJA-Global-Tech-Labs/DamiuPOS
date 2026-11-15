@@ -237,7 +237,7 @@
             android:paddingTop="6dp"
             android:paddingBottom="6dp"
             android:text="▸ Harga khusus lokasi ini (opsional)"
-            android:textColor="@color/primary"
+            android:textColor="?attr/colorPrimary"
             android:textSize="13sp"
             android:textStyle="bold" />
 

@@ -453,7 +453,7 @@ public class SalesAchievementActivity extends AppCompatActivity {
             int h = v > 0 ? Math.max(dp(3), Math.round(maxH * (v / (float) max))) : dp(1);
             LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(barW, h);
             bar.setLayoutParams(bp);
-            bar.setBackgroundColor(v > 0 ? 0xFF1565C0 : 0xFFE0E0E0);
+            bar.setBackgroundColor(v > 0 ? com.crowja.damiupos.util.ThemeColors.primary(this) : 0xFFE0E0E0);
             col.addView(bar);
 
             // Label tanggal hanya sesekali kalau rentangnya panjang — kalau tidak, teksnya tumpang tindih.

@@ -193,7 +193,7 @@ public class ResellerDetailActivity extends AppCompatActivity {
         info.setOnClickListener(v -> startActivity(new Intent(this, CustomerDetailActivity.class).putExtra("customer_id", c.getId())));
         row.addView(info, new android.widget.LinearLayout.LayoutParams(0, -2, 1f));
         if (manage) {
-            row.addView(rowAction("Ubah", 0xFF1565C0, v -> startActivity(new Intent(this, CustomerFormActivity.class).putExtra("customer_id", c.getId()))));
+            row.addView(rowAction("Ubah", com.crowja.damiupos.util.ThemeColors.primary(this), v -> startActivity(new Intent(this, CustomerFormActivity.class).putExtra("customer_id", c.getId()))));
             row.addView(rowAction("Lepas", 0xFFB71C1C, v -> confirmUnlink(c)));
         }
         return row;

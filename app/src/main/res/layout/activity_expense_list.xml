@@ -14,7 +14,7 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="@color/primary"
+            android:background="?attr/colorPrimary"
             app:navigationIcon="@drawable/ic_arrow_back"
             app:title="Pengeluaran"
             app:titleTextColor="@android:color/white" />
@@ -122,6 +122,6 @@
         android:layout_margin="16dp"
         android:contentDescription="Tambah pengeluaran"
         android:src="@android:drawable/ic_input_add"
-        app:backgroundTint="@color/primary"
+        app:backgroundTint="?attr/colorPrimary"
         app:tint="@android:color/white" />
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

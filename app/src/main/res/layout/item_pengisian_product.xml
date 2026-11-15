@@ -118,7 +118,7 @@
                     android:text="+1"
                     android:textColor="#FFFFFF"
                     android:textSize="17sp"
-                    app:backgroundTint="#1565C0" />
+                    app:backgroundTint="?attr/colorPrimary" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnPlus5"
@@ -134,7 +134,7 @@
                     android:text="+5"
                     android:textColor="#FFFFFF"
                     android:textSize="17sp"
-                    app:backgroundTint="#1565C0" />
+                    app:backgroundTint="?attr/colorPrimary" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnPlus10"
@@ -150,7 +150,7 @@
                     android:text="+10"
                     android:textColor="#FFFFFF"
                     android:textSize="17sp"
-                    app:backgroundTint="#1565C0" />
+                    app:backgroundTint="?attr/colorPrimary" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnOther"
@@ -163,7 +163,7 @@
                     android:paddingStart="4dp"
                     android:paddingEnd="4dp"
                     android:text="Lainnya…"
-                    android:textColor="#1565C0"
+                    android:textColor="?attr/colorPrimary"
                     android:textSize="14sp"
                     app:backgroundTint="#E3F2FD" />
             </LinearLayout>

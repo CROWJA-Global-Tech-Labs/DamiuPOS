@@ -448,7 +448,7 @@ public class GalonStockActivity extends AppCompatActivity {
 
         if (stokTersedia <= 0) tvStokTersedia.setTextColor(getResources().getColor(R.color.red));
         else if (stokTersedia < 10) tvStokTersedia.setTextColor(getResources().getColor(R.color.accent));
-        else tvStokTersedia.setTextColor(getResources().getColor(R.color.primary));
+        else tvStokTersedia.setTextColor(com.crowja.damiupos.util.ThemeColors.primary(this));
 
         List<String[]> history = galonStockDao.getStockHistory();
         adapter.setData(history);

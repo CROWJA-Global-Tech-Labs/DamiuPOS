@@ -423,7 +423,7 @@ public final class CheckoutSplitSheet {
                 if (p.isActive()) {
                     pv.tvSubtotal.setText(p.galon() + " galon · Subtotal Rp "
                             + nf.format(Math.round(p.total(cfg.beli, cfg.hargaBotol))));
-                    pv.tvSubtotal.setTextColor(ContextCompat.getColor(activity, R.color.primary));
+                    pv.tvSubtotal.setTextColor(com.crowja.damiupos.util.ThemeColors.primary(activity));
                 } else {
                     pv.tvSubtotal.setText("Tidak ikut (0 galon)");
                     pv.tvSubtotal.setTextColor(ContextCompat.getColor(activity, R.color.text_secondary));

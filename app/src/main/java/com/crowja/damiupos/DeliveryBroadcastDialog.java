@@ -397,7 +397,7 @@ final class DeliveryBroadcastDialog {
         TextView t = new TextView(this.act);
         t.setText(text);
         t.setTextSize(14f);
-        t.setTextColor(ContextCompat.getColor(this.act, R.color.primary));
+        t.setTextColor(com.crowja.damiupos.util.ThemeColors.primary(this.act));
         t.setGravity(Gravity.CENTER);
         t.setMinHeight(dp(48));
         t.setMinimumHeight(dp(48));

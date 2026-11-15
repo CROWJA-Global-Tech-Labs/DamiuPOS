@@ -16,7 +16,7 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="@color/primary"
+            android:background="?attr/colorPrimary"
             android:theme="@style/DAMIUToolbarOverlay"
             app:navigationIcon="@drawable/ic_arrow_back"
             app:popupTheme="@style/ThemeOverlay.MaterialComponents.Light"
@@ -108,7 +108,7 @@
                             android:minWidth="0dp"
                             android:text="+ {nama}"
                             android:textAllCaps="false"
-                            android:textColor="#1565C0"
+                            android:textColor="?attr/colorPrimary"
                             android:textSize="13sp" />
 
                         <TextView
@@ -192,7 +192,7 @@
                             android:layout_height="wrap_content"
                             android:text="📅 Pilih tanggal &amp; jam"
                             android:textAllCaps="false"
-                            android:textColor="#1565C0" />
+                            android:textColor="?attr/colorPrimary" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -259,7 +259,7 @@
                             android:layout_height="wrap_content"
                             android:text="🕗 Pukul: pilih jam"
                             android:textAllCaps="false"
-                            android:textColor="#1565C0" />
+                            android:textColor="?attr/colorPrimary" />
                     </LinearLayout>
 
                     <TextView
@@ -341,7 +341,7 @@
                             android:layout_weight="1"
                             android:text="🔍 Cari pelanggan"
                             android:textAllCaps="false"
-                            android:textColor="#1565C0"
+                            android:textColor="?attr/colorPrimary"
                             android:textSize="13sp" />
 
                         <Button
@@ -353,7 +353,7 @@
                             android:layout_weight="1"
                             android:text="📍 Per domisili"
                             android:textAllCaps="false"
-                            android:textColor="#1565C0"
+                            android:textColor="?attr/colorPrimary"
                             android:textSize="13sp" />
                     </LinearLayout>
 
@@ -371,7 +371,7 @@
                             android:layout_weight="1"
                             android:text="🗺️ Pilih dari peta"
                             android:textAllCaps="false"
-                            android:textColor="#1565C0"
+                            android:textColor="?attr/colorPrimary"
                             android:textSize="13sp" />
 
                         <Button
@@ -383,7 +383,7 @@
                             android:layout_weight="1"
                             android:text="🚚 Aturan Trip"
                             android:textAllCaps="false"
-                            android:textColor="#1565C0"
+                            android:textColor="?attr/colorPrimary"
                             android:textSize="13sp" />
                     </LinearLayout>
 
@@ -435,7 +435,7 @@
                         android:layout_marginTop="8dp"
                         android:text="👥 Lihat / keluarkan penerima (0)"
                         android:textAllCaps="false"
-                        android:textColor="#1565C0" />
+                        android:textColor="?attr/colorPrimary" />
                 </LinearLayout>
             </LinearLayout>
         </ScrollView>
@@ -468,7 +468,7 @@
             android:layout_height="wrap_content"
             android:layout_marginEnd="6dp"
             android:layout_weight="1"
-            android:backgroundTint="@color/primary"
+            android:backgroundTint="?attr/colorPrimary"
             android:text="⏰ Jadwalkan"
             android:textAllCaps="false"
             android:textColor="@color/white" />

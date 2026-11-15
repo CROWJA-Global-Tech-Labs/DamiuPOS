@@ -14,7 +14,7 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="@color/primary"
+            android:background="?attr/colorPrimary"
             android:titleTextColor="@color/white"
             app:navigationIcon="@drawable/ic_arrow_back"
             app:title="Antrian Delivery" />
@@ -28,7 +28,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:background="@color/primary"
+            android:background="?attr/colorPrimary"
             android:paddingStart="12dp"
             android:paddingEnd="12dp"
             android:paddingTop="10dp"
@@ -120,7 +120,7 @@
                 android:layout_marginTop="2dp"
                 android:text="Antar/proses order, lalu tandai Selesai untuk mencatat lama proses."
                 android:visibility="gone"
-                android:textColor="#D6FFFFFF"
+                android:textColor="?attr/textColorOnPrimaryMuted"
                 android:textSize="12sp" />
         </LinearLayout>
 
@@ -138,7 +138,7 @@
             app:fabSize="mini"
             app:maxImageSize="28dp"
             app:srcCompat="@android:drawable/ic_menu_sort_by_size"
-            app:tint="@color/primary" />
+            app:tint="?attr/colorPrimary" />
     </FrameLayout>
 
     <!-- Tiga tab: Antrian Saya (default) / Perangkat Lain / Pesanan Terbuka — cermin pemisahan
@@ -157,8 +157,8 @@
         android:clipToPadding="false"
         app:tabMode="fixed"
         app:tabGravity="fill"
-        app:tabIndicatorColor="@color/primary"
-        app:tabSelectedTextColor="@color/primary"
+        app:tabIndicatorColor="?attr/colorPrimary"
+        app:tabSelectedTextColor="?attr/colorPrimary"
         app:tabTextColor="@color/grey_medium">
 
         <com.google.android.material.tabs.TabItem
@@ -302,7 +302,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginStart="8dp"
                             android:text="▾"
-                            android:textColor="@color/primary"
+                            android:textColor="?attr/colorPrimary"
                             android:textSize="16sp"
                             android:textStyle="bold" />
                     </LinearLayout>
@@ -365,7 +365,7 @@
                             android:paddingTop="2dp"
                             android:paddingBottom="2dp"
                             android:text="Ketuk untuk lihat seluruh rit →"
-                            android:textColor="@color/primary"
+                            android:textColor="?attr/colorPrimary"
                             android:textSize="12sp"
                             android:textStyle="bold" />
                     </LinearLayout>
@@ -702,7 +702,7 @@
             android:visibility="gone"
             app:srcCompat="@android:drawable/ic_menu_directions"
             app:maxImageSize="32dp"
-            app:backgroundTint="@color/primary"
+            app:backgroundTint="?attr/colorPrimary"
             app:tint="@color/white" />
     </FrameLayout>
 

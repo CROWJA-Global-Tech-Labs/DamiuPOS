@@ -97,9 +97,9 @@ public class UpgradeActivity extends AppCompatActivity implements BillingManager
         selectedProductId = productId;
         boolean monthly = BuildConfig.SUB_PRODUCT_MONTHLY.equals(productId);
         cardMonthly.setStrokeWidth(monthly ? dp(2) : dp(1));
-        cardMonthly.setStrokeColor(monthly ? getResources().getColor(R.color.primary) : 0xFFCCCCCC);
+        cardMonthly.setStrokeColor(monthly ? com.crowja.damiupos.util.ThemeColors.primary(this) : 0xFFCCCCCC);
         cardYearly.setStrokeWidth(!monthly ? dp(2) : dp(1));
-        cardYearly.setStrokeColor(!monthly ? getResources().getColor(R.color.primary) : 0xFFCCCCCC);
+        cardYearly.setStrokeColor(!monthly ? com.crowja.damiupos.util.ThemeColors.primary(this) : 0xFFCCCCCC);
     }
 
     private int dp(int v) {

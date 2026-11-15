@@ -14,7 +14,7 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="@color/primary"
+            android:background="?attr/colorPrimary"
             app:navigationIcon="@android:drawable/ic_menu_close_clear_cancel"
             app:title="Upgrade ke Pro"
             app:titleTextColor="@android:color/white" />
@@ -35,7 +35,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="DAMIU POS Pro"
-                android:textColor="@color/primary"
+                android:textColor="?attr/colorPrimary"
                 android:textSize="24sp"
                 android:textStyle="bold" />
 
@@ -48,7 +48,7 @@
                 android:paddingHorizontal="10dp"
                 android:paddingVertical="4dp"
                 android:text="Status: Gratis"
-                android:textColor="@color/primary"
+                android:textColor="?attr/colorPrimary"
                 android:textSize="12sp"
                 android:textStyle="bold" />
 
@@ -112,7 +112,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
                         android:text="Memuat..."
-                        android:textColor="@color/primary"
+                        android:textColor="?attr/colorPrimary"
                         android:textSize="20sp"
                         android:textStyle="bold" />
 
@@ -147,7 +147,7 @@
                 app:cardCornerRadius="12dp"
                 app:cardElevation="2dp"
                 app:strokeWidth="2dp"
-                app:strokeColor="@color/primary">
+                app:strokeColor="?attr/colorPrimary">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -188,7 +188,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
                         android:text="Memuat..."
-                        android:textColor="@color/primary"
+                        android:textColor="?attr/colorPrimary"
                         android:textSize="20sp"
                         android:textStyle="bold" />
 
@@ -208,7 +208,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="20dp"
                 android:text="Mulai Berlangganan"
-                app:backgroundTint="@color/primary" />
+                app:backgroundTint="?attr/colorPrimary" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnManageSubscription"

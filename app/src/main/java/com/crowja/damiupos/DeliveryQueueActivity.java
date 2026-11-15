@@ -1,5 +1,6 @@
 package com.crowja.damiupos;
 
+import com.crowja.damiupos.util.ThemeColors;
 import android.Manifest;
 import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
@@ -1235,13 +1236,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       customSum.setVisibility(View.GONE);
       final TextView tvCustomSum = new TextView(this);
       tvCustomSum.setTextSize(13f);
-      tvCustomSum.setTextColor(this.getColor(R.color.primary));
+      tvCustomSum.setTextColor(ThemeColors.primary(this));
       customSum.addView(tvCustomSum, new LinearLayout.LayoutParams(0, -2, 1f));
       TextView btCustomEdit = new TextView(this);
       btCustomEdit.setText("Ubah");
       btCustomEdit.setTextSize(14f);
       btCustomEdit.setTypeface(null, android.graphics.Typeface.BOLD);
-      btCustomEdit.setTextColor(this.getColor(R.color.primary));
+      btCustomEdit.setTextColor(ThemeColors.primary(this));
       btCustomEdit.setPadding(this.dp(12f), this.dp(8f), this.dp(4f), this.dp(8f));
       customSum.addView(btCustomEdit);
       rg.addView(customSum);
@@ -1297,7 +1298,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       final TextView tvKmRange = new TextView(this);
       tvKmRange.setTextSize(15f);
       tvKmRange.setTypeface(null, android.graphics.Typeface.BOLD);
-      tvKmRange.setTextColor(this.getColor(R.color.primary));
+      tvKmRange.setTextColor(ThemeColors.primary(this));
       tvKmRange.setPadding(0, this.dp(6f), 0, 0);
       custom.addView(tvKmRange);
       final com.google.android.material.slider.RangeSlider kmSlider = new com.google.android.material.slider.RangeSlider(this);
@@ -1321,7 +1322,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       final TextView tvDir = new TextView(this);
       tvDir.setTextSize(14f);
       tvDir.setTypeface(null, android.graphics.Typeface.BOLD);
-      tvDir.setTextColor(this.getColor(R.color.primary));
+      tvDir.setTextColor(ThemeColors.primary(this));
       tvDir.setText("Arah: " + dirPie.describe());
       dirPie.setOnChange(() -> tvDir.setText("Arah: " + dirPie.describe()));
       LinearLayout.LayoutParams pieLp = new LinearLayout.LayoutParams(-2, -2);
@@ -1414,7 +1415,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          capRow.setOrientation(LinearLayout.HORIZONTAL);
          final TextView tvCapSum = new TextView(this);
          tvCapSum.setTextSize(13f);
-         tvCapSum.setTextColor(this.getColor(R.color.primary));
+         tvCapSum.setTextColor(ThemeColors.primary(this));
          tvCapSum.setVisibility(View.GONE);
          android.text.TextWatcher capWatch = new android.text.TextWatcher() {
             public void beforeTextChanged(CharSequence c, int a, int b, int d) {}
@@ -8725,7 +8726,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       LinearLayout header = new LinearLayout(this);
       header.setOrientation(LinearLayout.HORIZONTAL);
       header.setGravity(android.view.Gravity.CENTER_VERTICAL);
-      header.setBackgroundColor(this.getResources().getColor(color.primary));
+      header.setBackgroundColor(ThemeColors.primary(this));
       header.setPadding(this.dp(16f), this.dp(14f), this.dp(4f), this.dp(14f));
       final TextView title = new TextView(this);
       title.setTextColor(-1);
@@ -8861,11 +8862,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       rv.setVisibility(rows.isEmpty() ? View.GONE : View.VISIBLE);
 
       Runnable markAge = () -> {
-         btnAge.setBackgroundTintList(android.content.res.ColorStateList.valueOf(this.getResources().getColor(color.primary)));
+         btnAge.setBackgroundTintList(android.content.res.ColorStateList.valueOf(ThemeColors.primary(this)));
          btnDist.setBackgroundTintList(android.content.res.ColorStateList.valueOf(-5194043));
       };
       Runnable markDist = () -> {
-         btnDist.setBackgroundTintList(android.content.res.ColorStateList.valueOf(this.getResources().getColor(color.primary)));
+         btnDist.setBackgroundTintList(android.content.res.ColorStateList.valueOf(ThemeColors.primary(this)));
          btnAge.setBackgroundTintList(android.content.res.ColorStateList.valueOf(-5194043));
       };
       markAge.run();
@@ -9328,7 +9329,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          return b;
       };
       String quick = noPhoto ? CustomerFormActivity.QUICK_PHOTO_COORD : CustomerFormActivity.QUICK_LOCATION;
-      mk.apply(noPhoto ? "📷 Foto rumah + lokasi sekarang" : "📍 Tandai lokasi sekarang", 0xFF1565C0).setOnClickListener((v) -> {
+      mk.apply(noPhoto ? "📷 Foto rumah + lokasi sekarang" : "📍 Tandai lokasi sekarang", ThemeColors.primary(this)).setOnClickListener((v) -> {
          if (holder[0] != null) holder[0].dismiss();
          this.dataGateTrxId = t.getId();
          this.startActivity(new Intent(this, CustomerFormActivity.class).putExtra("customer_id", c.getId())
@@ -12196,7 +12197,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       LinearLayout header = new LinearLayout(this);
       header.setOrientation(LinearLayout.HORIZONTAL);
       header.setGravity(android.view.Gravity.CENTER_VERTICAL);
-      header.setBackgroundColor(this.getResources().getColor(color.primary));
+      header.setBackgroundColor(ThemeColors.primary(this));
       header.setPadding(this.dp(16f), this.dp(14f), this.dp(4f), this.dp(14f));
       TextView title = new TextView(this);
       title.setText("⏸ Antrean Tertunda");
@@ -16527,7 +16528,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                   (com.google.android.material.card.MaterialCardView) h.itemView;
             cardView.setStrokeWidth(DeliveryQueueActivity.this.dp(picked ? 3.0F : 1.0F));
             if (picked) {
-               cardView.setStrokeColor(DeliveryQueueActivity.this.getResources().getColor(color.primary));
+               cardView.setStrokeColor(ThemeColors.primary(DeliveryQueueActivity.this));
             }
          }
          // 🚚 Sedang diantar BOLEH dipilih — pelanggannya justru sasaran 📢 Broadcast "Terlambat"; aksi
@@ -16812,7 +16813,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             if (isSelectedNow) {
                this.stopBlink(h);
                h.card.setStrokeWidth(DeliveryQueueActivity.this.dp(3.0F));
-               h.card.setStrokeColor(DeliveryQueueActivity.this.getResources().getColor(color.primary));
+               h.card.setStrokeColor(ThemeColors.primary(DeliveryQueueActivity.this));
             } else if (blinkHi != 0) {
                h.card.setStrokeWidth(DeliveryQueueActivity.this.dp(lateNow ? 3.0F : 2.0F));
                this.applyBlink(h, blinkHi);
@@ -17111,7 +17112,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          h.card.setStrokeWidth(DeliveryQueueActivity.this.dp(pickedOpen || lateOpen ? 3.0F : 1.0F));
          if (pickedOpen) {
             this.stopCardBlink(h);   // kedip menimpa warna tanda terpilih
-            h.card.setStrokeColor(DeliveryQueueActivity.this.getResources().getColor(color.primary));
+            h.card.setStrokeColor(ThemeColors.primary(DeliveryQueueActivity.this));
          }
          h.itemView.setOnClickListener((v) -> {
             if (DeliveryQueueActivity.this.claimSelectOpen) {
