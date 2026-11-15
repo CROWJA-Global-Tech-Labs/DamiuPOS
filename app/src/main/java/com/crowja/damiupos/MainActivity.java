@@ -166,7 +166,7 @@ public class MainActivity extends AppCompatActivity {
         // (PengisianActivity). Sebelum setContentView, dan diulang di onResume.
         if (redirectPengisianHome()) return;
 
-        // Admin + "Tampilan Baru" aktif → beranda gaya Gojek (AdminHomeActivity). Sebelum setContentView.
+        // Sesi login + "Tampilan Tema v2" aktif → beranda baru (AdminHomeActivity). Sebelum setContentView.
         if (redirectAdminHome()) return;
 
         setContentView(R.layout.activity_main);
@@ -613,20 +613,29 @@ public class MainActivity extends AppCompatActivity {
      * boleh dipakai lagi.
      */
     private void warnIncompleteDeliveryThenConfirmPulang() {
+        warnIncompleteDeliveryThenConfirmPulang(this, settingsDao, transactionDao, this::startSelfieThenClockOut);
+    }
+
+    /**
+     * Dipakai juga oleh beranda Tampilan Tema v2: blokir bila antrean &gt; 0, selain itu dialog konfirmasi jam
+     * (confirmPulang); {@code onConfirmed} dijalankan setelah "Ya, Pulang".
+     */
+    static void warnIncompleteDeliveryThenConfirmPulang(android.app.Activity a, SettingsDao settingsDao,
+                                                        TransactionDao transactionDao, Runnable onConfirmed) {
         int pending = 0;
         try {
             pending = transactionDao.countDeliveryQueue();
         } catch (Exception ignored) {}
         // Pengisian tak punya antrean kiriman: antrean di HP ini (kalau ada) bukan tanggungannya,
         // jangan sampai memblokir Pulang.
-        if (com.crowja.damiupos.db.UserDao.isCurrentUserPengisian(this)) pending = 0;
+        if (com.crowja.damiupos.db.UserDao.isCurrentUserPengisian(a)) pending = 0;
         if (pending <= 0) {
-            confirmPulang();
+            confirmPulang(a, settingsDao, onConfirmed);
             return;
         }
 
-        IncompleteCustomerDialog.playAlarm(this);
-        new AlertDialog.Builder(this)
+        IncompleteCustomerDialog.playAlarm(a);
+        new AlertDialog.Builder(a)
                 .setCancelable(false)
                 .setIcon(android.R.drawable.ic_dialog_alert)
                 .setTitle("‼️ TIDAK BISA PULANG — Antrean Belum 0!")
@@ -636,19 +645,19 @@ public class MainActivity extends AppCompatActivity {
                         + "diselesaikan, atau dioper ke HP lain — SATU PER SATU sampai antreannya 0. "
                         + "Baru setelah itu boleh Pulang.")
                 .setPositiveButton("Selesaikan Antrean Sekarang", (d, w) ->
-                        startActivity(new Intent(this, DeliveryQueueActivity.class)))
+                        a.startActivity(new Intent(a, DeliveryQueueActivity.class)))
                 .setNegativeButton("Batal", null)
                 .show();
     }
 
-    private void confirmPulang() {
+    static void confirmPulang(android.app.Activity a, SettingsDao settingsDao, Runnable onConfirmed) {
         long uid = settingsDao.getCurrentUserId();
         StringBuilder msg = new StringBuilder("Akhiri shift dan catat jam pulang sekarang? "
                 + "Laporan shift akan dikirim ke admin.");
         try {
             String[] period = AttendanceRecap.currentPeriod(settingsDao.getPayrollCutoffDay());
             AttendanceRecap.PeriodSummary ps = AttendanceRecap.computePeriodSummary(
-                    DatabaseHelper.getInstance(this), uid, period[0], period[1],
+                    DatabaseHelper.getInstance(a), uid, period[0], period[1],
                     settingsDao.getDailyNormalHours());
             msg.append("\n\nPeriode cut-off (").append(period[0]).append(" s/d ")
                     .append(period[1]).append("):\n");
@@ -663,16 +672,16 @@ public class MainActivity extends AppCompatActivity {
                 msg.append("Status: CUKUP ✓");
             }
         } catch (Exception ignored) {}
-        new AlertDialog.Builder(this)
+        new AlertDialog.Builder(a)
                 .setTitle("Konfirmasi Pulang")
                 .setMessage(msg.toString())
-                .setPositiveButton("Ya, Pulang", (d, w) -> startSelfieThenClockOut())
+                .setPositiveButton("Ya, Pulang", (d, w) -> onConfirmed.run())
                 .setNegativeButton("Batal", null)
                 .show();
     }
 
     /** Format jam desimal → "Xj Ym" (pakai formatter shift). */
-    private String fmtHours(double hours) {
+    static String fmtHours(double hours) {
         return ShiftReporter.formatDuration(Math.round(hours * 3600000.0));
     }
 
@@ -927,7 +936,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private Ringtone appreciationRingtone;
 
     /**
      * Popup apresiasi (sekali per periode cut-off per staf) begitu akumulasi jam
@@ -935,14 +943,19 @@ public class MainActivity extends AppCompatActivity {
      * Tombol "OK" + suara nyaring. Pendamping notifikasi Android.
      */
     private void maybeShowWorkHoursAppreciation(long uid) {
+        maybeShowWorkHoursAppreciation(this, settingsDao, uid);
+    }
+
+    /** Dipakai juga oleh beranda Tampilan Tema v2. */
+    static void maybeShowWorkHoursAppreciation(android.app.Activity a, SettingsDao settingsDao, long uid) {
         String[] period = AttendanceRecap.currentPeriod(settingsDao.getPayrollCutoffDay());
         AttendanceRecap.PeriodSummary ps = AttendanceRecap.computePeriodSummary(
-                DatabaseHelper.getInstance(this), uid, period[0], period[1],
+                DatabaseHelper.getInstance(a), uid, period[0], period[1],
                 settingsDao.getDailyNormalHours());
         if (ps.requiredHours <= 0 || ps.totalHours < ps.requiredHours) return;
         String guardKey = "work_met_popup_" + uid;     // sekali per periode cut-off
         if (period[1].equals(settingsDao.get(guardKey, ""))) return;
-        if (isFinishing() || isDestroyed()) return;
+        if (a.isFinishing() || a.isDestroyed()) return;
         settingsDao.set(guardKey, period[1]);
 
         String uname = settingsDao.getCurrentUserName();
@@ -954,37 +967,37 @@ public class MainActivity extends AppCompatActivity {
                 Color.parseColor("#1565C0"), true, 1.15f);
         msg.append("\n\nTerima kasih atas dedikasimu. 🎉");
 
-        playLoudChime();
-        new AlertDialog.Builder(this)
+        final Ringtone rt = playLoudChime(a);
+        new AlertDialog.Builder(a)
                 .setTitle("🎉 Jam Kerja Terpenuhi!")
                 .setMessage(msg)
                 .setCancelable(false)
-                .setPositiveButton("OK", (d, w) -> stopChime())
-                .setOnDismissListener(d -> stopChime())
+                .setPositiveButton("OK", (d, w) -> stopChime(rt))
+                .setOnDismissListener(d -> stopChime(rt))
                 .show();
     }
 
     /** Mainkan nada nyaring (stream alarm) sekali. */
-    private void playLoudChime() {
+    private static Ringtone playLoudChime(Context ctx) {
         try {
             Uri snd = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
             if (snd == null) snd = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
-            Ringtone rt = RingtoneManager.getRingtone(getApplicationContext(), snd);
-            if (rt == null) return;
+            Ringtone rt = RingtoneManager.getRingtone(ctx.getApplicationContext(), snd);
+            if (rt == null) return null;
             rt.setAudioAttributes(new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_ALARM)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                     .build());
-            appreciationRingtone = rt;
             rt.play();
-        } catch (Exception ignored) {}
+            return rt;
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
-    private void stopChime() {
+    private static void stopChime(Ringtone rt) {
         try {
-            if (appreciationRingtone != null && appreciationRingtone.isPlaying()) {
-                appreciationRingtone.stop();
-            }
+            if (rt != null && rt.isPlaying()) rt.stop();
         } catch (Exception ignored) {}
     }
 
@@ -1143,7 +1156,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /** Append teks berwarna/bold/diperbesar ke SpannableStringBuilder. */
-    private void appendStyled(SpannableStringBuilder sb, String text,
+    private static void appendStyled(SpannableStringBuilder sb, String text,
                               int color, boolean bold, float sizeMul) {
         int start = sb.length();
         sb.append(text);
@@ -1409,14 +1422,14 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Admin dengan "Tampilan Baru (gaya Gojek)" aktif → {@link AdminHomeActivity}, lalu tutup activity ini.
+     * Sesi login dengan "Tampilan Tema v2" aktif → {@link AdminHomeActivity}, lalu tutup activity ini.
      * Bila beranda baru crash pada pembukaan sebelumnya, tampilan baru dimatikan otomatis dan admin
      * tetap di beranda lama ini. @return true bila dialihkan (pemanggil wajib langsung return).
      */
     private boolean redirectAdminHome() {
         if (!com.crowja.damiupos.util.GojekUi.isEnabled(this)) return false;
         if (com.crowja.damiupos.util.GojekUi.recoverFromCrashedBoot(this)) {
-            Toast.makeText(this, "Tampilan baru gagal dibuka — kembali ke tampilan lama. "
+            Toast.makeText(this, "Tampilan Tema v2 gagal dibuka — kembali ke tampilan lama. "
                     + "Aktifkan lagi dari Pengaturan bila sudah diperbaiki.", Toast.LENGTH_LONG).show();
             return false;
         }

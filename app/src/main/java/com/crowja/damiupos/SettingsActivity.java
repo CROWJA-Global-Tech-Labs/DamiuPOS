@@ -135,11 +135,11 @@ public class SettingsActivity extends AppCompatActivity {
             swLate.setOnCheckedChangeListener((b, checked) -> lateSd.set(DeliveryQueueActivity.K_LATE_ALARM_POPUP, checked ? "1" : "0"));
         }
 
-        // --- Tampilan baru (gaya Gojek): preferensi HP, khusus sesi admin ---
+        // --- Tampilan Tema v2: preferensi HP, untuk setiap sesi yang layak ---
         // Tidak masuk ReadOnlyForms.disable: ini setelan tampilan perangkat, bukan setelan bisnis.
         View cardGojek = findViewById(R.id.cardGojekUi);
         com.google.android.material.switchmaterial.SwitchMaterial swGojek = findViewById(R.id.switchGojekUi);
-        if (cardGojek != null && swGojek != null && com.crowja.damiupos.util.GojekUi.isAdminSession(this)) {
+        if (cardGojek != null && swGojek != null && com.crowja.damiupos.util.GojekUi.isEligibleSession(this)) {
             cardGojek.setVisibility(View.VISIBLE);
             swGojek.setChecked(com.crowja.damiupos.util.GojekUi.isPreferred(this));
             swGojek.setOnCheckedChangeListener((b, on) -> {

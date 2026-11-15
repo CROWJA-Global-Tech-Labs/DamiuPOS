@@ -112,6 +112,7 @@ public class AdminHomeActivity extends AppCompatActivity {
     private static final long TICK_MS = 60_000L;
     private static final long BOOT_OK_DELAY_MS = 2500L;
     private static final int REQ_BG_LOCATION = 9314;
+    private static final int REQ_LOCATION = 9312;
     private static final int RECENT_LIMIT = 8;
     private static final int LIST_CAP = 30;
     private static final int TREND_WINDOW = 30;          // hari (periode "per bulan")
@@ -403,6 +404,7 @@ public class AdminHomeActivity extends AppCompatActivity {
 
     /** Segarkan semua bagian: penjualan (server), agregat DB (latar), WA belum dibaca, status AI, eskalasi komplain. */
     private void refreshAll() {
+        safe("meRefresh", this::maybeRefreshMe);
         refreshSales();
         loadSnapshot();
         refreshWaUnread();
@@ -519,6 +521,26 @@ public class AdminHomeActivity extends AppCompatActivity {
         s.today = todayList;
         s.recent = ql("recent", () -> transactionDao.getRecent(RECENT_LIMIT));
         s.queueList = ql("queueList", () -> transactionDao.getDeliveryQueue());
+        if (s.menu.tracksAttendance) {
+            try {
+                ShiftReporter.Shift sh = ShiftReporter.computeShift(DatabaseHelper.getInstance(app), s.menu.uid);
+                String info = "Kerja " + ShiftReporter.formatDuration(sh.workMillis);
+                if (sh.breakCount > 0) info += " • Istirahat " + sh.breakCount + "x";
+                try {
+                    String[] period = AttendanceRecap.currentPeriod(settingsDao.getPayrollCutoffDay());
+                    AttendanceRecap.PeriodSummary ps = AttendanceRecap.computePeriodSummary(
+                            DatabaseHelper.getInstance(app), s.menu.uid, period[0], period[1],
+                            settingsDao.getDailyNormalHours());
+                    info += NL + MainActivity.fmtHours(ps.totalHours) + " / " + MainActivity.fmtHours(ps.requiredHours);
+                } catch (Throwable ignored) {
+                }
+                s.shiftInfo = info;
+                s.shiftOpen = sh.clockIn != null;
+            } catch (Throwable t) {
+                Log.w(TAG, "query shift", t);
+                s.shiftInfo = "Sedang bekerja";
+            }
+        }
 
         // Pesanan WA pending untuk perangkat INI; Marketing/Pengisian dibisukan (refreshOrderInboxBanner lama).
         try {
@@ -568,6 +590,7 @@ public class AdminHomeActivity extends AppCompatActivity {
     private void renderSnapshot() {
         if (snap.menu != null) ms = snap.menu;
         safe("header", this::renderHeader);
+        safe("shiftDuties", this::runShiftDuties);
         safe("grid", this::renderGrid);
         safe("trend", this::renderSalesTrend);
         safe("alerts", this::renderAlerts);
@@ -598,9 +621,13 @@ public class AdminHomeActivity extends AppCompatActivity {
         final int seq = salesSeq.incrementAndGet();
         final SyncSettings cfg = new SyncSettings(settingsDao);
         final boolean enrolled = cfg.isEnrolled();
+        // Admin/Marketing/SPV: se-depot dari server; peran lain: transaksi ATAS NAMANYA sendiri (lokal).
+        final boolean branch = ms.branchSales;
+        final String staff = branch ? null : (ms.uid > 0 ? settingsDao.getCurrentUserName() : null);
+        final String staffName = staff != null && !staff.isEmpty() ? staff : null;
         new Thread(() -> {
             JSONObject totals = null;
-            if (enrolled) {
+            if (branch && enrolled) {
                 try {
                     JSONObject res = new SyncApi(cfg).salesAchievement("today", null, null, null);
                     totals = res != null ? res.optJSONObject("totals") : null;
@@ -619,14 +646,18 @@ public class AdminHomeActivity extends AppCompatActivity {
                 scope = "se-depot";
             } else {
                 try {
-                    rev = transactionDao.getPendapatanHariIni(null);
-                    galon = transactionDao.getGalonTerjualHariIni(null);
-                    trx = transactionDao.getTransaksiHariIni(null);
+                    rev = transactionDao.getPendapatanHariIni(staffName);
+                    galon = transactionDao.getGalonTerjualHariIni(staffName);
+                    trx = transactionDao.getTransaksiHariIni(staffName);
                 } catch (Throwable t) {
                     Log.w(TAG, "sales local", t);
                 }
-                // Server tak terjangkau → angka LOKAL, keterangan jujur bahwa itu bukan angka se-depot.
-                scope = enrolled ? "HP ini · offline" : "HP ini";
+                if (!branch) {
+                    scope = staffName != null ? "milik Anda" : "HP ini";
+                } else {
+                    // Server tak terjangkau → angka LOKAL, keterangan jujur bahwa itu bukan angka se-depot.
+                    scope = enrolled ? "HP ini · offline" : "HP ini";
+                }
             }
             final double revF = rev;
             final int galonF = galon;
@@ -755,11 +786,11 @@ public class AdminHomeActivity extends AppCompatActivity {
         add("kembali", "Botol Galon Kembali", "Kembali", "↩️", R.color.gj_blue_tint, G_OPS,
                 m -> m.user == null || !m.user.isViewer(), () -> openTrx(Transaction.TYPE_KEMBALI));
         add("antrean", "Antrean Delivery", "Antrean", "🚚", R.color.gj_green_tint, G_OPS,
-                m -> true, () -> open(DeliveryQueueActivity.class)).badge(s -> s.queue);
+                AdminHomeActivity::queueVisible, () -> open(DeliveryQueueActivity.class)).badge(s -> s.queue);
         add("terjadwal", "Pesanan Terjadwal", "Terjadwal", "🗓️", R.color.gj_green_tint, G_OPS,
                 m -> m.admin && m.enrolled, () -> open(ScheduledOrderActivity.class));
         add("inbox", "Pesanan dari WA", "Pesanan WA", "📨", R.color.gj_orange_tint, G_OPS,
-                m -> true, () -> open(OrderInboxActivity.class)).badge(s -> s.inboxPending);
+                m -> !m.alertSilenced, () -> open(OrderInboxActivity.class)).badge(s -> s.inboxPending);
         add("keliling", "Mode Keliling", null, "🛵", R.color.gj_green_tint, G_OPS,
                 m -> m.user == null || !m.user.isViewer(), () -> open(IderModeActivity.class));
         add("pengisian", "Pengisian Live", "Pengisian", "🚰", R.color.gj_blue_tint, G_OPS,
@@ -891,6 +922,15 @@ public class AdminHomeActivity extends AppCompatActivity {
         long uid;
         User user;
         boolean admin;
+        boolean viewer;
+        boolean marketing;
+        /** Admin/Marketing/SPV: kartu penjualan = total se-depot dari server (refreshSalesCards lama). */
+        boolean branchSales;
+        /** Staf/SPV (bukan admin/viewer/marketing) — Istirahat/Pulang, shift, GPS (refreshOperatorBar lama). */
+        boolean tracksAttendance;
+        /** Marketing/Pengisian: tanpa alarm pesanan WA / ikon inbox. */
+        boolean alertSilenced;
+        String roleLabel = "";
         boolean canWaChat;
         boolean canPromosi;
         boolean enrolled;
@@ -922,6 +962,12 @@ public class AdminHomeActivity extends AppCompatActivity {
             m.uid = settingsDao.isMultiUserEnabled() ? settingsDao.getCurrentUserId() : 0;
             m.user = m.uid > 0 && userDao != null ? userDao.getById(m.uid) : null;
             m.admin = m.user != null && m.user.isAdmin();
+            m.viewer = m.user != null && m.user.isViewer();
+            m.marketing = m.user != null && m.user.isMarketing();
+            m.branchSales = m.user != null && (m.admin || m.marketing || m.user.isSpv());
+            m.tracksAttendance = m.uid > 0 && m.user != null && !m.admin && !m.viewer && !m.marketing;
+            m.alertSilenced = m.user != null && !m.user.receivesOperationalAlerts();
+            m.roleLabel = roleLabel(m.user);
             m.canWaChat = m.user != null && m.user.canUseWaChat();
             m.canPromosi = m.uid > 0 && userDao != null && userDao.canPromosi(m.uid);
             m.name = settingsDao.getCurrentUserName();
@@ -932,6 +978,21 @@ public class AdminHomeActivity extends AppCompatActivity {
             Log.w(TAG, "menuState user", t);
         }
         return m;
+    }
+
+    private static String roleLabel(User u) {
+        if (u == null) return "";
+        if (u.isAdmin()) return "Admin";
+        if (u.isSpv()) return "SPV";
+        if (u.isViewer()) return "Viewer";
+        if (u.isMarketing()) return "Marketing";
+        if (u.isPengisian()) return "Pengisian";
+        return "Staf";
+    }
+
+    /** Antrean Delivery tampil? Marketing hanya bila HP-nya dicentang Delivery (refreshOperatorBar lama). */
+    private static boolean queueVisible(MenuState m) {
+        return !(m.marketing && !m.deliveryDevice);
     }
 
     /** Hasil satu putaran agregat DB (thread latar). */
@@ -963,6 +1024,9 @@ public class AdminHomeActivity extends AppCompatActivity {
         List<Transaction> recent = new ArrayList<>();
         List<Transaction> today = new ArrayList<>();
         List<Transaction> queueList = new ArrayList<>();
+        /** Peran berabsen: "Kerja Xj Ym • Istirahat Nx\nperiode/ideal"; null = bukan peran berabsen. */
+        String shiftInfo;
+        boolean shiftOpen;
     }
 
     private static final class TileHolder {
@@ -1059,7 +1123,7 @@ public class AdminHomeActivity extends AppCompatActivity {
     }
 
     private void renderNavBadges() {
-        setNavBadge(TAB_PESANAN, snap.inboxPending + snap.queue);
+        setNavBadge(TAB_PESANAN, (ms.alertSilenced ? 0 : snap.inboxPending) + (queueVisible(ms) ? snap.queue : 0));
         setNavBadge(TAB_CHAT, ms.canWaChat ? Math.max(0, waUnread) : 0);
     }
 
@@ -1115,6 +1179,8 @@ public class AdminHomeActivity extends AppCompatActivity {
         clickable(R.id.gjhSumGalon, v -> open(GalonStockActivity.class));
         clickable(R.id.gjhSumCust, v -> open(CustomerListActivity.class));
         clickable(R.id.gjhSumIssue, v -> open(ComplaintListActivity.class));
+        clickable(R.id.gjhOpIstirahat, v -> doIstirahat());
+        clickable(R.id.gjhOpPulang, v -> doPulang());
     }
 
     private void clickable(int id, View.OnClickListener l) {
@@ -1127,12 +1193,31 @@ public class AdminHomeActivity extends AppCompatActivity {
         String name = ms.name != null ? ms.name.trim() : "";
         if (hello != null) hello.setText(name.isEmpty() ? "Halo 👋" : "Halo, " + name + " 👋");
         TextView sub = findViewById(R.id.gjhHelloSub);
-        if (sub != null) sub.setText(ms.place() + " · Admin");
+        if (sub != null) sub.setText(ms.place() + (ms.roleLabel.isEmpty() ? "" : " · " + ms.roleLabel));
         String initial = name.isEmpty() ? "A" : name.substring(0, 1).toUpperCase(Locale.ROOT);
         TextView av = findViewById(R.id.gjhAvatar);
         if (av != null) av.setText(initial);
         TextView av2 = findViewById(R.id.gjhAkunAvatar);
         if (av2 != null) av2.setText(initial);
+        safe("roleViews", this::renderRoleViews);
+    }
+
+    /** Bagian Beranda yang tampil per peran (refreshOperatorBar lama) + pita operator berabsen. */
+    private void renderRoleViews() {
+        int jk = ms.viewer ? View.GONE : View.VISIBLE;   // Viewer tak boleh membuat transaksi
+        View j = findViewById(R.id.gjhActJual);
+        if (j != null) j.setVisibility(jk);
+        View k = findViewById(R.id.gjhActKembali);
+        if (k != null) k.setVisibility(jk);
+        // Galon beredar / stok: khusus admin (kartu GLN lama).
+        View g = findViewById(R.id.gjhSumGalon);
+        if (g != null) g.setVisibility(ms.admin ? View.VISIBLE : View.GONE);
+        View strip = findViewById(R.id.gjhOperatorStrip);
+        if (strip != null) strip.setVisibility(ms.tracksAttendance ? View.VISIBLE : View.GONE);
+        TextView n = findViewById(R.id.gjhOpName);
+        if (n != null) n.setText(ms.name);
+        TextView sh = findViewById(R.id.gjhOpShift);
+        if (sh != null && snap.shiftInfo != null) sh.setText(snap.shiftInfo);
     }
 
     private void renderSales(double revenue, int galon, int trx, String scope) {
@@ -1384,7 +1469,7 @@ public class AdminHomeActivity extends AppCompatActivity {
                     "Ada komplain atau masalah pesanan yang belum selesai.", "Lihat",
                     () -> open(ComplaintListActivity.class), false));
         }
-        if (snap.stockKnown && snap.stok <= snap.stockAlert) {
+        if (ms.admin && snap.stockKnown && snap.stok <= snap.stockAlert) {
             l.add(new AlertItem(SEV_WARNING, "💧", "Stok galon rendah",
                     "Stok tersedia tinggal " + snap.stok + " (batas peringatan " + snap.stockAlert + ").",
                     "Cek stok", () -> open(GalonStockActivity.class), false));
@@ -1871,13 +1956,23 @@ public class AdminHomeActivity extends AppCompatActivity {
 
     private void renderPesanan() {
         pesananDirty = false;
+        boolean qVis = queueVisible(ms);
+        boolean inVis = !ms.alertSilenced;
+        for (int id : new int[]{R.id.gjhChipQueue, R.id.gjhBtnQueue}) {
+            View v = findViewById(id);
+            if (v != null) v.setVisibility(qVis ? View.VISIBLE : View.GONE);
+        }
+        for (int id : new int[]{R.id.gjhChipWa, R.id.gjhBtnInbox}) {
+            View v = findViewById(id);
+            if (v != null) v.setVisibility(inVis ? View.VISIBLE : View.GONE);
+        }
         TextView chipQ = findViewById(R.id.gjhChipQueue);
         if (chipQ != null) chipQ.setText("🚚 " + snap.queue + " antrean di HP ini");
         TextView chipW = findViewById(R.id.gjhChipWa);
         if (chipW != null) chipW.setText("📨 " + snap.inboxPending + " pesanan WA baru");
         TextView inboxBadge = findViewById(R.id.gjhBtnInboxBadge);
         if (inboxBadge != null) {
-            inboxBadge.setVisibility(snap.inboxPending > 0 ? View.VISIBLE : View.GONE);
+            inboxBadge.setVisibility(inVis && snap.inboxPending > 0 ? View.VISIBLE : View.GONE);
             inboxBadge.setText(fmtCount(snap.inboxPending));
         }
 
@@ -1954,9 +2049,11 @@ public class AdminHomeActivity extends AppCompatActivity {
                         () -> open(WaInboxActivity.class));
                 n++;
             }
-            addCircle(actions, "📨", "Pesanan WA", R.color.gj_orange_tint, snap.inboxPending,
-                    () -> open(OrderInboxActivity.class));
-            n++;
+            if (!ms.alertSilenced) {
+                addCircle(actions, "📨", "Pesanan WA", R.color.gj_orange_tint, snap.inboxPending,
+                        () -> open(OrderInboxActivity.class));
+                n++;
+            }
             addCircle(actions, "⚠️", "Komplain", R.color.gj_red_tint, snap.complaints,
                     () -> open(ComplaintListActivity.class));
             n++;
@@ -2034,7 +2131,8 @@ public class AdminHomeActivity extends AppCompatActivity {
 
     private void renderAkun() {
         TextView name = findViewById(R.id.gjhAkunName);
-        if (name != null) name.setText(ms.name != null && !ms.name.trim().isEmpty() ? ms.name.trim() : "Admin");
+        if (name != null) name.setText(ms.name != null && !ms.name.trim().isEmpty() ? ms.name.trim()
+                : ms.roleLabel.isEmpty() ? "Pengguna" : ms.roleLabel);
         TextView dev = findViewById(R.id.gjhAkunDevice);
         if (dev != null) dev.setText(ms.place());
         TextView ver = findViewById(R.id.gjhAkunVersion);
@@ -2069,7 +2167,7 @@ public class AdminHomeActivity extends AppCompatActivity {
 
         // ---- Depot
         g = addGroup(groups, "Depot");
-        addGroupRow(g, "🛠️", "Pengaturan", null, v -> open(SettingsActivity.class));
+        if (ms.admin) addGroupRow(g, "🛠️", "Pengaturan", null, v -> open(SettingsActivity.class));
         if (ms.admin && enrolled) {
             addGroupRow(g, "🖥️", "Dashboard Web", "Semua fitur web di HP", v -> open(AdminWebActivity.class));
             addGroupRow(g, "💬", "WhatsApp", "Akun, broadcast, status", v -> open(WhatsAppMenuActivity.class));
@@ -2077,7 +2175,7 @@ public class AdminHomeActivity extends AppCompatActivity {
 
         // ---- Tampilan
         g = addGroup(groups, "Tampilan");
-        View look = addGroupRow(g, "✨", "Tampilan baru (gaya Gojek)", "Matikan untuk kembali ke tampilan lama", null);
+        View look = addGroupRow(g, "✨", "Tampilan Tema v2", "Matikan untuk kembali ke tampilan lama.", null);
         safe("lookSwitch", () -> bindLookSwitch(look));
 
         // ---- Info
@@ -2085,9 +2183,15 @@ public class AdminHomeActivity extends AppCompatActivity {
         addGroupRow(g, "ℹ️", "Tentang", "v" + BuildConfig.VERSION_NAME, v -> showAboutDialog());
         addGroupRow(g, "📜", "Riwayat versi", null, v -> open(ChangelogActivity.class));
 
-        // ---- Keluar
+        // ---- Shift (peran berabsen) / Keluar
         g = addGroup(groups, null);
-        View out = addGroupRow(g, "🚪", "Keluar", null, v -> doAdminLogout());
+        View out;
+        if (ms.tracksAttendance) {
+            addGroupRow(g, "☕", "Istirahat", "Catat istirahat & kunci HP", v -> doIstirahat());
+            out = addGroupRow(g, "🏠", "Pulang", "Akhiri shift (selfie pulang)", v -> doPulang());
+        } else {
+            out = addGroupRow(g, "🚪", "Keluar", null, v -> doAdminLogout());
+        }
         TextView outTitle = out.findViewById(R.id.gjhRowTitle);
         if (outTitle != null) {
             outTitle.setTextColor(col(R.color.gj_danger));
@@ -2197,7 +2301,7 @@ public class AdminHomeActivity extends AppCompatActivity {
         }).start();
     }
 
-    /** Sakelar "Tampilan baru": OFF → konfirmasi → preferensi mati → MainActivity (tugas baru). */
+    /** Sakelar "Tampilan Tema v2": OFF → konfirmasi → preferensi mati → MainActivity (tugas baru). */
     /** Baris = satu kontrol aksesibel bertipe Switch (sakelar sendiri tak fokus/klik). */
     private static void a11ySwitchRow(View row, final boolean checked) {
         androidx.core.view.ViewCompat.setAccessibilityDelegate(row, new androidx.core.view.AccessibilityDelegateCompat() {
@@ -2228,7 +2332,9 @@ public class AdminHomeActivity extends AppCompatActivity {
             if (checked) return;
             new AlertDialog.Builder(this)
                     .setTitle("Kembali ke tampilan lama?")
-                    .setMessage("Beranda akan kembali ke tampilan sebelumnya. Tampilan baru bisa dinyalakan lagi dari Pengaturan.")
+                    .setMessage(ms.admin
+                            ? "Beranda akan kembali ke tampilan sebelumnya. Tampilan Tema v2 bisa dinyalakan lagi dari Pengaturan."
+                            : "Beranda akan kembali ke tampilan sebelumnya. Untuk menyalakan Tampilan Tema v2 lagi, minta admin membukanya dari Pengaturan di HP ini.")
                     .setPositiveButton("Ya, kembali", (d, w) -> {
                         GojekUi.setPreferred(this, false);
                         startActivity(new Intent(this, MainActivity.class)
@@ -2416,11 +2522,72 @@ public class AdminHomeActivity extends AppCompatActivity {
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQ_BG_LOCATION) {
+        if (requestCode == REQ_LOCATION && grantResults.length > 0
+                && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            LocationService.start(this);
+            ensureBackgroundReliability();   // lanjut minta lokasi "sepanjang waktu" + pengecualian baterai
+        } else if (requestCode == REQ_BG_LOCATION) {
             // Apapun hasilnya, mulai/segarkan service — dgn bg-location ter-grant, restart dari background/boot
             // nanti bisa membaca GPS.
             LocationService.ensureOnline(getApplicationContext());
         }
+    }
+
+    // ---------------------------------------------------------------- shift (peran berabsen, port refreshOperatorBar)
+
+    private boolean locationAsked;
+    private long lastMeRefreshAt;
+
+    /** Shift terbuka: pengingat jam kerja, popup apresiasi jam terpenuhi, pelacakan lokasi (beranda lama). */
+    private void runShiftDuties() {
+        if (!snap.loaded || !ms.tracksAttendance || !snap.shiftOpen || ms.uid <= 0) return;
+        WorkHoursReminder.schedule(getApplicationContext(), ms.uid);
+        safe("workMet", () -> MainActivity.maybeShowWorkHoursAppreciation(this, settingsDao, ms.uid));
+        ensureLocationTracking();
+    }
+
+    /** Lacak lokasi staf selama shift; minta izin sekali bila perlu (ensureLocationTracking lama). */
+    private void ensureLocationTracking() {
+        SyncSettings cfg = new SyncSettings(settingsDao);
+        if (!cfg.isEnrolled() || !cfg.isLocationTrackingEnabled()) return;
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            LocationService.start(this);
+        } else if (!locationAsked) {
+            locationAsked = true;
+            androidx.core.app.ActivityCompat.requestPermissions(this,
+                    new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION}, REQ_LOCATION);
+        }
+    }
+
+    /** Marketing: status "Delivery" HP lewat /api/me bisa tertunda — segarkan maks. 1x/menit (beranda lama). */
+    private void maybeRefreshMe() {
+        if (!ms.marketing || System.currentTimeMillis() - lastMeRefreshAt <= 60_000L) return;
+        final SyncSettings cfg = new SyncSettings(settingsDao);
+        if (!cfg.isEnrolled()) return;
+        lastMeRefreshAt = System.currentTimeMillis();
+        final boolean before = cfg.isDeliveryDevice();
+        com.crowja.damiupos.sync.OnlineTasks.forceConfigRefreshNow(getApplicationContext(), () -> {
+            boolean after = new SyncSettings(settingsDao).isDeliveryDevice();
+            if (after != before) handler.post(() -> {
+                if (!isFinishing() && !isDestroyed()) loadSnapshot();
+            });
+        });
+    }
+
+    private void doIstirahat() {
+        com.crowja.damiupos.util.ShiftActions.confirmBreak(this, settingsDao);
+    }
+
+    /**
+     * Pulang: pemeriksaan antrean + dialog jam kerja dijalankan DI SINI (sama dengan beranda lama), lalu
+     * selfie + catat OUT diserahkan ke MainActivity (EXTRA_AUTO_CLOCKOUT → startSelfieThenClockOut).
+     */
+    private void doPulang() {
+        MainActivity.warnIncompleteDeliveryThenConfirmPulang(this, settingsDao, transactionDao, () -> {
+            startSafely(new Intent(this, MainActivity.class).putExtra(MainActivity.EXTRA_AUTO_CLOCKOUT, true));
+            finish();
+        });
     }
 
     // ---------------------------------------------------------------- Pengisian Live (port apa adanya)
