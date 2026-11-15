@@ -25,14 +25,143 @@
         <item name="materialAlertDialogTheme">@style/ThemeOverlay.Gj.Dialog</item>
     </style>
 
-    <!-- Overlay untuk layar lama (diisi lebih lanjut oleh pekerjaan tema global). -->
+    <!-- Overlay untuk layar LAMA saat sesi admin + tampilan baru aktif (DamiuApplication →
+         GojekUi.applyOverlay, sebelum setContentView). Pola "brand service bar": toolbar + status bar
+         hijau gj_primary (teks/ikon putih 4.6:1). Toolbar/aksen di layout memakai ?attr/colorPrimary,
+         jadi ikut overlay ini; untuk non-admin ?attr/colorPrimary = @color/primary (tak berubah).
+         JANGAN tambahkan windowActionBar/windowNoTitle: 59 layar memanggil setSupportActionBar. -->
     <style name="ThemeOverlay.DAMIUPOS.Gojek" parent="">
         <item name="colorPrimary">@color/gj_primary</item>
-        <item name="colorPrimaryDark">@color/gj_primary</item>
+        <!-- Varian gelap untuk aksen yang dulu @color/primary_dark (teks di latar terang, bar PiP):
+             #006B05 — 6.9:1 di atas putih. Status bar diatur sendiri di bawah. -->
+        <item name="colorPrimaryDark">@color/gj_on_primary_container</item>
+        <item name="colorPrimaryVariant">@color/gj_on_primary_container</item>
+        <item name="colorOnPrimary">@color/white</item>
         <item name="colorAccent">@color/gj_primary</item>
         <item name="colorSecondary">@color/gj_primary</item>
+        <item name="colorSecondaryVariant">@color/gj_on_primary_container</item>
+        <!-- FAB / Extended FAB memakai colorSecondary sebagai latar → ikon/teks putih (bawaan hitam). -->
+        <item name="colorOnSecondary">@color/white</item>
         <item name="colorControlActivated">@color/gj_primary</item>
         <item name="android:statusBarColor">@color/gj_primary</item>
+        <!-- Tombol: pil (50%), tebal, tanpa huruf kapital, warna = selector bawaan (ikut colorPrimary,
+             state nonaktif tetap ada). materialButtonStyle adalah defStyleAttr SEMUA MaterialButton,
+             jadi atribut yang tak ditulis style= eksplisit (OutlinedButton/TextButton) — termasuk
+             shapeAppearanceOverlay — ikut dari sini; tombol dengan app:cornerRadius tetap sudutnya.
+             Dua atribut berikutnya untuk new MaterialButton(ctx, null, …OutlinedStyle/borderless…). -->
+        <item name="materialButtonStyle">@style/Widget.GjOverlay.Button</item>
+        <item name="materialButtonOutlinedStyle">@style/Widget.GjOverlay.Button.Outlined</item>
+        <item name="borderlessButtonStyle">@style/Widget.GjOverlay.Button.Text</item>
+        <!-- Komponen kecil lain (kolom input TextInputLayout, item kalender): 8dp = token Asphalt S.
+             Sengaja BUKAN pil — TextInputLayout memakai atribut ini juga, dan input multi-baris jadi
+             lonjong; pil untuk tombol sudah datang dari shapeAppearanceOverlay gaya tombol di atas,
+             chip & FAB sudah pil/bulat dari overlay bawaannya. -->
+        <item name="shapeAppearanceSmallComponent">@style/ShapeAppearance.GjOverlay.SmallComponent</item>
+        <!-- Dialog: androidx AlertDialog (≈349), MaterialAlertDialogBuilder, dan 6 android.app.AlertDialog. -->
+        <item name="alertDialogTheme">@style/ThemeOverlay.GjOverlay.Dialog</item>
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.GjOverlay.MaterialAlertDialog</item>
+        <item name="android:alertDialogTheme">@style/ThemeOverlay.GjOverlay.FrameworkDialog</item>
+        <!-- Tab: indikator hijau 3dp tanpa ripple (pola tab dalam halaman Gojek). -->
+        <item name="tabStyle">@style/Widget.GjOverlay.TabLayout</item>
+    </style>
+
+    <!-- ===== Gaya tambahan khusus overlay layar lama (TIDAK dipakai Theme.DAMIUPOS.Gojek) ===== -->
+
+    <style name="Widget.GjOverlay.Button" parent="Widget.MaterialComponents.Button">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:textStyle">bold</item>
+        <item name="elevation">0dp</item>
+        <item name="shapeAppearanceOverlay">@style/ShapeAppearanceOverlay.GjOverlay.Pill</item>
+    </style>
+
+    <style name="Widget.GjOverlay.Button.Outlined" parent="Widget.MaterialComponents.Button.OutlinedButton">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:textStyle">bold</item>
+        <item name="shapeAppearanceOverlay">@style/ShapeAppearanceOverlay.GjOverlay.Pill</item>
+    </style>
+
+    <style name="Widget.GjOverlay.Button.Text" parent="Widget.MaterialComponents.Button.TextButton">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:textStyle">bold</item>
+        <item name="shapeAppearanceOverlay">@style/ShapeAppearanceOverlay.GjOverlay.Pill</item>
+    </style>
+
+    <style name="ShapeAppearance.GjOverlay.SmallComponent" parent="ShapeAppearance.MaterialComponents.SmallComponent">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">8dp</item>
+    </style>
+
+    <style name="ShapeAppearanceOverlay.GjOverlay.Pill" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">50%</item>
+    </style>
+
+    <!-- androidx AlertDialog: sudut 16dp (latar jendela), tombol teks hijau tebal tanpa kapital.
+         Warna tombol = selector bawaan MDC (ikut colorPrimary) supaya tombol yang dinonaktifkan
+         (pos.setEnabled(false) di ±20 dialog) tetap tampak nonaktif. -->
+    <style name="ThemeOverlay.GjOverlay.Dialog" parent="ThemeOverlay.MaterialComponents.Dialog.Alert">
+        <item name="colorPrimary">@color/gj_primary</item>
+        <item name="colorAccent">@color/gj_primary</item>
+        <item name="colorControlActivated">@color/gj_primary</item>
+        <item name="android:windowBackground">@drawable/gj_dialog_background</item>
+        <item name="buttonBarButtonStyle">@style/Widget.GjOverlay.DialogButton</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.GjOverlay.DialogButton</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Widget.GjOverlay.DialogButton</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Widget.GjOverlay.DialogButton</item>
+        <item name="shapeAppearanceMediumComponent">@style/ShapeAppearance.Gj.Dialog</item>
+    </style>
+
+    <style name="ThemeOverlay.GjOverlay.MaterialAlertDialog" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
+        <item name="colorPrimary">@color/gj_primary</item>
+        <item name="colorAccent">@color/gj_primary</item>
+        <item name="colorControlActivated">@color/gj_primary</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.GjOverlay.DialogButton</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Widget.GjOverlay.DialogButton</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Widget.GjOverlay.DialogButton</item>
+        <item name="shapeAppearanceMediumComponent">@style/ShapeAppearance.Gj.Dialog</item>
+    </style>
+
+    <style name="Widget.GjOverlay.DialogButton" parent="Widget.MaterialComponents.Button.TextButton.Dialog.Flush">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <!-- android.app.AlertDialog (WizardActivity, RegionConfirm, ClaimApprovalPrompter, WaBridgeSend, …). -->
+    <style name="ThemeOverlay.GjOverlay.FrameworkDialog" parent="@android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">@color/gj_primary</item>
+        <item name="android:colorPrimary">@color/gj_primary</item>
+        <item name="android:colorControlActivated">@color/gj_primary</item>
+        <item name="android:windowBackground">@drawable/gj_dialog_background</item>
+        <item name="android:buttonBarButtonStyle">@style/Widget.GjOverlay.FrameworkDialogButton</item>
+        <item name="android:buttonBarPositiveButtonStyle">@style/Widget.GjOverlay.FrameworkDialogButton</item>
+        <item name="android:buttonBarNegativeButtonStyle">@style/Widget.GjOverlay.FrameworkDialogButton</item>
+        <item name="android:buttonBarNeutralButtonStyle">@style/Widget.GjOverlay.FrameworkDialogButton</item>
+    </style>
+
+    <!-- Induk publik dari Widget.Material.Button.ButtonBar.AlertDialog (yang privat); ukuran disalin. -->
+    <style name="Widget.GjOverlay.FrameworkDialogButton" parent="@android:style/Widget.Material.Button.Borderless.Colored">
+        <item name="android:minWidth">64dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:maxLines">2</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="Widget.GjOverlay.TabLayout" parent="Widget.MaterialComponents.TabLayout">
+        <item name="tabIndicatorHeight">3dp</item>
+        <item name="tabIndicatorFullWidth">false</item>
+        <item name="tabRippleColor">@null</item>
+        <item name="tabTextAppearance">@style/TextAppearance.GjOverlay.Tab</item>
+    </style>
+
+    <style name="TextAppearance.GjOverlay.Tab" parent="TextAppearance.MaterialComponents.Button">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0</item>
     </style>
 
     <!-- Tombol pil (sudut = setengah tinggi), tebal, tanpa huruf kapital, tanpa bayangan. -->

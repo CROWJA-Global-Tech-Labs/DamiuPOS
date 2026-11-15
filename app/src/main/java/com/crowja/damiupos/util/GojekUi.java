@@ -57,12 +57,51 @@ public final class GojekUi {
         if (on) prefs(ctx).edit().remove(KEY_BOOT_PENDING).remove(KEY_AUTO_DISABLED).commit();
     }
 
-    /** Tampilan baru berlaku untuk sesi ini? (admin + preferensi aktif). */
-    public static boolean isEnabled(Context ctx) {
-        return isAdminSession(ctx) && isPreferred(ctx);
+    // ------------------------------------------------------------------ cache isEnabled
+    // isEnabled dievaluasi di SETIAP pembuatan activity (overlay di DamiuApplication) = ±4 baca SQLite
+    // di main thread. Hasilnya disimpan sebentar (TTL) dan dibuang eksplisit lewat invalidate() saat
+    // sesi login, flag multi-user, atau preferensi berubah. Perubahan yang tak lewat setter tsb
+    // (peran user ditarik sync, nilai multi-user dari pull) paling lambat terlihat setelah TTL.
+
+    private static final long CACHE_TTL_NANOS = 5_000_000_000L; // 5 detik
+
+    private static final class Snapshot {
+        final boolean enabled;
+        final long atNanos;
+        final long gen;
+
+        Snapshot(boolean enabled, long atNanos, long gen) {
+            this.enabled = enabled;
+            this.atNanos = atNanos;
+            this.gen = gen;
+        }
     }
 
-    /** Overlay tema Gojek untuk layar LAMA (dipanggil sebelum setContentView, lihat DamiuApplication). */
+    private static volatile Snapshot cache;
+    private static final java.util.concurrent.atomic.AtomicLong GEN = new java.util.concurrent.atomic.AtomicLong();
+
+    /** Buang hasil isEnabled yang tersimpan (login/logout, multi-user, preferensi berubah). */
+    public static void invalidate() {
+        GEN.incrementAndGet();
+        cache = null;
+    }
+
+    /** Tampilan baru berlaku untuk sesi ini? (admin + preferensi aktif). Di-cache ±5 dtk. */
+    public static boolean isEnabled(Context ctx) {
+        long now = System.nanoTime();
+        Snapshot s = cache;
+        if (s != null && s.gen == GEN.get() && now - s.atNanos < CACHE_TTL_NANOS) return s.enabled;
+        long gen = GEN.get();
+        boolean on = isAdminSession(ctx) && isPreferred(ctx);
+        // Kalau invalidate() terjadi selagi menghitung, gen-nya sudah beda → snapshot ini tak dipakai.
+        cache = new Snapshot(on, now, gen);
+        return on;
+    }
+
+    /**
+     * Overlay tema Gojek untuk layar LAMA. Dipanggil dari DamiuApplication.onActivityCreated, yang
+     * berjalan DI DALAM super.onCreate() — sebelum setContentView, jadi seluruh view & dekor ikut.
+     */
     public static void applyOverlay(Activity a) {
         try {
             if (!isEnabled(a)) return;
