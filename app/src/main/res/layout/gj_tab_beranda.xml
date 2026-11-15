@@ -39,16 +39,61 @@
                     android:layout_weight="1"
                     android:orientation="vertical">
 
-                    <TextView
-                        android:id="@+id/gjhHello"
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:ellipsize="end"
-                        android:maxLines="1"
-                        android:text="Halo 👋"
-                        android:textColor="@color/white"
-                        android:textSize="18sp"
-                        android:textStyle="bold" />
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/gjhHello"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:ellipsize="end"
+                            android:maxLines="1"
+                            android:maxWidth="165dp"
+                            android:text="Halo 👋"
+                            android:textColor="@color/white"
+                            android:textSize="18sp"
+                            android:textStyle="bold" />
+
+                    <!-- Pil status AI (latar gelap-transparan supaya teks putih kecil tetap ≥ 4.5:1). -->
+                    <LinearLayout
+                        android:id="@+id/gjhAiPill"
+                        android:layout_width="wrap_content"
+                        android:layout_height="26dp"
+                        android:layout_marginStart="8dp"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="12dp">
+
+                        <ImageView
+                            android:id="@+id/gjhAiIcon"
+                            android:layout_width="16dp"
+                            android:layout_height="16dp"
+                            android:importantForAccessibility="no"
+                            android:src="@drawable/ic_robot" />
+
+                        <TextView
+                            android:id="@+id/gjhAiLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="6dp"
+                            android:text="AI ?"
+                            android:textColor="@color/white"
+                            android:textSize="12sp"
+                            android:textStyle="bold" />
+
+                        <View
+                            android:id="@+id/gjhAiDot"
+                            android:layout_width="9dp"
+                            android:layout_height="9dp"
+                            android:layout_marginStart="6dp" />
+                    </LinearLayout>
+                    </LinearLayout>
 
                     <TextView
                         android:id="@+id/gjhHelloSub"
@@ -92,43 +137,6 @@
                         android:background="@drawable/gjh_bg_dot_red"
                         android:visibility="gone" />
                 </FrameLayout>
-            </LinearLayout>
-
-            <!-- Pil status AI (latar gelap-transparan supaya teks putih kecil tetap ≥ 4.5:1). -->
-            <LinearLayout
-                android:id="@+id/gjhAiPill"
-                android:layout_width="wrap_content"
-                android:layout_height="28dp"
-                android:layout_marginTop="10dp"
-                android:clickable="true"
-                android:focusable="true"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingStart="10dp"
-                android:paddingEnd="12dp">
-
-                <ImageView
-                    android:id="@+id/gjhAiIcon"
-                    android:layout_width="16dp"
-                    android:layout_height="16dp"
-                    android:importantForAccessibility="no"
-                    android:src="@drawable/ic_robot" />
-
-                <TextView
-                    android:id="@+id/gjhAiLabel"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:text="AI ?"
-                    android:textColor="@color/white"
-                    android:textSize="12sp"
-                    android:textStyle="bold" />
-
-                <View
-                    android:id="@+id/gjhAiDot"
-                    android:layout_width="9dp"
-                    android:layout_height="9dp"
-                    android:layout_marginStart="6dp" />
             </LinearLayout>
 
             <LinearLayout
