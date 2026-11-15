@@ -23,7 +23,7 @@
             android:id="@+id/tvTime"
             android:layout_width="52dp"
             android:layout_height="wrap_content"
-            android:textColor="@color/primary"
+            android:textColor="?attr/colorPrimary"
             android:textSize="15sp"
             android:textStyle="bold" />
 

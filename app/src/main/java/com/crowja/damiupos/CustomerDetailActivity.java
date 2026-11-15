@@ -1663,7 +1663,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
             android.widget.TextView jl = new android.widget.TextView(this);
             jl.setText("📜 Lihat Jurnal Pesanan →");
             jl.setTextSize(15);
-            jl.setTextColor(0xFF1565C0);
+            jl.setTextColor(com.crowja.damiupos.util.ThemeColors.primary(this));
             jl.setPadding(dp(22), dp(12), dp(22), dp(4));
             jl.setOnClickListener(v -> showOrderJournal(trxUuid));
             col.addView(jl);
@@ -1672,7 +1672,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 android.widget.TextView ch = new android.widget.TextView(this);
                 ch.setText("💬 Riwayat Chat Pesanan →");
                 ch.setTextSize(15);
-                ch.setTextColor(0xFF1565C0);
+                ch.setTextColor(com.crowja.damiupos.util.ThemeColors.primary(this));
                 ch.setPadding(dp(22), dp(8), dp(22), dp(4));
                 ch.setOnClickListener(v -> startActivity(new android.content.Intent(this, ChatLogActivity.class)
                         .putExtra(ChatLogActivity.EXTRA_MODE, ChatLogActivity.MODE_ORDER)
@@ -1705,7 +1705,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
             android.widget.TextView ed = new android.widget.TextView(this);
             ed.setText("✏️ Ubah Transaksi →");
             ed.setTextSize(15);
-            ed.setTextColor(0xFF1565C0);
+            ed.setTextColor(com.crowja.damiupos.util.ThemeColors.primary(this));
             ed.setPadding(dp(22), dp(8), dp(22), dp(4));
             ed.setOnClickListener(v -> startActivity(new android.content.Intent(this, ReceiptActivity.class)
                     .putExtra(ReceiptActivity.EXTRA_TRANSACTION_ID, localId)

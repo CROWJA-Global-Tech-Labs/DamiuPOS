@@ -15,7 +15,7 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="@color/primary"
+            android:background="?attr/colorPrimary"
             android:titleTextColor="@color/white"
             app:navigationIcon="@drawable/ic_arrow_back"
             app:title="Pengaturan" />
@@ -50,7 +50,7 @@
                 android:focusable="true"
                 app:cardCornerRadius="12dp"
                 app:cardElevation="3dp"
-                app:cardBackgroundColor="@color/primary">
+                app:cardBackgroundColor="?attr/colorPrimary">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -371,7 +371,7 @@
                         android:layout_marginEnd="12dp"
                         android:contentDescription="Multi User &amp; Absensi"
                         android:src="@android:drawable/ic_menu_my_calendar"
-                        app:tint="@color/primary" />
+                        app:tint="?attr/colorPrimary" />
 
                     <LinearLayout
                         android:layout_width="0dp"

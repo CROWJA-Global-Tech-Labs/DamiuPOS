@@ -612,7 +612,7 @@ public class WaAccountsActivity extends AppCompatActivity {
                 qr.setText("📷 Scan QR");
                 qr.setAllCaps(false);
                 qr.setTextColor(0xFFFFFFFF);
-                qr.setBackgroundTintList(ColorStateList.valueOf(0xFF1565C0));   // 5,8:1 dengan teks putih
+                qr.setBackgroundTintList(ColorStateList.valueOf(com.crowja.damiupos.util.ThemeColors.primary(c)));   // 5,8:1 dengan teks putih
                 qr.setOnClickListener(v -> showQr(a));
                 actions.addView(qr);
             }

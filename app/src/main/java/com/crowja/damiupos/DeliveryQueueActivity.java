@@ -1235,13 +1235,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       customSum.setVisibility(View.GONE);
       final TextView tvCustomSum = new TextView(this);
       tvCustomSum.setTextSize(13f);
-      tvCustomSum.setTextColor(this.getColor(R.color.primary));
+      tvCustomSum.setTextColor(com.crowja.damiupos.util.ThemeColors.primary(this));
       customSum.addView(tvCustomSum, new LinearLayout.LayoutParams(0, -2, 1f));
       TextView btCustomEdit = new TextView(this);
       btCustomEdit.setText("Ubah");
       btCustomEdit.setTextSize(14f);
       btCustomEdit.setTypeface(null, android.graphics.Typeface.BOLD);
-      btCustomEdit.setTextColor(this.getColor(R.color.primary));
+      btCustomEdit.setTextColor(com.crowja.damiupos.util.ThemeColors.primary(this));
       btCustomEdit.setPadding(this.dp(12f), this.dp(8f), this.dp(4f), this.dp(8f));
       customSum.addView(btCustomEdit);
       rg.addView(customSum);
@@ -1297,7 +1297,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       final TextView tvKmRange = new TextView(this);
       tvKmRange.setTextSize(15f);
       tvKmRange.setTypeface(null, android.graphics.Typeface.BOLD);
-      tvKmRange.setTextColor(this.getColor(R.color.primary));
+      tvKmRange.setTextColor(com.crowja.damiupos.util.ThemeColors.primary(this));
       tvKmRange.setPadding(0, this.dp(6f), 0, 0);
       custom.addView(tvKmRange);
       final com.google.android.material.slider.RangeSlider kmSlider = new com.google.android.material.slider.RangeSlider(this);
@@ -1321,7 +1321,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       final TextView tvDir = new TextView(this);
       tvDir.setTextSize(14f);
       tvDir.setTypeface(null, android.graphics.Typeface.BOLD);
-      tvDir.setTextColor(this.getColor(R.color.primary));
+      tvDir.setTextColor(com.crowja.damiupos.util.ThemeColors.primary(this));
       tvDir.setText("Arah: " + dirPie.describe());
       dirPie.setOnChange(() -> tvDir.setText("Arah: " + dirPie.describe()));
       LinearLayout.LayoutParams pieLp = new LinearLayout.LayoutParams(-2, -2);
@@ -1414,7 +1414,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          capRow.setOrientation(LinearLayout.HORIZONTAL);
          final TextView tvCapSum = new TextView(this);
          tvCapSum.setTextSize(13f);
-         tvCapSum.setTextColor(this.getColor(R.color.primary));
+         tvCapSum.setTextColor(com.crowja.damiupos.util.ThemeColors.primary(this));
          tvCapSum.setVisibility(View.GONE);
          android.text.TextWatcher capWatch = new android.text.TextWatcher() {
             public void beforeTextChanged(CharSequence c, int a, int b, int d) {}
@@ -9328,7 +9328,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          return b;
       };
       String quick = noPhoto ? CustomerFormActivity.QUICK_PHOTO_COORD : CustomerFormActivity.QUICK_LOCATION;
-      mk.apply(noPhoto ? "📷 Foto rumah + lokasi sekarang" : "📍 Tandai lokasi sekarang", 0xFF1565C0).setOnClickListener((v) -> {
+      mk.apply(noPhoto ? "📷 Foto rumah + lokasi sekarang" : "📍 Tandai lokasi sekarang", com.crowja.damiupos.util.ThemeColors.primary(this)).setOnClickListener((v) -> {
          if (holder[0] != null) holder[0].dismiss();
          this.dataGateTrxId = t.getId();
          this.startActivity(new Intent(this, CustomerFormActivity.class).putExtra("customer_id", c.getId())

@@ -293,7 +293,7 @@
             android:layout_marginTop="8dp"
             android:gravity="end"
             android:text="0 galon · Subtotal Rp 0"
-            android:textColor="@color/primary"
+            android:textColor="?attr/colorPrimary"
             android:textSize="14sp"
             android:textStyle="bold" />
     </LinearLayout>

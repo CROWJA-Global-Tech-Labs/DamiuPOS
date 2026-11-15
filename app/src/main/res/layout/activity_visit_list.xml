@@ -16,7 +16,7 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="@color/primary"
+            android:background="?attr/colorPrimary"
             app:title="Daftar Kunjungan"
             app:titleTextColor="@color/white"
             app:navigationIcon="@drawable/ic_arrow_back" />
@@ -194,7 +194,7 @@
             android:layout_height="wrap_content"
             android:text="Semua"
             android:textAllCaps="false"
-            android:textColor="#1565C0" />
+            android:textColor="?attr/colorPrimary" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSelectCancel"

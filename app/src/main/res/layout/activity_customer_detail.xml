@@ -14,7 +14,7 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="@color/primary"
+            android:background="?attr/colorPrimary"
             android:titleTextColor="@color/white"
             app:navigationIcon="@drawable/ic_arrow_back"
             app:title="@string/detail_pelanggan" />
@@ -59,7 +59,7 @@
                             android:src="@android:drawable/ic_menu_gallery"
                             android:background="@color/grey_light"
                             app:shapeAppearanceOverlay="@style/CircleImageView"
-                            app:strokeColor="@color/primary"
+                            app:strokeColor="?attr/colorPrimary"
                             app:strokeWidth="2dp" />
 
                         <LinearLayout
@@ -101,7 +101,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="4dp"
-                                android:textColor="@color/primary"
+                                android:textColor="?attr/colorPrimary"
                                 android:textSize="13sp"
                                 android:clickable="true"
                                 android:focusable="true"
@@ -113,7 +113,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="4dp"
-                                android:textColor="@color/primary"
+                                android:textColor="?attr/colorPrimary"
                                 android:textSize="12sp"
                                 android:visibility="gone" />
 
@@ -240,7 +240,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                app:cardBackgroundColor="@color/primary"
+                app:cardBackgroundColor="?attr/colorPrimary"
                 app:cardCornerRadius="10dp"
                 app:cardElevation="2dp">
 
@@ -314,7 +314,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="Rp 0"
-                            android:textColor="@color/primary"
+                            android:textColor="?attr/colorPrimary"
                             android:textSize="18sp"
                             android:textStyle="bold" />
 
@@ -657,7 +657,7 @@
                             android:layout_width="20dp"
                             android:layout_height="20dp"
                             android:src="@android:drawable/ic_menu_mylocation"
-                            app:tint="@color/primary"
+                            app:tint="?attr/colorPrimary"
                             android:contentDescription="Lokasi" />
 
                         <TextView
@@ -727,7 +727,7 @@
                     android:background="?attr/selectableItemBackground"
                     android:padding="6dp"
                     android:text="Selengkapnya ›"
-                    android:textColor="@color/primary"
+                    android:textColor="?attr/colorPrimary"
                     android:textSize="14sp"
                     android:textStyle="bold"
                     android:visibility="gone" />
@@ -772,6 +772,6 @@
         android:contentDescription="@string/transaksi_baru"
         android:src="@android:drawable/ic_input_add"
         app:tint="@color/white"
-        app:backgroundTint="@color/primary" />
+        app:backgroundTint="?attr/colorPrimary" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

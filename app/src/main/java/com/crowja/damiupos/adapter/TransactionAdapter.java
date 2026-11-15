@@ -278,7 +278,7 @@ public class TransactionAdapter extends RecyclerView.Adapter<TransactionAdapter.
 
         void bind(Transaction trx) {
             if (colorPrimary == 0) {
-                colorPrimary = itemView.getContext().getResources().getColor(R.color.primary);
+                colorPrimary = com.crowja.damiupos.util.ThemeColors.primary(itemView.getContext());
                 colorGreen = itemView.getContext().getResources().getColor(R.color.green);
             }
             boolean isJual = Transaction.TYPE_JUAL.equals(trx.getType());

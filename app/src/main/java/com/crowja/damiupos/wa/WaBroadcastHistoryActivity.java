@@ -78,7 +78,7 @@ public class WaBroadcastHistoryActivity extends AppCompatActivity {
                 }
             }
         });
-        swipe.setColorSchemeColors(0xFF1565C0);
+        swipe.setColorSchemeColors(com.crowja.damiupos.util.ThemeColors.primary(this));
         swipe.setOnRefreshListener(() -> load(true));
         btnRetry.setOnClickListener(v -> load(true));
         load(true);

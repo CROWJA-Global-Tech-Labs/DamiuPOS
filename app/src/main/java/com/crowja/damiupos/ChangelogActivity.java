@@ -64,7 +64,7 @@ public class ChangelogActivity extends AppCompatActivity {
 
             if (line.startsWith("# ")) {
                 line = line.substring(2);
-                color = Color.parseColor("#1565C0"); size = 1.45f; bold = true;
+                color = com.crowja.damiupos.util.ThemeColors.primary(this); size = 1.45f; bold = true;
             } else if (line.startsWith("## ")) {
                 line = line.substring(3);
                 color = Color.parseColor("#00695C"); size = 1.2f; bold = true;

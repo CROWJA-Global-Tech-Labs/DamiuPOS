@@ -14,7 +14,7 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="@color/primary"
+            android:background="?attr/colorPrimary"
             app:navigationIcon="@drawable/ic_arrow_back"
             app:title="Tambah Pengeluaran"
             app:titleTextColor="@android:color/white" />
@@ -316,7 +316,7 @@
                 android:layout_marginTop="20dp"
                 android:text="Simpan"
                 android:textAllCaps="false"
-                app:backgroundTint="@color/primary"
+                app:backgroundTint="?attr/colorPrimary"
                 app:cornerRadius="10dp" />
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>

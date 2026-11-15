@@ -20,7 +20,7 @@
             android:id="@+id/tvStaff"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textColor="@color/primary_dark"
+            android:textColor="?attr/colorPrimaryDark"
             android:textSize="11sp"
             android:textStyle="bold"
             android:visibility="gone" />
@@ -55,7 +55,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginBottom="4dp"
-            android:textColor="@color/primary_dark"
+            android:textColor="?attr/colorPrimaryDark"
             android:textStyle="bold"
             android:visibility="gone" />
 

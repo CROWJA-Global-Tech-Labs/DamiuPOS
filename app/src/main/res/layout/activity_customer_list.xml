@@ -14,7 +14,7 @@
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
-        android:background="@color/primary"
+        android:background="?attr/colorPrimary"
         android:elevation="4dp"
         android:titleTextColor="@color/white"
         app:navigationIcon="@drawable/ic_arrow_back"
@@ -213,7 +213,7 @@
             android:layout_margin="16dp"
             android:contentDescription="@string/tambah_pelanggan"
             android:src="@android:drawable/ic_input_add"
-            app:backgroundTint="@color/primary"
+            app:backgroundTint="?attr/colorPrimary"
             app:tint="@color/white" />
 
     </androidx.coordinatorlayout.widget.CoordinatorLayout>
