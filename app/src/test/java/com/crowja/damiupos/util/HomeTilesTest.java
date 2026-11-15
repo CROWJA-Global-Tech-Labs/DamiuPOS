@@ -36,7 +36,7 @@ public class HomeTilesTest {
     @Test
     public void defaultsSkipHidden() {
         List<String> d = HomeTiles.defaults(id -> !id.equals("chatwa"));
-        assertEquals(Arrays.asList("antrean", "pelanggan", "komplain", "followup", "tren", "laporan", "stok"), d);
+        assertEquals(Arrays.asList("antrean", "pelanggan", "komplain", "followup", "tren", "stok", "transaksi"), d);
         assertEquals(HomeTiles.DEFAULT_COUNT, HomeTiles.defaults(null).size());
     }
 

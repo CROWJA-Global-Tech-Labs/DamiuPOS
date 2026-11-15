@@ -23,7 +23,7 @@ public final class HomeTiles {
     /** Urutan bawaan: 7 pertama yang tampil dipakai; sisanya cadangan bila ada yang tersembunyi. */
     public static final List<String> DEFAULT_ORDER = Collections.unmodifiableList(java.util.Arrays.asList(
             "antrean", "pelanggan", "komplain", "followup", "tren", "chatwa",
-            "laporan", "stok", "transaksi", "jual", "kembali", "pengeluaran", "setoran"));
+            "stok", "transaksi", "jual", "kembali", "pengeluaran", "setoran"));
 
     /**
      * Ubin yang masuk bawaan SETELAH user bisa menyimpan daftar sendiri: {id, sisipkan-setelah-id}.
