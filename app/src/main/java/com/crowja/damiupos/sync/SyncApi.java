@@ -789,6 +789,11 @@ public class SyncApi {
         return get(cfg.getBaseUrl() + "/api/followup/due", cfg.getToken());
     }
 
+    /** Status provider AI agen WA (hidup/cadangan/limit/diam) untuk indikator robot di Beranda. */
+    public JSONObject aiStatus() throws Exception {
+        return get(cfg.getBaseUrl() + "/api/ai-status", cfg.getToken());
+    }
+
     public JSONObject devicesQueueAll() throws Exception {
         return get(cfg.getBaseUrl() + "/api/devices/queue-all", cfg.getToken());
     }
