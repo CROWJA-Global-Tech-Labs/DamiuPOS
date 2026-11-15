@@ -1892,7 +1892,67 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private long aiStatusAt;
+    private boolean aiStatusBusy;
+    private String aiStatusText = "";
+
+    /** Indikator robot + dot di kartu Masalah: hijau = provider AI agen WA HIDUP, merah = MATI, abu = tak diketahui. */
+    private void refreshAiStatus() {
+        final View ll = findViewById(R.id.llAiStatus);
+        if (ll == null) return;
+        ll.setOnClickListener(v -> Toast.makeText(this, aiStatusText.isEmpty() ? "Memuat status AI…" : aiStatusText, Toast.LENGTH_LONG).show());
+        if (aiStatusBusy || (aiStatusAt != 0 && android.os.SystemClock.elapsedRealtime() - aiStatusAt < 30000L)) return;
+        final com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
+        if (!cfg.isEnrolled()) {
+            paintAiDot(0xFF9E9E9E, "🤖 Status AI tak diketahui — perangkat belum terhubung ke server.");
+            return;
+        }
+        aiStatusBusy = true;
+        new Thread(() -> {
+            org.json.JSONObject r = null;
+            try {
+                r = new com.crowja.damiupos.sync.SyncApi(cfg).aiStatus();
+            } catch (Throwable ignored) {
+            }
+            final org.json.JSONObject fr = r;
+            runOnUiThread(() -> {
+                aiStatusBusy = false;
+                if (isFinishing() || isDestroyed()) return;
+                if (fr == null) {
+                    paintAiDot(0xFF9E9E9E, "🤖 Status AI tak diketahui — periksa koneksi internet.");
+                    return;
+                }
+                aiStatusAt = android.os.SystemClock.elapsedRealtime();
+                boolean alive = fr.optBoolean("alive", false);
+                String state = fr.optString("state", "silent");
+                String provider = fr.optString("provider", "");
+                String fallback = fr.optString("fallback", "");
+                String reason = fr.optString("reason", "");
+                String until = fr.optString("until", "");
+                if ("null".equals(provider)) provider = "";
+                if ("null".equals(fallback)) fallback = "";
+                if ("null".equals(reason)) reason = "";
+                if ("null".equals(until)) until = "";
+                StringBuilder sb = new StringBuilder("🤖 AI provider ").append(alive ? "HIDUP" : "MATI");
+                if (alive && "fallback".equals(state)) sb.append(" (pakai cadangan").append(fallback.isEmpty() ? "" : ": " + fallback).append(")");
+                else if (alive && !provider.isEmpty()) sb.append(" · ").append(provider);
+                if (!alive && !reason.isEmpty()) sb.append("\n").append(reason);
+                if (!alive && !until.isEmpty()) sb.append("\nPulih sekitar: ").append(until);
+                paintAiDot(alive ? 0xFF00C853 : 0xFFFF1744, sb.toString());
+            });
+        }).start();
+    }
+
+    private void paintAiDot(int color, String text) {
+        aiStatusText = text;
+        View dot = findViewById(R.id.vAiDot);
+        if (dot != null && dot.getBackground() instanceof android.graphics.drawable.GradientDrawable) {
+            ((android.graphics.drawable.GradientDrawable) dot.getBackground().mutate()).setColor(color);
+        }
+    }
+
     private void refreshDashboard() {
+        refreshAiStatus();
         // Pro Temp chip — countdown ke expiry kalau user pakai rewarded ad
         TextView chipProTemp = findViewById(R.id.chipProTemp);
         if (chipProTemp != null) {

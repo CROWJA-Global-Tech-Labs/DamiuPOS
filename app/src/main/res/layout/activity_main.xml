@@ -711,6 +711,33 @@
                             android:textColor="@color/white"
                             android:textSize="20sp"
                             android:textStyle="bold" />
+
+                        <!-- Indikator AI provider (agen WA): robot + dot hijau = HIDUP / merah = MATI. -->
+                        <LinearLayout
+                            android:id="@+id/llAiStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:background="?attr/selectableItemBackgroundBorderless"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:padding="2dp">
+
+                            <ImageView
+                                android:layout_width="18dp"
+                                android:layout_height="18dp"
+                                android:contentDescription="AI provider"
+                                android:src="@drawable/ic_robot" />
+
+                            <View
+                                android:id="@+id/vAiDot"
+                                android:layout_width="11dp"
+                                android:layout_height="11dp"
+                                android:layout_marginStart="5dp"
+                                android:background="@drawable/bg_ai_dot" />
+                        </LinearLayout>
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
             </LinearLayout>
