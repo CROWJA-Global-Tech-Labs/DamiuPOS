@@ -1442,6 +1442,7 @@ public class MainActivity extends AppCompatActivity {
         com.crowja.damiupos.util.ForegroundDuties.onResume(this);
         // Hangatkan cache logo depot (disinkron dari web) supaya struk pertama pun sudah ada logonya.
         new Thread(() -> com.crowja.damiupos.util.DepotLogo.ensureDownloaded(getApplicationContext())).start();
+        new Thread(() -> com.crowja.damiupos.util.ComplaintSirenSound.ensureDownloaded(getApplicationContext())).start();
         // Minta pengecualian baterai + lokasi "sepanjang waktu" (sekali) supaya sinkronisasi &
         // lapor koordinat tetap jalan walau app tidak di foreground / setelah reboot.
         ensureBackgroundReliability();

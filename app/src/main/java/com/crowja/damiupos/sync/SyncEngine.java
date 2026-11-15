@@ -1409,6 +1409,8 @@ public class SyncEngine {
                     // Logo depot mungkin baru/berubah → unduh ke cache di background supaya struk &
                     // Pengaturan langsung punya gambarnya (ensureDownloaded no-op bila URL sama).
                     new Thread(() -> com.crowja.damiupos.util.DepotLogo.ensureDownloaded(appCtx)).start();
+                    // Suara sirine komplain (web Konfigurasi) mungkin berubah → samakan cache lokalnya.
+                    new Thread(() -> com.crowja.damiupos.util.ComplaintSirenSound.ensureDownloaded(appCtx)).start();
                 }
                 if (newCursors != null) {
                     cfg.setCursor(SETTINGS_ENTITY,
