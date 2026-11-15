@@ -939,6 +939,12 @@ public class SettingsDao {
     public boolean isMultiUserEnabled() {
         return "1".equals(get(KEY_MULTIUSER_ENABLED, "0"));
     }
+
+    /** "Tampilan Baru (gaya Gojek)" — preferensi PERANGKAT (tidak disinkron), bawaan aktif.
+     *  Hanya berlaku untuk sesi admin (lihat util.GojekUi). */
+    public static final String KEY_UI_GOJEK = "ui_gojek";
+    public boolean isGojekUiPreferred() { return !"0".equals(get(KEY_UI_GOJEK, "1")); }
+    public void setGojekUiPreferred(boolean on) { set(KEY_UI_GOJEK, on ? "1" : "0"); }
     public void setMultiUserEnabled(boolean enabled) {
         set(KEY_MULTIUSER_ENABLED, enabled ? "1" : "0");
     }

@@ -238,6 +238,12 @@
         <!-- Karyawan Pengisian (Day-time): singleTask supaya ketukan notifikasi/deep link tak menumpuk
              salinan layar ini di atas salinan yang sudah terbuka. Dikunci potret: rotasi membuat ulang
              activity dan menghilangkan dialog (hitung stok dengan angka yang sedang diketik). -->
+        <!-- Beranda "Tampilan Baru (gaya Gojek)" — sementara khusus login admin (util.GojekUi). -->
+        <activity
+            android:name=".AdminHomeActivity"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.DAMIUPOS.Gojek" />
         <activity
             android:name=".PengisianActivity"
             android:launchMode="singleTask"
