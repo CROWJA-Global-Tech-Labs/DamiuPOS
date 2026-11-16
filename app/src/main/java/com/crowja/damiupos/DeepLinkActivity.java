@@ -54,7 +54,7 @@ public class DeepLinkActivity extends Activity {
             if (uuid != null && !uuid.isEmpty()) {
                 trxId = new TransactionDao(DatabaseHelper.getInstance(this)).getIdBySyncUuid(uuid);
             }
-            openOrder(trxId);
+            openPesanan(trxId, uuid);
         } else {
             openNewTransaction(data != null ? data.getQueryParameter("customer") : null);
         }
@@ -80,6 +80,41 @@ public class DeepLinkActivity extends Activity {
                     Toast.LENGTH_LONG).show();
             openHome();
         }
+    }
+
+    /**
+     * Link /pesanan/{uuid} dari grup eskalasi (mis. [KOMPLAIN]). Pesanan sering milik HP LAIN (transaksi
+     * tak dibagi antar-HP) atau sudah selesai — dulu keduanya berakhir "Pesanan tidak ditemukan" lalu
+     * kembali ke beranda. Sekarang:
+     * <ul><li>ada di HP ini &amp; masih berjalan → Antrian Delivery (fokus ke pesanan),</li>
+     * <li>ada di HP ini &amp; sudah selesai → struknya,</li>
+     * <li>tidak ada di HP ini → Chat Pesanan (dimuat dari server per uuid; detail + chat WA pelanggan).</li></ul>
+     */
+    private void openPesanan(long trxId, String uuid) {
+        Transaction t = null;
+        if (trxId > 0) {
+            try { t = new TransactionDao(DatabaseHelper.getInstance(this)).getById(trxId); } catch (Throwable ignored) { }
+        }
+        boolean done = t != null && t.getDeliveryDoneAt() != null && !t.getDeliveryDoneAt().trim().isEmpty();
+        if (t != null && !done) {
+            openOrder(trxId);
+            return;
+        }
+        Intent home = new Intent(this, MainActivity.class);
+        if (t != null) {
+            Intent rc = new Intent(this, ReceiptActivity.class).putExtra(ReceiptActivity.EXTRA_TRANSACTION_ID, trxId);
+            TaskStackBuilder.create(this).addNextIntent(home).addNextIntent(rc).startActivities();
+            return;
+        }
+        if (uuid != null && uuid.length() >= 30) {
+            Intent chat = new Intent(this, ChatLogActivity.class)
+                    .putExtra(ChatLogActivity.EXTRA_MODE, ChatLogActivity.MODE_ORDER)
+                    .putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid)
+                    .putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, "");
+            TaskStackBuilder.create(this).addNextIntent(home).addNextIntent(chat).startActivities();
+            return;
+        }
+        openOrder(-1);
     }
 
     private void openOrder(long trxId) {
