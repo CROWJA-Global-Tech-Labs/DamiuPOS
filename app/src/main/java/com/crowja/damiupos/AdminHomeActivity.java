@@ -1052,11 +1052,25 @@ public class AdminHomeActivity extends AppCompatActivity {
             if (label != null) label.setText(NAV_LABELS[i]);
             tab.setContentDescription(NAV_LABELS[i]);
             final int idx = i;
-            tab.setOnClickListener(v -> selectTab(idx));
+            tab.setOnClickListener(v -> onNavTap(idx));
         }
     }
 
+    /**
+     * Tab Pesanan = Antrian Delivery (digabung atas permintaan owner, 16 Nov 2026): ketuk langsung membuka
+     * layar Antrian Delivery penuh. Riwayat &amp; Terjadwal tetap lewat Semua menu (Transaksi, Pesanan
+     * Terjadwal). Peran yang tak melihat antrean (Marketing di HP non-delivery) tetap memakai tab lama.
+     */
+    private void onNavTap(int idx) {
+        if (idx == TAB_PESANAN && queueVisible(ms)) {
+            startSafely(new Intent(this, DeliveryQueueActivity.class));
+            return;
+        }
+        selectTab(idx);
+    }
+
     private void selectTab(int idx) {
+        if (idx == TAB_PESANAN && queueVisible(ms)) idx = TAB_BERANDA;   // dipulihkan dari state lama
         if (idx < 0 || idx > 3) idx = TAB_BERANDA;
         currentTab = idx;
         for (int i = 0; i < 4; i++) {
