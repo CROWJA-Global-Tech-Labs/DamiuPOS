@@ -249,6 +249,23 @@
                             android:textColor="@color/gj_text_secondary"
                             android:textSize="12sp" />
 
+                        <!-- Lencana galon: total dipesan (selesai + menunggu) · menunggu diantar. -->
+                        <TextView
+                            android:id="@+id/gjhSalesGalon"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:background="@drawable/gjh_bg_chip"
+                            android:maxLines="2"
+                            android:paddingStart="8dp"
+                            android:paddingTop="2dp"
+                            android:paddingEnd="8dp"
+                            android:paddingBottom="2dp"
+                            android:textColor="@color/gj_text_primary"
+                            android:textSize="12sp"
+                            android:textStyle="bold"
+                            android:visibility="gone" />
+
                         <TextView
                             android:id="@+id/gjhSalesTrend"
                             android:layout_width="wrap_content"

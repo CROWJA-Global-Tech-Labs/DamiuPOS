@@ -634,10 +634,12 @@ public class AdminHomeActivity extends AppCompatActivity {
         final String staffName = staff != null && !staff.isEmpty() ? staff : null;
         new Thread(() -> {
             JSONObject totals = null;
+            JSONObject queueJ = null;
             if (branch && enrolled) {
                 try {
                     JSONObject res = new SyncApi(cfg).salesAchievement("today", null, null, null);
                     totals = res != null ? res.optJSONObject("totals") : null;
+                    queueJ = res != null ? res.optJSONObject("queue") : null;
                 } catch (Throwable t) {
                     Log.w(TAG, "salesAchievement: " + t);
                 }
@@ -670,6 +672,9 @@ public class AdminHomeActivity extends AppCompatActivity {
             final int galonF = galon;
             final int trxF = trx;
             final String scopeF = scope;
+            final JSONObject queueF = queueJ;
+            final int galonDone = galon;
+            handler.post(() -> renderGalonBadge(galonDone, queueF));
             handler.post(() -> {
                 if (seq != salesSeq.get() || isFinishing() || isDestroyed()) return;
                 safe("sales", () -> renderSales(revF, galonF, trxF, scopeF));
@@ -1242,6 +1247,26 @@ public class AdminHomeActivity extends AppCompatActivity {
         if (n != null) n.setText(ms.name);
         TextView sh = findViewById(R.id.gjhOpShift);
         if (sh != null && snap.shiftInfo != null) sh.setText(snap.shiftInfo);
+    }
+
+    /** Lencana: 🫙 total galon hari ini (selesai + menunggu) · ⏳ menunggu diantar (+ tertunda). Hanya se-depot. */
+    private void renderGalonBadge(int galonDone, JSONObject queue) {
+        TextView tv = findViewById(R.id.gjhSalesGalon);
+        if (tv == null) return;
+        if (queue == null) {
+            tv.setVisibility(View.GONE);
+            return;
+        }
+        int wait = queue.optInt("galon", 0);
+        int waitTrx = queue.optInt("trx", 0);
+        int tunda = queue.optInt("tertunda_galon", 0);
+        String t = "🫙 " + nf.format(galonDone + wait) + " galon total · ⏳ " + nf.format(wait) + " menunggu"
+                + (waitTrx > 0 ? " (" + waitTrx + " pesanan)" : "")
+                + (tunda > 0 ? " · ⏸ " + nf.format(tunda) + " tertunda" : "");
+        tv.setText(t);
+        tv.setContentDescription("Total " + (galonDone + wait) + " galon hari ini, " + wait + " galon menunggu diantar"
+                + (tunda > 0 ? ", " + tunda + " galon tertunda" : ""));
+        tv.setVisibility(View.VISIBLE);
     }
 
     private void renderSales(double revenue, int galon, int trx, String scope) {
