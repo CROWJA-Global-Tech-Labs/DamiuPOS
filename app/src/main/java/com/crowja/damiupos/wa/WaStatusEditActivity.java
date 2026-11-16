@@ -2,13 +2,20 @@ package com.crowja.damiupos.wa;
 
 import android.app.DatePickerDialog;
 import android.app.TimePickerDialog;
+import android.Manifest;
 import android.content.ClipData;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Color;
 import android.graphics.Matrix;
+import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.text.Editable;
 import android.text.InputFilter;
 import android.text.InputType;
@@ -35,6 +42,8 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import androidx.exifinterface.media.ExifInterface;
 
 import com.crowja.damiupos.R;
@@ -63,11 +72,13 @@ import java.util.UUID;
 
 /**
  * Form tambah / ubah Status WhatsApp (Admin) — cermin form web /wa-status/create &amp; /edit: nama, perangkat/akun
- * yang memposting (+ status koneksi Bridge), sumber konten (artikel, artikel bergilir, teks + emoji, teks bergilir,
- * gambar, koleksi foto bergilir), warna latar &amp; gaya huruf, penonton, 🔒 menutup order hari ini, dan jadwal
+ * yang memposting (+ status koneksi Bridge), sumber konten (artikel, artikel bergilir, teks berlatar warna, teks bergilir,
+ * gambar, video, koleksi foto bergilir), warna latar &amp; gaya huruf (+ pratinjau), penonton, 🔒 menutup order hari ini, dan jadwal
  * (posting sekarang / jadwalkan / draf; Status yang sudah diproses: Simpan saja / posting ulang / jadwalkan ulang /
  * jadikan draf) + pengulangan. Foto dipilih lewat ACTION_GET_CONTENT (tanpa izin storage), diunggah satu per satu
- * ke {@code status/photos}, lalu tokennya disertakan saat menyimpan. Aturan sebenarnya di server.
+ * ke {@code status/photos}, lalu tokennya disertakan saat menyimpan. Video (galeri / rekam) dikompres di HP bila perlu
+ * ({@link WaStatusVideoPrep}; batas dari {@code form.video}: long_side, max_bytes, potongan ≤ 30 detik, maks. 10) lalu
+ * tiap potongan dititipkan ke {@code status/videos} dan tokennya dikirim berurutan di {@code staged_videos[]}. Aturan sebenarnya di server.
  */
 public class WaStatusEditActivity extends AppCompatActivity {
 
@@ -76,8 +87,16 @@ public class WaStatusEditActivity extends AppCompatActivity {
 
     private static final int REQ_IMAGE = 51;
     private static final int REQ_PHOTOS = 52;
-    private static final long MAX_UPLOAD = 7_500_000L;   // server: maks 8 MB per foto
-    private static final int MAX_SIDE = 2560;
+    private static final int REQ_VIDEO = 53;
+    private static final int REQ_VIDEO_REC = 54;
+    private static final int REQ_CAMERA_PERM = 55;
+    /**
+     * Foto di atas ini (atau di atas {@link #MAX_SIDE} px) dikompres ulang ke JPEG. Server menerima ≤ 8 MB, tapi foto
+     * kamera 5-8 MB tak memberi apa-apa di Status (WhatsApp memperkecilnya lagi) dan dulu membuat kiriman ke Bridge
+     * kena 413 (badan base64 melewati batas nginx).
+     */
+    private static final long MAX_UPLOAD = 1_500_000L;
+    private static final int MAX_SIDE = 2048;
     private static final int MAX_PHOTOS = 20;
     private static final String[] EMOJIS = {"😀", "😊", "😍", "🥰", "😎", "🤩", "🙏", "👍", "👏", "🔥", "💧", "🚰", "💦",
             "🌊", "🧊", "✨", "🎉", "🎁", "🛵", "🚚", "📦", "⭐", "❤️", "💙", "✅", "📢", "🕒", "📍", "🛒", "💰", "🌞", "🌙"};
@@ -111,6 +130,15 @@ public class WaStatusEditActivity extends AppCompatActivity {
     private final List<EditText> texts = new ArrayList<>();
     @Nullable private EditText lastText;
     private ImageView ivImage;
+    private View secVideo;
+    private ImageView ivVideo;
+    private TextView tvVideoInfo, tvTextPreview;
+    /** Potongan video baru (sudah dikompres) berurutan; kosong = tak mengganti video. */
+    private final List<Picked> newVideo = new ArrayList<>();
+    @Nullable private WaStatusVideoPrep prep;
+    /** Kategori artikel bergilir ({@code cycle_categories[]}), urut seperti dari server. */
+    private final Map<String, CheckBox> categoryBoxes = new LinkedHashMap<>();
+    private WaStatusVideoRules vrules = WaStatusVideoRules.from(null);
     private WaStatusFlow photoGrid;
     private TextView tvPhotoCount;
 
@@ -162,6 +190,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (prep != null) prep.cancel();
         hideProgress();
         super.onDestroy();
     }
@@ -200,6 +229,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
                 post = fr.optJSONObject("post") != null ? fr.optJSONObject("post") : new JSONObject();
                 processed = post.optBoolean("processed");
                 newImage = null;
+                newVideo.clear();
                 newPhotos.clear();
                 removePaths.clear();
                 clientKey = UUID.randomUUID().toString();   // form baru (mis. dimuat ulang sesudah "Status berubah")
@@ -288,7 +318,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
             JSONObject s = sources.optJSONObject(i);
             if (s == null) continue;
             String key = s.optString("key");
-            RadioButton rb = radio(WaStatusUi.sourceIcon(key) + " " + ("text".equals(key) ? "Teks + emoji" : s.optString("label")));
+            RadioButton rb = radio(WaStatusUi.sourceIcon(key) + " " + ("text".equals(key) ? "Teks (latar warna)" : s.optString("label")));
             rgSource.addView(rb);
             sourceIds.put(rb.getId(), key);
             if (key.equals(src)) rb.setChecked(true);
@@ -298,6 +328,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
         buildArticle(gap);
         buildArticleCycle(gap);
         buildImage(gap);
+        buildVideo(gap);
         buildImageCycle(gap);
         buildBody(gap);
         buildTextCycle(gap);
@@ -381,6 +412,27 @@ public class WaStatusEditActivity extends AppCompatActivity {
             sb.append(".");
         }
         sec.addView(WaStatusUi.note(this, sb.toString(), WaStatusUi.BLUE, WaStatusUi.BLUE_BG));
+        categoryBoxes.clear();
+        JSONArray cats = form.optJSONArray("article_categories");
+        if (cats == null || cats.length() == 0) return;
+        Set<String> chosen = new HashSet<>();
+        JSONArray saved = post.optJSONArray("cycle_categories");
+        for (int i = 0; saved != null && i < saved.length(); i++) chosen.add(saved.optString(i));
+        sec.addView(WaStatusUi.text(this, "Kategori yang digilir (kosong = semua kategori)", 14, WaStatusUi.TEXT, true),
+                WaStatusUi.full(dp(8)));
+        WaStatusFlow flow = new WaStatusFlow(this, dp(8), dp(2));
+        for (int i = 0; i < cats.length(); i++) {
+            JSONObject o = cats.optJSONObject(i);
+            String name = o != null ? o.optString("name", o.optString("category", "")) : cats.optString(i, "");
+            if (name.trim().isEmpty() || categoryBoxes.containsKey(name)) continue;
+            CheckBox cb = new CheckBox(this);
+            cb.setText(name);
+            cb.setTextColor(WaStatusUi.TEXT);
+            cb.setChecked(chosen.contains(name));
+            categoryBoxes.put(name, cb);
+            flow.addView(cb);
+        }
+        sec.addView(flow, WaStatusUi.full(dp(2)));
     }
 
     private void buildImage(int gap) {
@@ -407,6 +459,46 @@ public class WaStatusEditActivity extends AppCompatActivity {
         sec.addView(pick, WaStatusUi.full(dp(6)));
         sec.addView(WaStatusUi.text(this, "JPG / PNG / WebP, maksimal 8 MB. Teks di bawah menjadi keterangan gambar (opsional).",
                 12, WaStatusUi.TEXT_2, false));
+    }
+
+    private void buildVideo(int gap) {
+        LinearLayout sec = section(gap);
+        secVideo = sec;
+        sec.addView(WaStatusUi.text(this, "Video", 14, WaStatusUi.TEXT, true));
+        ivVideo = new ImageView(this);
+        ivVideo.setAdjustViewBounds(true);
+        ivVideo.setScaleType(ImageView.ScaleType.FIT_START);
+        ivVideo.setBackground(WaStatusUi.box(0xFF263238, 0xFFCFD8DC, 8, this));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(160), dp(160));
+        lp.topMargin = dp(6);
+        sec.addView(ivVideo, lp);
+        ivVideo.setVisibility(View.GONE);
+        vrules = WaStatusVideoRules.from(form.optJSONObject("video"));
+        int savedParts = savedVideoParts();
+        boolean saved = savedParts > 0;
+        tvVideoInfo = WaStatusUi.text(this, saved ? "🎬 Video tersimpan (" + savedParts + " potongan) — pilih berkas baru hanya bila "
+                + "ingin mengganti video."
+                : "Belum ada video.", 13, saved ? WaStatusUi.GREEN : WaStatusUi.TEXT_2, saved);
+        sec.addView(tvVideoInfo, WaStatusUi.full(dp(4)));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        MaterialButton pick = outlined("🎬 Pilih video");
+        pick.setOnClickListener(v -> pickVideo());
+        row.addView(pick, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        MaterialButton rec = outlined("📹 Rekam");
+        rec.setOnClickListener(v -> recordVideo());
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        rlp.leftMargin = dp(8);
+        row.addView(rec, rlp);
+        sec.addView(row, WaStatusUi.full(dp(6)));
+        sec.addView(WaStatusUi.text(this, vrules.hint(), 12, WaStatusUi.TEXT_2, false));
+    }
+
+    /** Jumlah potongan video yang sudah tersimpan di server ({@code post.video_parts[]}). */
+    private int savedVideoParts() {
+        if (!"video".equals(post.optString("source_type"))) return 0;
+        JSONArray a = post.optJSONArray("video_parts");
+        return a != null ? a.length() : 0;
     }
 
     private void buildImageCycle(int gap) {
@@ -510,6 +602,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
         etBody.addTextChangedListener(watcher(() -> {
             updateCount();
             suggestClose();
+            updatePreview();
         }));
     }
 
@@ -571,6 +664,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
         et.addTextChangedListener(watcher(() -> {
             count.run();
             suggestClose();
+            updatePreview();
         }));
         et.setOnFocusChangeListener((v, has) -> {
             if (has) lastText = et;
@@ -590,7 +684,16 @@ public class WaStatusEditActivity extends AppCompatActivity {
     private void buildStyle(int gap) {
         LinearLayout sec = section(gap);
         secStyle = sec;
-        sec.addView(WaStatusUi.text(this, "Warna latar", 14, WaStatusUi.TEXT, true));
+        // Pratinjau Status TEKS WhatsApp: teks putih di atas warna latar terpilih (acak/bergilir → warna pertama).
+        sec.addView(WaStatusUi.text(this, "Pratinjau Status teks", 12, WaStatusUi.TEXT_2, false));
+        tvTextPreview = new TextView(this);
+        tvTextPreview.setTextColor(0xFFFFFFFF);
+        tvTextPreview.setTextSize(18);
+        tvTextPreview.setGravity(Gravity.CENTER);
+        tvTextPreview.setMinHeight(dp(120));
+        tvTextPreview.setPadding(dp(16), dp(20), dp(16), dp(20));
+        sec.addView(tvTextPreview, WaStatusUi.full(dp(4)));
+        sec.addView(WaStatusUi.text(this, "Warna latar", 14, WaStatusUi.TEXT, true), WaStatusUi.full(dp(10)));
         bgValues.clear();
         List<String> bgLabels = new ArrayList<>();
         bgValues.add("random");
@@ -608,6 +711,10 @@ public class WaStatusEditActivity extends AppCompatActivity {
         int bgIdx = Math.max(0, bgSel != null ? bgValues.indexOf(bgSel) : 0);   // tanpa pilihan = opsi pertama (seperti web)
         spBg = spinner(bgLabels, bgIdx);
         sec.addView(spBg, WaStatusUi.full(dp(4)));
+        spBg.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> p, View v, int pos, long id) { updatePreview(); }
+            @Override public void onNothingSelected(AdapterView<?> p) { }
+        });
 
         sec.addView(WaStatusUi.text(this, "Gaya huruf", 14, WaStatusUi.TEXT, true), WaStatusUi.full(dp(10)));
         fontValues.clear();
@@ -706,6 +813,29 @@ public class WaStatusEditActivity extends AppCompatActivity {
         return s != null ? s : "text";
     }
 
+    /** Sumber yang memakai kotak teks tunggal: isi Status teks, atau keterangan gambar / video / koleksi foto. */
+    private static boolean hasBody(String src) {
+        return "text".equals(src) || "image".equals(src) || "image_cycle".equals(src) || "video".equals(src);
+    }
+
+    private void updatePreview() {
+        if (tvTextPreview == null || spBg == null || etBody == null) return;
+        int pos = Math.max(0, spBg.getSelectedItemPosition());
+        String hex = pos < bgValues.size() ? bgValues.get(pos) : "";
+        if (!hex.startsWith("#")) hex = bgValues.size() > 2 ? bgValues.get(2) : "#128C7E";   // acak/bergilir → warna pertama
+        int bg;
+        try {
+            bg = Color.parseColor(hex);
+        } catch (IllegalArgumentException e) {
+            bg = 0xFF128C7E;
+        }
+        tvTextPreview.setBackground(WaStatusUi.box(bg, bg, 10, this));
+        String t = "text_cycle".equals(source()) ? (texts.isEmpty() ? "" : texts.get(0).getText().toString())
+                : etBody.getText().toString();
+        tvTextPreview.setText(t.trim().isEmpty() ? "Tulis teks Status…" : t.trim());
+        tvTextPreview.setAlpha(t.trim().isEmpty() ? 0.6f : 1f);
+    }
+
     private String when() {
         String w = whenIds.get(rgWhen.getCheckedRadioButtonId());
         return w != null ? w : (processed ? "keep" : "now");
@@ -717,11 +847,13 @@ public class WaStatusEditActivity extends AppCompatActivity {
         WaStatusUi.hide(secArticle, !"article".equals(src));
         WaStatusUi.hide(secArticleCycle, !"article_cycle".equals(src));
         WaStatusUi.hide(secImage, !"image".equals(src));
+        WaStatusUi.hide(secVideo, !"video".equals(src));
         WaStatusUi.hide(secImageCycle, !"image_cycle".equals(src));
-        WaStatusUi.hide(secBody, !("text".equals(src) || "image".equals(src) || "image_cycle".equals(src)));
+        WaStatusUi.hide(secBody, !hasBody(src));
         tvBodyLabel.setText("text".equals(src) ? "Teks Status" : "Keterangan (opsional)");
         WaStatusUi.hide(secTextCycle, !"text_cycle".equals(src));
         WaStatusUi.hide(secStyle, !("text".equals(src) || "text_cycle".equals(src)));
+        updatePreview();
         WaStatusUi.hide(secSchedule, !"schedule".equals(when));
         WaStatusUi.hide(tvKeepNote, !"keep".equals(when));
         btnSave.setText(WaStatusRules.saveLabel(when, processed));
@@ -782,7 +914,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
     private String closeText() {
         String src = source();
         StringBuilder t = new StringBuilder(etName.getText().toString());
-        if ("text".equals(src) || "image".equals(src) || "image_cycle".equals(src)) t.append(' ').append(etBody.getText());
+        if (hasBody(src)) t.append(' ').append(etBody.getText());
         if ("text_cycle".equals(src)) {
             for (EditText e : texts) t.append(' ').append(e.getText());
         }
@@ -846,6 +978,19 @@ public class WaStatusEditActivity extends AppCompatActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if ((requestCode == REQ_VIDEO || requestCode == REQ_VIDEO_REC) && resultCode == RESULT_OK) {
+            Uri u = data != null ? data.getData() : null;
+            if (u == null) {
+                Toast.makeText(this, "Video tak diterima dari aplikasi kamera/galeri — coba pilih dari galeri.", Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (secVideo == null) {
+                Toast.makeText(this, "Form belum siap — pilih ulang videonya sebentar lagi.", Toast.LENGTH_LONG).show();
+                return;
+            }
+            handleVideo(u);
+            return;
+        }
         if (resultCode != RESULT_OK || data == null || (requestCode != REQ_IMAGE && requestCode != REQ_PHOTOS)) return;
         if (ivImage == null || photoGrid == null) {
             Toast.makeText(this, "Form belum siap — pilih ulang fotonya sebentar lagi.", Toast.LENGTH_LONG).show();
@@ -904,7 +1049,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
         }).start();
     }
 
-    /** Salin foto ke cache; terlalu besar / format lain → diperkecil ke JPEG (≤ 2560 px, ≤ 7,5 MB, orientasi EXIF diterapkan). */
+    /** Salin foto ke cache; di atas 1,5 MB / 2048 px / format lain → JPEG (≤ 2048 px, ≤ 1,5 MB, orientasi EXIF diterapkan). */
     private Picked prepare(Uri uri) throws IOException {
         File dir = cacheDir();
         String mime = getContentResolver().getType(uri);
@@ -924,7 +1069,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
         }
         if (mime == null) mime = o.outMimeType;
         boolean supported = "image/jpeg".equals(mime) || "image/png".equals(mime) || "image/webp".equals(mime);
-        if (supported && raw.length() <= MAX_UPLOAD && Math.max(o.outWidth, o.outHeight) <= 4096) {
+        if (supported && raw.length() <= MAX_UPLOAD && Math.max(o.outWidth, o.outHeight) <= MAX_SIDE) {
             File f = new File(dir, "st_" + System.nanoTime() + ("image/png".equals(mime) ? ".png" : "image/webp".equals(mime) ? ".webp" : ".jpg"));
             if (!raw.renameTo(f)) f = raw;
             return new Picked(f, mime);
@@ -954,8 +1099,15 @@ public class WaStatusEditActivity extends AppCompatActivity {
             if (b2 != bm) bm.recycle();
             bm = b2;
         }
+        if (bm.hasAlpha()) {   // PNG/WebP transparan → JPEG: latar putih, bukan hitam
+            Bitmap flat = Bitmap.createBitmap(bm.getWidth(), bm.getHeight(), Bitmap.Config.ARGB_8888);
+            flat.eraseColor(0xFFFFFFFF);
+            new android.graphics.Canvas(flat).drawBitmap(bm, 0, 0, null);
+            bm.recycle();
+            bm = flat;
+        }
         File out = new File(dir, "st_" + System.nanoTime() + ".jpg");
-        int q = 88;
+        int q = 85;
         do {
             try (FileOutputStream fo = new FileOutputStream(out)) {
                 bm.compress(Bitmap.CompressFormat.JPEG, q, fo);
@@ -965,6 +1117,248 @@ public class WaStatusEditActivity extends AppCompatActivity {
         bm.recycle();
         raw.delete();
         return new Picked(out, "image/jpeg");
+    }
+
+    // ------------------------------------------------------------------ video
+
+    private void pickVideo() {
+        Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+        i.setType("video/*");
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        try {
+            startActivityForResult(Intent.createChooser(i, "Pilih video"), REQ_VIDEO);
+        } catch (Exception e) {
+            Toast.makeText(this, "Tidak dapat membuka galeri.", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void recordVideo() {
+        // Aplikasi ini mendeklarasikan izin CAMERA (selfie absen) → ACTION_VIDEO_CAPTURE wajib izinnya sudah diberikan.
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, REQ_CAMERA_PERM);
+            return;
+        }
+        Intent i = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
+        i.putExtra(MediaStore.EXTRA_DURATION_LIMIT, (int) (vrules.maxTotalMs() / 1000));
+        try {
+            startActivityForResult(i, REQ_VIDEO_REC);
+        } catch (Exception e) {
+            Toast.makeText(this, "Tidak dapat membuka kamera.", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode != REQ_CAMERA_PERM) return;
+        if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) recordVideo();
+        else Toast.makeText(this, "Izin kamera diperlukan untuk merekam video.", Toast.LENGTH_LONG).show();
+    }
+
+    private static final class VideoMeta {
+        long durationMs, bytes = -1;
+        int width, height;
+        String mime;
+        boolean hasVideo;
+    }
+
+    private VideoMeta probe(Uri uri) {
+        VideoMeta m = new VideoMeta();
+        MediaMetadataRetriever r = new MediaMetadataRetriever();
+        try {
+            r.setDataSource(this, uri);
+            m.hasVideo = "yes".equals(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO));
+            m.durationMs = parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
+            m.width = (int) parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
+            m.height = (int) parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
+            m.mime = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE);
+        } catch (Exception e) {
+            m.hasVideo = false;
+        } finally {
+            try {
+                r.release();
+            } catch (Exception ignored) {
+                // sudah dilepas
+            }
+        }
+        String type = getContentResolver().getType(uri);
+        if (type != null && type.startsWith("video/")) m.mime = type;
+        try (Cursor c = getContentResolver().query(uri, new String[]{OpenableColumns.SIZE}, null, null, null)) {
+            if (c != null && c.moveToFirst() && !c.isNull(0)) m.bytes = c.getLong(0);
+        } catch (Exception ignored) {
+            // ukuran tak diketahui → dianggap perlu dikompres
+        }
+        if (m.bytes < 0 && "file".equals(uri.getScheme()) && uri.getPath() != null) m.bytes = new File(uri.getPath()).length();
+        return m;
+    }
+
+    private static long parseLong(@Nullable String s) {
+        try {
+            return s == null ? 0 : Long.parseLong(s.trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private void handleVideo(Uri uri) {
+        showProgress("Membaca video…");
+        new Thread(() -> {
+            VideoMeta m = probe(uri);
+            runOnUiThread(() -> {
+                hideProgress();
+                if (isFinishing() || isDestroyed()) return;
+                if (!m.hasVideo || m.durationMs <= 0) {
+                    alert("Video tak bisa dibaca", "Berkas yang dipilih bukan video yang bisa diputar HP ini.");
+                    return;
+                }
+                // Sudah MP4 kecil, pendek, dan tak lebih lebar dari long_side → dipakai apa adanya (satu potongan).
+                if ("video/mp4".equals(m.mime) && m.bytes > 0 && m.bytes <= vrules.maxBytes && m.durationMs <= vrules.segmentMs() + 500
+                        && Math.max(m.width, m.height) <= vrules.longSide) {
+                    copyVideo(uri, m.durationMs);
+                    return;
+                }
+                List<long[]> plan = vrules.plan(m.durationMs);
+                if (vrules.tooLong(m.durationMs)) {
+                    new AlertDialog.Builder(this).setTitle("Video terlalu panjang")
+                            .setMessage("Video ini " + WaStatusVideoRules.clock(m.durationMs) + ". Maksimal " + vrules.maxParts
+                                    + " potongan × " + vrules.segmentSeconds + " detik (" + WaStatusVideoRules.clock(vrules.maxTotalMs())
+                                    + ").\n\nPakai " + WaStatusVideoRules.clock(vrules.maxTotalMs()) + " pertama saja? (Atau potong dulu "
+                                    + "di galeri, lalu pilih lagi.)")
+                            .setPositiveButton("Pakai bagian awal", (d, w) -> transcodeParts(uri, plan, 0, new ArrayList<>()))
+                            .setNegativeButton("Batal", null)
+                            .show();
+                    return;
+                }
+                transcodeParts(uri, plan, 0, new ArrayList<>());
+            });
+        }).start();
+    }
+
+    /** Kompres potongan ke-{@code idx} dari {@code plan}, lalu lanjut ke berikutnya; selesai → {@link #setVideo}. */
+    private void transcodeParts(Uri uri, List<long[]> plan, int idx, List<Picked> done) {
+        if (idx >= plan.size()) {
+            hideProgress();
+            long total = plan.isEmpty() ? 0 : plan.get(plan.size() - 1)[1];
+            setVideo(done, total);
+            return;
+        }
+        long[] seg = plan.get(idx);
+        int count = plan.size();
+        String label = count > 1 ? "Mengompres potongan " + (idx + 1) + "/" + count + "… " : "Mengompres video… ";
+        File out = new File(cacheDir(), "vid_" + System.nanoTime() + ".mp4");
+        showProgress(label + "0%");
+        try {
+            prep = WaStatusVideoPrep.start(this, uri, seg[0], seg[1], vrules.longSide, vrules.videoBitrate(seg[1] - seg[0]), out,
+                    new WaStatusVideoPrep.Callback() {
+                        @Override
+                        public void progress(int percent) {
+                            setProgressText(label + percent + "%");
+                        }
+
+                        @Override
+                        public void done(File f) {
+                            prep = null;
+                            if (isFinishing() || isDestroyed()) return;
+                            String bad = vrules.partCheck(idx + 1, count, f.length(), seg[1] - seg[0]);
+                            if (bad != null) {
+                                hideProgress();
+                                f.delete();
+                                for (Picked p : done) p.file.delete();
+                                alert("Video belum bisa dipakai", bad + "\n\nPilih video yang lebih sederhana / pendek.");
+                                return;
+                            }
+                            done.add(new Picked(f, "video/mp4"));
+                            transcodeParts(uri, plan, idx + 1, done);
+                        }
+
+                        @Override
+                        public void failed(String message) {
+                            prep = null;
+                            hideProgress();
+                            for (Picked p : done) p.file.delete();
+                            if (isFinishing() || isDestroyed()) return;
+                            alert("Video gagal dikompres", message + "\n\nPotong / perkecil dulu videonya, lalu pilih lagi.");
+                        }
+                    });
+        } catch (Exception e) {
+            prep = null;
+            hideProgress();
+            for (Picked p : done) p.file.delete();
+            alert("Video gagal dikompres", "Video tak bisa dikompres di HP ini.");
+        }
+    }
+
+    /** Video yang sudah memenuhi batas: disalin apa adanya ke cache (kualitas asli). */
+    private void copyVideo(Uri uri, long durationMs) {
+        showProgress("Menyiapkan video…");
+        new Thread(() -> {
+            File f = new File(cacheDir(), "vid_" + System.nanoTime() + ".mp4");
+            String err = null;
+            try (InputStream in = getContentResolver().openInputStream(uri); OutputStream out = new FileOutputStream(f)) {
+                if (in == null) throw new IOException("Video tak bisa dibaca.");
+                byte[] buf = new byte[65536];
+                long total = 0;
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    total += n;
+                    if (total > vrules.maxBytes) throw new IOException(vrules.partCheck(1, 1, total, durationMs));
+                    out.write(buf, 0, n);
+                }
+            } catch (Exception e) {
+                err = e.getMessage() != null ? e.getMessage() : "Video tak bisa dibaca.";
+            }
+            final String fe = err != null ? err : vrules.partCheck(1, 1, f.length(), durationMs);
+            runOnUiThread(() -> {
+                hideProgress();
+                if (isFinishing() || isDestroyed()) return;
+                if (fe != null) {
+                    f.delete();
+                    alert("Video belum bisa dipakai", fe);
+                    return;
+                }
+                List<Picked> one = new ArrayList<>();
+                one.add(new Picked(f, "video/mp4"));
+                setVideo(one, durationMs);
+            });
+        }).start();
+    }
+
+    private void setVideo(List<Picked> parts, long durationMs) {
+        for (Picked p : newVideo) {
+            tokens.remove(p.file.getAbsolutePath());
+            p.file.delete();
+        }
+        newVideo.clear();
+        newVideo.addAll(parts);
+        long bytes = 0;
+        for (Picked p : parts) bytes += p.file.length();
+        tvVideoInfo.setText("🎬 " + WaStatusVideoRules.clock(durationMs) + " · " + parts.size() + " potongan · "
+                + WaStatusVideoRules.kb(bytes) + " — siap diunggah saat disimpan.");
+        tvVideoInfo.setTextColor(WaStatusUi.GREEN);
+        ivVideo.setImageDrawable(null);
+        ivVideo.setVisibility(View.VISIBLE);
+        if (parts.isEmpty()) return;
+        File f = parts.get(0).file;
+        new Thread(() -> {
+            Bitmap frame = null;
+            MediaMetadataRetriever r = new MediaMetadataRetriever();
+            try {
+                r.setDataSource(f.getAbsolutePath());
+                frame = r.getFrameAtTime(0);
+            } catch (Exception ignored) {
+                // tanpa cuplikan
+            } finally {
+                try {
+                    r.release();
+                } catch (Exception ignored) {
+                    // sudah dilepas
+                }
+            }
+            final Bitmap fb = frame;
+            runOnUiThread(() -> {
+                if (fb != null && !isDestroyed() && !newVideo.isEmpty() && newVideo.get(0).file.equals(f)) ivVideo.setImageBitmap(fb);
+            });
+        }).start();
     }
 
     private static int exifRotation(File f) {
@@ -1012,6 +1406,10 @@ public class WaStatusEditActivity extends AppCompatActivity {
             alert("Periksa isian", "Isi jadwal posting (📅 Pilih tanggal & jam).");
             return;
         }
+        if ("video".equals(src) && newVideo.isEmpty() && savedVideoParts() == 0) {
+            alert("Periksa isian", "Pilih atau rekam video untuk Status.");
+            return;
+        }
         if ("image_cycle".equals(src) && photoTotal() > MAX_PHOTOS) {
             alert("Periksa isian", "Koleksi maksimal 20 foto.");
             return;
@@ -1042,9 +1440,11 @@ public class WaStatusEditActivity extends AppCompatActivity {
         }
         if ("image".equals(src) && newImage != null) uploads.add(newImage);
         if ("image_cycle".equals(src)) uploads.addAll(newPhotos);
+        if ("video".equals(src)) uploads.addAll(newVideo);
+        final boolean video = "video".equals(src);
         saving = true;
         btnSave.setEnabled(false);
-        showProgress(uploads.isEmpty() ? savingText(when) : "Mengunggah foto…");
+        showProgress(uploads.isEmpty() ? savingText(when) : video ? "Mengunggah video…" : "Mengunggah foto…");
         new Thread(() -> {
             JSONObject r = null;
             Exception err = null;
@@ -1057,14 +1457,19 @@ public class WaStatusEditActivity extends AppCompatActivity {
                     String token = tokens.get(key);
                     if (token == null) {
                         final int n = i + 1;
-                        runOnUiThread(() -> setProgressText("Mengunggah foto " + n + "/" + uploads.size() + "…"));
-                        JSONObject up = api.adminWaUpload("status/photos", new HashMap<>(), "image", p.file, p.mime, staffUuid);
+                        runOnUiThread(() -> setProgressText(video ? "Mengunggah video " + n + "/" + uploads.size() + " ("
+                                + WaStatusVideoRules.kb(p.file.length()) + ")…"
+                                : "Mengunggah foto " + n + "/" + uploads.size() + "…"));
+                        JSONObject up = video
+                                ? api.adminWaUpload("status/videos", new HashMap<>(), "video", p.file, p.mime, staffUuid)
+                                : api.adminWaUpload("status/photos", new HashMap<>(), "image", p.file, p.mime, staffUuid);
                         token = up.optString("token", "");
                         tokens.put(key, token);
                     }
                     staged.put(token);
                 }
                 if ("image".equals(src) && staged.length() > 0) body.put("staged_image", staged.getString(0));
+                if (video && staged.length() > 0) body.put("staged_videos", staged);   // urutan = urutan tayang
                 if ("image_cycle".equals(src)) body.put("staged_images", staged);
                 runOnUiThread(() -> setProgressText(savingText(when)));
                 r = api.adminWaPost(postId > 0 ? "status/" + postId + "/update" : "status", body, staffUuid);
@@ -1143,11 +1548,16 @@ public class WaStatusEditActivity extends AppCompatActivity {
         JSONArray acc = new JSONArray();
         for (Map.Entry<String, CheckBox> e : accountBoxes.entrySet()) if (e.getValue().isChecked()) acc.put(e.getKey());
         b.put("accounts", acc);
-        if ("text".equals(src) || "image".equals(src) || "image_cycle".equals(src)) b.put("body", etBody.getText().toString());
+        if (hasBody(src)) b.put("body", etBody.getText().toString());
         if ("text_cycle".equals(src)) {
             JSONArray t = new JSONArray();
             for (EditText e : texts) t.put(e.getText().toString());
             b.put("texts", t);
+        }
+        if ("article_cycle".equals(src)) {
+            JSONArray cats = new JSONArray();
+            for (Map.Entry<String, CheckBox> e : categoryBoxes.entrySet()) if (e.getValue().isChecked()) cats.put(e.getKey());
+            b.put("cycle_categories", cats);
         }
         if ("article".equals(src)) {
             int pos = spArticle.getSelectedItemPosition();
