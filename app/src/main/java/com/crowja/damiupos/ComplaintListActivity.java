@@ -425,7 +425,7 @@ public class ComplaintListActivity extends AppCompatActivity {
             String local = Ts.local(activityAt(t));
             String day = local.length() >= 10 ? local.substring(0, 10) : "—";
             // Belum ditandai selesai → otomatis pindah ke hari ini (terus ikut ke hari berikutnya sampai ditangani).
-            if (!remoteMode && isActive(t) && day.compareTo(todayKey) < 0) day = todayKey;
+            if (isActive(t) && day.compareTo(todayKey) < 0) day = todayKey;
             List<Transaction> l = tmp.get(day);
             if (l == null) tmp.put(day, l = new ArrayList<>());
             l.add(t);
