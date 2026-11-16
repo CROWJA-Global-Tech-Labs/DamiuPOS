@@ -1260,9 +1260,8 @@ public class AdminHomeActivity extends AppCompatActivity {
         int wait = queue.optInt("galon", 0);
         int waitTrx = queue.optInt("trx", 0);
         int tunda = queue.optInt("tertunda_galon", 0);
-        String t = "🫙 " + nf.format(galonDone + wait) + " galon total · ⏳ " + nf.format(wait) + " menunggu"
-                + (waitTrx > 0 ? " (" + waitTrx + " pesanan)" : "")
-                + (tunda > 0 ? " · ⏸ " + nf.format(tunda) + " tertunda" : "");
+        String t = "🫙 " + nf.format(galonDone + wait) + " total · ⏳ " + nf.format(wait) + " menunggu"
+                + (tunda > 0 ? " · ⏸ " + nf.format(tunda) : "");
         tv.setText(t);
         tv.setContentDescription("Total " + (galonDone + wait) + " galon hari ini, " + wait + " galon menunggu diantar"
                 + (tunda > 0 ? ", " + tunda + " galon tertunda" : ""));
