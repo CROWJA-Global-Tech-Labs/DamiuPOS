@@ -62,7 +62,9 @@
         <!-- Dialog: androidx AlertDialog (≈349), MaterialAlertDialogBuilder, dan 6 android.app.AlertDialog. -->
         <item name="alertDialogTheme">@style/ThemeOverlay.GjOverlay.Dialog</item>
         <item name="materialAlertDialogTheme">@style/ThemeOverlay.GjOverlay.MaterialAlertDialog</item>
-        <item name="android:alertDialogTheme">@style/ThemeOverlay.GjOverlay.FrameworkDialog</item>
+        <!-- android:alertDialogTheme SENGAJA tidak diganti: dialog framework (android.app.AlertDialog) memakai tombol
+             MaterialButton dari inflater AppCompat; dengan tema dialog framework kita teksnya jadi PUTIH di atas putih
+             (terbukti di emulator, DialogButtonsOverlayTest). Biarkan bawaan agar tombolnya tetap terlihat. -->
         <!-- Tab: indikator hijau 3dp tanpa ripple (pola tab dalam halaman Gojek). -->
         <item name="tabStyle">@style/Widget.GjOverlay.TabLayout</item>
     </style>
