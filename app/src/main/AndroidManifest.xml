@@ -239,6 +239,10 @@
              salinan layar ini di atas salinan yang sudah terbuka. Dikunci potret: rotasi membuat ulang
              activity dan menghilangkan dialog (hitung stok dengan angka yang sedang diketik). -->
         <!-- Beranda "Tampilan Baru (gaya Gojek)" — sementara khusus login admin (util.GojekUi). -->
+        <!-- Notifikasi komplain digeser → hentikan sirine yang diputar aplikasi (suara unggahan). -->
+        <receiver
+            android:name=".util.SirenPlayer$StopReceiver"
+            android:exported="false" />
         <activity
             android:name=".AdminHomeActivity"
             android:launchMode="singleTask"

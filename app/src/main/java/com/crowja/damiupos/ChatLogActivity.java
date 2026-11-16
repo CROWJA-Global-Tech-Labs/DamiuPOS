@@ -537,6 +537,7 @@ public class ChatLogActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        com.crowja.damiupos.util.SirenPlayer.stop();   // layar komplain dibuka = sirine sudah ditanggapi
         // Staf bisa logout / di-"Pulangkan" dari dashboard selagi chat ini terbuka di belakang.
         if (orderMode && loginRequired(this)) {
             exitToLogin();
