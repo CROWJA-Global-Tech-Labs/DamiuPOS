@@ -1,64 +1,91 @@
 package com.crowja.damiupos.wa;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
+import java.util.List;
+
 public class WaStatusVideoRulesTest {
 
-    private static final long MB = 1024L * 1024;
-
-    @Test
-    public void sixtySecondsPlusRoundingIsOneStatus() {
-        assertFalse(WaStatusVideoRules.tooLong(60_000));
-        assertFalse(WaStatusVideoRules.tooLong(60_900));   // durasi kontainer sering lebih sedikit dari 60,0
-        assertTrue(WaStatusVideoRules.tooLong(61_500));
-        assertTrue(WaStatusVideoRules.tooLong(135_000));
+    /** Batas Bridge 1 MB (server max_bytes ±770 KB): doc → detik = min(30, floor(max_bytes*0.9*8/450000)), long_side 480. */
+    private static WaStatusVideoRules small() {
+        return new WaStatusVideoRules(30, 10, 788_480, 480, 0);
     }
 
     @Test
-    public void smallMp4ThatFitsIsUploadedAsIs() {
-        assertFalse(WaStatusVideoRules.needsTranscode(8 * MB, 30_000, 1280, 720, "video/mp4"));
-        assertFalse(WaStatusVideoRules.needsTranscode(16 * MB, 60_000, 720, 1280, "video/mp4"));
+    public void segmentFollowsDocFormula() {
+        assertEquals(12, small().segmentSeconds);   // floor(788480*0.9*8/450000) = 12
+        assertEquals(480, small().longSide);
     }
 
     @Test
-    public void bigHighResOtherFormatOrLongVideosAreTranscoded() {
-        assertTrue("terlalu besar", WaStatusVideoRules.needsTranscode(16 * MB + 1, 30_000, 1280, 720, "video/mp4"));
-        assertTrue("1080p", WaStatusVideoRules.needsTranscode(5 * MB, 10_000, 1920, 1080, "video/mp4"));
-        assertTrue("1080p potret", WaStatusVideoRules.needsTranscode(5 * MB, 10_000, 1080, 1920, "video/mp4"));
-        assertTrue("3gp", WaStatusVideoRules.needsTranscode(2 * MB, 10_000, 640, 480, "video/3gpp"));
-        assertTrue("mime tak diketahui", WaStatusVideoRules.needsTranscode(2 * MB, 10_000, 640, 480, null));
-        assertTrue("lebih dari 60 detik", WaStatusVideoRules.needsTranscode(2 * MB, 90_000, 640, 480, "video/mp4"));
+    public void bigLimitUses30sAnd720() {
+        WaStatusVideoRules r = new WaStatusVideoRules(30, 10, 16L * 1048576, 720, 0);
+        assertEquals(30, r.segmentSeconds);
+        assertEquals(720, r.longSide);
     }
 
     @Test
-    public void bitrateKeepsAFullMinuteUnderTheLimitAndIsClamped() {
-        int br = WaStatusVideoRules.videoBitrate(60_000);
-        long bytes = (br + 128_000L) * 60 / 8;
-        assertTrue("60 dtk ≤ 16 MB: " + bytes, bytes <= WaStatusVideoRules.MAX_BYTES);
-        assertTrue("tak terlalu rendah: " + br, br >= 1_500_000);
-        assertEquals("video panjang dihitung sebagai 60 dtk (dipotong)", br, WaStatusVideoRules.videoBitrate(600_000));
-        assertEquals("video pendek dibatasi atas", 3_000_000, WaStatusVideoRules.videoBitrate(5_000));
-        assertEquals("durasi 0 tak membagi nol", 3_000_000, WaStatusVideoRules.videoBitrate(0));
+    public void serverSegmentSecondsWins() {
+        assertEquals(20, new WaStatusVideoRules(30, 10, 788_480, 480, 20).segmentSeconds);
+        assertEquals(30, new WaStatusVideoRules(30, 10, 788_480, 480, 99).segmentSeconds);   // tetap ≤ max_seconds
     }
 
     @Test
-    public void finalCheckExplainsWhatIsWrong() {
-        assertNull(WaStatusVideoRules.finalCheck(9 * MB, 45_000));
-        assertEquals("Video 1:15 — Status WhatsApp maksimal 60 detik.", WaStatusVideoRules.finalCheck(9 * MB, 75_000));
-        assertEquals("Video 17,0 MB — maksimal 16,0 MB. Pilih video yang lebih pendek.",
-                WaStatusVideoRules.finalCheck(17 * MB, 45_000));
-        assertEquals("Video kosong atau tak bisa dibaca.", WaStatusVideoRules.finalCheck(0, 45_000));
+    public void fallbacksWhenFieldsMissing() {
+        WaStatusVideoRules r = WaStatusVideoRules.from(null);
+        assertEquals(30, r.maxSeconds);
+        assertEquals(10, r.maxParts);
+        assertEquals(WaStatusVideoRules.FALLBACK_MAX_BYTES, r.maxBytes);
+        assertEquals(480, r.longSide);
+        assertTrue(r.segmentSeconds >= 1 && r.segmentSeconds <= 30);
     }
 
     @Test
-    public void clockFormatsMinutesAndSeconds() {
-        assertEquals("0:09", WaStatusVideoRules.clock(9_400));
-        assertEquals("1:00", WaStatusVideoRules.clock(59_600));
-        assertEquals("2:15", WaStatusVideoRules.clock(135_000));
+    public void planSplitsInOrder() {
+        List<long[]> p = small().plan(30_000);
+        assertEquals(3, p.size());
+        assertEquals(0, p.get(0)[0]);
+        assertEquals(12_000, p.get(0)[1]);
+        assertEquals(24_000, p.get(2)[0]);
+        assertEquals(30_000, p.get(2)[1]);
+    }
+
+    @Test
+    public void planMergesTinyTail() {
+        List<long[]> p = small().plan(24_400);
+        assertEquals(2, p.size());
+        assertEquals(24_400, p.get(1)[1]);
+    }
+
+    @Test
+    public void planCapsAtMaxParts() {
+        WaStatusVideoRules r = small();
+        List<long[]> p = r.plan(10 * 60_000);
+        assertEquals(10, p.size());
+        assertEquals(120_000, p.get(9)[1]);
+        assertTrue(r.tooLong(10 * 60_000));
+    }
+
+    @Test
+    public void bitrateFitsBudget() {
+        WaStatusVideoRules r = small();
+        int v = r.videoBitrate(12_000);
+        long bytes = (long) (v + WaStatusVideoRules.AUDIO_BPS) * 12 / 8;
+        assertTrue(bytes <= r.maxBytes);
+    }
+
+    @Test
+    public void partCheck() {
+        WaStatusVideoRules r = small();
+        assertNull(r.partCheck(1, 2, 700_000, 12_000));
+        String bad = r.partCheck(2, 3, 900_000, 12_000);
+        assertNotNull(bad);
+        assertTrue(bad.startsWith("Potongan 2/3"));
+        assertNotNull(r.partCheck(1, 1, 500_000, 40_000));
     }
 }

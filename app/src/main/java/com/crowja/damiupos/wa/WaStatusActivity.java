@@ -213,7 +213,50 @@ public class WaStatusActivity extends AppCompatActivity {
     private void askPost(JSONObject p) {
         int n = p.optJSONArray("accounts") != null ? p.optJSONArray("accounts").length() : 0;
         confirm("Posting sekarang", WaStatusRules.postNowConfirm(p.optBoolean("post_will_close"), p.optBoolean("closes_orders"), n),
-                "Posting", () -> act(p.optLong("id"), "post", null, "Memposting Status…"));
+                "Posting", () -> {
+                    if ("article_cycle".equals(p.optString("source_type"))) pickArticleThenPost(p.optLong("id"));
+                    else act(p.optLong("id"), "post", null, "Memposting Status…");
+                });
+    }
+
+    /** Artikel bergilir: "Giliran berikutnya" (bawaan server) atau artikel pilihan → {@code article_id}. */
+    private void pickArticleThenPost(long id) {
+        showProgress("Memuat artikel…");
+        new Thread(() -> {
+            JSONArray arts = null;
+            try {
+                JSONObject f = WaAdmin.api(this).adminWaGet("status/" + id, null, staffUuid).optJSONObject("form");
+                arts = f != null ? f.optJSONArray("articles") : null;
+            } catch (Exception ignored) {
+                // tanpa daftar → giliran berikutnya
+            }
+            final JSONArray fa = arts;
+            runOnUiThread(() -> {
+                hideProgress();
+                if (isFinishing() || isDestroyed()) return;
+                if (fa == null || fa.length() == 0) {
+                    act(id, "post", null, "Memposting Status…");
+                    return;
+                }
+                String[] items = new String[fa.length() + 1];
+                items[0] = "↻ Giliran berikutnya";
+                for (int i = 0; i < fa.length(); i++) items[i + 1] = fa.optJSONObject(i) != null ? fa.optJSONObject(i).optString("title") : "?";
+                new AlertDialog.Builder(this).setTitle("Artikel yang diposting")
+                        .setItems(items, (d, w) -> {
+                            JSONObject b = new JSONObject();
+                            if (w > 0) {
+                                try {
+                                    b.put("article_id", fa.optJSONObject(w - 1).optLong("id"));
+                                } catch (Exception ignored) {
+                                    // tak terjadi
+                                }
+                            }
+                            act(id, "post", b, "Memposting Status…");
+                        })
+                        .setNegativeButton("Batal", null)
+                        .show();
+            });
+        }).start();
     }
 
     private void askCancel(JSONObject p) {
@@ -224,6 +267,9 @@ public class WaStatusActivity extends AppCompatActivity {
     private void askRetry(JSONObject p) {
         confirm("Coba lagi yang gagal", p.optBoolean("retry_will_close")
                         ? "Bila berhasil tayang, order hari ini ditutup. Coba lagi sekarang?"
+                        : "video".equals(p.optString("source_type"))
+                        ? "Posting ulang ke akun yang gagal sekarang? Potongan video yang sudah tayang tidak diulang — "
+                        + "dilanjutkan dari potongan yang gagal."
                         : "Posting ulang Status ini ke akun yang gagal sekarang?",
                 "Coba lagi", () -> act(p.optLong("id"), "retry", null, "Memposting ulang…"));
     }
@@ -280,6 +326,15 @@ public class WaStatusActivity extends AppCompatActivity {
         addChip(meta, WaStatusUi.badge(this, p.optString("status_label"), col[0], col[1]));
         addChip(meta, WaStatusUi.text(this, WaStatusUi.sourceIcon(p.optString("source_type")) + " " + p.optString("source_label"),
                 12, WaStatusUi.TEXT_2, false));
+        if (p.optInt("video_parts") > 0) {
+            addChip(meta, WaStatusUi.text(this, "🎬 " + p.optInt("video_parts") + " potongan", 12, WaStatusUi.TEXT_2, false));
+        }
+        JSONArray cats = p.optJSONArray("cycle_categories");
+        if ("article_cycle".equals(p.optString("source_type")) && cats != null && cats.length() > 0) {
+            StringBuilder cs = new StringBuilder();
+            for (int i = 0; i < cats.length(); i++) cs.append(i > 0 ? ", " : "").append(cats.optString(i));
+            addChip(meta, WaStatusUi.text(this, "🏷️ " + cs, 12, WaStatusUi.BLUE, false));
+        }
         String sched = WaStatusUi.str(p, "scheduled_label");
         String posted = WaStatusUi.str(p, "posted_label");
         if (sched != null) addChip(meta, WaStatusUi.text(this, "🕒 " + sched, 12, WaStatusUi.TEXT_2, false));

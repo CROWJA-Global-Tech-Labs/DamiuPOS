@@ -28,8 +28,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Kompres video Status di HP dengan Media3 Transformer: H.264 + AAC dalam MP4, sisi terpanjang ≤ 1280 px, bitrate
- * dari {@link WaStatusVideoRules#videoBitrate} (hasil ±14 MB), dan — bila diminta — hanya 60 detik pertama.
+ * Kompres satu potongan video Status di HP dengan Media3 Transformer: H.264 + AAC dalam MP4, sisi terpanjang = long_side
+ * server, bitrate dari {@link WaStatusVideoRules#videoBitrate} (≤ max_bytes server per potongan).
  * Dipanggil dari thread UTAMA (Transformer butuh Looper); callback juga di thread utama.
  */
 @OptIn(markerClass = UnstableApi.class)
@@ -74,25 +74,16 @@ final class WaStatusVideoPrep {
                 .build();
     }
 
-    /**
-     * Mulai kompres. {@code clipMs} > 0 = potong sampai milidetik itu; {@code resize} = perkecil ke ≤ 1280 px.
-     * Kembalikan objeknya supaya bisa dibatalkan ({@link #cancel}).
-     */
-    static WaStatusVideoPrep start(Context ctx, Uri uri, long clipMs, boolean resize, long durationMs, File out, Callback cb) {
-        WaStatusVideoPrep p = new WaStatusVideoPrep(ctx.getApplicationContext(),
-                WaStatusVideoRules.videoBitrate(clipMs > 0 ? clipMs : durationMs), cb, out);
-        MediaItem.Builder mi = new MediaItem.Builder().setUri(uri);
-        if (clipMs > 0) {
-            mi.setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setEndPositionMs(clipMs).build());
-        }
-        List<Effect> fx = new ArrayList<>();
-        if (resize) {
-            fx.add(Presentation.createForWidthAndHeight(WaStatusVideoRules.MAX_SIDE, WaStatusVideoRules.MAX_SIDE,
-                    Presentation.LAYOUT_SCALE_TO_FIT));
-        }
-        EditedMediaItem item = new EditedMediaItem.Builder(mi.build())
-                .setEffects(new Effects(ImmutableList.of(), fx))
+    /** Kompres satu potongan [startMs, endMs) ke sisi terpanjang {@code longSide} px dengan bitrate video {@code bitrate}. */
+    static WaStatusVideoPrep start(Context ctx, Uri uri, long startMs, long endMs, int longSide, int bitrate, File out, Callback cb) {
+        WaStatusVideoPrep p = new WaStatusVideoPrep(ctx.getApplicationContext(), bitrate, cb, out);
+        MediaItem mi = new MediaItem.Builder().setUri(uri)
+                .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(startMs).setEndPositionMs(endMs).build())
                 .build();
+        List<Effect> fx = new ArrayList<>();
+        fx.add(Presentation.createForWidthAndHeight(longSide, longSide, Presentation.LAYOUT_SCALE_TO_FIT));
+        EditedMediaItem item = new EditedMediaItem.Builder(mi).setEffects(new Effects(ImmutableList.of(), fx)).build();
         p.transformer.start(item, out.getAbsolutePath());
         p.poll();
         return p;
