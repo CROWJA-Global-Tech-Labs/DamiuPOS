@@ -64,6 +64,21 @@ public final class ComplaintSirenSound {
         return Uri.parse("android.resource://" + c.getPackageName() + "/" + resId);
     }
 
+    /** Kanal TANPA suara untuk pilihan yang diputar aplikasi sendiri (SirenPlayer). */
+    public static Choice silentChannelFor(Choice c) {
+        return new Choice(c.sound, BASE_CHANNEL + "_app", null, c.repeat);
+    }
+
+    /** Sirine bawaan (cadangan bila kanal pilihan gagal dibuat). */
+    public static Choice bawaan(Context c, boolean repeat) {
+        return new Choice("bawaan", BASE_CHANNEL, raw(c, R.raw.complaint_siren), repeat);
+    }
+
+    /** Suara unggahan sendiri → diputar aplikasi (bukan suara kanal notifikasi). */
+    public static boolean playedByApp(Choice c) {
+        return c != null && "custom".equals(c.sound) && c.uri != null;
+    }
+
     public static Choice current(Context c) {
         SettingsDao d = new SettingsDao(DatabaseHelper.getInstance(c));
         String sound = d.getComplaintSirenSound();

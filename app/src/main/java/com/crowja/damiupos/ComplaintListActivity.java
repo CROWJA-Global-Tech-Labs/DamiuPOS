@@ -208,6 +208,7 @@ public class ComplaintListActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        com.crowja.damiupos.util.SirenPlayer.stop();   // layar komplain dibuka = sirine sudah ditanggapi
         load();
         render();
         IssueReminder.refreshAsync(this, true, () -> runOnUiThread(() -> {   // eskalasi AI terbaru dari server

@@ -49,8 +49,19 @@ public final class ComplaintAlert {
     }
 
     private static void post(Context ctx, Intent open, String title, String body, int notifId) {
-        ComplaintSirenSound.Choice choice = ComplaintSirenSound.current(ctx);
-        ensureChannel(ctx, choice);
+        // Apa pun yang gagal di bagian suara/kanal, notifikasi + popup komplain WAJIB tetap tampil.
+        ComplaintSirenSound.Choice picked;
+        try {
+            picked = ComplaintSirenSound.current(ctx);
+        } catch (Throwable t) {
+            picked = ComplaintSirenSound.bawaan(ctx, true);
+        }
+        final boolean appPlays = ComplaintSirenSound.playedByApp(picked);
+        ComplaintSirenSound.Choice choice = appPlays ? ComplaintSirenSound.silentChannelFor(picked) : picked;
+        if (!ensureChannelSafe(ctx, choice)) {
+            choice = ComplaintSirenSound.bawaan(ctx, picked.repeat);
+            ensureChannelSafe(ctx, choice);
+        }
         PendingIntent pi = PendingIntent.getActivity(ctx, notifId, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Uri sound = choice.uri;
@@ -64,6 +75,10 @@ public final class ComplaintAlert {
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setAutoCancel(true)
                 .setContentIntent(pi)
+                .setDeleteIntent(PendingIntent.getBroadcast(ctx, notifId,
+                        new Intent(ctx, com.crowja.damiupos.util.SirenPlayer.StopReceiver.class)
+                                .setAction(com.crowja.damiupos.util.SirenPlayer.ACTION_STOP),
+                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE))
                 .setVibrate(new long[]{0, 600, 250, 600, 250, 600});
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O && sound != null) {
             b.setSound(sound, android.media.AudioManager.STREAM_ALARM);
@@ -72,7 +87,14 @@ public final class ComplaintAlert {
         if (choice.repeat && !choice.silent()) n.flags |= Notification.FLAG_INSISTENT;   // sirene berulang sampai diketuk / digeser
         try {
             NotificationManagerCompat.from(ctx).notify(notifId, n);
-        } catch (SecurityException ignored) {
+        } catch (Throwable ignored) {
+        }
+        // Suara unggahan sendiri: diputar aplikasi di stream alarm (lihat SirenPlayer).
+        if (appPlays) {
+            try {
+                com.crowja.damiupos.util.SirenPlayer.start(ctx, picked.uri, picked.repeat);
+            } catch (Throwable ignored) {
+            }
         }
         // Popup di layar yang sedang tampil (atau begitu dashboard dibuka) — memakai jalur pesan admin.
         try {
@@ -84,7 +106,22 @@ public final class ComplaintAlert {
 
     /** Kanal dibuat sekali dengan suara sirene khusus; suara kanal tak bisa diubah aplikasi sesudahnya. */
     public static void ensureChannel(Context ctx) {
-        ensureChannel(ctx, ComplaintSirenSound.current(ctx));
+        try {
+            ComplaintSirenSound.Choice c = ComplaintSirenSound.current(ctx);
+            if (ComplaintSirenSound.playedByApp(c)) c = ComplaintSirenSound.silentChannelFor(c);
+            if (!ensureChannelSafe(ctx, c)) ensureChannelSafe(ctx, ComplaintSirenSound.bawaan(ctx, true));
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean ensureChannelSafe(Context ctx, ComplaintSirenSound.Choice choice) {
+        try {
+            ensureChannel(ctx, choice);
+            return true;
+        } catch (Throwable t) {
+            android.util.Log.w("ComplaintAlert", "kanal sirine gagal: " + t);
+            return false;
+        }
     }
 
     /**
