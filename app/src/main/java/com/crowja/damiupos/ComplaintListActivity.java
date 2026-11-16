@@ -107,7 +107,9 @@ public class ComplaintListActivity extends AppCompatActivity {
         com.crowja.damiupos.model.User me = new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this))
                 .getById(new SettingsDao(DatabaseHelper.getInstance(this)).getCurrentUserId());
         isAdmin = me != null && me.isAdmin();
-        if (isAdmin) {
+        // Admin, SPV & Marketing: lihat komplain SEMUA perangkat (server). Bersihkan tetap khusus Admin.
+        final boolean canSeeAll = me != null && (me.isAdmin() || me.isSpv() || me.isMarketing());
+        if (canSeeAll) {
             LinearLayout scope = new LinearLayout(this);
             scope.setOrientation(LinearLayout.HORIZONTAL);
             scope.setPadding(dp(12), dp(2), dp(12), dp(2));
@@ -119,10 +121,13 @@ public class ComplaintListActivity extends AppCompatActivity {
             scope.addView(btnRemote, new LinearLayout.LayoutParams(0, -2, 1f));
             scope.addView(btnClear, new LinearLayout.LayoutParams(0, -2, 1f));
             btnClear.setOnClickListener(v -> chooseClear());
+            if (!isAdmin) btnClear.setVisibility(View.GONE);
             root.addView(scope);
             btnLocal.setOnClickListener(v -> setRemote(false));
             btnRemote.setOnClickListener(v -> setRemote(true));
             styleScope();
+            // Bawaan untuk peran ini: langsung tampilkan semua perangkat.
+            root.post(() -> setRemote(true));
         }
 
         LinearLayout kinds = new LinearLayout(this);
