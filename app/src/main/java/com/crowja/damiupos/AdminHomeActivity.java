@@ -470,6 +470,32 @@ public class AdminHomeActivity extends AppCompatActivity {
         }
     }
 
+    private static long remoteComplaintsAt;
+    private static int remoteComplaintsCount = -1;
+
+    /** Jumlah komplain AKTIF se-cabang dari /api/admin/complaints (cache 60 dtk); -1 bila gagal/tak boleh. */
+    private static int remoteActiveComplaints(Context app, SyncSettings cfg) {
+        long now = System.currentTimeMillis();
+        if (remoteComplaintsCount >= 0 && now - remoteComplaintsAt < 60_000L) return remoteComplaintsCount;
+        try {
+            String staff = com.crowja.damiupos.sync.LocationReporter.currentStaffUuid(app);
+            JSONObject res = new SyncApi(cfg).adminComplaints(staff);
+            org.json.JSONArray arr = res != null ? res.optJSONArray("complaints") : null;
+            if (arr == null) return remoteComplaintsCount;
+            int n = 0;
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.optJSONObject(i);
+                if (o != null && o.optBoolean("active", false)) n++;
+            }
+            remoteComplaintsCount = n;
+            remoteComplaintsAt = now;
+            return n;
+        } catch (Throwable t) {
+            Log.w(TAG, "remote complaints: " + t);
+            return remoteComplaintsCount;
+        }
+    }
+
     /** Thread latar: semua hitungan & daftar untuk keempat tab. */
     private Snapshot computeSnapshot(Context app) {
         Snapshot s = new Snapshot();
@@ -478,6 +504,12 @@ public class AdminHomeActivity extends AppCompatActivity {
         final SyncSettings cfg = new SyncSettings(settingsDao);
         s.queue = qi("queue", () -> transactionDao.countDeliveryQueue());
         s.complaints = qi("complaints", () -> transactionDao.countActiveComplaints());
+        // Admin/SPV/Marketing melihat komplain SEMUA perangkat (layar Komplain bawaannya "Semua perangkat"),
+        // jadi lencana ubin/kartu Masalah juga dihitung dari server — bukan cuma transaksi HP ini.
+        if (s.menu != null && s.menu.branchSales && cfg.isEnrolled()) {
+            int remote = remoteActiveComplaints(app, cfg);
+            if (remote >= 0) s.complaints = remote;
+        }
         s.followUp = qi("followup", () -> customerDao.countFollowUpCandidates(settingsDao.getFollowupDays()));
         s.visitUrgent = qi("visit", () -> customerDao.countVisitUrgent());
         s.stockAlert = qi("stockAlert", () -> settingsDao.getStockAlert());
