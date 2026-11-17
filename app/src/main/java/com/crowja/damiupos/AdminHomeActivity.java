@@ -1266,6 +1266,7 @@ public class AdminHomeActivity extends AppCompatActivity {
         tv.setContentDescription("Total " + (galonDone + wait) + " galon hari ini, " + wait + " galon menunggu diantar"
                 + (tunda > 0 ? ", " + tunda + " galon tertunda" : ""));
         tv.setVisibility(View.VISIBLE);
+        tv.setSelected(true);   // marquee cuma berjalan saat view "selected" (lihat ellipsize=marquee di layout)
     }
 
     private void renderSales(double revenue, int galon, int trx, String scope) {
