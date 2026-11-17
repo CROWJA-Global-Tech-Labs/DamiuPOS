@@ -136,6 +136,8 @@ public class WaStatusEditActivity extends AppCompatActivity {
     /** Potongan video baru (sudah dikompres) berurutan; kosong = tak mengganti video. */
     private final List<Picked> newVideo = new ArrayList<>();
     @Nullable private WaStatusVideoPrep prep;
+    /** Ukuran keluaran kompres video terpilih (rasio asli) — {@link WaStatusVideoRules#outputSize}. */
+    private int[] outSize = {720, 1280};
     /** Kategori artikel bergilir ({@code cycle_categories[]}), urut seperti dari server. */
     private final Map<String, CheckBox> categoryBoxes = new LinkedHashMap<>();
     private WaStatusVideoRules vrules = WaStatusVideoRules.from(null);
@@ -1157,7 +1159,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
 
     private static final class VideoMeta {
         long durationMs, bytes = -1;
-        int width, height;
+        int width, height, rotation;
         String mime;
         boolean hasVideo;
     }
@@ -1171,6 +1173,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
             m.durationMs = parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION));
             m.width = (int) parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
             m.height = (int) parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
+            m.rotation = (int) parseLong(r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION));
             m.mime = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE);
         } catch (Exception e) {
             m.hasVideo = false;
@@ -1211,9 +1214,8 @@ public class WaStatusEditActivity extends AppCompatActivity {
                     alert("Video tak bisa dibaca", "Berkas yang dipilih bukan video yang bisa diputar HP ini.");
                     return;
                 }
-                // Sudah MP4 kecil, pendek, dan tak lebih lebar dari long_side → dipakai apa adanya (satu potongan).
-                if ("video/mp4".equals(m.mime) && m.bytes > 0 && m.bytes <= vrules.maxBytes && m.durationMs <= vrules.segmentMs() + 500
-                        && Math.max(m.width, m.height) <= vrules.longSide) {
+                // Sudah MP4 kecil, pendek, dan ≤ 1080×1920 → dipakai apa adanya (satu potongan, kualitas asli).
+                if (vrules.usableAsIs(m.mime, m.bytes, m.durationMs, m.width, m.height)) {
                     copyVideo(uri, m.durationMs);
                     return;
                 }
@@ -1229,6 +1231,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
                             .show();
                     return;
                 }
+                outSize = vrules.outputSize(m.width, m.height, m.rotation);
                 transcodeParts(uri, plan, 0, new ArrayList<>());
             });
         }).start();
@@ -1248,7 +1251,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
         File out = new File(cacheDir(), "vid_" + System.nanoTime() + ".mp4");
         showProgress(label + "0%");
         try {
-            prep = WaStatusVideoPrep.start(this, uri, seg[0], seg[1], vrules.longSide, vrules.videoBitrate(seg[1] - seg[0]), out,
+            prep = WaStatusVideoPrep.start(this, uri, seg[0], seg[1], outSize[0], outSize[1], vrules.videoBitrate(seg[1] - seg[0]), out,
                     new WaStatusVideoPrep.Callback() {
                         @Override
                         public void progress(int percent) {

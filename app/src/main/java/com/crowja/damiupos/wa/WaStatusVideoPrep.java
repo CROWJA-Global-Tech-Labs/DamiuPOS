@@ -74,15 +74,18 @@ final class WaStatusVideoPrep {
                 .build();
     }
 
-    /** Kompres satu potongan [startMs, endMs) ke sisi terpanjang {@code longSide} px dengan bitrate video {@code bitrate}. */
-    static WaStatusVideoPrep start(Context ctx, Uri uri, long startMs, long endMs, int longSide, int bitrate, File out, Callback cb) {
+    /**
+     * Kompres satu potongan [startMs, endMs) ke {@code width}×{@code height} (rasio asli, dari
+     * {@link WaStatusVideoRules#outputSize}) dengan bitrate video {@code bitrate}.
+     */
+    static WaStatusVideoPrep start(Context ctx, Uri uri, long startMs, long endMs, int width, int height, int bitrate, File out, Callback cb) {
         WaStatusVideoPrep p = new WaStatusVideoPrep(ctx.getApplicationContext(), bitrate, cb, out);
         MediaItem mi = new MediaItem.Builder().setUri(uri)
                 .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
                         .setStartPositionMs(startMs).setEndPositionMs(endMs).build())
                 .build();
         List<Effect> fx = new ArrayList<>();
-        fx.add(Presentation.createForWidthAndHeight(longSide, longSide, Presentation.LAYOUT_SCALE_TO_FIT));
+        fx.add(Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT));
         EditedMediaItem item = new EditedMediaItem.Builder(mi).setEffects(new Effects(ImmutableList.of(), fx)).build();
         p.transformer.start(item, out.getAbsolutePath());
         p.poll();
