@@ -200,6 +200,9 @@
             android:name=".wa.WaStatusActivity"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode" />
         <activity
+            android:name=".wa.WaStatusLiveActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode" />
+        <activity
             android:name=".wa.WaStatusEditActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:windowSoftInputMode="adjustResize" />

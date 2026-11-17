@@ -96,4 +96,34 @@ public final class WaStatusRules {
         if (closesOrders) return "Posting sekarang? Postingan ini TIDAK menutup order hari ini secara otomatis — tutup manual di halaman Status Order bila perlu.";
         return "Posting Status ini sekarang ke " + accountCount + " akun WhatsApp?";
     }
+
+    /** Label tombol aktif/nonaktif Status terjadwal (sama dengan web). */
+    public static String pauseLabel(boolean paused) {
+        return paused ? "▶ Aktifkan" : "⏸ Nonaktifkan";
+    }
+
+    /** Konfirmasi aktif/nonaktif — jadwal & pengulangan tetap tersimpan. */
+    public static String pauseConfirm(boolean paused, @Nullable String name) {
+        String n = name == null || name.isEmpty() ? "Status ini" : "\"" + name + "\"";
+        return paused
+                ? "Aktifkan lagi " + n + "? Jadwal yang terlewat selama nonaktif digeser ke putaran berikutnya."
+                : "Nonaktifkan " + n + "? Status tidak diposting sampai diaktifkan lagi; jadwal & pengulangan tetap tersimpan.";
+    }
+
+    /** Baris keterangan penampil Status tayang: waktu tayang · hilang jam · nama postingan / "dari HP" · penonton. */
+    public static String liveMeta(@Nullable String posted, @Nullable String expires, @Nullable String postName,
+                                  @Nullable String source, int audience) {
+        List<String> parts = new ArrayList<>();
+        if (posted != null && !posted.isEmpty()) parts.add(posted);
+        if (expires != null && !expires.isEmpty()) parts.add(expires);
+        if (postName != null && !postName.isEmpty()) parts.add("“" + postName + "”");
+        else if ("phone".equals(source)) parts.add("diposting dari HP");
+        if (audience > 0) parts.add(audience + " penonton");
+        return String.join(" · ", parts);
+    }
+
+    /** Konfirmasi tarik Status dari WhatsApp. */
+    public static String liveDeleteConfirm(String account) {
+        return "Status ini dihapus dari WhatsApp " + account + " — penonton tidak bisa melihatnya lagi. Tidak bisa dibatalkan.";
+    }
 }
