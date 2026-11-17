@@ -76,6 +76,7 @@ public class WaStatusActivity extends AppCompatActivity {
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
+        menu.add(0, 2, 0, "📺 Status tayang").setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS | MenuItem.SHOW_AS_ACTION_WITH_TEXT);
         menu.add(0, 1, 0, "🔄 Muat ulang").setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER);
         return true;
     }
@@ -84,6 +85,10 @@ public class WaStatusActivity extends AppCompatActivity {
     public boolean onOptionsItemSelected(@NonNull MenuItem item) {
         if (item.getItemId() == 1) {
             load(true);
+            return true;
+        }
+        if (item.getItemId() == 2) {
+            startActivity(new Intent(this, WaStatusLiveActivity.class));
             return true;
         }
         return super.onOptionsItemSelected(item);
@@ -259,6 +264,21 @@ public class WaStatusActivity extends AppCompatActivity {
         }).start();
     }
 
+    /** Aktif/nonaktif Status terjadwal ({@code POST status/{id}/pause}). */
+    private void askPause(JSONObject p) {
+        boolean paused = p.optBoolean("paused");
+        confirm(WaStatusRules.pauseLabel(paused), WaStatusRules.pauseConfirm(paused, p.optString("name")),
+                paused ? "Aktifkan" : "Nonaktifkan", () -> {
+                    JSONObject b = new JSONObject();
+                    try {
+                        b.put("paused", !paused);
+                    } catch (Exception ignored) {
+                        // tak terjadi
+                    }
+                    act(p.optLong("id"), "pause", b, paused ? "Mengaktifkan…" : "Menonaktifkan…");
+                });
+    }
+
     private void askCancel(JSONObject p) {
         confirm("Batalkan Status", "Batalkan Status \"" + p.optString("name") + "\"? Status ini tidak akan diposting.",
                 "Ya, batalkan", () -> act(p.optLong("id"), "cancel", null, "Membatalkan…"));
@@ -324,6 +344,7 @@ public class WaStatusActivity extends AppCompatActivity {
         String status = p.optString("status");
         int[] col = WaStatusUi.statusColors(status);
         addChip(meta, WaStatusUi.badge(this, p.optString("status_label"), col[0], col[1]));
+        if (p.optBoolean("paused")) addChip(meta, WaStatusUi.badge(this, "⏸ Nonaktif", WaStatusUi.SLATE, WaStatusUi.SLATE_BG));
         addChip(meta, WaStatusUi.text(this, WaStatusUi.sourceIcon(p.optString("source_type")) + " " + p.optString("source_label"),
                 12, WaStatusUi.TEXT_2, false));
         if (p.optInt("video_parts") > 0) {
@@ -390,6 +411,10 @@ public class WaStatusActivity extends AppCompatActivity {
             });
         }
         if (p.optBoolean("can_post")) addButton(btns, "Posting sekarang", WaStatusUi.GREEN, v -> askPost(p));
+        if (p.optBoolean("can_pause")) {
+            addButton(btns, WaStatusRules.pauseLabel(p.optBoolean("paused")), p.optBoolean("paused") ? WaStatusUi.BLUE : WaStatusUi.TEXT_2,
+                    v -> askPause(p));
+        }
         if (p.optBoolean("can_cancel")) addButton(btns, "Batalkan", WaStatusUi.TEXT_2, v -> askCancel(p));
         if (p.optBoolean("can_close_orders")) addButton(btns, "🔒 Tutup order hari ini", WaStatusUi.RED, v -> askCloseOrders(p));
         if (p.optBoolean("can_retry")) addButton(btns, "Coba lagi yang gagal", WaStatusUi.AMBER, v -> askRetry(p));
