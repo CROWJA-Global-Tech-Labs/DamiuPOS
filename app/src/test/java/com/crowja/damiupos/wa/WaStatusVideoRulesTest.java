@@ -1,6 +1,8 @@
 package com.crowja.damiupos.wa;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -41,7 +43,8 @@ public class WaStatusVideoRulesTest {
         assertEquals(30, r.maxSeconds);
         assertEquals(10, r.maxParts);
         assertEquals(WaStatusVideoRules.FALLBACK_MAX_BYTES, r.maxBytes);
-        assertEquals(480, r.longSide);
+        assertEquals(640, r.longSide);
+        assertEquals(1920, r.passLongSide);
         assertTrue(r.segmentSeconds >= 1 && r.segmentSeconds <= 30);
     }
 
@@ -87,5 +90,25 @@ public class WaStatusVideoRulesTest {
         assertNotNull(bad);
         assertTrue(bad.startsWith("Potongan 2/3"));
         assertNotNull(r.partCheck(1, 1, 500_000, 40_000));
+    }
+
+    @Test
+    public void outputKeepsTheAspectRatioInsteadOfASquareFrame() {
+        WaStatusVideoRules r = new WaStatusVideoRules(60, 10, 16L * 1048576, 1280, 0);
+        assertArrayEquals(new int[]{720, 1280}, r.outputSize(1080, 1920, 0));      // potret 9:16 → 720×1280, bukan 1280×1280
+        assertArrayEquals(new int[]{1280, 720}, r.outputSize(1920, 1080, 0));      // lanskap
+        assertArrayEquals(new int[]{720, 1280}, r.outputSize(1920, 1080, 90));     // rekaman HP berotasi = potret
+        assertArrayEquals(new int[]{1072, 1072}, r.outputSize(1080, 1080, 0));     // persegi tetap persegi, tak diperbesar
+        assertArrayEquals(new int[]{352, 640}, r.outputSize(360, 640, 0));         // kecil: tak diperbesar, kelipatan 16
+    }
+
+    @Test
+    public void fullHdMp4WithinTheLimitsIsUsedAsIs() {
+        WaStatusVideoRules r = new WaStatusVideoRules(60, 10, 16L * 1048576, 1280, 0);
+        assertTrue(r.usableAsIs("video/mp4", 12_273_555, 45_845, 1080, 1920));
+        assertFalse(r.usableAsIs("video/mp4", 12_273_555, 45_845, 2160, 3840));    // 4K → kompres
+        assertFalse(r.usableAsIs("video/quicktime", 1_000_000, 10_000, 1080, 1920));
+        assertFalse(r.usableAsIs("video/mp4", 17L * 1048576, 45_845, 1080, 1920)); // kebesaran
+        assertFalse(r.usableAsIs("video/mp4", 1_000_000, 75_000, 1080, 1920));     // > satu potongan
     }
 }
