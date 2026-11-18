@@ -516,6 +516,10 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       Toolbar toolbar = (Toolbar)this.findViewById(id.toolbar);
       this.setSupportActionBar(toolbar);
       toolbar.setNavigationOnClickListener((v) -> this.finish());
+      if (this.getIntent() != null && this.getIntent().getBooleanExtra(AdminHomeActivity.EXTRA_AS_TAB, false)) {
+         toolbar.setNavigationIcon(null);
+         AdminHomeActivity.bindTabNav(this, AdminHomeActivity.TAB_PESANAN);
+      }
       this.dao = new TransactionDao(DatabaseHelper.getInstance(this));
       this.customerDao = new CustomerDao(DatabaseHelper.getInstance(this));
       // Guided Delivery diputuskan SEBELUM view lain dibaca: enterGuidedChrome menyembunyikan

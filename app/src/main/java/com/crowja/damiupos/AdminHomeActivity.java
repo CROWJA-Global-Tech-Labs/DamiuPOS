@@ -102,7 +102,7 @@ public class AdminHomeActivity extends AppCompatActivity {
     private static final String TAG = "AdminHome";
 
     private static final int TAB_BERANDA = 0;
-    private static final int TAB_PESANAN = 1;
+    static final int TAB_PESANAN = 1;
     private static final int TAB_CHAT = 2;
     private static final int TAB_AKUN = 3;
     private static final String STATE_TAB = "gj_tab";
@@ -232,7 +232,8 @@ public class AdminHomeActivity extends AppCompatActivity {
         safe("ai", () -> paintAi(AiStatusMonitor.STATE_UNKNOWN, ""));
         setupBack();
 
-        int tab = savedInstanceState != null ? savedInstanceState.getInt(STATE_TAB, TAB_BERANDA) : TAB_BERANDA;
+        int tab = savedInstanceState != null ? savedInstanceState.getInt(STATE_TAB, TAB_BERANDA)
+                : getIntent() != null ? getIntent().getIntExtra(EXTRA_NAV_TAB, TAB_BERANDA) : TAB_BERANDA;
         selectTab(tab);
 
         // Banner iklan (otomatis GONE saat Pro) — sekali di onCreate, sama dengan beranda lama.
@@ -249,6 +250,7 @@ public class AdminHomeActivity extends AppCompatActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        if (intent != null && intent.hasExtra(EXTRA_NAV_TAB)) selectTab(intent.getIntExtra(EXTRA_NAV_TAB, TAB_BERANDA));
     }
 
     @Override
@@ -804,7 +806,7 @@ public class AdminHomeActivity extends AppCompatActivity {
                 m -> m.user == null || !m.user.isViewer(), () -> openTrx(Transaction.TYPE_JUAL));
         add("kembali", "Botol Galon Kembali", "Kembali", "↩️", R.color.gj_blue_tint, G_OPS,
                 m -> m.user == null || !m.user.isViewer(), () -> openTrx(Transaction.TYPE_KEMBALI));
-        add("antrean", "Antrean Delivery", "Antrean", "🚚", R.color.gj_green_tint, G_OPS,
+        add("antrean", "Pesanan (Antrean Delivery)", "Pesanan", "🚚", R.color.gj_green_tint, G_OPS,
                 AdminHomeActivity::queueVisible, () -> open(DeliveryQueueActivity.class)).badge(s -> s.queue);
         add("terjadwal", "Pesanan Terjadwal", "Terjadwal", "🗓️", R.color.gj_green_tint, G_OPS,
                 m -> m.admin && m.enrolled, () -> open(ScheduledOrderActivity.class));
@@ -1079,6 +1081,52 @@ public class AdminHomeActivity extends AppCompatActivity {
         for (int i = 0; i < 4; i++) tabViews[i] = findViewById(TAB_IDS[i]);
     }
 
+    /** Layar Antrian Delivery dibuka sebagai tab Pesanan (bar bawah ikut tampil, tanpa tombol kembali). */
+    static final String EXTRA_AS_TAB = "as_nav_tab";
+    /** Tab yang dipilih saat beranda dibuka dari bar bawah layar lain. */
+    static final String EXTRA_NAV_TAB = "nav_tab";
+
+    /**
+     * Pasang bar bawah beranda di layar lain (Antrian Delivery sebagai tab Pesanan). Ketuk tab lain → kembali
+     * ke beranda (singleTask) di tab itu tanpa animasi, layar ini ditutup.
+     */
+    static void bindTabNav(android.app.Activity a, int selected) {
+        View bar = a.findViewById(R.id.gjhBottomNav);
+        if (bar == null) return;
+        bar.setVisibility(View.VISIBLE);
+        int primary = androidx.core.content.ContextCompat.getColor(a, R.color.gj_primary);
+        int sec = androidx.core.content.ContextCompat.getColor(a, R.color.gj_text_secondary);
+        int txt = androidx.core.content.ContextCompat.getColor(a, R.color.gj_text_primary);
+        for (int i = 0; i < 4; i++) {
+            View tab = a.findViewById(NAV_IDS[i]);
+            if (tab == null) continue;
+            boolean active = i == selected;
+            ImageView icon = tab.findViewById(R.id.gjhNavIcon);
+            TextView label = tab.findViewById(R.id.gjhNavLabel);
+            View ind = tab.findViewById(R.id.gjhNavIndicator);
+            if (icon != null) {
+                icon.setImageResource(NAV_ICONS[i]);
+                ImageViewCompat.setImageTintList(icon, ColorStateList.valueOf(active ? primary : sec));
+            }
+            if (label != null) {
+                label.setText(NAV_LABELS[i]);
+                label.setTextColor(active ? txt : sec);
+                label.setTypeface(Typeface.DEFAULT, active ? Typeface.BOLD : Typeface.NORMAL);
+            }
+            if (ind != null) ind.setVisibility(active ? View.VISIBLE : View.INVISIBLE);
+            tab.setSelected(active);
+            tab.setContentDescription(NAV_LABELS[i]);
+            final int idx = i;
+            tab.setOnClickListener(v -> {
+                if (idx == selected) return;
+                a.startActivity(new Intent(a, AdminHomeActivity.class).putExtra(EXTRA_NAV_TAB, idx)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                a.finish();
+                a.overridePendingTransition(0, 0);
+            });
+        }
+    }
+
     private void bindNav() {
         for (int i = 0; i < 4; i++) {
             View tab = findViewById(NAV_IDS[i]);
@@ -1101,7 +1149,8 @@ public class AdminHomeActivity extends AppCompatActivity {
      */
     private void onNavTap(int idx) {
         if (idx == TAB_PESANAN && queueVisible(ms)) {
-            startSafely(new Intent(this, DeliveryQueueActivity.class));
+            startSafely(new Intent(this, DeliveryQueueActivity.class).putExtra(EXTRA_AS_TAB, true));
+            overridePendingTransition(0, 0);
             return;
         }
         selectTab(idx);
