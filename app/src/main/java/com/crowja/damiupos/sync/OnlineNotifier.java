@@ -73,6 +73,7 @@ public final class OnlineNotifier {
     }
 
     public static void postNotif(Context ctx, String title, String body, int id) {
+        if (com.crowja.damiupos.db.UserDao.isOffDuty(ctx)) return;   // belum login / sudah Pulang
         ensureChannel(ctx);
         Intent open = new Intent(ctx, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);

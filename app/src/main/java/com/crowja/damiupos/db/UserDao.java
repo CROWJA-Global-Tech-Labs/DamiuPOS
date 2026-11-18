@@ -33,6 +33,19 @@ public class UserDao {
         }
     }
 
+    /**
+     * Perangkat multi-user yang belum login atau sudah Pulang → semua notifikasi/sirine harus diam.
+     * Istirahat tidak dihitung (user istirahat masih bertugas). Perangkat single-user → selalu false.
+     */
+    public static boolean isOffDuty(android.content.Context ctx) {
+        try {
+            SettingsDao s = new SettingsDao(DatabaseHelper.getInstance(ctx));
+            return s.isMultiUserEnabled() && s.getCurrentUserId() <= 0 && s.getBreakUserId() <= 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     /** Apakah user yang SEDANG login berperan Pengisian (Day-time)? Tanpa login staf → false. */
     public static boolean isCurrentUserPengisian(android.content.Context ctx) {
         User u = currentUser(ctx);

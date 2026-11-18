@@ -60,7 +60,8 @@ public class OrderAlertService extends Service {
     public static void start(Context ctx) {
         // Karyawan marketing/pengisian tidak menangani pesanan → jangan bunyikan alarm pesanan
         // sama sekali (User.receivesOperationalAlerts).
-        if (com.crowja.damiupos.db.UserDao.isCurrentUserAlertSilenced(ctx)) return;
+        if (com.crowja.damiupos.db.UserDao.isCurrentUserAlertSilenced(ctx)
+                || com.crowja.damiupos.db.UserDao.isOffDuty(ctx)) return;
         Intent i = new Intent(ctx, OrderAlertService.class).setAction(ACTION_START);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             ctx.startForegroundService(i);
@@ -72,7 +73,8 @@ public class OrderAlertService extends Service {
     public static void refresh(Context ctx) {
         // Karyawan marketing/pengisian tidak menangani pesanan → jangan mulai/ulangi alarm; pastikan
         // berhenti (mis. dibuka dari Inbox saat masih ada pesanan pending hasil sinkron web).
-        if (com.crowja.damiupos.db.UserDao.isCurrentUserAlertSilenced(ctx)) { stop(ctx); return; }
+        if (com.crowja.damiupos.db.UserDao.isCurrentUserAlertSilenced(ctx)
+                || com.crowja.damiupos.db.UserDao.isOffDuty(ctx)) { stop(ctx); return; }
         Intent i = new Intent(ctx, OrderAlertService.class).setAction(ACTION_REFRESH);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             ctx.startForegroundService(i);
@@ -122,7 +124,8 @@ public class OrderAlertService extends Service {
         // jalan, intent langsung), kalau user yang login sekarang MARKETING/PENGISIAN → jangan
         // bunyikan/tahan notifikasi pesanan. startForeground sudah dipanggil di atas (memenuhi
         // kontrak FGS) jadi aman langsung lepas & berhenti.
-        if (com.crowja.damiupos.db.UserDao.isCurrentUserAlertSilenced(this)) {
+        if (com.crowja.damiupos.db.UserDao.isCurrentUserAlertSilenced(this)
+                || com.crowja.damiupos.db.UserDao.isOffDuty(this)) {
             stopForegroundCompat();
             stopSelf();
             return START_NOT_STICKY;

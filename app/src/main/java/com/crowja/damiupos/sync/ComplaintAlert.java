@@ -49,6 +49,14 @@ public final class ComplaintAlert {
     }
 
     private static void post(Context ctx, Intent open, String title, String body, int notifId) {
+        // Belum login / sudah Pulang: tanpa notifikasi & sirine; popup tertahan tampil saat dashboard dibuka.
+        if (com.crowja.damiupos.db.UserDao.isOffDuty(ctx)) {
+            try {
+                new SettingsDao(DatabaseHelper.getInstance(ctx)).setPendingAdminMessage(title, body);
+            } catch (Throwable ignored) {
+            }
+            return;
+        }
         // Apa pun yang gagal di bagian suara/kanal, notifikasi + popup komplain WAJIB tetap tampil.
         ComplaintSirenSound.Choice picked;
         try {

@@ -464,6 +464,7 @@ public final class PickupNearbyMonitor {
 
     /** @param loud true = bunyi + getar + heads-up (peringatan pertama / ulang); false = perbarui teks saja. */
     private void postAlert(Event e, boolean loud) {
+        if (com.crowja.damiupos.db.UserDao.isOffDuty(app)) return;   // belum login / sudah Pulang
         Candidate c = e.cand;
         ensureChannels(app);
         String text = PickupNearbyLogic.alertText(c.galon, e.distanceM, c.source, c.holder);

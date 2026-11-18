@@ -209,6 +209,7 @@ public final class WaGateway {
      * diizinkan Android — berbeda dengan peluncuran dari poller background.
      */
     private static void postTapToSend(Context ctx, Intent chat, String phone, String why) {
+        if (com.crowja.damiupos.db.UserDao.isOffDuty(ctx)) return;   // belum login / sudah Pulang
         OnlineNotifier.ensureChannel(ctx);   // Android O+: channel wajib ada dulu
         // Satu notifikasi per NOMOR tujuan: id tetap akan membuat pesan gagal kedua menimpa yang
         // pertama, menghapus satu-satunya jalan pemulihan pesan itu (dan PendingIntent-nya ikut
