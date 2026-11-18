@@ -17,7 +17,7 @@
             android:background="?attr/colorPrimary"
             android:titleTextColor="@color/white"
             app:navigationIcon="@drawable/ic_arrow_back"
-            app:title="Antrian Delivery" />
+            app:title="Pesanan" />
     </com.google.android.material.appbar.AppBarLayout>
 
     <FrameLayout
@@ -896,5 +896,42 @@
             app:iconGravity="textStart"
             app:iconPadding="4dp" />
     </LinearLayout>
+    </LinearLayout>
+    <!-- Bar bawah Beranda/Pesanan/Chat/Akun: tampil saat layar ini dibuka sebagai tab Pesanan beranda admin. -->
+    <LinearLayout
+        android:id="@+id/gjhBottomNav"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="@color/gj_surface"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <include
+            android:id="@+id/gjNavBeranda"
+            layout="@layout/gjh_nav_tab"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_weight="1" />
+
+        <include
+            android:id="@+id/gjNavPesanan"
+            layout="@layout/gjh_nav_tab"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_weight="1" />
+
+        <include
+            android:id="@+id/gjNavChat"
+            layout="@layout/gjh_nav_tab"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_weight="1" />
+
+        <include
+            android:id="@+id/gjNavAkun"
+            layout="@layout/gjh_nav_tab"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_weight="1" />
     </LinearLayout>
 </LinearLayout>
