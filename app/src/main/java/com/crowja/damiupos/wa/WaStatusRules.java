@@ -118,8 +118,31 @@ public final class WaStatusRules {
         if (expires != null && !expires.isEmpty()) parts.add(expires);
         if (postName != null && !postName.isEmpty()) parts.add("“" + postName + "”");
         else if ("phone".equals(source)) parts.add("diposting dari HP");
-        if (audience > 0) parts.add(audience + " penonton");
+        if (audience > 0) parts.add("dikirim ke " + audience + " kontak");
         return String.join(" · ", parts);
+    }
+
+    /** Tombol penonton di penampil reels: "👁 12 penonton" (null = Bridge belum mencatat → "👁 Penonton"). */
+    public static String viewsButton(@Nullable Integer views) {
+        return views == null ? "👁 Penonton" : "👁 " + views + " penonton";
+    }
+
+    /** Judul daftar penonton. */
+    public static String viewersTitle(int count, int customers) {
+        return "👁 " + count + " penonton · " + customers + " pelanggan";
+    }
+
+    /** Satu baris daftar penonton: "Bu Sari ✓ pelanggan\n0812… · 18 Nov 09:01". */
+    public static String viewerLine(String name, @Nullable String phone, @Nullable String at, boolean customer,
+                                    @Nullable String waName) {
+        StringBuilder b = new StringBuilder(name);
+        if (customer) b.append("  ✓ pelanggan");
+        List<String> sub = new ArrayList<>();
+        if (phone != null && !phone.isEmpty()) sub.add(phone);
+        if (customer && waName != null && !waName.isEmpty() && !waName.equals(name)) sub.add("WA: " + waName);
+        if (at != null && !at.isEmpty()) sub.add(at);
+        if (!sub.isEmpty()) b.append("\n").append(String.join(" · ", sub));
+        return b.toString();
     }
 
     /** Konfirmasi tarik Status dari WhatsApp. */

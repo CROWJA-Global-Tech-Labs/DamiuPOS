@@ -210,7 +210,8 @@ public class WaStatusLiveActivity extends AppCompatActivity {
         }
         String foot = WaStatusUi.str(s, "posted_label");
         if (foot != null) {
-            TextView t = WaStatusUi.text(this, foot + ("phone".equals(s.optString("source")) ? " · HP" : ""), 10, Color.WHITE, false);
+            TextView t = WaStatusUi.text(this, foot + ("phone".equals(s.optString("source")) ? " · HP" : "")
+                    + (s.isNull("views") ? "" : "\n👁 " + s.optInt("views")), 10, Color.WHITE, false);
             t.setBackgroundColor(0x99000000);
             t.setPadding(WaStatusUi.dp(this, 4), WaStatusUi.dp(this, 2), WaStatusUi.dp(this, 4), WaStatusUi.dp(this, 2));
             f.addView(t, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
@@ -234,7 +235,8 @@ public class WaStatusLiveActivity extends AppCompatActivity {
         final FrameLayout stage;
         final TextView who, meta, caption, count;
         final LinearLayout bars;
-        final MaterialButton del;
+        final MaterialButton del, views;
+        @Nullable VideoView video;
         final Runnable next = () -> go(1);
 
         Reel(JSONObject account, List<JSONObject> items, int start) {
@@ -298,6 +300,14 @@ public class WaStatusLiveActivity extends AppCompatActivity {
             actions.setGravity(Gravity.CENTER_VERTICAL);
             count = WaStatusUi.text(WaStatusLiveActivity.this, "", 12, 0xFFB0BEC5, false);
             actions.addView(count, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            views = new MaterialButton(WaStatusLiveActivity.this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
+            views.setAllCaps(false);
+            views.setTextColor(Color.WHITE);
+            views.setStrokeColor(android.content.res.ColorStateList.valueOf(0x99FFFFFF));
+            views.setOnClickListener(v -> showViewers());
+            LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            vlp.rightMargin = WaStatusUi.dp(WaStatusLiveActivity.this, 8);
+            actions.addView(views, vlp);
             del = new MaterialButton(WaStatusLiveActivity.this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle);
             del.setText("🗑 Hapus dari WhatsApp");
             del.setAllCaps(false);
@@ -348,6 +358,8 @@ public class WaStatusLiveActivity extends AppCompatActivity {
             meta.setText(WaStatusRules.liveMeta(WaStatusUi.str(s, "posted_label"), WaStatusUi.str(s, "expires_label"),
                     WaStatusUi.str(s, "post_name"), s.optString("source"), s.isNull("audience") ? 0 : s.optInt("audience")));
             count.setText((idx + 1) + " / " + items.size());
+            views.setText(WaStatusRules.viewsButton(s.isNull("views") ? null : s.optInt("views")));
+            video = null;
             String type = s.optString("type");
             caption.setText("text".equals(type) ? "" : s.optString("text"));
             FrameLayout.LayoutParams full = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER);
@@ -362,6 +374,7 @@ public class WaStatusLiveActivity extends AppCompatActivity {
                 main.postDelayed(next, SLIDE_MS);
             } else if ("video".equals(type) && media != null) {
                 VideoView v = new VideoView(WaStatusLiveActivity.this);
+                video = v;
                 v.setVideoURI(Uri.parse(media));
                 v.setOnPreparedListener(mp -> v.start());
                 v.setOnCompletionListener(mp -> go(1));
@@ -379,6 +392,71 @@ public class WaStatusLiveActivity extends AppCompatActivity {
                 stage.addView(iv, full);
                 main.postDelayed(next, SLIDE_MS);
             }
+        }
+
+        /** 👁 Penonton: siapa saja yang sudah melihat Status ini, dicocokkan ke pelanggan. Status dijeda selama dibuka. */
+        void showViewers() {
+            main.removeCallbacks(next);
+            if (video != null) video.pause();
+            JSONObject s = items.get(idx);
+            AlertDialog dlg = new AlertDialog.Builder(WaStatusLiveActivity.this)
+                    .setTitle("👁 Penonton")
+                    .setMessage("Memuat…")
+                    .setPositiveButton("Tutup", null)
+                    .setOnDismissListener(x -> resume())
+                    .show();
+            new Thread(() -> {
+                JSONObject r = null;
+                String err = null;
+                try {
+                    java.util.Map<String, String> q = new java.util.HashMap<>();
+                    q.put("account", account.optString("account"));
+                    q.put("id", s.optString("id"));
+                    r = WaAdmin.api(WaStatusLiveActivity.this).adminWaGet("status/live/viewers", q, staffUuid);
+                } catch (Exception e) {
+                    err = WaAdmin.errorMessage(e);
+                }
+                final JSONObject fr = r;
+                final String fe = err;
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed() || !dlg.isShowing()) return;
+                    if (fr == null || !fr.optBoolean("ok")) {
+                        dlg.setMessage(fr != null ? WaAdmin.message(fr, "Gagal memuat penonton.") : fe);
+                        return;
+                    }
+                    JSONArray vs = fr.optJSONArray("viewers");
+                    int n = vs != null ? vs.length() : 0;
+                    dlg.setTitle(WaStatusRules.viewersTitle(fr.optInt("count"), fr.optInt("customers")));
+                    if (n == 0) {
+                        dlg.setMessage("Belum ada yang melihat Status ini (dihitung sejak Bridge mencatat penonton).");
+                        return;
+                    }
+                    dlg.dismiss();
+                    String[] lines = new String[n];
+                    for (int i = 0; i < n; i++) {
+                        JSONObject v = vs.optJSONObject(i);
+                        if (v == null) { lines[i] = ""; continue; }
+                        lines[i] = WaStatusRules.viewerLine(v.optString("name"), WaStatusUi.str(v, "phone"),
+                                WaStatusUi.str(v, "at_label"), !v.isNull("customer_id"), WaStatusUi.str(v, "wa_name"));
+                    }
+                    main.removeCallbacks(next);
+                    if (video != null) video.pause();
+                    new AlertDialog.Builder(WaStatusLiveActivity.this)
+                            .setTitle(WaStatusRules.viewersTitle(fr.optInt("count"), fr.optInt("customers")))
+                            .setItems(lines, null)
+                            .setPositiveButton("Tutup", null)
+                            .setOnDismissListener(x -> resume())
+                            .show();
+                });
+            }).start();
+        }
+
+        /** Lanjutkan Status setelah dialog penonton ditutup. */
+        void resume() {
+            if (!d.isShowing()) return;
+            main.removeCallbacks(next);
+            if (video != null) video.start();
+            else main.postDelayed(next, SLIDE_MS);
         }
 
         void askDelete() {
