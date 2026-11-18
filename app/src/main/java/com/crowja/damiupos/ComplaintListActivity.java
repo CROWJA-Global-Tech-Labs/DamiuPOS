@@ -1283,6 +1283,44 @@ public class ComplaintListActivity extends AppCompatActivity {
      * 🔍 Detail masalah/komplain: popup ringkasan kesimpulan (ditulis Agen AI; bila belum ada, pesan masuk terakhir
      * pelanggan) + catatan masalah. Tombol "Detail Transaksi" membuka detail order seperti dulu.
      */
+    /** Pecah ringkasan jadi poin per kalimat/baris. */
+    static String toBullets(String s) {
+        StringBuilder sb = new StringBuilder();
+        for (String line : s.trim().split("\\r?\\n|(?<=[.!?])\\s+(?=[A-Z0-9])")) {
+            String p = line.trim().replaceFirst("^([-•*]|\\d+[.)])\\s*", "");
+            if (!p.isEmpty()) sb.append("• ").append(p).append("\n");
+        }
+        return sb.toString().trim();
+    }
+
+    /** Saran tindakan untuk staf berdasarkan kata kunci di ringkasan/catatan masalah. */
+    static String staffSuggestions(String src) {
+        String s = src.toLowerCase(java.util.Locale.ROOT);
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        if (s.matches("(?s).*(telat|terlambat|lama|belum (datang|sampai|diantar)|kapan).*"))
+            out.add("Cek posisi kurir di Antrian Antar, kabari pelanggan perkiraan waktu tiba.");
+        if (s.matches("(?s).*(bocor|rusak|pecah|retak|tutup|segel).*"))
+            out.add("Tawarkan tukar galon/botol baru tanpa biaya dan periksa stok galon sebelum diantar.");
+        if (s.matches("(?s).*(bau|rasa|keruh|kotor|lumut|jentik|warna).*"))
+            out.add("Periksa filter/UV dan kebersihan galon, ganti isi ulang gratis, catat untuk perawatan mesin.");
+        if (s.matches("(?s).*(kurang|salah|tidak sesuai|keliru|jumlah).*"))
+            out.add("Cocokkan item pesanan dengan nota, kirim kekurangan atau koreksi secepatnya.");
+        if (s.matches("(?s).*(harga|mahal|bayar|tagih|kembalian|uang|transfer|ongkir).*"))
+            out.add("Cek ulang nominal di Detail Transaksi; jika ada selisih, koreksi atau kembalikan ke pelanggan.");
+        if (s.matches("(?s).*(kasar|tidak sopan|judes|marah|kecewa|sikap).*"))
+            out.add("Minta maaf dengan sopan, dengarkan keluhan, laporkan ke pemilik bila menyangkut sikap staf.");
+        if (s.matches("(?s).*(batal|cancel|refund).*"))
+            out.add("Konfirmasi pembatalan ke pelanggan dan proses pengembalian dana bila sudah bayar.");
+        if (s.matches("(?s).*(alamat|lokasi|nyasar|tidak ketemu).*"))
+            out.add("Konfirmasi ulang alamat/titik lokasi via WA dan perbarui data pelanggan.");
+        if (out.isEmpty()) out.add("Hubungi pelanggan via WA untuk klarifikasi, lalu tandai selesai setelah tertangani.");
+        out.add("Tutup dengan konfirmasi ke pelanggan bahwa masalah sudah diselesaikan.");
+        StringBuilder sb = new StringBuilder("\n\n💡 Saran untuk staf:\n");
+        int i = 1;
+        for (String o : out) sb.append(i++).append(". ").append(o).append("\n");
+        return sb.toString().trim().isEmpty() ? "" : sb.toString().replaceAll("\\n$", "");
+    }
+
     private void showIssueDetail(final Transaction t) {
         IssueReminder.markSeen(this, t);
         final StringBuilder head = new StringBuilder();
@@ -1307,7 +1345,7 @@ public class ComplaintListActivity extends AppCompatActivity {
                 String sum = r.optString("summary", "");
                 if ("null".equals(sum)) sum = "";
                 if (!sum.trim().isEmpty()) {
-                    text = "🤖 Ringkasan Agen AI:\n" + sum.trim();
+                    text = "🤖 Ringkasan Agen AI:\n" + toBullets(sum) + staffSuggestions(sum + " " + headText);
                 } else {
                     StringBuilder sb = new StringBuilder();
                     org.json.JSONArray ms = r.optJSONArray("messages");
