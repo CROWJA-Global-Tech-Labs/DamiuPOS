@@ -177,6 +177,7 @@ public class AdminHomeActivity extends AppCompatActivity {
         public void run() {
             refreshSales();
             refreshWaUnread();
+            if (ai != null) ai.refresh();
             handler.postDelayed(this, TICK_MS);
         }
     };

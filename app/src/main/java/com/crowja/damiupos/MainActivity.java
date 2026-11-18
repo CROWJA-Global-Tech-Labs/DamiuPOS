@@ -75,6 +75,7 @@ public class MainActivity extends AppCompatActivity {
         @Override public void run() {
             refreshSalesCards();
             refreshWaChatBadge();
+            refreshAiStatus();
             salesCardsHandler.postDelayed(this, SALES_CARDS_REFRESH_MS);
         }
     };
