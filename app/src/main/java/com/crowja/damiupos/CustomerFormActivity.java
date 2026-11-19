@@ -72,6 +72,19 @@ public class CustomerFormActivity extends AppCompatActivity {
     public static final String QUICK_PHOTO_COORD = "photo_coord";
     public static final String QUICK_LOCATION = "location";
     public static final String QUICK_PHOTO = "photo";
+    /** Lokasi tujuan order (nama + koordinat) — quick capture menulis ke lokasi ITU, bukan selalu lokasi
+     *  utama. Tanpa ini, update foto/lokasi saat mengantar ke lokasi kedua menimpa lokasi pertama. */
+    public static final String EXTRA_QUICK_DEST_NAME = "quick_dest_name";
+    public static final String EXTRA_QUICK_DEST_LAT = "quick_dest_lat";
+    public static final String EXTRA_QUICK_DEST_LNG = "quick_dest_lng";
+
+    /** Pasang lokasi tujuan order ke intent quick capture. */
+    public static Intent withQuickDest(Intent i, com.crowja.damiupos.model.Transaction t) {
+        if (t == null) return i;
+        return i.putExtra(EXTRA_QUICK_DEST_NAME, t.getDeliveryDestName())
+                .putExtra(EXTRA_QUICK_DEST_LAT, t.getDeliveryDestLat())
+                .putExtra(EXTRA_QUICK_DEST_LNG, t.getDeliveryDestLng());
+    }
 
     /** Pilihan Update: foto saja, lokasi saja, atau keduanya; onPick menerima salah satu QUICK_*. */
     static void askQuickCapture(android.app.Activity act, java.util.function.Consumer<String> onPick) {
@@ -83,6 +96,8 @@ public class CustomerFormActivity extends AppCompatActivity {
     }
 
     private boolean quickPhotoOnly;
+    /** Baris lokasi sasaran quick capture (lokasi tujuan order); null = lokasi utama. */
+    private LocationRow quickTargetRow;
     public static final String EXTRA_PREFILL_PHONE = "prefill_phone";
 
     /** Id pelanggan yang baru di-insert, dipakai untuk setResult */
@@ -397,6 +412,18 @@ public class CustomerFormActivity extends AppCompatActivity {
         if (editId != -1 && savedInstanceState == null && quick != null) {
             findViewById(R.id.btnSimpan).post(() -> {
                 if (isFinishing() || isDestroyed()) return;
+                LocationRow target = resolveQuickTarget();
+                if (target != null && !locationRows.isEmpty() && target != locationRows.get(0)) {
+                    // Lokasi tujuan BUKAN lokasi utama: foto masuk koleksi lokasi itu, koordinat ke baris itu.
+                    quickTargetRow = target;
+                    String nm = target.etName.getText() != null ? target.etName.getText().toString().trim() : "";
+                    if (QUICK_LOCATION.equals(quick)) getLocation(target);
+                    else if (QUICK_PHOTO.equals(quick)) addLocationPhotoClicked(target);
+                    else takePhotoAndCoordinate();
+                    Toast.makeText(this, "Update untuk lokasi \"" + nm + "\". Setelah terisi, ketuk SIMPAN.",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
                 if (QUICK_PHOTO.equals(quick)) {
                     quickPhotoOnly = true;
                     takePhotoAndCoordinate();
@@ -1303,6 +1330,29 @@ public class CustomerFormActivity extends AppCompatActivity {
         if (editId == -1 && !locationRows.isEmpty()) renderLocationPhotos(locationRows.get(0));
     }
 
+    /** Baris lokasi yang cocok dengan tujuan order: nama sama, lalu koordinat terdekat (≤150 m). */
+    private LocationRow resolveQuickTarget() {
+        if (locationRows.isEmpty()) return null;
+        String name = getIntent().getStringExtra(EXTRA_QUICK_DEST_NAME);
+        if (name != null && !name.trim().isEmpty()) {
+            for (LocationRow r : locationRows) {
+                String n = r.etName.getText() != null ? r.etName.getText().toString().trim() : "";
+                if (n.equalsIgnoreCase(name.trim())) return r;
+            }
+        }
+        double lat = getIntent().getDoubleExtra(EXTRA_QUICK_DEST_LAT, 0), lng = getIntent().getDoubleExtra(EXTRA_QUICK_DEST_LNG, 0);
+        if (lat == 0 && lng == 0) return null;
+        LocationRow best = null;
+        float bestM = 150f;
+        for (LocationRow r : locationRows) {
+            if (r.lat == 0 && r.lng == 0) continue;
+            float[] d = new float[1];
+            android.location.Location.distanceBetween(lat, lng, r.lat, r.lng, d);
+            if (d[0] <= bestM) { bestM = d[0]; best = r; }
+        }
+        return best;
+    }
+
     private void takePhotoAndCoordinate() {
         startActivityForResult(new Intent(this, PhotoCoordinateActivity.class), REQUEST_PHOTO_COORD);
     }
@@ -1405,6 +1455,23 @@ public class CustomerFormActivity extends AppCompatActivity {
                 updateKoordinatDisplay(pendingMapRow);
             }
             pendingMapRow = null;
+        } else if (requestCode == REQUEST_PHOTO_COORD && resultCode == RESULT_OK && data != null
+                && quickTargetRow != null && locationRows.contains(quickTargetRow)) {
+            // Quick capture untuk lokasi NON-utama: foto ke koleksi lokasi itu, koordinat ke baris itu.
+            LocationRow row = quickTargetRow;
+            String path = data.getStringExtra(PhotoCoordinateActivity.EXTRA_PHOTO_PATH);
+            if (path != null && !path.isEmpty()) {
+                if (row.photos.size() < MAX_LOCATION_PHOTOS) uploadLocationPhoto(row, path);
+                else Toast.makeText(this, "Foto lokasi sudah " + MAX_LOCATION_PHOTOS + " — hapus satu dulu", Toast.LENGTH_LONG).show();
+            }
+            double lat = data.getDoubleExtra(PhotoCoordinateActivity.EXTRA_LAT, 0);
+            double lng = data.getDoubleExtra(PhotoCoordinateActivity.EXTRA_LNG, 0);
+            if (lat != 0 || lng != 0) {
+                row.lat = lat;
+                row.lng = lng;
+                updateKoordinatDisplay(row);
+            }
+            Toast.makeText(this, "Foto & koordinat lokasi tujuan terisi", Toast.LENGTH_SHORT).show();
         } else if (requestCode == REQUEST_PHOTO_COORD && resultCode == RESULT_OK && data != null) {
             // Workflow gabungan: set foto rumah + koordinat lokasi UTAMA (baris pertama) sekaligus.
             String path = data.getStringExtra(PhotoCoordinateActivity.EXTRA_PHOTO_PATH);

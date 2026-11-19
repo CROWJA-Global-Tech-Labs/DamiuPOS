@@ -7385,7 +7385,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          Toast.makeText(this, "Order ini tanpa pelanggan.", Toast.LENGTH_SHORT).show();
          return;
       }
-      this.startActivity(new Intent(this, CustomerFormActivity.class).putExtra("customer_id", c.getId())
+      this.startActivity(CustomerFormActivity.withQuickDest(new Intent(this, CustomerFormActivity.class), t).putExtra("customer_id", c.getId())
             .putExtra(CustomerFormActivity.EXTRA_QUICK_CAPTURE, quick));
    }
 
@@ -9336,7 +9336,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       mk.apply(noPhoto ? "📷 Foto rumah + lokasi sekarang" : "📍 Tandai lokasi sekarang", ThemeColors.primary(this)).setOnClickListener((v) -> {
          if (holder[0] != null) holder[0].dismiss();
          this.dataGateTrxId = t.getId();
-         this.startActivity(new Intent(this, CustomerFormActivity.class).putExtra("customer_id", c.getId())
+         this.startActivity(CustomerFormActivity.withQuickDest(new Intent(this, CustomerFormActivity.class), t).putExtra("customer_id", c.getId())
                .putExtra(CustomerFormActivity.EXTRA_QUICK_CAPTURE, quick));
       });
       if ((new SettingsDao(DatabaseHelper.getInstance(this))).isRevokeCreditIncompleteEnabled()) {
