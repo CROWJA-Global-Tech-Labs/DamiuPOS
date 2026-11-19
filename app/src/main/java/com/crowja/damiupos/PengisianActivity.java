@@ -516,7 +516,8 @@ public class PengisianActivity extends AppCompatActivity {
         heroBox.setBackground(rounded(heroColor, 16));
         tvHeroTitle.setText(FillText.heroTitle(plan));
         tvHeroValue.setText(FillText.heroValue(plan));
-        tvHeroSub.setText(FillText.heroSub(plan));
+        String place = FillText.placementLine(plan);
+        tvHeroSub.setText(place == null ? FillText.heroSub(plan) : FillText.heroSub(plan) + "\n" + place);
 
         String warn = FillText.unmappedWarning(plan);
         if (warn != null) {

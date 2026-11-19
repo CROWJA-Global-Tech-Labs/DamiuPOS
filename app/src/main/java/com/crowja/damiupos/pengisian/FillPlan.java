@@ -85,6 +85,19 @@ public final class FillPlan {
     public int unmappedPcs, unmappedOrders;
     public List<Recent> recent = new ArrayList<>();
 
+    /** Tempat menaruh galon hasil isi (urut prioritas) — dasar instruksi "Taruh: Kios 100 · Panther 50". */
+    public static final class Storage {
+        public final String name;
+        public final int capacity;
+
+        public Storage(String name, int capacity) {
+            this.name = name;
+            this.capacity = capacity;
+        }
+    }
+
+    public List<Storage> storages = new ArrayList<>();
+
     /** Salinan dalam (produk & recent disalin) — bahan {@link FillOverlay}. */
     public FillPlan copy() {
         FillPlan c = new FillPlan();
@@ -99,6 +112,7 @@ public final class FillPlan {
         c.inTransitPcs = inTransitPcs; c.inTransitOrders = inTransitOrders;
         c.unmappedPcs = unmappedPcs; c.unmappedOrders = unmappedOrders;
         for (Recent r : recent) c.recent.add(r.copy());
+        c.storages = new ArrayList<>(storages);
         return c;
     }
 
@@ -168,6 +182,17 @@ public final class FillPlan {
         if (um != null) {
             p.unmappedPcs = num(um, "pcs", 0);
             p.unmappedOrders = num(um, "orders", 0);
+        }
+
+        JsonObject pl = obj(o, "placement");
+        JsonArray sts = pl != null ? arr(pl, "storages") : null;
+        if (sts != null) {
+            for (JsonElement e : sts) {
+                if (!e.isJsonObject()) continue;
+                JsonObject s = e.getAsJsonObject();
+                String name = str(s, "name", "");
+                if (!name.isEmpty()) p.storages.add(new Storage(name, num(s, "capacity", 0)));
+            }
         }
 
         JsonArray rec = arr(o, "recent");
