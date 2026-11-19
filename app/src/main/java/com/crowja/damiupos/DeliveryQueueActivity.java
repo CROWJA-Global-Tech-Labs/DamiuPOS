@@ -4236,16 +4236,25 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * dikirim ke server (POST /api/transactions/{uuid}/items) yang menghitung harga & total lalu menyinkronkannya.
     */
    private void showEditItemsDialog(String uuid, String custName, Map<String, Integer> current) {
+      showEditItemsDialog(this, uuid, custName, current, () -> {
+         this.loadOtherDevices();
+         this.loadData();
+      });
+   }
+
+   /** Versi statis — dipakai juga Detail Transaksi di Detail Pelanggan (pesanan yang tak ada di HP ini). */
+   static void showEditItemsDialog(android.app.Activity act, String uuid, String custName, Map<String, Integer> current,
+         Runnable onSaved) {
       if (uuid == null || uuid.isEmpty()) {
-         Toast.makeText(this, "Pesanan belum tersinkron — coba lagi sebentar.", Toast.LENGTH_SHORT).show();
+         Toast.makeText(act, "Pesanan belum tersinkron — coba lagi sebentar.", Toast.LENGTH_SHORT).show();
          return;
       }
-      List<Product> products = new ProductDao(DatabaseHelper.getInstance(this)).getAll();
-      int pad = this.dp(20f);
-      LinearLayout box = new LinearLayout(this);
+      List<Product> products = new ProductDao(DatabaseHelper.getInstance(act)).getAll();
+      int pad = dp(act, 20f);
+      LinearLayout box = new LinearLayout(act);
       box.setOrientation(LinearLayout.VERTICAL);
-      box.setPadding(pad, this.dp(8f), pad, 0);
-      TextView hint = new TextView(this);
+      box.setPadding(pad, dp(act, 8f), pad, 0);
+      TextView hint = new TextView(act);
       hint.setText("Jumlah galon per produk (0 = hapus). Harga & total dihitung server sesuai harga pelanggan/lokasi.");
       hint.setTextSize(12f);
       box.addView(hint);
@@ -4255,14 +4264,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          String pu = pr.getUuid();
          if (pu == null || pu.isEmpty() || !seen.add(pu)) continue;
          String slug = pr.getSlug() != null && !pr.getSlug().trim().isEmpty() ? pr.getSlug().trim() : safe(pr.getName());
-         LinearLayout row = new LinearLayout(this);
+         LinearLayout row = new LinearLayout(act);
          row.setOrientation(LinearLayout.HORIZONTAL);
          row.setGravity(android.view.Gravity.CENTER_VERTICAL);
-         TextView lbl = new TextView(this);
+         TextView lbl = new TextView(act);
          lbl.setText(slug + " · " + safe(pr.getName()));
          lbl.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1f));
          row.addView(lbl);
-         EditText et = new EditText(this);
+         EditText et = new EditText(act);
          et.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
          et.setMinEms(3);
          et.setSelectAllOnFocus(true);
@@ -4272,9 +4281,9 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          box.addView(row);
          inputs.put(pu, et);
       }
-      ScrollView sv = new ScrollView(this);
+      ScrollView sv = new ScrollView(act);
       sv.addView(box);
-      AlertDialog dlg = (new AlertDialog.Builder(this)).setTitle("✏️ Ubah Item — " + custName).setView(sv)
+      AlertDialog dlg = (new AlertDialog.Builder(act)).setTitle("✏️ Ubah Item — " + custName).setView(sv)
             .setPositiveButton("Simpan", (DialogInterface.OnClickListener) null)
             .setNegativeButton("Batal", (DialogInterface.OnClickListener) null).create();
       dlg.setOnShowListener(di -> dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
@@ -4286,15 +4295,15 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                if (n > 0) items.put(new JSONObject().put("product_uuid", e.getKey()).put("qty", n));
             }
          } catch (Exception ex) {
-            Toast.makeText(this, "Isian tidak valid.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(act, "Isian tidak valid.", Toast.LENGTH_SHORT).show();
             return;
          }
          if (items.length() == 0) {
-            Toast.makeText(this, "Minimal satu produk.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(act, "Minimal satu produk.", Toast.LENGTH_SHORT).show();
             return;
          }
          dlg.dismiss();
-         SyncSettings cfg = this.syncCfg();
+         SyncSettings cfg = new SyncSettings(new SettingsDao(DatabaseHelper.getInstance(act)));
          new Thread(() -> {
             String m;
             boolean ok = false;
@@ -4309,18 +4318,21 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             }
             final String fm = m;
             final boolean fok = ok;
-            this.runOnUiThread(() -> {
-               if (this.isFinishing() || this.isDestroyed()) return;
-               Toast.makeText(this, fm, Toast.LENGTH_LONG).show();
+            act.runOnUiThread(() -> {
+               if (act.isFinishing() || act.isDestroyed()) return;
+               Toast.makeText(act, fm, Toast.LENGTH_LONG).show();
                if (fok) {
-                  SyncScheduler.syncNow(this.getApplicationContext());
-                  this.loadOtherDevices();
-                  this.loadData();
+                  SyncScheduler.syncNow(act.getApplicationContext());
+                  if (onSaved != null) onSaved.run();
                }
             });
          }).start();
       }));
       dlg.show();
+   }
+
+   private static int dp(android.content.Context c, float v) {
+      return Math.round(v * c.getResources().getDisplayMetrics().density);
    }
 
    /** Pemegang order di baris tab Perangkat Lain (routed_uuid, jatuh ke device_group_uuid). */
