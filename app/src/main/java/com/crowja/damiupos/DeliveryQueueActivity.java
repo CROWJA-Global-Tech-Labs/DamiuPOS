@@ -12343,6 +12343,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
       boolean viewer = this.currentUserIsViewer();
       boolean offline = source == TERTUNDA_SRC_OFFLINE;
+      list.addView(this.tertundaTotalsRow(rows));
+
       // Pilih-banyak: centang per kartu + "Pilih semua" → ▶ Lanjutkan (jatuh tempo hari ini / semua).
       java.util.Set<String> listed = new java.util.HashSet<>();
       for (TertundaRows.Merged<Transaction> m : rows) listed.add(m.uuid());
@@ -12635,6 +12637,60 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }).start();
    }
 
+   private static JSONObject tertundaJson(TertundaRows.Row s) {
+      try {
+         return s.json != null && !s.json.isEmpty() ? new JSONObject(s.json) : new JSONObject();
+      } catch (Exception e) {
+         return new JSONObject();
+      }
+   }
+
+   /** Baris kapsul produk [label, jenis, qty, warna] satu kartu tertunda — data server bila ada, else lokal. */
+   private List<Object[]> tertundaTypedRows(TertundaRows.Merged<Transaction> m) {
+      try {
+         if (m.server != null) return this.typedRows(tertundaJson(m.server));
+         if (m.local != null) return this.typedRows(m.local);
+      } catch (Exception ignored) {
+      }
+      return new ArrayList<>();
+   }
+
+   /** Ringkasan di atas daftar: "Total N galon" + total per produk (slug ×qty, warna produk). */
+   private View tertundaTotalsRow(List<TertundaRows.Merged<Transaction>> rows) {
+      LinkedHashMap<String, int[]> total = new LinkedHashMap<>();
+      int galon = 0;
+      for (TertundaRows.Merged<Transaction> m : rows) {
+         galon += m.server != null ? m.server.galon : (m.local != null ? m.local.getJumlahGalon() : 0);
+         for (Object[] r : this.tertundaTypedRows(m)) {
+            if ((Integer) r[2] <= 0) continue;
+            addTripChip(total, typedKey((String) r[0], (String) r[1]), (Integer) r[2], (Integer) r[3]);
+         }
+      }
+      LinearLayout box = new LinearLayout(this);
+      box.setOrientation(LinearLayout.VERTICAL);
+      box.setBackgroundColor(-1);
+      box.setPadding(this.dp(12f), this.dp(8f), this.dp(12f), this.dp(8f));
+      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+      lp.bottomMargin = this.dp(10f);
+      box.setLayoutParams(lp);
+      TextView tv = new TextView(this);
+      tv.setText("🧮 Total " + galon + " galon · " + rows.size() + " pesanan");
+      tv.setTextSize(15f);
+      tv.setTypeface(tv.getTypeface(), android.graphics.Typeface.BOLD);
+      box.addView(tv);
+      if (!total.isEmpty()) {
+         LinearLayout chips = new LinearLayout(this);
+         chips.setOrientation(LinearLayout.HORIZONTAL);
+         chips.setPadding(0, this.dp(4f), 0, 0);
+         for (Map.Entry<String, int[]> e : total.entrySet()) chips.addView(this.makeDetailBadge(e.getKey() + " ×" + e.getValue()[0], e.getValue()[1]));
+         android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+         hs.setHorizontalScrollBarEnabled(false);
+         hs.addView(chips);
+         box.addView(hs);
+      }
+      return box;
+   }
+
    private TextView tertundaBanner(String text, boolean warn, Runnable onTap) {
       TextView tv = new TextView(this);
       tv.setText(text);
@@ -12679,6 +12735,20 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       tvMeta.setTextSize(13f);
       tvMeta.setTextColor(-10395295);
       card.addView(tvMeta);
+
+      // Kapsul produk per slug (warna produk), sama dengan kartu Antrian Saya.
+      List<Object[]> chipRows = this.tertundaTypedRows(m);
+      if (!chipRows.isEmpty()) {
+         LinearLayout chips = new LinearLayout(this);
+         chips.setOrientation(LinearLayout.HORIZONTAL);
+         chips.setPadding(0, this.dp(4f), 0, this.dp(2f));
+         boolean assumed = s != null ? galonAssumed(strJson(tertundaJson(s), "galon_type_source")) : galonAssumed(t.getGalonTypeSource());
+         for (Object[] r : chipRows) chips.addView(this.makeDetailBadge(typedChipText(r, assumed), (Integer) r[3]));
+         android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(this);
+         hs.setHorizontalScrollBarEnabled(false);
+         hs.addView(chips);
+         card.addView(hs);
+      }
 
       // 📱 Pemegang order — kartu harus bisa bilang order ini milik HP lain (dulu tak ada sama sekali).
       // Pesanan Terbuka yang dijeda / order web tanpa rute diberi label sendiri, bukan nama HP asal.
