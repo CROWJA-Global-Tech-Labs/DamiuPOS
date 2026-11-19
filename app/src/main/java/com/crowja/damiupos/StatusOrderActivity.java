@@ -23,6 +23,7 @@ import com.crowja.damiupos.db.DatabaseHelper;
 import com.crowja.damiupos.db.SettingsDao;
 import com.crowja.damiupos.db.UserDao;
 import com.crowja.damiupos.model.User;
+import com.crowja.damiupos.sync.LocationReporter;
 import com.crowja.damiupos.sync.SyncApi;
 import com.crowja.damiupos.sync.SyncSettings;
 
