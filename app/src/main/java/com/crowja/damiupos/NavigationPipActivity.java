@@ -1842,7 +1842,7 @@ TextView done = mediaChip("✅ Selesai", 0xFF15803D);
         }
         leaving = true;   // onResume menyalakan lagi auto-melayang
         disableAutoEnter();
-        startActivity(new Intent(this, CustomerFormActivity.class).putExtra("customer_id", a.getCustomerId())
+        startActivity(CustomerFormActivity.withQuickDest(new Intent(this, CustomerFormActivity.class), a).putExtra("customer_id", a.getCustomerId())
                 .putExtra(CustomerFormActivity.EXTRA_QUICK_CAPTURE, mode));
     }
 
