@@ -1236,14 +1236,15 @@ public class ComplaintListActivity extends AppCompatActivity {
     private void chooseChat(final Transaction t) {
         IssueReminder.markSeen(this, t);
         // Baris pilihan: "Chat WA" memakai ikon resmi WhatsApp.
-        final String[] labels = {"Chat Pesanan", "Chat WA"};
+        // 0 = chat yang mengandung komplain saja, 1 = chat pesanan real-time (bisa dibalas), 2 = WhatsApp.
+        final String[] labels = {"Chat Komplain", "Chat Pesanan", "Chat WA"};
         android.widget.ArrayAdapter<String> ad = new android.widget.ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, labels) {
             @Override
             public View getView(int position, View convertView, android.view.ViewGroup parent) {
                 TextView tv = (TextView) super.getView(position, convertView, parent);
                 tv.setTextSize(16f);
                 tv.setCompoundDrawablePadding(dp(12));
-                if (position == 1) {
+                if (position == 2) {
                     android.graphics.drawable.Drawable ic = androidx.core.content.ContextCompat.getDrawable(ComplaintListActivity.this, R.drawable.ic_whatsapp);
                     if (ic != null) {
                         ic = ic.mutate();
@@ -1253,7 +1254,7 @@ public class ComplaintListActivity extends AppCompatActivity {
                     tv.setText("Chat WA");
                 } else {
                     tv.setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0);
-                    tv.setText("💬 Chat Pesanan");
+                    tv.setText(position == 0 ? "😠 Chat Komplain (pesan berisi komplain)" : "💬 Chat Pesanan (real-time)");
                 }
                 return tv;
             }
@@ -1261,14 +1262,14 @@ public class ComplaintListActivity extends AppCompatActivity {
         new AlertDialog.Builder(this)
                 .setTitle("💬 Chat — " + (t.getCustomerName() != null ? t.getCustomerName() : "Pelanggan"))
                 .setAdapter(ad, (d, which) -> {
-                    if (which == 0) {
+                    if (which == 0 || which == 1) {
                         String uuid = chatUuidOf(t);
                         if (uuid == null || uuid.isEmpty()) {
                             Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
                             return;
                         }
                         startActivity(new Intent(this, ChatLogActivity.class)
-                                .putExtra(ChatLogActivity.EXTRA_MODE, ChatLogActivity.MODE_ORDER)
+                                .putExtra(ChatLogActivity.EXTRA_MODE, which == 0 ? ChatLogActivity.MODE_COMPLAINT : ChatLogActivity.MODE_ORDER)
                                 .putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid)
                                 .putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, t.getCustomerName() != null ? t.getCustomerName() : ""));
                     } else {
