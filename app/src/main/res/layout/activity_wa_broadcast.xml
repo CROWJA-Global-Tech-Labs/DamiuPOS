@@ -309,6 +309,12 @@
                         android:textSize="14sp"
                         android:textStyle="bold" />
 
+                    <!-- Template pesan siap pakai (kendala pengiriman, libur, promo, …) — ketuk untuk mengisi Pesan. -->
+                    <FrameLayout
+                        android:id="@+id/templateHolder"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content" />
+
                     <EditText
                         android:id="@+id/etMessage"
                         android:layout_width="match_parent"
