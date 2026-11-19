@@ -1712,6 +1712,19 @@ public class CustomerDetailActivity extends AppCompatActivity {
                     .putExtra(ReceiptActivity.EXTRA_OPEN_EDIT, true)));
             col.addView(ed);
         }
+        // Pesanan yang TIDAK ada di HP ini (dibuat web / Agen AI / HP lain) dan belum selesai: ubah item lewat
+        // server (sama dengan "✏️ Ubah Item" di Antrian Delivery → Perangkat Lain / Pesanan Terbuka).
+        if (localId <= 0 && !kembali && !trxUuid.isEmpty() && ("PENDING".equals(st) || "TERTUNDA".equals(st))) {
+            android.widget.TextView ed = new android.widget.TextView(this);
+            ed.setText("✏️ Ubah Transaksi →");
+            ed.setTextSize(15);
+            ed.setTextColor(com.crowja.damiupos.util.ThemeColors.primary(this));
+            ed.setPadding(dp(22), dp(8), dp(22), dp(4));
+            final org.json.JSONObject trx = t;
+            ed.setOnClickListener(v -> DeliveryQueueActivity.showEditItemsDialog(this, trxUuid,
+                    currentCustomer != null ? currentCustomer.getName() : "", slugQtyOfLines(trx), null));
+            col.addView(ed);
+        }
         androidx.appcompat.app.AlertDialog.Builder b = new androidx.appcompat.app.AlertDialog.Builder(this)
                 .setTitle(kembali ? "Detail Galon Kembali" : "Detail Transaksi")
                 .setView(sv)
@@ -1812,6 +1825,28 @@ public class CustomerDetailActivity extends AppCompatActivity {
             recreate();
         }));
         dlg.show();
+    }
+
+    /** Jumlah per slug produk (KAPITAL) dari baris "lines" transaksi server — prefill dialog Ubah Item. */
+    private java.util.Map<String, Integer> slugQtyOfLines(org.json.JSONObject t) {
+        java.util.Map<String, Integer> m = new java.util.HashMap<>();
+        org.json.JSONArray lines = t.optJSONArray("lines");
+        if (lines == null) return m;
+        java.util.List<com.crowja.damiupos.model.Product> products =
+                new com.crowja.damiupos.db.ProductDao(com.crowja.damiupos.db.DatabaseHelper.getInstance(this)).getAll();
+        for (int i = 0; i < lines.length(); i++) {
+            org.json.JSONObject l = lines.optJSONObject(i);
+            if (l == null) continue;
+            String pu = l.optString("product_uuid", ""), name = l.optString("name", "").trim();
+            for (com.crowja.damiupos.model.Product p : products) {
+                boolean hit = (!pu.isEmpty() && pu.equals(p.getUuid())) || (p.getName() != null && p.getName().trim().equalsIgnoreCase(name));
+                if (!hit) continue;
+                String slug = p.getSlug() != null && !p.getSlug().trim().isEmpty() ? p.getSlug().trim() : p.getName().trim();
+                m.merge(slug.toUpperCase(java.util.Locale.US), (int) Math.round(l.optDouble("qty", 0)), Integer::sum);
+                break;
+            }
+        }
+        return m;
     }
 
     private static String statusLabel(String s) {
