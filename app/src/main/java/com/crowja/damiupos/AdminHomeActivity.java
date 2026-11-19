@@ -318,6 +318,7 @@ public class AdminHomeActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        stopHeaderBlink();
         handler.removeCallbacks(ticker);
         if (io != null) io.shutdown();
         if (ai != null) ai.release();
@@ -1194,7 +1195,8 @@ public class AdminHomeActivity extends AppCompatActivity {
     private void applyStatusBar(boolean green) {
         try {
             Window w = getWindow();
-            w.setStatusBarColor(col(green ? R.color.gj_primary : R.color.gj_surface));
+            if (!(green && headerBlink != null && headerBlink.isRunning()))
+                w.setStatusBarColor(col(green ? R.color.gj_primary : R.color.gj_surface));
             WindowCompat.getInsetsController(w, w.getDecorView()).setAppearanceLightStatusBars(!green);
         } catch (Throwable t) {
             Log.w(TAG, "statusBar", t);
@@ -1403,7 +1405,43 @@ public class AdminHomeActivity extends AppCompatActivity {
         View sumAi = findViewById(R.id.gjhSumAi);
         if (sumAi != null) sumAi.setContentDescription(text == null || text.isEmpty() ? label : text);
         updateIssueBlink();
+        updateHeaderAlert(state == AiStatusMonitor.STATE_DEAD);
         safe("alerts", this::renderAlerts);
+    }
+
+    private android.animation.ValueAnimator headerBlink;
+
+    /** Area biru header (+ status bar di tab Beranda) berkedip merah selama AI mati; kembali biru saat hidup. */
+    private void updateHeaderAlert(boolean dead) {
+        View header = findViewById(R.id.gjhHeader);
+        if (header == null) return;
+        final int blue = col(R.color.gj_primary), red = col(R.color.gj_badge_red);
+        if (!dead) {
+            stopHeaderBlink();
+            header.setBackgroundColor(blue);
+            if (currentTab == TAB_BERANDA) applyStatusBar(true);
+            return;
+        }
+        if (headerBlink != null && headerBlink.isRunning()) return;
+        headerBlink = android.animation.ValueAnimator.ofObject(new android.animation.ArgbEvaluator(), blue, red);
+        headerBlink.setDuration(600);
+        headerBlink.setRepeatMode(android.animation.ValueAnimator.REVERSE);
+        headerBlink.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+        headerBlink.addUpdateListener(a -> {
+            int c = (Integer) a.getAnimatedValue();
+            header.setBackgroundColor(c);
+            if (currentTab == TAB_BERANDA) {
+                try { getWindow().setStatusBarColor(c); } catch (Throwable ignored) {}
+            }
+        });
+        headerBlink.start();
+    }
+
+    private void stopHeaderBlink() {
+        if (headerBlink != null) {
+            headerBlink.cancel();
+            headerBlink = null;
+        }
     }
 
     // ---------------------------------------------------------------- service grid
