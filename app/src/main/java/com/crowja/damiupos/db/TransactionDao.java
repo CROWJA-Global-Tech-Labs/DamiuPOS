@@ -85,6 +85,7 @@ public class TransactionDao {
             if (trx.getGalonSpec() != null) values.put(DatabaseHelper.COL_GALON_SPEC, trx.getGalonSpec());
         }
         values.put(DatabaseHelper.COL_ONGKIR, trx.getOngkir());
+        values.put(DatabaseHelper.COL_DISKON, trx.getDiskon());
         values.put(DatabaseHelper.COL_ONGKIR_TYPE,
                 trx.getOngkirType() != null ? trx.getOngkirType() : Transaction.ONGKIR_PER_GALON);
         values.put(DatabaseHelper.COL_GALON_OWNERSHIP,
@@ -1573,6 +1574,7 @@ public class TransactionDao {
         double ongkir = Transaction.ONGKIR_PER_GALON.equals(t.getOngkirType())
                 ? t.getOngkir() * galon : t.getOngkir();
         double total = itemTotal + ongkir;
+        total -= Math.min(Math.max(0, t.getDiskon()), Math.max(0, total));   // diskon tersimpan tetap berlaku
 
         // CASH BON = pintasan "diterima Rp0". Bila paidAmount tak dikirim sama sekali (jalur lama),
         // jatuh ke perilaku HUTANG-eksplisit: piutang penuh hanya bila dropdown pembayarannya HUTANG.
@@ -2378,6 +2380,10 @@ public class TransactionDao {
         int ongkirIdx = cursor.getColumnIndex(DatabaseHelper.COL_ONGKIR);
         if (ongkirIdx >= 0) {
             t.setOngkir(cursor.getDouble(ongkirIdx));
+        }
+        int diskonIdx = cursor.getColumnIndex(DatabaseHelper.COL_DISKON);
+        if (diskonIdx >= 0) {
+            t.setDiskon(cursor.getDouble(diskonIdx));
         }
         int ongkirTypeIdx = cursor.getColumnIndex(DatabaseHelper.COL_ONGKIR_TYPE);
         if (ongkirTypeIdx >= 0) {

@@ -171,7 +171,7 @@ public class SyncEngine {
             new Spec("transactions", DatabaseHelper.TABLE_TRANSACTIONS, new String[]{
                     DatabaseHelper.COL_TYPE, DatabaseHelper.COL_JUMLAH_GALON,
                     DatabaseHelper.COL_HARGA_PER_GALON, DatabaseHelper.COL_TOTAL_HARGA,
-                    DatabaseHelper.COL_ONGKIR, DatabaseHelper.COL_ONGKIR_TYPE,
+                    DatabaseHelper.COL_ONGKIR, DatabaseHelper.COL_ONGKIR_TYPE, DatabaseHelper.COL_DISKON,
                     DatabaseHelper.COL_ITEMS_JSON, DatabaseHelper.COL_GALON_OWNERSHIP,
                     DatabaseHelper.COL_HARGA_BOTOL, DatabaseHelper.COL_PAYMENT_METHOD,
                     // Cash bon (HUTANG) — stempel pelunasan + URL foto bukti, dua arah.

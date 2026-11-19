@@ -54,6 +54,8 @@ public class ReceiptActivity extends AppCompatActivity {
     public static final String EXTRA_HARGA_PER_GALON = "harga_per_galon";
     public static final String EXTRA_ONGKIR = "ongkir";
     public static final String EXTRA_ONGKIR_TYPE = "ongkir_type";
+    /** Diskon nominal (Rp); EXTRA_TOTAL_HARGA sudah dikurangi diskon ini. */
+    public static final String EXTRA_DISKON = "diskon";
     /** Harga & kepemilikan botol — dipakai rekonsiliasi ongkir (beli botol BUKAN ongkir). */
     public static final String EXTRA_HARGA_BOTOL = "harga_botol";
     public static final String EXTRA_OWNERSHIP = "galon_ownership";
@@ -415,6 +417,7 @@ public class ReceiptActivity extends AppCompatActivity {
         i.putExtra(EXTRA_HARGA_PER_GALON, t.getHargaPerGalon());
         i.putExtra(EXTRA_ONGKIR, t.getOngkir());
         i.putExtra(EXTRA_ONGKIR_TYPE, t.getOngkirType());
+        i.putExtra(EXTRA_DISKON, t.getDiskon());
         i.putExtra(EXTRA_HARGA_BOTOL, t.getHargaBotolGalon());
         i.putExtra(EXTRA_OWNERSHIP, t.getGalonOwnership());
         i.putExtra(EXTRA_TOTAL_HARGA, t.getTotalHarga());
@@ -950,6 +953,10 @@ public class ReceiptActivity extends AppCompatActivity {
                         "Rp " + nf.format(totalGalon * ongkir), greyDot);
             } else if ("borongan".equals(ongkirType) && ongkir > 0) {
                 addCardRow(items, "Ongkos kirim (borongan)", null, "Rp " + nf.format(ongkir), greyDot);
+            }
+            double diskonCard = in.getDoubleExtra(EXTRA_DISKON, 0);
+            if (diskonCard > 0.5) {
+                addCardRow(items, "Diskon", null, "-Rp " + nf.format(diskonCard), greyDot);
             }
             // Galon kembali
             int jumlahKembali = in.getIntExtra(EXTRA_JUMLAH_KEMBALI, 0);
@@ -1543,6 +1550,10 @@ public class ReceiptActivity extends AppCompatActivity {
 
         // Items — detailed breakdown
         appendPrinterItems(sb, items, productName, jumlah, hargaPerGalon, ongkir, ongkirType, nf);
+        double diskonPrint = getIntent().getDoubleExtra(EXTRA_DISKON, 0);
+        if (diskonPrint > 0.5) {
+            sb.append(leftRight("Diskon", "-Rp " + nf.format(diskonPrint))).append("\n");
+        }
 
         // Botol galon kosong yang ditukar/dikembalikan pelanggan pada penjualan ini.
         int jumlahKembali = getIntent().getIntExtra(EXTRA_JUMLAH_KEMBALI, 0);
@@ -2318,6 +2329,7 @@ public class ReceiptActivity extends AppCompatActivity {
             double ongkir = in.getDoubleExtra(EXTRA_ONGKIR, 0);
             String ongkirType = in.getStringExtra(EXTRA_ONGKIR_TYPE);
             double total = in.getDoubleExtra(EXTRA_TOTAL_HARGA, 0);
+            double diskonWa = in.getDoubleExtra(EXTRA_DISKON, 0);
             // Baris produk + ONGKIR — angka ongkir DITURUNKAN dari total yang benar-benar dibayar
             // (cermin PERSIS StrukWa::rincian + Transaction::strukExtras di web): sisa total yang tak
             // dijelaskan baris produk & botol dikembalikan ke ongkir. Satu rumus melayani ketiga bentuk
@@ -2326,9 +2338,11 @@ public class ReceiptActivity extends AppCompatActivity {
             // Rumusnya di CheckoutStrukText.rincianItems — dipakai juga tiap lokasi struk gabungan.
             sb.append(CheckoutStrukText.rincianItems(items,
                     in.getStringExtra(EXTRA_PRODUCT_NAME), in.getIntExtra(EXTRA_JUMLAH, 0),
-                    in.getDoubleExtra(EXTRA_HARGA_PER_GALON, 0), ongkir, ongkirType, total,
+                    in.getDoubleExtra(EXTRA_HARGA_PER_GALON, 0), ongkir, ongkirType, total + diskonWa,
                     "BELI".equals(in.getStringExtra(EXTRA_OWNERSHIP)), in.getDoubleExtra(EXTRA_HARGA_BOTOL, 0),
                     isDeliveryOrder(in), nf));
+            // Diskon SETELAH baris item (ongkir diturunkan dari total KOTOR di atas): Σ baris − diskon = *Total*.
+            if (diskonWa > 0.5) sb.append("\nDiskon -Rp").append(nf.format(diskonWa));
             // Metode pembayaran DILEBUR ke baris Total (satu baris) — "*Total: Rp5.000 (Bayar
             // Tunai)*", DILEWATI bila ada pelunasan hutang lama (di bawah) -- *Total* sudah gabungan
             // dua hal berbeda, jadi tak dilabeli satu metode bayar saja. Cermin App\Support\StrukWa

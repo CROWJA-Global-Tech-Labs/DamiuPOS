@@ -153,6 +153,18 @@ public final class DeliveryEditDialog {
                 : "Kosongkan jika ongkir tidak berubah");
         root.addView(ongkir);
 
+        // Diskon nominal (Rp) — terisi diskon tersimpan; kosong/0 = tanpa diskon. Dipagari server.
+        final TextView diskonLabel = new TextView(act);
+        diskonLabel.setText("Diskon (Rp):");
+        diskonLabel.setTextSize(13f);
+        diskonLabel.setPadding(0, dp(act, 14), 0, 0);
+        root.addView(diskonLabel);
+        final EditText diskon = new EditText(act);
+        diskon.setInputType(InputType.TYPE_CLASS_NUMBER);
+        diskon.setHint("0");
+        if (t.getDiskon() > 0) diskon.setText(formatPlain(t.getDiskon()));
+        root.addView(diskon);
+
         final TextView kembaliLabel = new TextView(act);
         kembaliLabel.setText("Galon Kembali Aktual (galon kosong yang benar-benar diterima):");
         kembaliLabel.setTextSize(13f);
@@ -224,6 +236,12 @@ public final class DeliveryEditDialog {
                     }
                     ongkirVal = ov;
                 }
+                final double dv = parseNonNegOr(diskon.getText().toString().trim(), -1);
+                if (!diskon.getText().toString().trim().isEmpty() && dv < 0) {
+                    toast(act, "Isi diskon dengan angka ≥ 0, atau kosongkan.");
+                    return;
+                }
+                final double fDiskon = Math.max(0, dv);
                 final String n = note.getText().toString().trim();
                 final Double fOngkirVal = ongkirVal;
                 final int fKb = kb;
@@ -231,7 +249,7 @@ public final class DeliveryEditDialog {
                 // Tinjau hasil AKHIR pesanan → tampilkan dulu untuk dikonfirmasi SEBELUM benar-benar
                 // mengirim (edit langsung tak bisa "dibatalkan" setelah tersimpan di server, jadi
                 // staf harus melihat rinciannya lebih dulu).
-                String summary = buildFinalReviewSummary(t, liveRows, fOngkirVal, fKb, n);
+                String summary = buildFinalReviewSummary(t, liveRows, fOngkirVal, fDiskon, fKb, n);
                 new AlertDialog.Builder(act)
                         .setTitle("Tinjau Pesanan")
                         .setMessage(summary)
@@ -241,7 +259,7 @@ public final class DeliveryEditDialog {
                             dialog.setCancelable(false);
                             final Button neg = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
                             if (neg != null) neg.setEnabled(false);
-                            submit(act, dialog, pos, neg, dbh, cfg, t, liveRows, fOngkirVal, fKb, n);
+                            submit(act, dialog, pos, neg, dbh, cfg, t, liveRows, fOngkirVal, fDiskon, fKb, n);
                         })
                         .setNegativeButton("Periksa Lagi", null)
                         .show();
@@ -260,7 +278,7 @@ public final class DeliveryEditDialog {
     }
 
     private static String buildFinalReviewSummary(Transaction t, List<EditRow> liveRows, Double ongkirVal,
-                                                    int kb, String reason) {
+                                                    double diskonVal, int kb, String reason) {
         java.text.NumberFormat nf = java.text.NumberFormat.getInstance(new java.util.Locale("id", "ID"));
         StringBuilder sb = new StringBuilder();
 
@@ -291,9 +309,15 @@ public final class DeliveryEditDialog {
             sb.append("\nOngkir: Rp ").append(nf.format(Math.round(ongkirTotal)))
                     .append(ongkirVal != null ? "" : " (tetap)");
         }
+        double gross = totalItems + ongkirTotal;
+        double diskonUsed = Math.min(diskonVal, Math.max(0, gross));
+        if (diskonUsed > 0) {
+            sb.append("\nDiskon: -Rp ").append(nf.format(Math.round(diskonUsed)));
+        }
         sb.append("\nTotal: Rp ").append(nf.format(Math.round(totalItems)))
                 .append(" + Rp ").append(nf.format(Math.round(ongkirTotal)))
-                .append(" = Rp ").append(nf.format(Math.round(totalItems + ongkirTotal)));
+                .append(diskonUsed > 0 ? " − Rp " + nf.format(Math.round(diskonUsed)) : "")
+                .append(" = Rp ").append(nf.format(Math.round(gross - diskonUsed)));
 
         sb.append("\n\nGalon Kembali Aktual: ").append(kb);
         if (!reason.isEmpty()) {
@@ -397,7 +421,7 @@ public final class DeliveryEditDialog {
     private static void submit(final Activity act, final AlertDialog dialog, final Button pos,
                                final Button neg, final DatabaseHelper dbh, final SyncSettings cfg,
                                final Transaction t, final List<EditRow> rows, final Double ongkir,
-                               final int kembali, final String reason) {
+                               final double diskon, final int kembali, final String reason) {
         new Thread(() -> {
             String errMsg = null;
             String okMsg = null;
@@ -428,6 +452,7 @@ public final class DeliveryEditDialog {
                     body.put("items", arr);
                     // Per galon: angka yang diisi = TARIF → "ongkir_rate" (jenis tetap per_galon di server).
                     if (ongkir != null) body.put(isPerGalon(t) ? "ongkir_rate" : "ongkir", ongkir);
+                    body.put("diskon", diskon);
                     body.put("jual_return_qty", kembali);
                     if (!reason.isEmpty()) body.put("reason", reason);
                     if (uname != null && !uname.isEmpty()) body.put("requester_name", uname);

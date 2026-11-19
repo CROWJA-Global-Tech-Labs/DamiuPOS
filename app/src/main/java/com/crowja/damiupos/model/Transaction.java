@@ -83,6 +83,8 @@ public class Transaction {
     private double hargaPerGalon;
     private double totalHarga;
     private double ongkir;
+    /** Diskon nominal (Rp); totalHarga sudah dikurangi diskon ini. */
+    private double diskon;
     private String ongkirType = ONGKIR_PER_GALON;
     private String galonOwnership = OWNERSHIP_PINJAM;
     private double hargaBotolGalon; // harga beli botol galon saat ownership=BELI
@@ -264,6 +266,8 @@ public class Transaction {
 
     public double getOngkir() { return ongkir; }
     public void setOngkir(double ongkir) { this.ongkir = ongkir; }
+    public double getDiskon() { return diskon; }
+    public void setDiskon(double diskon) { this.diskon = Math.max(0, diskon); }
 
     public String getOngkirType() { return ongkirType; }
     public void setOngkirType(String ongkirType) { this.ongkirType = ongkirType; }

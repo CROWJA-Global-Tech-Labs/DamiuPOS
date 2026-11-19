@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 107;
+    private static final int DATABASE_VERSION = 108;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -270,6 +270,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public static final String COL_CATATAN = "catatan";
     public static final String COL_ONGKIR = "ongkir";
     public static final String COL_ONGKIR_TYPE = "ongkir_type";
+    /** Diskon nominal (Rp) per transaksi; total_harga disimpan SESUDAH diskon (cermin server). */
+    public static final String COL_DISKON = "diskon";
     public static final String COL_ITEMS_JSON = "items_json";
     public static final String COL_GALON_OWNERSHIP = "galon_ownership";
     public static final String COL_HARGA_BOTOL = "harga_botol";
@@ -664,6 +666,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_TOTAL_HARGA + " REAL DEFAULT 0, " +
                     COL_ONGKIR + " REAL DEFAULT 0, " +
                     COL_ONGKIR_TYPE + " TEXT DEFAULT 'per_galon', " +
+                    COL_DISKON + " REAL DEFAULT 0, " +
                     COL_ITEMS_JSON + " TEXT, " +
                     COL_GALON_OWNERSHIP + " TEXT DEFAULT 'PINJAM', " +
                     COL_HARGA_BOTOL + " REAL DEFAULT 0, " +
@@ -1822,6 +1825,10 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             // reseller yang sudah ada di HP tetap tergerbang lewat penanda [ORDER RESELLER] di catatan
             // sampai pull berikutnya membawa flag-nya.
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_PROOF_REQUIRED + " INTEGER DEFAULT 0");
+        }
+        if (oldVersion < 108) {
+            // Diskon nominal per transaksi (lihat COL_DISKON). Aditif; baris lama = tanpa diskon.
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DISKON + " REAL DEFAULT 0");
         }
         if (oldVersion < 107) {
             // Komplain yang muncul kembali sesudah pesanan selesai (lihat COL_COMPLAINT_LAST_INBOUND_AT); baris lama terisi
