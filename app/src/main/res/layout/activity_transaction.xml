@@ -1225,6 +1225,28 @@
                             android:text="0" />
                     </com.google.android.material.textfield.TextInputLayout>
 
+                    <!-- Diskon nominal (Rp) — memotong total; hanya JUAL satu lokasi (cermin web). -->
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/tilDiskon"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:hint="Diskon"
+                        app:prefixText="Rp "
+                        app:boxCornerRadiusBottomEnd="8dp"
+                        app:boxCornerRadiusBottomStart="8dp"
+                        app:boxCornerRadiusTopEnd="8dp"
+                        app:boxCornerRadiusTopStart="8dp">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/etDiskon"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="number"
+                            android:hint="0" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
                     <com.google.android.material.textfield.TextInputLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"

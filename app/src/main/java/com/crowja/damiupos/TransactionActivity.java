@@ -259,6 +259,10 @@ public class TransactionActivity extends AppCompatActivity {
      *  transaksi DB — lihat {@link #doSaveCheckout}. Form order tunggal (item, Kirim ke, ongkir, galon
      *  kembali, perangkat) disembunyikan; isinya ada di {@link #checkoutParts}. */
     private boolean multiLocMode = false;
+    /** Diskon nominal yang dipakai simpan terakhir (dipagari ke total kotor) — ikut ke struk. */
+    private double formDiskon = 0;
+    private TextInputLayout tilDiskon;
+    private TextInputEditText etDiskon;
     /** Bagian per lokasi berkoordinat (termasuk yang 0 galon — hanya bagian bergalon yang jadi leg). */
     private final List<CheckoutPart> checkoutParts = new ArrayList<>();
     private View tvSplitEntry, cardCheckoutParts;
@@ -386,6 +390,8 @@ public class TransactionActivity extends AppCompatActivity {
         etCatatan = findViewById(R.id.etCatatan);
         addGalonTypeRow();
         tilOngkir = findViewById(R.id.tilOngkir);
+        tilDiskon = findViewById(R.id.tilDiskon);
+        etDiskon = findViewById(R.id.etDiskon);
         tilJumlahKembali = findViewById(R.id.tilJumlahKembali);
         toggleOngkirMode = findViewById(R.id.toggleOngkirMode);
         ongkirModeContainer = findViewById(R.id.ongkirModeContainer);
@@ -573,6 +579,7 @@ public class TransactionActivity extends AppCompatActivity {
             @Override public void afterTextChanged(Editable s) { updateTotal(); }
         };
         etOngkir.addTextChangedListener(calcWatcher);
+        etDiskon.addTextChangedListener(calcWatcher);
         etHargaGantiRugi.addTextChangedListener(calcWatcher);
         etJumlahKembali.addTextChangedListener(calcWatcher);
         etJumlahRusak.addTextChangedListener(calcWatcher);
@@ -1563,7 +1570,21 @@ public class TransactionActivity extends AppCompatActivity {
         syncingOngkir = false;
     }
 
+    /** Diskon berlaku? Hanya JUAL satu lokasi yang bukan promosi gratis (cermin form web). */
+    private boolean diskonActive() {
+        return isJualSelected() && !isJualBotolSelected() && !multiLocMode
+                && !(promosiMode && isPromosiGratis());
+    }
+
+    /** Diskon nominal dari form, dipagari 0 … total kotor (sama dgn TransactionController::clampDiskon). */
+    private double diskonFor(double gross) {
+        if (etDiskon == null || !diskonActive()) return 0;
+        double d = parseDoubleOr(etDiskon, 0);
+        return Math.max(0, Math.min(d, Math.max(0, gross)));
+    }
+
     private void updateTotal() {
+        if (tilDiskon != null) tilDiskon.setVisibility(diskonActive() ? View.VISIBLE : View.GONE);
         if (isJualBotolSelected()) {
             int qty = parseIntOr(etJumlahBotolJual, 0);
             double harga = parseDoubleOr(etHargaBotolJual, 0);
@@ -1617,6 +1638,7 @@ public class TransactionActivity extends AppCompatActivity {
             double hargaBotol = parseDoubleOr(etHargaBotol, 0);
             total += hargaBotol * getTotalJumlah();
         }
+        total -= diskonFor(total);
         NumberFormat nf = NumberFormat.getInstance(new Locale("id", "ID"));
         tvTotalHarga.setText("Rp " + nf.format(total));
         lastJualTotal = total;
@@ -3472,7 +3494,10 @@ public class TransactionActivity extends AppCompatActivity {
                 }
                 totalHarga += hargaBotol * totalJumlah;
             }
+            formDiskon = diskonFor(totalHarga);
+            totalHarga -= formDiskon;
         } else {
+            formDiskon = 0;
             String qtyStr = etJumlahKembali.getText() != null
                     ? etJumlahKembali.getText().toString().trim() : "";
             if (qtyStr.isEmpty()) {
@@ -4130,6 +4155,7 @@ public class TransactionActivity extends AppCompatActivity {
         boolean destAlways;
         String assignedDeviceUuid;
         double saldoUsed, refundUsed;
+        double diskon;
         String note = "";
     }
 
@@ -4182,6 +4208,7 @@ public class TransactionActivity extends AppCompatActivity {
             totalHarga = 0;
             ongkir = 0;
             ongkirType = Transaction.ONGKIR_NONE;
+            formDiskon = 0;
         }
 
         // Satu baris dari isian form — jalur tulis yang SAMA dengan tiap leg checkout multi-lokasi
@@ -4198,6 +4225,7 @@ public class TransactionActivity extends AppCompatActivity {
         spec.hargaBotol = hargaBotol;
         spec.kembali = jumlahKembali;
         spec.tanggal = selectedTrxDate;
+        spec.diskon = isJual ? formDiskon : 0;
         spec.destName = selectedDestName;
         spec.destLat = selectedDestLat;
         spec.destLng = selectedDestLng;
@@ -4334,6 +4362,7 @@ public class TransactionActivity extends AppCompatActivity {
             r.putExtra(ReceiptActivity.EXTRA_JUMLAH_KEMBALI, jumlahKembali);
             r.putExtra(ReceiptActivity.EXTRA_ONGKIR, ongkir);
             r.putExtra(ReceiptActivity.EXTRA_ONGKIR_TYPE, ongkirType);
+            r.putExtra(ReceiptActivity.EXTRA_DISKON, formDiskon);
             // Kepemilikan + harga botol WAJIB ikut: tanpa keduanya composeTextStruk menghitung
             // biaya botol = 0, lalu SISA total yang tak terjelaskan dilempar ke baris "Ongkir" —
             // pelanggan yang tidak diantar menerima struk bertuliskan ongkir puluhan ribu.
@@ -4445,6 +4474,7 @@ public class TransactionActivity extends AppCompatActivity {
         trx.setOngkirType(s.ongkirType);
         if (s.tanggal != null) trx.setTanggal(s.tanggal);
         trx.setTotalHarga(s.totalHarga);
+        trx.setDiskon(s.diskon);
         if (isJual) {
             trx.setGalonOwnership(s.ownership);
             trx.setHargaBotolGalon(s.hargaBotol);
