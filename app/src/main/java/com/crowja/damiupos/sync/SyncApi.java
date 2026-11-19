@@ -900,6 +900,18 @@ public class SyncApi {
         return get(cfg.getBaseUrl() + "/api/delivery/record", cfg.getToken());
     }
 
+    // ------------------------------------------------ Status Order (/api/admin/order-status) — Admin & SPV
+    /** {ok, message, data{order_status, order_status_reason, order_open, reopens_at, closes_at, early_close,
+     *  ops_condition, condition_presets, condition_saved, agent_guard, open_time, close_time}}. */
+    public JSONObject adminOrderStatus(String staffUuid) throws Exception {
+        return get(cfg.getBaseUrl() + "/api/admin/order-status", cfg.getToken(), staffUuid);
+    }
+
+    /** @param action {@code close} ({note?}) | {@code reopen} | {@code condition} ({key, label?}) | {@code agent-guard} ({enabled}) */
+    public JSONObject adminOrderStatusAction(String action, JSONObject body, String staffUuid) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/admin/order-status/" + action, body, cfg.getToken(), staffUuid);
+    }
+
     // ------------------------------------------------ Pesanan Terjadwal (/api/order-schedules)
     // Tabel jadwal hanya di server (tak tersinkron). Semua panggilan membawa X-Staff-Uuid: server
     // hanya melayani staf Admin aktif cabang ini (cermin halaman web owner/admin).
