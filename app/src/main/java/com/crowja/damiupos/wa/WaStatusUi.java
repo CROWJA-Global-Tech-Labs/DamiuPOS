@@ -113,6 +113,7 @@ final class WaStatusUi {
             case "image": return "🖼️";
             case "video": return "🎬";
             case "image_cycle": return "🎞️";
+            case "video_cycle": return "📼";
             default: return "✍️";
         }
     }
