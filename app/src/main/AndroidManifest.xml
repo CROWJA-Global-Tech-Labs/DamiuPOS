@@ -157,6 +157,7 @@
             android:name=".IderModeActivity"
             android:screenOrientation="portrait" />
         <activity android:name=".ScheduledOrderActivity" />
+        <activity android:name=".StatusOrderActivity" />
         <activity android:name=".DeviceAdminActivity" />
         <activity android:name=".WhatsAppMenuActivity" />
         <!-- Akun WhatsApp: isi form & dialog dibangun di kode (tanpa id) — configChanges supaya rotasi /

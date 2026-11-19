@@ -809,6 +809,8 @@ public class AdminHomeActivity extends AppCompatActivity {
                 m -> m.user == null || !m.user.isViewer(), () -> openTrx(Transaction.TYPE_KEMBALI));
         add("antrean", "Pesanan (Antrean Delivery)", "Pesanan", "🚚", R.color.gj_green_tint, G_OPS,
                 AdminHomeActivity::queueVisible, () -> open(DeliveryQueueActivity.class)).badge(s -> s.queue);
+        add("statusorder", "Status Order (OPEN/CLOSED)", "Status Order", "🚦", R.color.gj_red_tint, G_OPS,
+                m -> m.enrolled && m.user != null && (m.user.isAdmin() || m.user.isSpv()), () -> open(StatusOrderActivity.class));
         add("terjadwal", "Pesanan Terjadwal", "Terjadwal", "🗓️", R.color.gj_green_tint, G_OPS,
                 m -> m.admin && m.enrolled, () -> open(ScheduledOrderActivity.class));
         add("keliling", "Mode Keliling", null, "🛵", R.color.gj_green_tint, G_OPS,
