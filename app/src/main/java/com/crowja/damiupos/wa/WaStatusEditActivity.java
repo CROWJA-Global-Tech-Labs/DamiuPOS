@@ -143,6 +143,15 @@ public class WaStatusEditActivity extends AppCompatActivity {
     private WaStatusVideoRules vrules = WaStatusVideoRules.from(null);
     private WaStatusFlow photoGrid;
     private TextView tvPhotoCount;
+    /** Koleksi video bergilir ({@code video_cycle}): tiap video satu Status (≤ satu potongan), ditambahkan di belakang. */
+    private View secVideoCycle;
+    private WaStatusFlow videoGrid;
+    private TextView tvVideoCount;
+    private final List<Picked> newCycleVideos = new ArrayList<>();
+    private final Set<String> removeVideoPaths = new HashSet<>();
+    /** Video yang sedang dipilih/dikompres untuk koleksi (bukan sumber "Video"). */
+    private boolean pickingCycle;
+    private static final int MAX_CYCLE_VIDEOS = 20;
 
     @Nullable private String scheduledAt;
     @Nullable private Picked newImage;
@@ -234,6 +243,8 @@ public class WaStatusEditActivity extends AppCompatActivity {
                 newVideo.clear();
                 newPhotos.clear();
                 removePaths.clear();
+                newCycleVideos.clear();
+                removeVideoPaths.clear();
                 clientKey = UUID.randomUUID().toString();   // form baru (mis. dimuat ulang sesudah "Status berubah")
                 build();
                 tvState.setVisibility(View.GONE);
@@ -332,6 +343,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
         buildImage(gap);
         buildVideo(gap);
         buildImageCycle(gap);
+        buildVideoCycle(gap);
         buildBody(gap);
         buildTextCycle(gap);
         buildStyle(gap);
@@ -485,10 +497,16 @@ public class WaStatusEditActivity extends AppCompatActivity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         MaterialButton pick = outlined("🎬 Pilih video");
-        pick.setOnClickListener(v -> pickVideo());
+        pick.setOnClickListener(v -> {
+            pickingCycle = false;
+            pickVideo();
+        });
         row.addView(pick, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         MaterialButton rec = outlined("📹 Rekam");
-        rec.setOnClickListener(v -> recordVideo());
+        rec.setOnClickListener(v -> {
+            pickingCycle = false;
+            recordVideo();
+        });
         LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
         rlp.leftMargin = dp(8);
         row.addView(rec, rlp);
@@ -584,6 +602,136 @@ public class WaStatusEditActivity extends AppCompatActivity {
         int n = photoTotal();
         tvPhotoCount.setText(n == 0 ? "Belum ada foto di koleksi." : n + " foto di koleksi" + (n > MAX_PHOTOS ? " — maksimal 20!" : "."));
         tvPhotoCount.setTextColor(n > MAX_PHOTOS ? WaStatusUi.RED : WaStatusUi.TEXT_2);
+    }
+
+    private void buildVideoCycle(int gap) {
+        LinearLayout sec = section(gap);
+        secVideoCycle = sec;
+        sec.addView(WaStatusUi.text(this, "Koleksi video (bergilir)", 14, WaStatusUi.TEXT, true));
+        sec.addView(WaStatusUi.note(this, "Tiap kali Status ini tayang, video berikutnya dari koleksi dipasang (urut seperti diunggah), "
+                + "lalu kembali ke video pertama. Tiap video maksimal " + vrules.segmentSeconds + " detik (satu Status). Agar benar-benar "
+                + "bergilir, isi \"Ulangi tiap … hari\" di bagian Jadwal. Keterangan di bawah dipakai untuk semua video.",
+                WaStatusUi.BLUE, WaStatusUi.BLUE_BG), WaStatusUi.full(dp(6)));
+        videoGrid = new WaStatusFlow(this, dp(8), dp(8));
+        sec.addView(videoGrid, WaStatusUi.full(dp(8)));
+        tvVideoCount = WaStatusUi.text(this, "", 12, WaStatusUi.TEXT_2, false);
+        sec.addView(tvVideoCount, WaStatusUi.full(dp(4)));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        MaterialButton add = outlined("➕ Tambah video");
+        add.setOnClickListener(v -> {
+            pickingCycle = true;
+            pickVideo();
+        });
+        row.addView(add, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        MaterialButton rec = outlined("📹 Rekam");
+        rec.setOnClickListener(v -> {
+            pickingCycle = true;
+            recordVideo();
+        });
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        rlp.leftMargin = dp(8);
+        row.addView(rec, rlp);
+        sec.addView(row, WaStatusUi.full(dp(6)));
+        sec.addView(WaStatusUi.text(this, "Tambah satu per satu, hingga " + MAX_CYCLE_VIDEOS + " video. Dikompres di HP seperti Status "
+                + "video biasa. Centang \"hapus\" untuk membuang video lama dari koleksi.", 12, WaStatusUi.TEXT_2, false));
+        renderCycleVideos();
+    }
+
+    /** Video koleksi yang tersimpan di server ({@code post.image_paths[]} untuk sumber video_cycle). */
+    @Nullable
+    private JSONArray savedCycleVideos() {
+        return "video_cycle".equals(post.optString("source_type")) ? post.optJSONArray("image_paths") : null;
+    }
+
+    private void renderCycleVideos() {
+        videoGrid.removeAllViews();
+        JSONArray existing = savedCycleVideos();
+        int n = 0;
+        for (int i = 0; existing != null && i < existing.length(); i++) {
+            JSONObject o = existing.optJSONObject(i);
+            if (o == null) continue;
+            String path = o.optString("path");
+            LinearLayout cell = videoCell(o.optString("url"), "#" + (++n));
+            CheckBox del = new CheckBox(this);
+            del.setText("hapus");
+            del.setTextColor(WaStatusUi.TEXT);
+            del.setTextSize(12);
+            del.setChecked(removeVideoPaths.contains(path));
+            del.setOnCheckedChangeListener((b, on) -> {
+                if (on) removeVideoPaths.add(path);
+                else removeVideoPaths.remove(path);
+                updateVideoCount();
+            });
+            cell.addView(del);
+            videoGrid.addView(cell, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        for (Picked p : new ArrayList<>(newCycleVideos)) {
+            LinearLayout cell = videoCell(p.file.getAbsolutePath(), "baru");
+            TextView x = WaStatusUi.text(this, "✕ batal", 12, WaStatusUi.RED, true);
+            x.setPadding(dp(4), dp(8), dp(4), dp(8));
+            x.setOnClickListener(v -> {
+                newCycleVideos.remove(p);
+                tokens.remove(p.file.getAbsolutePath());
+                p.file.delete();
+                renderCycleVideos();
+            });
+            cell.addView(x);
+            videoGrid.addView(cell, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        }
+        updateVideoCount();
+    }
+
+    /** Sel koleksi video: cuplikan bingkai pertama (berkas lokal atau URL server) + label. */
+    private LinearLayout videoCell(String src, String caption) {
+        LinearLayout cell = new LinearLayout(this);
+        cell.setOrientation(LinearLayout.VERTICAL);
+        cell.setGravity(Gravity.CENTER_HORIZONTAL);
+        ImageView iv = new ImageView(this);
+        iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        iv.setBackground(WaStatusUi.box(0xFF263238, 0xFFCFD8DC, 8, this));
+        cell.addView(iv, new LinearLayout.LayoutParams(dp(88), dp(88)));
+        cell.addView(WaStatusUi.text(this, "🎬 " + caption, 12, WaStatusUi.TEXT_2, false));
+        new Thread(() -> {
+            Bitmap frame = null;
+            MediaMetadataRetriever r = new MediaMetadataRetriever();
+            try {
+                if (src.startsWith("http://") || src.startsWith("https://")) r.setDataSource(src, new HashMap<>());
+                else r.setDataSource(src);
+                frame = r.getFrameAtTime(500_000);
+            } catch (Exception | OutOfMemoryError ignored) {
+                // tanpa cuplikan
+            } finally {
+                try {
+                    r.release();
+                } catch (Exception ignored) {
+                    // sudah dilepas
+                }
+            }
+            final Bitmap fb = frame;
+            runOnUiThread(() -> {
+                if (fb != null && !isDestroyed()) iv.setImageBitmap(fb);
+            });
+        }).start();
+        return cell;
+    }
+
+    private int cycleVideoTotal() {
+        JSONArray existing = savedCycleVideos();
+        int kept = 0;
+        for (int i = 0; existing != null && i < existing.length(); i++) {
+            JSONObject o = existing.optJSONObject(i);
+            if (o != null && !removeVideoPaths.contains(o.optString("path"))) kept++;
+        }
+        return kept + newCycleVideos.size();
+    }
+
+    private void updateVideoCount() {
+        if (tvVideoCount == null) return;
+        int n = cycleVideoTotal();
+        tvVideoCount.setText(n == 0 ? "Belum ada video di koleksi." : n + " video di koleksi"
+                + (n > MAX_CYCLE_VIDEOS ? " — maksimal " + MAX_CYCLE_VIDEOS + "!" : "."));
+        tvVideoCount.setTextColor(n > MAX_CYCLE_VIDEOS ? WaStatusUi.RED : WaStatusUi.TEXT_2);
     }
 
     private void buildBody(int gap) {
@@ -817,7 +965,8 @@ public class WaStatusEditActivity extends AppCompatActivity {
 
     /** Sumber yang memakai kotak teks tunggal: isi Status teks, atau keterangan gambar / video / koleksi foto. */
     private static boolean hasBody(String src) {
-        return "text".equals(src) || "image".equals(src) || "image_cycle".equals(src) || "video".equals(src);
+        return "text".equals(src) || "image".equals(src) || "image_cycle".equals(src) || "video".equals(src)
+                || "video_cycle".equals(src);
     }
 
     private void updatePreview() {
@@ -851,6 +1000,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
         WaStatusUi.hide(secImage, !"image".equals(src));
         WaStatusUi.hide(secVideo, !"video".equals(src));
         WaStatusUi.hide(secImageCycle, !"image_cycle".equals(src));
+        WaStatusUi.hide(secVideoCycle, !"video_cycle".equals(src));
         WaStatusUi.hide(secBody, !hasBody(src));
         tvBodyLabel.setText("text".equals(src) ? "Teks Status" : "Keterangan (opsional)");
         WaStatusUi.hide(secTextCycle, !"text_cycle".equals(src));
@@ -986,7 +1136,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
                 Toast.makeText(this, "Video tak diterima dari aplikasi kamera/galeri — coba pilih dari galeri.", Toast.LENGTH_LONG).show();
                 return;
             }
-            if (secVideo == null) {
+            if (secVideo == null || secVideoCycle == null) {
                 Toast.makeText(this, "Form belum siap — pilih ulang videonya sebentar lagi.", Toast.LENGTH_LONG).show();
                 return;
             }
@@ -1141,7 +1291,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
             return;
         }
         Intent i = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
-        i.putExtra(MediaStore.EXTRA_DURATION_LIMIT, (int) (vrules.maxTotalMs() / 1000));
+        i.putExtra(MediaStore.EXTRA_DURATION_LIMIT, (int) ((pickingCycle ? vrules.segmentMs() : vrules.maxTotalMs()) / 1000));
         try {
             startActivityForResult(i, REQ_VIDEO_REC);
         } catch (Exception e) {
@@ -1220,6 +1370,12 @@ public class WaStatusEditActivity extends AppCompatActivity {
                     return;
                 }
                 List<long[]> plan = vrules.plan(m.durationMs);
+                if (pickingCycle && plan.size() > 1) {
+                    alert("Video terlalu panjang", "Video ini " + WaStatusVideoRules.clock(m.durationMs) + ". Tiap video koleksi maksimal "
+                            + vrules.segmentSeconds + " detik (satu Status). Potong dulu di galeri, atau pakai sumber \"Video\" yang "
+                            + "memotongnya jadi beberapa Status.");
+                    return;
+                }
                 if (vrules.tooLong(m.durationMs)) {
                     new AlertDialog.Builder(this).setTitle("Video terlalu panjang")
                             .setMessage("Video ini " + WaStatusVideoRules.clock(m.durationMs) + ". Maksimal " + vrules.maxParts
@@ -1242,7 +1398,7 @@ public class WaStatusEditActivity extends AppCompatActivity {
         if (idx >= plan.size()) {
             hideProgress();
             long total = plan.isEmpty() ? 0 : plan.get(plan.size() - 1)[1];
-            setVideo(done, total);
+            deliverVideo(done, total);
             return;
         }
         long[] seg = plan.get(idx);
@@ -1321,9 +1477,20 @@ public class WaStatusEditActivity extends AppCompatActivity {
                 }
                 List<Picked> one = new ArrayList<>();
                 one.add(new Picked(f, "video/mp4"));
-                setVideo(one, durationMs);
+                deliverVideo(one, durationMs);
             });
         }).start();
+    }
+
+    /** Hasil pilih/kompres: masuk koleksi video bergilir, atau mengganti video sumber "Video". */
+    private void deliverVideo(List<Picked> parts, long durationMs) {
+        if (!pickingCycle) {
+            setVideo(parts, durationMs);
+            return;
+        }
+        newCycleVideos.addAll(parts);
+        renderCycleVideos();
+        if (cycleVideoTotal() > MAX_CYCLE_VIDEOS) alert("Koleksi penuh", "Koleksi maksimal " + MAX_CYCLE_VIDEOS + " video — hapus beberapa dulu.");
     }
 
     private void setVideo(List<Picked> parts, long durationMs) {
@@ -1413,6 +1580,14 @@ public class WaStatusEditActivity extends AppCompatActivity {
             alert("Periksa isian", "Pilih atau rekam video untuk Status.");
             return;
         }
+        if ("video_cycle".equals(src) && cycleVideoTotal() == 0) {
+            alert("Periksa isian", "Tambahkan minimal satu video ke koleksi.");
+            return;
+        }
+        if ("video_cycle".equals(src) && cycleVideoTotal() > MAX_CYCLE_VIDEOS) {
+            alert("Periksa isian", "Koleksi maksimal " + MAX_CYCLE_VIDEOS + " video.");
+            return;
+        }
         if ("image_cycle".equals(src) && photoTotal() > MAX_PHOTOS) {
             alert("Periksa isian", "Koleksi maksimal 20 foto.");
             return;
@@ -1444,7 +1619,8 @@ public class WaStatusEditActivity extends AppCompatActivity {
         if ("image".equals(src) && newImage != null) uploads.add(newImage);
         if ("image_cycle".equals(src)) uploads.addAll(newPhotos);
         if ("video".equals(src)) uploads.addAll(newVideo);
-        final boolean video = "video".equals(src);
+        if ("video_cycle".equals(src)) uploads.addAll(newCycleVideos);
+        final boolean video = "video".equals(src) || "video_cycle".equals(src);
         saving = true;
         btnSave.setEnabled(false);
         showProgress(uploads.isEmpty() ? savingText(when) : video ? "Mengunggah video…" : "Mengunggah foto…");
@@ -1575,9 +1751,9 @@ public class WaStatusEditActivity extends AppCompatActivity {
         b.put("repeat_days", etRepeat.isEnabled() ? intOrNull(etRepeat) : JSONObject.NULL);
         b.put("closes_orders", cbCloses.isChecked());
         if ("schedule".equals(when)) b.put("scheduled_at", scheduledAt);
-        if ("image_cycle".equals(src)) {
+        if ("image_cycle".equals(src) || "video_cycle".equals(src)) {
             JSONArray rm = new JSONArray();
-            for (String p : removePaths) rm.put(p);
+            for (String p : "video_cycle".equals(src) ? removeVideoPaths : removePaths) rm.put(p);
             b.put("remove_images", rm);
         }
         return b;
