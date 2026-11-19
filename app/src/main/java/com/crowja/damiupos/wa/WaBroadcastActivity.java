@@ -157,6 +157,8 @@ public class WaBroadcastActivity extends AppCompatActivity {
         tvSelectedEmpty = findViewById(R.id.tvSelectedEmpty);
         btnSelectedAll = findViewById(R.id.btnSelectedAll);
         etMessage = findViewById(R.id.etMessage);
+        android.widget.FrameLayout tplHolder = findViewById(R.id.templateHolder);
+        if (tplHolder != null) tplHolder.addView(buildTemplateRow());
         tvCounter = findViewById(R.id.tvCounter);
         btnSend = findViewById(R.id.btnSend);
 
@@ -879,5 +881,69 @@ public class WaBroadcastActivity extends AppCompatActivity {
 
     private int dp(int v) {
         return Math.round(v * getResources().getDisplayMetrics().density);
+    }
+
+    /** Template pesan broadcast: label chip → isi pesan ({nama} diganti nama pelanggan saat kirim). */
+    private static final String[][] TEMPLATES = {
+            {"🚚 Kendala pengiriman", "Halo {nama}, mohon maaf pengiriman galon hari ini terlambat karena ada kendala di perjalanan. "
+                    + "Pesanan tetap kami antar secepatnya. Terima kasih atas pengertiannya 🙏"},
+            {"🌧️ Hujan / banjir", "Halo {nama}, karena hujan deras/banjir di beberapa wilayah, pengiriman galon hari ini mungkin "
+                    + "lebih lama dari biasanya. Kami tetap antar begitu kondisi aman. Mohon maaf atas ketidaknyamanannya 🙏"},
+            {"🛵 Kurir terbatas", "Halo {nama}, hari ini kurir kami terbatas sehingga antrean pengiriman lebih panjang. "
+                    + "Pesanan Kakak tetap kami proses sesuai urutan. Terima kasih sudah menunggu 🙏"},
+            {"⚙️ Gangguan mesin/stok", "Halo {nama}, mohon maaf saat ini ada gangguan mesin/stok air di depot sehingga pengisian "
+                    + "dan pengiriman tertunda sementara. Kami kabari lagi begitu normal kembali 🙏"},
+            {"🏖️ Depot libur", "Halo {nama}, depot kami libur pada [tanggal]. Pesanan dapat dikirim kembali mulai [tanggal]. "
+                    + "Silakan pesan lebih awal agar stok galon di rumah aman. Terima kasih 🙏"},
+            {"✅ Sudah normal", "Halo {nama}, pengiriman galon sudah kembali normal. Terima kasih atas kesabarannya, "
+                    + "silakan pesan seperti biasa lewat chat ini 🙏"},
+            {"💧 Pengingat isi ulang", "Halo {nama}, galon di rumah sudah mau habis? Balas chat ini untuk pesan isi ulang, "
+                    + "kami antar sampai rumah 🚚💧"},
+            {"🎁 Promo", "Halo {nama}, ada promo spesial: [isi promo]. Berlaku sampai [tanggal]. Balas chat ini untuk pesan ya 🙏"},
+            {"💰 Perubahan harga", "Halo {nama}, mulai [tanggal] harga isi ulang galon menjadi [harga]. Terima kasih "
+                    + "sudah setia berlangganan 🙏"},
+    };
+
+    /** Baris chip template di atas kolom Pesan; ketuk = isi Pesan (konfirmasi bila sudah ada tulisan lain). */
+    private android.widget.HorizontalScrollView buildTemplateRow() {
+        float d = getResources().getDisplayMetrics().density;
+        android.widget.LinearLayout chips = new android.widget.LinearLayout(this);
+        chips.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        chips.setPadding(0, Math.round(6 * d), 0, 0);
+        for (String[] tpl : TEMPLATES) {
+            android.widget.Button chip = new android.widget.Button(this);
+            chip.setText(tpl[0]);
+            chip.setAllCaps(false);
+            chip.setTextSize(12f);
+            chip.setPadding(Math.round(10 * d), Math.round(2 * d), Math.round(10 * d), Math.round(2 * d));
+            chip.setMinHeight(0);
+            chip.setMinimumHeight(0);
+            android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(-2, -2);
+            lp.setMarginEnd(Math.round(6 * d));
+            chip.setLayoutParams(lp);
+            chip.setOnClickListener(v -> {
+                String cur = etMessage.getText().toString().trim();
+                Runnable apply = () -> {
+                    etMessage.setText(tpl[1]);
+                    etMessage.setSelection(etMessage.getText().length());
+                    etMessage.requestFocus();
+                };
+                if (cur.isEmpty() || cur.equals(tpl[1])) {
+                    apply.run();
+                    return;
+                }
+                new androidx.appcompat.app.AlertDialog.Builder(this)
+                        .setTitle("Ganti pesan?")
+                        .setMessage("Pesan yang sudah ditulis akan diganti template \"" + tpl[0] + "\".")
+                        .setPositiveButton("Ganti", (dd, w) -> apply.run())
+                        .setNegativeButton("Batal", null)
+                        .show();
+            });
+            chips.addView(chip);
+        }
+        android.widget.HorizontalScrollView scroll = new android.widget.HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.addView(chips);
+        return scroll;
     }
 }
