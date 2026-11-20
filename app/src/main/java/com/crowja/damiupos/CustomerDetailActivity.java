@@ -50,6 +50,13 @@ public class CustomerDetailActivity extends AppCompatActivity {
     private static final int MENU_FLAG_PROBLEM = 12;
     /** Menu: tandai pelanggan PRIORITAS (utamakan → naik ke atas antrian delivery & follow up). */
     private static final int MENU_PRIORITY = 13;
+    /** Menu: 🚫 Berhenti Berlangganan + alasan (template). */
+    private static final int MENU_STOP_SUB = 14;
+    private static final String[] STOP_SUB_PRESETS = {
+            "Pindah rumah", "Pindah ke depot lain", "Harga terlalu mahal", "Kualitas air kurang",
+            "Pengiriman sering terlambat", "Pakai air PDAM / sumur / galon sendiri", "Usaha tutup",
+            "Tidak bisa dihubungi", "Lainnya (jelaskan)",
+    };
 
     /** Kategori masalah: kunci tersinkron (cermin web) → label Indonesia. Urutan dijaga. */
     private static final String[] ISSUE_KEYS = {"phone", "coordinate", "photo", "address", "other"};
@@ -232,6 +239,8 @@ public class CustomerDetailActivity extends AppCompatActivity {
                 .setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_NEVER);
         menu.add(0, MENU_PRIORITY, 3, "⭐ Jadikan Prioritas")
                 .setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_NEVER);
+        menu.add(0, MENU_STOP_SUB, 4, "🚫 Berhenti Berlangganan")
+                .setShowAsAction(android.view.MenuItem.SHOW_AS_ACTION_NEVER);
         return true;
     }
 
@@ -276,7 +285,75 @@ public class CustomerDetailActivity extends AppCompatActivity {
             showPriorityDialog();
             return true;
         }
+        if (item.getItemId() == MENU_STOP_SUB) {
+            showStopSubscriptionDialog();
+            return true;
+        }
         return super.onOptionsItemSelected(item);
+    }
+
+    /**
+     * 🚫 Berhenti Berlangganan: pilih/tulis alasan (template chip), lalu kirim ke server — sama dengan web
+     * "Tandai Berhenti Langganan": keluar dari Follow Up, Pesanan Terjadwal dijeda, aktif lagi bila ia pesan lagi.
+     */
+    private void showStopSubscriptionDialog() {
+        final String name = currentCustomer != null ? currentCustomer.getName() : "Pelanggan";
+        final com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(
+                new com.crowja.damiupos.db.SettingsDao(com.crowja.damiupos.db.DatabaseHelper.getInstance(this)));
+        final String uuid = cfg.isEnrolled() ? customerDao.getSyncUuidById(customerId) : null;
+        if (uuid == null || uuid.isEmpty()) {
+            android.widget.Toast.makeText(this, "Pelanggan belum tersinkron ke server — coba lagi setelah sinkron.",
+                    android.widget.Toast.LENGTH_LONG).show();
+            return;
+        }
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+        android.widget.TextView hint = new android.widget.TextView(this);
+        hint.setText("Pelanggan keluar dari Follow Up dan Pesanan Terjadwal dijeda. Otomatis aktif lagi bila ia pesan lagi.
+
+Alasan:");
+        hint.setTextSize(13);
+        box.addView(hint);
+        final android.widget.EditText et = new android.widget.EditText(this);
+        et.setHint("Tulis alasan…");
+        et.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(160)});
+        box.addView(DeliveryVoidDialog.buildQuickReasonRow(this, et, STOP_SUB_PRESETS));
+        box.addView(et);
+        final androidx.appcompat.app.AlertDialog dlg = new androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("🚫 Berhenti Berlangganan — " + name)
+                .setView(box)
+                .setPositiveButton("Tandai Berhenti", null)
+                .setNegativeButton("Batal", null)
+                .create();
+        dlg.setOnShowListener(di -> dlg.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            final String reason = et.getText().toString().trim();
+            if (reason.isEmpty()) {
+                et.setError("Pilih atau tulis alasannya dulu.");
+                return;
+            }
+            dlg.dismiss();
+            final String staff = com.crowja.damiupos.sync.LocationReporter.currentStaffUuid(this);
+            new Thread(() -> {
+                String msg;
+                try {
+                    org.json.JSONObject r = new com.crowja.damiupos.sync.SyncApi(cfg).stopSubscription(uuid, reason, staff);
+                    msg = r.optString("message", "\"" + name + "\" ditandai berhenti berlangganan.");
+                } catch (com.crowja.damiupos.sync.SyncApi.SyncException se) {
+                    String m = se.serverMessage();
+                    msg = "Gagal menandai berhenti berlangganan" + (m != null && !m.isEmpty() ? ": " + m : " (kode " + se.code + ")") + ".";
+                } catch (Exception e) {
+                    msg = "Gagal menandai berhenti berlangganan — periksa koneksi internet.";
+                }
+                final String fMsg = msg;
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    android.widget.Toast.makeText(this, fMsg, android.widget.Toast.LENGTH_LONG).show();
+                    com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                });
+            }).start();
+        }));
+        dlg.show();
     }
 
     /** Link publik butuh server → hanya tampil saat sinkronisasi online aktif & pelanggan bukan "Umum". */
