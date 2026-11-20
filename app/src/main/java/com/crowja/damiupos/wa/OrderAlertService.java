@@ -211,7 +211,7 @@ public class OrderAlertService extends Service {
                 : "📨 Ada pesanan WA baru";
         String text = "Tap untuk buka inbox & balas pelanggan";
 
-        return new NotificationCompat.Builder(this, CHANNEL_ID).setSilent(com.crowja.damiupos.util.QuietHours.isQuiet(this))
+        return new NotificationCompat.Builder(this, CHANNEL_ID).setSilent(com.crowja.damiupos.util.QuietHours.muteAndBuzz(this))
                 .setSmallIcon(R.drawable.ic_inbox)
                 .setContentTitle(title)
                 .setContentText(text)
@@ -238,7 +238,7 @@ public class OrderAlertService extends Service {
 
     private synchronized void startSound() {
         if (player != null) return; // already playing
-        if (com.crowja.damiupos.util.QuietHours.isQuiet(this)) return;   // 🔕 jam senyap cabang
+        if (com.crowja.damiupos.util.QuietHours.muteAndBuzz(this)) return;   // 🔕 jam senyap cabang
         try {
             SettingsDao settings = new SettingsDao(DatabaseHelper.getInstance(this));
             String uriStr = settings.getWaRingtoneUri();

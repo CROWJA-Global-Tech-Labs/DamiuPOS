@@ -9409,7 +9409,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
    }
 
    private void playIncompleteAlertSound() {
-      if (com.crowja.damiupos.util.QuietHours.isQuiet(this)) return;   // 🔕 jam senyap cabang
+      if (com.crowja.damiupos.util.QuietHours.muteAndBuzz(this)) return;   // 🔕 jam senyap cabang
       try {
          Uri uri = RingtoneManager.getDefaultUri(4);
          if (uri == null) {

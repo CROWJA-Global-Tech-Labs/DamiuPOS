@@ -474,7 +474,7 @@ public final class PickupNearbyMonitor {
                 new Intent(app, LaterReceiver.class).setAction(LaterReceiver.ACTION_LATER)
                         .putExtra(LaterReceiver.EXTRA_KEY, c.key),
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        NotificationCompat.Builder b = new NotificationCompat.Builder(app, CHANNEL_ALERT).setSilent(com.crowja.damiupos.util.QuietHours.isQuiet(app))
+        NotificationCompat.Builder b = new NotificationCompat.Builder(app, CHANNEL_ALERT).setSilent(com.crowja.damiupos.util.QuietHours.muteAndBuzz(app))
                 .setSmallIcon(R.drawable.ic_inbox)
                 .setContentTitle(PickupNearbyLogic.alertTitle(c.name))
                 .setContentText(text)
@@ -501,7 +501,7 @@ public final class PickupNearbyMonitor {
         ensureChannels(app);
         String title = PickupNearbyLogic.passedTitle(c.name);
         String text = c.galon + " galon kembali · " + PickupNearbyLogic.sourceLabel(c.source, c.holder);
-        NotificationCompat.Builder b = new NotificationCompat.Builder(app, CHANNEL_PASSED).setSilent(com.crowja.damiupos.util.QuietHours.isQuiet(app))
+        NotificationCompat.Builder b = new NotificationCompat.Builder(app, CHANNEL_PASSED).setSilent(com.crowja.damiupos.util.QuietHours.muteAndBuzz(app))
                 .setSmallIcon(R.drawable.ic_inbox)
                 .setContentTitle(title)
                 .setContentText(text)

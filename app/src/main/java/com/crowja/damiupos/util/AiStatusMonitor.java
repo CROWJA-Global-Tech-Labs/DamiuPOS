@@ -211,7 +211,7 @@ public final class AiStatusMonitor {
         try {
             ComplaintSirenSound.Choice ch = ComplaintSirenSound.current(activity);
             if (ch.silent()) return;   // "Tanpa suara" dari web Konfigurasi dihormati
-            if (QuietHours.isQuiet(activity)) return;   // 🔕 jam senyap cabang
+            if (QuietHours.muteAndBuzz(activity)) return;   // 🔕 jam senyap cabang
             mp = new MediaPlayer();
             mp.setAudioAttributes(new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_ALARM)

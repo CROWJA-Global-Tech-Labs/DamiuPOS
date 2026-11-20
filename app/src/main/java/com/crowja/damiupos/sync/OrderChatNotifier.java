@@ -477,7 +477,7 @@ public final class OrderChatNotifier {
             extras.putLong(EXTRA_AT, Math.max(handledAt, r.at));
             // Tanpa setAutoCancel: ChatLogActivity menghapusnya saat chat-nya benar-benar tampil. Ketukan
             // yang berakhir di gerbang login tak boleh menghilangkan balasannya dari baki.
-            NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, CHANNEL_ID).setSilent(com.crowja.damiupos.util.QuietHours.isQuiet(ctx))
+            NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, CHANNEL_ID).setSilent(com.crowja.damiupos.util.QuietHours.muteAndBuzz(ctx))
                     .setSmallIcon(R.drawable.ic_inbox)
                     .setContentTitle(title(r.name))
                     .setContentText(body)

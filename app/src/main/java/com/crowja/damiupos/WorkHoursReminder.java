@@ -156,7 +156,7 @@ public final class WorkHoursReminder {
         PendingIntent contentPi = PendingIntent.getActivity(ctx, 0, open, piFlags);
         String big = "Jam kerjamu periode cut-off ini sudah terpenuhi: " + worked
                 + " dari target " + req + ". Terima kasih atas kerja kerasmu!";
-        Notification n = new NotificationCompat.Builder(ctx, CHANNEL_ID).setSilent(com.crowja.damiupos.util.QuietHours.isQuiet(ctx))
+        Notification n = new NotificationCompat.Builder(ctx, CHANNEL_ID).setSilent(com.crowja.damiupos.util.QuietHours.muteAndBuzz(ctx))
                 .setSmallIcon(R.drawable.ic_check)
                 .setContentTitle("Jam kerja periode terpenuhi 🎉")
                 .setContentText("Periode: " + worked + " / " + req)

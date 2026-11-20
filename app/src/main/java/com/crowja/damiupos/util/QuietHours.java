@@ -14,8 +14,8 @@ import java.util.regex.Pattern;
 /**
  * Jam senyap cabang (web Konfigurasi → "🔕 Jam Senyap Notifikasi"), disinkron lewat app_settings {@code quiet_hours}:
  * JSON {@code [{"start":"21:00","end":"05:00"}, …]}. Selama jam HP berada di salah satu rentang, SEMUA bunyi notifikasi
- * aplikasi dibisukan — pemutar suara langsung dilewati dan notifikasi diposting {@code setSilent(true)} (tetap muncul,
- * tanpa bunyi & getar). Rentang boleh melewati tengah malam (start &gt; end); batas akhir tidak termasuk.
+ * aplikasi dibisukan — pemutar suara dilewati dan notifikasi diposting {@code setSilent(true)} (tetap muncul), dan HP
+ * DIGETARKAN sebagai gantinya ({@link #muteAndBuzz}). Rentang boleh melewati tengah malam (start &gt; end); batas akhir tidak termasuk.
  */
 public final class QuietHours {
     private static final Pattern RANGE = Pattern.compile(
@@ -34,6 +34,33 @@ public final class QuietHours {
             return isQuietAt(raw, c.get(Calendar.HOUR_OF_DAY) * 60 + c.get(Calendar.MINUTE));
         } catch (Exception e) {
             return false;
+        }
+    }
+
+    private static long lastBuzz;
+
+    /**
+     * Dipakai di setiap titik bunyi: jam senyap → kembalikan true (pemanggil membisukan suaranya) DAN getarkan HP sekali,
+     * supaya notifikasi tetap terasa. {@code setSilent(true)} ikut mematikan getar kanal, jadi getarnya dibuat di sini.
+     * Getar diredam 3 detik: notifikasi + sirine yang berbunyi bersamaan cukup satu getaran.
+     */
+    public static boolean muteAndBuzz(@Nullable Context ctx) {
+        if (!isQuiet(ctx)) return false;
+        buzz(ctx);
+        return true;
+    }
+
+    private static synchronized void buzz(Context ctx) {
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (now - lastBuzz < 3000) return;
+        lastBuzz = now;
+        try {
+            android.os.Vibrator v = (android.os.Vibrator) ctx.getApplicationContext().getSystemService(Context.VIBRATOR_SERVICE);
+            if (v != null && v.hasVibrator()) {
+                v.vibrate(android.os.VibrationEffect.createWaveform(new long[]{0, 300, 150, 300}, -1));
+            }
+        } catch (Exception ignored) {
+            // tanpa getar
         }
     }
 
