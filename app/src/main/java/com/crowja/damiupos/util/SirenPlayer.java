@@ -32,6 +32,7 @@ public final class SirenPlayer {
     public static synchronized void start(Context ctx, Uri uri, boolean loop) {
         stop();
         if (uri == null) return;
+        if (QuietHours.isQuiet(ctx)) return;   // 🔕 jam senyap cabang: notifikasinya tetap tampil, tanpa sirine
         try {
             MediaPlayer mp = new MediaPlayer();
             mp.setAudioAttributes(new AudioAttributes.Builder()

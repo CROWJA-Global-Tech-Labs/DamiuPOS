@@ -79,7 +79,7 @@ public final class OnlineNotifier {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
         PendingIntent pi = PendingIntent.getActivity(ctx, id, open, flags);
-        Notification n = new NotificationCompat.Builder(ctx, CHANNEL_PUSH)
+        Notification n = new NotificationCompat.Builder(ctx, CHANNEL_PUSH).setSilent(com.crowja.damiupos.util.QuietHours.isQuiet(ctx))
                 .setSmallIcon(R.drawable.ic_info)
                 .setContentTitle(title)
                 .setContentText(body)

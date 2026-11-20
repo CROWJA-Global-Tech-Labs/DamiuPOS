@@ -73,7 +73,7 @@ public final class ComplaintAlert {
         PendingIntent pi = PendingIntent.getActivity(ctx, notifId, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Uri sound = choice.uri;
-        NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, choice.channelId)
+        NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, choice.channelId).setSilent(com.crowja.damiupos.util.QuietHours.isQuiet(ctx))
                 .setSmallIcon(R.drawable.ic_info)
                 .setContentTitle(title)
                 .setContentText(body)

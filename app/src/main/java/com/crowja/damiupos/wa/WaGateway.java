@@ -221,7 +221,7 @@ public final class WaGateway {
         String body = "Ketuk untuk membuka chat " + phone + " (pesan sudah terisi) lalu tekan Kirim. "
                 + why;
         try {
-            Notification n = new NotificationCompat.Builder(ctx, OnlineNotifier.CHANNEL_PUSH)
+            Notification n = new NotificationCompat.Builder(ctx, OnlineNotifier.CHANNEL_PUSH).setSilent(com.crowja.damiupos.util.QuietHours.isQuiet(ctx))
                     .setSmallIcon(R.drawable.ic_info)
                     .setContentTitle("Kirim WhatsApp ke " + phone)
                     .setContentText(body)

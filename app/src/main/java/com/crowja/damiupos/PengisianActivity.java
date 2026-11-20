@@ -967,6 +967,7 @@ public class PengisianActivity extends AppCompatActivity {
 
     /** Kebutuhan isi naik antara dua pembaruan: bunyi pendek (stream alarm) + getar. Hanya foreground. */
     private void alertIncrease() {
+        if (com.crowja.damiupos.util.QuietHours.isQuiet(this)) return;   // 🔕 jam senyap cabang: kartu tetap berubah, tanpa bunyi/getar
         try {
             Vibrator vib = (Vibrator) getSystemService(VIBRATOR_SERVICE);
             if (vib != null && vib.hasVibrator()) {

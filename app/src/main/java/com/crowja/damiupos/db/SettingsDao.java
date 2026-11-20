@@ -40,6 +40,8 @@ public class SettingsDao {
     public static final String KEY_COMPLAINT_SIREN_SOUND = "complaint_siren_sound";
     public static final String KEY_COMPLAINT_SIREN_URL = "complaint_siren_url";
     public static final String KEY_COMPLAINT_SIREN_REPEAT = "complaint_siren_repeat";
+    /** Jam senyap cabang (web Konfigurasi): JSON [{"start":"21:00","end":"05:00"}, …] — {@link com.crowja.damiupos.util.QuietHours}. */
+    public static final String KEY_QUIET_HOURS = "quiet_hours";
     public static final String KEY_WIZARD_COMPLETED = "wizard_completed";
     public static final String KEY_FOLLOWUP_DAYS = "followup_days";
     public static final String KEY_STOCK_ALERT = "stock_alert";
@@ -246,7 +248,7 @@ public class SettingsDao {
             KEY_POINTS_ENABLED, KEY_POINTS_PER_AMOUNT, KEY_POINTS_REWARD_THRESHOLD,
             KEY_PRODUCT_BONUS_THRESHOLD,
             KEY_DEPOT_NAME, KEY_DEPOT_ADDRESS, KEY_DEPOT_PHONE, KEY_DEPOT_LOGO_URL,
-            KEY_COMPLAINT_SIREN_SOUND, KEY_COMPLAINT_SIREN_URL, KEY_COMPLAINT_SIREN_REPEAT,
+            KEY_COMPLAINT_SIREN_SOUND, KEY_COMPLAINT_SIREN_URL, KEY_COMPLAINT_SIREN_REPEAT, KEY_QUIET_HOURS,
             KEY_FOLLOWUP_DAYS, KEY_FOLLOWUP_TEMPLATE, KEY_PANTUN_BRAND,
             KEY_FOLLOWUP_OPENER, KEY_FOLLOWUP_CLOSER,
             KEY_OPS_CLOSE_TIME, KEY_OPS_OPEN_TIME, KEY_WA_STRUK_TEMPLATE,
