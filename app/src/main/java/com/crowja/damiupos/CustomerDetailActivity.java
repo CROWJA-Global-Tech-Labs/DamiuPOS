@@ -310,9 +310,7 @@ public class CustomerDetailActivity extends AppCompatActivity {
         box.setOrientation(android.widget.LinearLayout.VERTICAL);
         box.setPadding(dp(20), dp(8), dp(20), 0);
         android.widget.TextView hint = new android.widget.TextView(this);
-        hint.setText("Pelanggan keluar dari Follow Up dan Pesanan Terjadwal dijeda. Otomatis aktif lagi bila ia pesan lagi.
-
-Alasan:");
+        hint.setText("Pelanggan keluar dari Follow Up dan Pesanan Terjadwal dijeda. Otomatis aktif lagi bila ia pesan lagi.\n\nAlasan:");
         hint.setTextSize(13);
         box.addView(hint);
         final android.widget.EditText et = new android.widget.EditText(this);
