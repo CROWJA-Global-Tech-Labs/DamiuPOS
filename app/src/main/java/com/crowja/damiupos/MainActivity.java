@@ -967,6 +967,7 @@ public class MainActivity extends AppCompatActivity {
 
     /** Mainkan nada nyaring (stream alarm) sekali. */
     private static Ringtone playLoudChime(Context ctx) {
+        if (com.crowja.damiupos.util.QuietHours.isQuiet(ctx)) return null;   // 🔕 jam senyap cabang
         try {
             Uri snd = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
             if (snd == null) snd = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
