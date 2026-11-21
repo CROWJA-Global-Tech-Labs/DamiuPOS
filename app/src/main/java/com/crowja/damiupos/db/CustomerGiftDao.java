@@ -130,6 +130,8 @@ public class CustomerGiftDao {
     public static final class Row {
         public long localId;
         public String itemType, productUuid, itemName, reason, redeemedAt, redeemedBy, createdAt;
+        /** Struk yang menuntaskan / sedang menunggu gift ini (null = diberikan manual / belum). */
+        public String redeemedTrxUuid, pendingTrxUuid;
         public int qty;
 
         public boolean given() {
@@ -145,7 +147,8 @@ public class CustomerGiftDao {
         try (Cursor c = db.query(DatabaseHelper.TABLE_CUSTOMER_GIFTS, new String[]{
                         DatabaseHelper.COL_ID, DatabaseHelper.COL_GIFT_ITEM_TYPE, DatabaseHelper.COL_GIFT_PRODUCT_UUID,
                         DatabaseHelper.COL_GIFT_ITEM_NAME, DatabaseHelper.COL_GIFT_QTY, DatabaseHelper.COL_GIFT_REASON,
-                        DatabaseHelper.COL_GIFT_REDEEMED_AT, DatabaseHelper.COL_GIFT_REDEEMED_BY, DatabaseHelper.COL_CREATED_AT},
+                        DatabaseHelper.COL_GIFT_REDEEMED_AT, DatabaseHelper.COL_GIFT_REDEEMED_BY, DatabaseHelper.COL_CREATED_AT,
+                        DatabaseHelper.COL_GIFT_REDEEMED_TRX_UUID, DatabaseHelper.COL_GIFT_PENDING_TRX_UUID},
                 inClause(personCustomerIds(db, customerLocalId)), null, null, null,
                 DatabaseHelper.COL_CREATED_AT + " DESC")) {
             while (c.moveToNext()) {
@@ -159,6 +162,8 @@ public class CustomerGiftDao {
                 r.redeemedAt = c.getString(6);
                 r.redeemedBy = c.getString(7);
                 r.createdAt = c.getString(8);
+                r.redeemedTrxUuid = c.getString(9);
+                r.pendingTrxUuid = c.getString(10);
                 out.add(r);
             }
         }

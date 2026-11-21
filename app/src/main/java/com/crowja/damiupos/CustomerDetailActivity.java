@@ -156,6 +156,9 @@ public class CustomerDetailActivity extends AppCompatActivity {
         cardGift = findViewById(R.id.cardGift);
         llGifts = findViewById(R.id.llGifts);
         findViewById(R.id.btnAddGift).setOnClickListener(v -> showGiftDialog(null));
+        findViewById(R.id.btnGiftHistory).setOnClickListener(v -> startActivity(
+                new android.content.Intent(this, GiftHistoryActivity.class).putExtra("customer_id", customerId)
+                        .putExtra("customer_name", currentCustomer != null ? currentCustomer.getName() : null)));
         tvEmptyHistory = findViewById(R.id.tvEmptyHistory);
         rvTransactions = findViewById(R.id.rvTransactions);
         cardDeliveryMetric = findViewById(R.id.cardDeliveryMetric);

@@ -461,6 +461,15 @@
                             android:textColor="#78350F"
                             android:textSize="13sp"
                             app:strokeColor="#F59E0B" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnGiftHistory"
+                            style="@style/Widget.MaterialComponents.Button.TextButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="🕘 Riwayat Gift"
+                            android:textColor="#78350F"
+                            android:textSize="13sp" />
                     </LinearLayout>
 
                     <LinearLayout
