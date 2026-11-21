@@ -1247,6 +1247,39 @@ public class ReceiptActivity extends AppCompatActivity {
                 ? new java.util.ArrayList<>(giftLeg.items)
                 : new java.util.ArrayList<>(
                         TransactionItem.listFromJson(getIntent().getStringExtra(EXTRA_ITEMS_JSON)));
+        final double baseTotal = giftLeg != null ? giftLeg.total : getIntent().getDoubleExtra(EXTRA_TOTAL_HARGA, 0);
+        showProductGiftOptions(giftDao, gift, trxId, trxUuid, items, baseTotal, "🎁 Pelanggan punya gift", "Nanti saja",
+                (newItems, newTotal) -> {
+                    // Struk digambar ulang dari extras → perbarui dulu, lalu susun ulang layar ini.
+                    // Struk gabungan: baca ulang SEMUA leg dari DB (leg utama baru saja berubah).
+                    if (giftLeg != null) {
+                        reloadCheckoutLegs();
+                    } else {
+                        getIntent().putExtra(EXTRA_ITEMS_JSON, TransactionItem.listToJson(newItems));
+                        getIntent().putExtra(EXTRA_TOTAL_HARGA, newTotal);
+                    }
+                    // Gambar ulang di tempat, BUKAN recreate(): onCreate menjadwalkan iklan
+                    // interstitial, jadi menyusun ulang activity akan memunculkan iklan kedua.
+                    receiptText = buildReceipt();
+                    populateReceiptCard();
+                    populateStrukTeksPreview();
+                });
+    }
+
+    private interface GiftApplied {
+        void done(java.util.List<TransactionItem> items, double total);
+    }
+
+    /**
+     * Pilihan wujud gift PRODUK untuk transaksi {@code trxId}: tambah baris Rp 0 (boleh ditukar ke produk yang dibeli),
+     * atau gratiskan sebagian baris yang dibeli. Dipakai popup sesudah transaksi dibuat DAN menu "Ubah Transaksi →
+     * 🎁 Tambahkan gift" (cermin form Edit Transaksi web). Batal = gift tetap pending.
+     */
+    private void showProductGiftOptions(final com.crowja.damiupos.db.CustomerGiftDao giftDao,
+                                        final com.crowja.damiupos.db.CustomerGiftDao.Gift gift,
+                                        final long trxId, final String trxUuid,
+                                        final java.util.List<TransactionItem> items, final double baseTotal,
+                                        String title, String cancelLabel, final GiftApplied onDone) {
 
         // Satu daftar pilihan: tambah (nama gift) → tambah (tukar ke tiap item dibeli) → gratiskan
         // tiap baris yang jumlahnya cukup. Indeksnya dipetakan lewat dua list paralel di bawah.
@@ -1276,11 +1309,11 @@ public class ReceiptActivity extends AppCompatActivity {
         }
 
         new androidx.appcompat.app.AlertDialog.Builder(this)
-                .setTitle("🎁 Pelanggan punya gift")
+                .setTitle(title)
                 .setItems(labels.toArray(new String[0]), (d, which) -> {
                     int swap = swapIdx.get(which);
                     int free = freeIdx.get(which);
-                    double total = giftLeg != null ? giftLeg.total : getIntent().getDoubleExtra(EXTRA_TOTAL_HARGA, 0);
+                    double total = baseTotal;
                     int galon = 0;
                     for (TransactionItem it : items) galon += it.jumlah;
 
@@ -1318,24 +1351,11 @@ public class ReceiptActivity extends AppCompatActivity {
                             new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this))
                                     .getCurrentUserName(), queued);
 
-                    // Struk digambar ulang dari extras → perbarui dulu, lalu susun ulang layar ini.
-                    // Struk gabungan: baca ulang SEMUA leg dari DB (leg utama baru saja berubah).
-                    if (giftLeg != null) {
-                        reloadCheckoutLegs();
-                    } else {
-                        getIntent().putExtra(EXTRA_ITEMS_JSON, TransactionItem.listToJson(items));
-                        getIntent().putExtra(EXTRA_TOTAL_HARGA, total);
-                    }
                     com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
-                    // Gambar ulang di tempat, BUKAN recreate(): onCreate menjadwalkan iklan
-                    // interstitial, jadi menyusun ulang activity akan memunculkan iklan kedua.
-                    // populateReceiptCard() mengosongkan kontainer item lebih dulu, jadi aman
-                    // dipanggil berulang.
-                    receiptText = buildReceipt();
-                    populateReceiptCard();
-                    populateStrukTeksPreview();
+                    final double finalTotal = total;
+                    onDone.done(items, finalTotal);
                 })
-                .setNegativeButton("Nanti saja", null)   // gift tetap pending
+                .setNegativeButton(cancelLabel, null)   // gift tetap pending
                 .show();
     }
 
@@ -3050,18 +3070,70 @@ public class ReceiptActivity extends AppCompatActivity {
             // JUAL: pilih apa yang diubah. Item/harga/ongkir lewat dialog edit penuh (server memutuskan:
             // langsung bila masih antrean, selain itu permintaan izin dengan alasan wajib).
             final com.crowja.damiupos.model.Transaction tt = t;
+            final java.util.List<com.crowja.damiupos.db.CustomerGiftDao.Gift> pendingGifts =
+                    new com.crowja.damiupos.db.CustomerGiftDao(DatabaseHelper.getInstance(this)).pendingForCustomer(t.getCustomerId());
+            java.util.List<String> opts = new java.util.ArrayList<>();
+            opts.add("🧾 Item, jumlah, harga & ongkir");
+            opts.add("💳 Metode pembayaran");
+            if (!pendingGifts.isEmpty()) opts.add("🎁 Tambahkan gift pelanggan (" + pendingGifts.size() + ")");
             new AlertDialog.Builder(this)
                     .setTitle("Ubah Transaksi")
-                    .setItems(new String[]{"🧾 Item, jumlah, harga & ongkir", "💳 Metode pembayaran"}, (d, w) -> {
+                    .setItems(opts.toArray(new String[0]), (d, w) -> {
                         if (w == 0) {
                             com.crowja.damiupos.DeliveryEditDialog.show(this, tt, this::recreate);
-                        } else {
+                        } else if (w == 1) {
                             showEditPaymentMethod(tt);
+                        } else {
+                            pickGiftForEdit(tt, pendingGifts);
                         }
                     })
                     .setNegativeButton("Batal", null)
                     .show();
         }
+    }
+
+    /**
+     * "Ubah Transaksi → 🎁 Tambahkan gift pelanggan": pilih SATU gift pending pelanggan lalu berikan lewat transaksi ini —
+     * gift PRODUK memakai pilihan wujud yang sama dengan popup sesudah transaksi dibuat; gift CUSTOM cukup dilekatkan.
+     * Order yang masih di antrean delivery hanya dilekatkan ("sungguh diberikan" saat Selesai). Cermin form Edit web.
+     */
+    private void pickGiftForEdit(com.crowja.damiupos.model.Transaction t,
+                                 java.util.List<com.crowja.damiupos.db.CustomerGiftDao.Gift> gifts) {
+        final com.crowja.damiupos.db.CustomerGiftDao giftDao =
+                new com.crowja.damiupos.db.CustomerGiftDao(DatabaseHelper.getInstance(this));
+        String[] labels = new String[gifts.size()];
+        for (int i = 0; i < gifts.size(); i++) {
+            com.crowja.damiupos.db.CustomerGiftDao.Gift g = gifts.get(i);
+            labels[i] = (g.isProduct() ? "🎁 " : "🎀 ") + g.qty + " pcs " + g.itemName;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("🎁 Gift pelanggan")
+                .setItems(labels, (d, which) -> {
+                    com.crowja.damiupos.db.CustomerGiftDao.Gift g = gifts.get(which);
+                    TransactionDao tdao = new TransactionDao(DatabaseHelper.getInstance(this));
+                    com.crowja.damiupos.model.Transaction fresh = tdao.getById(t.getId());
+                    if (fresh == null) return;
+                    final String trxUuid = tdao.getSyncUuidById(fresh.getId());
+                    if (trxUuid == null || trxUuid.isEmpty()) return;
+                    String byName = new com.crowja.damiupos.db.SettingsDao(DatabaseHelper.getInstance(this)).getCurrentUserName();
+                    if (!g.isProduct()) {
+                        giftDao.redeemOne(g.localId, trxUuid, byName,
+                                TransactionDao.isQueuedForDelivery(fresh.getDeliveryStatus()));
+                        com.crowja.damiupos.sync.SyncScheduler.syncNow(getApplicationContext());
+                        Toast.makeText(this, "🎁 " + g.qty + " pcs " + g.itemName + " ikut diberikan", Toast.LENGTH_SHORT).show();
+                        recreate();
+                        return;
+                    }
+                    java.util.List<TransactionItem> items = fresh.getItems() != null
+                            ? new java.util.ArrayList<>(fresh.getItems()) : new java.util.ArrayList<>();
+                    showProductGiftOptions(giftDao, g, fresh.getId(), trxUuid, items, fresh.getTotalHarga(),
+                            "🎁 Berikan " + g.qty + " pcs " + g.itemName, "Batal", (newItems, newTotal) -> {
+                                Toast.makeText(this, "🎁 Gift ditambahkan ke transaksi", Toast.LENGTH_SHORT).show();
+                                recreate();
+                            });
+                })
+                .setNegativeButton("Batal", null)
+                .show();
     }
 
     private void showEditPaymentMethod(com.crowja.damiupos.model.Transaction t) {
