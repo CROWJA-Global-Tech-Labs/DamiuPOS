@@ -867,6 +867,8 @@ public class AdminHomeActivity extends AppCompatActivity {
                 m -> m.admin, () -> open(SettingsActivity.class));
         add("perangkat", "Pengaturan Perangkat", "Perangkat", "⚙️", R.color.gj_grey_tint, G_SET,
                 m -> m.admin && m.enrolled, () -> open(DeviceAdminActivity.class));
+        add("staffpopup", "Popup Login Staf", "Popup Login", "📢", R.color.gj_grey_tint, G_SET,
+                m -> m.admin && m.enrolled, () -> open(StaffPopupAdminActivity.class));
         add("dashweb", "Dashboard Web", null, "🖥️", R.color.gj_blue_tint, G_SET,
                 m -> m.admin && m.enrolled, () -> open(AdminWebActivity.class));
         add("sinkron", "Sinkronisasi Online", "Sinkronisasi", "🔄", R.color.gj_blue_tint, G_SET,
@@ -2517,6 +2519,7 @@ public class AdminHomeActivity extends AppCompatActivity {
         addGroupRow(g, "🔄", "Sinkronisasi Online", null, v -> open(SyncSettingsActivity.class));
         if (ms.admin && enrolled) {
             addGroupRow(g, "⚙️", "Pengaturan Perangkat", null, v -> open(DeviceAdminActivity.class));
+            addGroupRow(g, "📢", "Popup Login Staf", null, v -> open(StaffPopupAdminActivity.class));
         }
 
         // ---- Depot

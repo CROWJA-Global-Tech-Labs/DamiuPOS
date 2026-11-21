@@ -973,6 +973,27 @@ public class SyncApi {
         return execute(b.build());
     }
 
+    // ------------------------------------------------ 📢 Popup Login Staf (/api/admin/staff-popups)
+
+    /** {ok, messages[], devices[{uuid,name,is_me}], days[{day,label}]} — staf Admin aktif cabang ini. */
+    public JSONObject adminStaffPopups(String staffUuid) throws Exception {
+        return get(cfg.getBaseUrl() + "/api/admin/staff-popups", cfg.getToken(), staffUuid);
+    }
+
+    /** Simpan pesan baru ({@code id} 0) atau ubah → {ok, message, popup}; 422 membawa pesan validasi. */
+    public JSONObject adminStaffPopupSave(long id, JSONObject body, String staffUuid) throws Exception {
+        return post(cfg.getBaseUrl() + "/api/admin/staff-popups" + (id > 0 ? "/" + id : ""), body, cfg.getToken(), staffUuid);
+    }
+
+    public JSONObject adminStaffPopupDelete(long id, String staffUuid) throws Exception {
+        Request.Builder b = new Request.Builder().url(cfg.getBaseUrl() + "/api/admin/staff-popups/" + id)
+                .header("Accept", "application/json").delete();
+        String token = cfg.getToken();
+        if (token != null && !token.isEmpty()) b.header("Authorization", "Bearer " + token);
+        if (staffUuid != null && !staffUuid.isEmpty()) b.header("X-Staff-Uuid", staffUuid);
+        return execute(b.build());
+    }
+
     // ------------------------------------------------ WhatsApp Admin (/api/admin/wa/*)
     // Cermin grup menu web "WhatsApp". Generik supaya tiap layar (wa.*Activity) memakai jalur sendiri
     // tanpa menambah metode di sini. Semua membawa X-Staff-Uuid (staf Admin aktif cabang ini).

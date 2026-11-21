@@ -1148,7 +1148,14 @@ public class SettingsDao {
     }
     public String getCurrentUserName() { return get(KEY_CURRENT_USER_NAME, ""); }
 
+    /** 📢 Popup login/logout staf untuk perangkat ini (JSON dari /api/me {@code staff_popups}) — lokal, tak disinkron balik. */
+    public static final String KEY_STAFF_POPUPS = "staff_popups_json";
+    /** Peristiwa sesi yang popup-nya belum ditampilkan ("login" / "logout") — {@link com.crowja.damiupos.util.StaffPopup}. */
+    public static final String KEY_STAFF_POPUP_PENDING = "staff_popup_pending";
+
     public void setCurrentUser(long id, String name) {
+        String popupEvent = com.crowja.damiupos.util.StaffPopup.eventFor(getCurrentUserId(), id);
+        if (popupEvent != null) set(KEY_STAFF_POPUP_PENDING, popupEvent);
         set(KEY_CURRENT_USER_ID, String.valueOf(id));
         set(KEY_CURRENT_USER_NAME, name != null ? name : "");
         clearAdminWebSession();   // ganti user / logout = PIN Dashboard Web diminta lagi

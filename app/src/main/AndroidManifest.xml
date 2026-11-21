@@ -159,6 +159,7 @@
         <activity android:name=".ScheduledOrderActivity" />
         <activity android:name=".StatusOrderActivity" />
         <activity android:name=".DeviceAdminActivity" />
+        <activity android:name=".StaffPopupAdminActivity" />
         <activity android:name=".WhatsAppMenuActivity" />
         <!-- Akun WhatsApp: isi form & dialog dibangun di kode (tanpa id) — configChanges supaya rotasi /
              layar terpisah tak membuang dialog Tambah/Ubah, form Auto-Send yang belum disimpan, atau
