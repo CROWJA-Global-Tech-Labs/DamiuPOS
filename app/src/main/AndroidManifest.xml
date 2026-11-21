@@ -133,6 +133,7 @@
         <activity android:name=".CustomerListActivity" />
         <activity android:name=".CustomerFormActivity" />
         <activity android:name=".CustomerDetailActivity" />
+        <activity android:name=".GiftHistoryActivity" />
         <activity android:name=".TransactionActivity" />
         <activity android:name=".TransactionListActivity" />
         <activity android:name=".ReportActivity" />
