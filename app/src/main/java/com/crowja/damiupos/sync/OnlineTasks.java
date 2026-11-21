@@ -167,6 +167,12 @@ public final class OnlineTasks {
             // 📥 Peringatan Galon Kembali di sekitar rute (sakelar + radius per perangkat, halaman Perangkat).
             // Kunci absen (server lama) → nilai tersimpan dipertahankan (bawaan aktif, 50 m).
             boolean pickupChanged = false;
+            // 📢 Popup login/logout staf untuk perangkat ini (server lama tak mengirim kunci ini → biarkan).
+            if (r.has("staff_popups")) {
+                org.json.JSONArray sp = r.optJSONArray("staff_popups");
+                new com.crowja.damiupos.db.SettingsDao(com.crowja.damiupos.db.DatabaseHelper.getInstance(ctx))
+                        .set(com.crowja.damiupos.db.SettingsDao.KEY_STAFF_POPUPS, sp != null ? sp.toString() : "[]");
+            }
             if (r.has("pickup_alert_enabled")) {
                 boolean on = com.crowja.damiupos.util.PickupNearbyLogic.parseBool(
                         r.opt("pickup_alert_enabled"), cfg.isPickupAlertEnabled());

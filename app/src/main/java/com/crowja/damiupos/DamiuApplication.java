@@ -68,6 +68,8 @@ public class DamiuApplication extends Application {
                 com.crowja.damiupos.util.ClaimApprovalPrompter.onActivityResumed(a);
                 // Pembaruan Wajib di layar MANA PUN yang dibuka (hormati Tunda 1 jam).
                 com.crowja.damiupos.sync.VersionUpdater.maybePrompt(a);
+                // 📢 Popup login/logout staf yang tertunda → tampil di layar pertama sesudah login/logout.
+                com.crowja.damiupos.util.StaffPopup.showPending(a);
             }
             @Override public void onActivityPaused(@NonNull Activity a) {
                 if (currentActivity.get() == a) currentActivity = new WeakReference<>(null);
