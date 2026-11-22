@@ -9279,7 +9279,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          if (c.hasOpenIssue() && (new SettingsDao(DatabaseHelper.getInstance(this))).isBlockDeliveryOnIssueEnabled()) {
             this.showIssueBlockThenComplete(t, c);
          } else {
-            boolean noPhoto = !c.hasPhoto();
+            boolean noPhoto = !hasDestPhoto(t, c);
             boolean noCoord = !c.hasCoordinates();
             if (!noPhoto && !noCoord) {
                this.complete(t, false);
@@ -9316,9 +9316,22 @@ public class DeliveryQueueActivity extends AppCompatActivity {
     * foto+koordinat / GPS di form pelanggan; kembali ke sini → dicek ulang dan, bila lengkap, Selesai berlanjut
     * dengan poin normal. "Tetap selesai" (dua ketukan) = order selesai TANPA POIN GALON (markDelivered revoke).
     */
+   /**
+    * Foto yang dihitung gerbang Selesai = foto LOKASI TUJUAN order (Customer.hasPhotoForDest), bukan
+    * sembarang foto pelanggan; tujuan reseller tetap aturan lama. Foto yang baru diambil di panel
+    * navigasi (belum tertarik sinkron) ikut dihitung lewat DestPhotoMemo.
+    */
+   private static boolean hasDestPhoto(Transaction t, Customer c) {
+      if (t.isResellerDestination()) return c.hasPhoto();
+      return c.hasPhotoForDest(t.getDeliveryDestName())
+            || com.crowja.damiupos.db.DestPhotoMemo.recentlyTaken(t.getCustomerId(), t.getDeliveryDestName());
+   }
+
    private void showMandatoryDataGate(Transaction t, Customer c, boolean noPhoto, boolean noCoord) {
       StringBuilder missing = new StringBuilder();
-      if (noPhoto) missing.append("• Belum ada FOTO rumah\n");
+      String dest = t.getDeliveryDestName() != null ? t.getDeliveryDestName().trim() : "";
+      if (noPhoto) missing.append(dest.isEmpty() || t.isResellerDestination()
+            ? "• Belum ada FOTO rumah\n" : "• Lokasi tujuan \"" + dest + "\" belum punya FOTO\n");
       if (noCoord) missing.append("• LOKASI (koordinat) belum ditandai\n");
       this.playIncompleteAlertSound();
       int pad = this.dp(20f);
@@ -9386,11 +9399,11 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       }
       Customer c = t.getCustomerId() > 0L ? this.customerDao.getById(t.getCustomerId()) : null;
       if (c == null) return;
-      if (c.hasPhoto() && c.hasCoordinates()) {
+      if (hasDestPhoto(t, c) && c.hasCoordinates()) {
          Toast.makeText(this, "✓ Data pelanggan lengkap — lanjut Selesai.", Toast.LENGTH_SHORT).show();
          this.complete(t, false);
       } else {
-         this.showMandatoryDataGate(t, c, !c.hasPhoto(), !c.hasCoordinates());
+         this.showMandatoryDataGate(t, c, !hasDestPhoto(t, c), !c.hasCoordinates());
       }
    }
 
@@ -16851,6 +16864,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             }
 
             h.tvNoFoto.setVisibility(t.isCustomerNoPhoto() ? 0 : 8);
+            if (h.tvWajibFoto != null) {
+               if (t.isDestPhotoMissing()) {
+                  h.tvWajibFoto.setVisibility(0);
+                  DeliveryQueueActivity.this.blinkViewForever(h.tvWajibFoto);
+               } else {
+                  h.tvWajibFoto.setVisibility(8);
+                  h.tvWajibFoto.clearAnimation();
+                  h.tvWajibFoto.setAlpha(1.0F);
+               }
+            }
             h.tvNoLokasi.setVisibility(t.isCustomerNoCoord() ? 0 : 8);
             StringBuilder meta = new StringBuilder();
             String jarak = DeliveryQueueActivity.this.myLat == (double)0.0F && DeliveryQueueActivity.this.myLng == (double)0.0F ? null : DeliveryQueueActivity.formatJarak(DeliveryQueueActivity.distOrInf(t, DeliveryQueueActivity.this.myLat, DeliveryQueueActivity.this.myLng));
@@ -16998,6 +17021,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          TextView tvDeadline;
          TextView tvMeta;
          TextView tvNoFoto;
+         TextView tvWajibFoto;
          TextView tvNoLokasi;
          TextView tvOngkir;
          TextView tvPickupOnly;
@@ -17019,6 +17043,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.tvDeadline = (TextView)v.findViewById(id.tvDeadline);
             this.tvMeta = (TextView)v.findViewById(id.tvMeta);
             this.tvNoFoto = (TextView)v.findViewById(id.tvNoFoto);
+            this.tvWajibFoto = (TextView)v.findViewById(id.tvWajibFoto);
             this.tvNoLokasi = (TextView)v.findViewById(id.tvNoLokasi);
             this.tvOngkir = (TextView)v.findViewById(id.tvOngkir);
             this.tvPickupOnly = (TextView)v.findViewById(id.tvPickupOnly);

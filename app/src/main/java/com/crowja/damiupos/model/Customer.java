@@ -193,6 +193,28 @@ public class Customer {
         return false;
     }
 
+    /**
+     * Lokasi TUJUAN order punya foto sendiri? Tujuan bernama yang cocok dengan sebuah lokasi → HANYA
+     * foto lokasi itu yang dihitung (foto rumah pelanggan berlaku untuk lokasi PERTAMA/utama saja —
+     * cermin {@link Location#photo}). Tujuan kosong / tak cocok lokasi mana pun → aturan lama
+     * {@link #hasPhoto()}. Kasus Ibu Sit Rohmat 2026-11-22: "Rumah Krikilan" baru tanpa foto lolos
+     * karena foto "Kediaman" dihitung.
+     */
+    public boolean hasPhotoForDest(String destName) {
+        String dn = destName != null ? destName.trim() : "";
+        if (dn.isEmpty() || locations == null || locations.isEmpty()) return hasPhoto();
+        for (int i = 0; i < locations.size(); i++) {
+            Location l = locations.get(i);
+            if (l == null || l.name == null || !dn.equalsIgnoreCase(l.name.trim())) continue;
+            if (realPhoto(l.photo)) return true;
+            if (l.photos != null) {
+                for (String p : l.photos) if (realPhoto(p)) return true;
+            }
+            return i == 0 && (realPhoto(photoPath) || realPhoto(photoUrl));
+        }
+        return hasPhoto();
+    }
+
     private static boolean realPhoto(String v) {
         return v != null && !v.trim().isEmpty() && !"null".equalsIgnoreCase(v.trim());
     }
