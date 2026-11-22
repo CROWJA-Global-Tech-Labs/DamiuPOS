@@ -4685,6 +4685,13 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             .setMessage(delivering ? (this.isAdminUser() ? "\ud83d\ude9a SEDANG DIANTAR \u2014 Admin tetap bisa mengambil alih.\n\n" : "\ud83d\ude9a SEDANG DIANTAR \u2014 tidak bisa diambil alih.\n\n") + text : text)
             .setNeutralButton("\ud83d\udd0d Preview", (d, w) -> this.showOtherDevicePreview(q))
             .setNegativeButton("Kembali", (DialogInterface.OnClickListener)null);
+      TextView jurnal = com.crowja.damiupos.util.OrderJournal.link(this, q.optString("uuid", ""));
+      if (jurnal != null) {
+         LinearLayout jbox = new LinearLayout(this);
+         jbox.setPadding(this.dp(24f), 0, this.dp(24f), 0);
+         jbox.addView(jurnal);
+         b.setView(jbox);
+      }
       if ((!delivering || this.isAdminUser()) && !awaiting) {
          b.setPositiveButton("\ud83d\udce5 Ambil Alih", (d, w) -> this.confirmTakeOverOtherDevices(q));
       }
@@ -12083,6 +12090,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          body.addView(tvComplained);
       }
 
+      TextView jurnal = com.crowja.damiupos.util.OrderJournal.link(this, this.dao.getSyncUuidById(t.getId()));
+      if (jurnal != null) body.addView(jurnal);
       ScrollView scroll = new ScrollView(this);
       scroll.addView(body);
       boolean voidPending = t.hasPendingVoidRequest();
@@ -12958,6 +12967,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       msg.setTextSize(14f);
       com.crowja.damiupos.util.NoteLinks.apply(msg);   // link di Catatan bisa diketuk
       body.addView(msg);
+      TextView jurnal = com.crowja.damiupos.util.OrderJournal.link(this, s.uuid);
+      if (jurnal != null) body.addView(jurnal);
       ScrollView scroll = new ScrollView(this);
       scroll.addView(body);
       AlertDialog dialog = (new AlertDialog.Builder(this)).setTitle("Detail Order — " + s.name)
