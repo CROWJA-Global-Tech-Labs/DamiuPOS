@@ -135,7 +135,7 @@ public class User {
     /** Layar "Pencapaian Penjualan" (rekap penjualan SE-CABANG, hidup dari server): Admin &
      *  Marketing — peran yang memang bertugas memantau capaian tim. Staf/SPV/Viewer tidak: mereka
      *  hanya perlu antrian & transaksinya sendiri, dan layar ini memuat omzet seluruh cabang. */
-    public boolean canViewSalesAchievement() { return isAdmin() || isMarketing(); }
+    public boolean canViewSalesAchievement() { return isAdmin() || isMarketing() || isStaf(); }
 
     /** Laporan → "📈 Tren Penjualan" (omzet se-cabang dari server): Admin, SPV, Marketing. */
     public boolean canViewSalesTrend() { return isAdmin() || isSpv() || isMarketing(); }

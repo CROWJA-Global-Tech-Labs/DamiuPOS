@@ -697,6 +697,7 @@ public class MainActivity extends AppCompatActivity {
         // dua sumber kebenaran untuk aturan peran yang sama pasti menyimpang cepat atau lambat.
         boolean canSeeDeliveryRecord = false;
         boolean canUseWaChat = false;
+        boolean canSeeAchievement = false;
         if (show) {
             com.crowja.damiupos.model.User cur =
                     new com.crowja.damiupos.db.UserDao(DatabaseHelper.getInstance(this)).getById(uid);
@@ -705,6 +706,7 @@ public class MainActivity extends AppCompatActivity {
             isMarketing = cur != null && cur.isMarketing();
             canSeeDeliveryRecord = cur != null && cur.canViewDeliveryRecord();
             canUseWaChat = cur != null && cur.canUseWaChat();
+            canSeeAchievement = cur != null && cur.canViewSalesAchievement();
         }
         // Hanya staf yang absen di bar ini. Marketing SENGAJA tetap di cabang "tanpa absen" (label +
         // tombol Logout saja) — jangan diganti User.tracksAttendance(): predikat itu memasukkan
@@ -748,14 +750,14 @@ public class MainActivity extends AppCompatActivity {
             });
         }
 
-        // Pencapaian Penjualan: Admin & Marketing (User.canViewSalesAchievement) — peran yang
+        // Pencapaian Penjualan: Admin, Marketing & Staf (User.canViewSalesAchievement) — peran yang
         // memantau capaian tim. Disembunyikan untuk peran lain: layarnya memuat omzet SE-CABANG.
         // Visibilitas dipasang pada SEL grid (FrameLayout), bukan tombolnya — tombol yang GONE di
         // dalam sel yang VISIBLE tetap memesan petak grid dan meninggalkan lubang.
         View boxAchievement = findViewById(R.id.boxSalesAchievement);
         View btnAchievement = findViewById(R.id.btnSalesAchievement);
         if (boxAchievement != null) {
-            boolean canSee = show && (isAdmin || isMarketing);
+            boolean canSee = show && canSeeAchievement;
             boxAchievement.setVisibility(canSee ? View.VISIBLE : View.GONE);
         }
         if (btnAchievement != null) {
