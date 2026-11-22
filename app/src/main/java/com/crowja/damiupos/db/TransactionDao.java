@@ -895,7 +895,18 @@ public class TransactionDao {
                 boolean hasCoord = t.getCustomerLat() != 0 || t.getCustomerLng() != 0;
                 boolean realCust = t.getCustomerId() > 0
                         && !CustomerDao.UMUM_NAME.equalsIgnoreCase(t.getCustomerName());
-                t.setCustomerNoPhoto(realCust && !hasPhoto);
+                // Foto lokasi TUJUAN (bukan sembarang foto pelanggan) — Customer.hasPhotoForDest.
+                boolean destPhoto = hasPhoto;
+                if (realCust && !t.isResellerDestination()) {
+                    com.crowja.damiupos.model.Customer pc = new com.crowja.damiupos.model.Customer();
+                    pc.setPhotoUrl(custPhoto);
+                    pc.setPhotoPath(custPhotoPath);
+                    pc.setLocations(CustomerDao.parseLocations(getStr(c, "cust_locs")));
+                    destPhoto = pc.hasPhotoForDest(t.getDeliveryDestName());
+                }
+                boolean missing = realCust && !destPhoto && !DestPhotoMemo.recentlyTaken(t.getCustomerId(), t.getDeliveryDestName());
+                t.setCustomerNoPhoto(missing);
+                t.setDestPhotoMissing(missing && !Transaction.TYPE_KEMBALI.equals(t.getType()));
                 t.setCustomerNoCoord(realCust && !hasCoord);
                 list.add(t);
             }

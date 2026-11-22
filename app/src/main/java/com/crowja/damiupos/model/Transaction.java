@@ -231,6 +231,11 @@ public class Transaction {
     }
 
     public boolean isCustomerNoPhoto() { return customerNoPhoto; }
+
+    /** Lokasi TUJUAN order belum punya foto → badge "📷 WAJIB FOTO" berkedip + gerbang Selesai. */
+    private boolean destPhotoMissing;
+    public boolean isDestPhotoMissing() { return destPhotoMissing; }
+    public void setDestPhotoMissing(boolean v) { this.destPhotoMissing = v; }
     public void setCustomerNoPhoto(boolean v) { this.customerNoPhoto = v; }
 
     public boolean isCustomerNoCoord() { return customerNoCoord; }

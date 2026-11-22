@@ -796,6 +796,8 @@ public class NavigationPipActivity extends AppCompatActivity {
         String debtElsewhere = "";
         /** Pengingat tagih leg checkout ("" untuk order biasa) — sama dgn popup antrean. */
         String legHint = "";
+        /** Lokasi tujuan aktif belum punya foto SENDIRI → Selesai wajib foto dulu. */
+        boolean destPhotoMissing;
         /** Foto lokasi tujuan perhentian aktif: URL server ATAU path lokal (null = tak ada). */
         String photoUrl, photoLocal;
         /** Titik perhentian tersisa (untuk peta), termasuk yang aktif. */
@@ -949,6 +951,9 @@ public class NavigationPipActivity extends AppCompatActivity {
         if (t.isResellerDestination() || t.getCustomerId() <= 0) return;
         Customer c = new CustomerDao(db).getByIdMerged(t.getCustomerId());
         if (c == null) return;
+        // Gerbang Selesai memakai foto LOKASI TUJUAN (tampilan boleh jatuh ke foto rumah, gerbang tidak).
+        s.destPhotoMissing = !c.hasPhotoForDest(t.getDeliveryDestName())
+                && !com.crowja.damiupos.db.DestPhotoMemo.recentlyTaken(t.getCustomerId(), t.getDeliveryDestName());
         String dn = clean(t.getDeliveryDestName());
         if (!dn.isEmpty() && c.getLocations() != null) {
             for (Customer.Location l : c.getLocations()) {
@@ -1509,6 +1514,8 @@ public class NavigationPipActivity extends AppCompatActivity {
                     return;
                 }
                 Toast.makeText(this, "📷 Foto lokasi diperbarui (jadi foto pertama).", Toast.LENGTH_LONG).show();
+                com.crowja.damiupos.db.DestPhotoMemo.markTaken(customerId, destName);
+                if (last != null) last.destPhotoMissing = false;
                 if (last != null) {
                     last.photoLocal = path;
                     last.photoUrl = null;
@@ -1803,8 +1810,7 @@ TextView done = mediaChip("✅ Selesai", 0xFF15803D);
         // Lokasi tujuan belum punya foto sama sekali → WAJIB foto dulu (kurir sedang di lokasi; foto ini yang dipakai
         // kurir berikutnya mengenali rumahnya). Tujuan reseller / tanpa pelanggan dikecualikan.
         Transaction act = last != null ? last.active : null;
-        if (act != null && act.getCustomerId() > 0 && !act.isResellerDestination()
-                && last.photoUrl == null && last.photoLocal == null) {
+        if (act != null && act.getCustomerId() > 0 && !act.isResellerDestination() && last.destPhotoMissing) {
             new androidx.appcompat.app.AlertDialog.Builder(this)
                     .setTitle("📷 Wajib Foto Lokasi")
                     .setMessage("Lokasi \"" + clean(act.getCustomerName()) + "\" belum punya foto. Ambil foto lokasi dulu "
