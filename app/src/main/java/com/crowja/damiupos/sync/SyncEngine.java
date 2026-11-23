@@ -201,6 +201,8 @@ public class SyncEngine {
                     // menolak nilai ini dari push HP, jadi praktis pull-only walau ikut dataCols.
                     DatabaseHelper.COL_DELIVERY_PRIORITY_AT, DatabaseHelper.COL_DELIVERY_PRIORITY_REASON,
                     DatabaseHelper.COL_DELIVERY_PRIORITY_BY, DatabaseHelper.COL_DELIVERY_PRIORITY_LEVEL,
+                    // ❗ Gagal Kirim Nx — dihitung cron server; server men-skip-nya dari push, jadi pull-only.
+                    DatabaseHelper.COL_DELIVERY_FAILED_COUNT,
                     // ⏰ Batas Antar + jam berangkat paling lambat — dihitung server (DeliveryDeadlines),
                     // di-skip fillColumns saat push, jadi pull-only walau ikut dataCols.
                     DatabaseHelper.COL_DELIVERY_DUE_AT, DatabaseHelper.COL_DELIVERY_DEPART_BY,

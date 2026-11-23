@@ -3191,6 +3191,14 @@ public class DeliveryQueueActivity extends AppCompatActivity {
       return bindClaimRequest(line, btn, trxUuid, delivering, true);
    }
 
+   /** Badge "❗ Gagal Kirim Nx" di kartu antrean (null-safe: layout lama / holder adapter lain tanpa view-nya). */
+   static void bindFailedBadge(TextView tv, Transaction t) {
+      if (tv == null) return;
+      String label = t == null ? null : t.failedBadge();
+      tv.setText(label != null ? label : "");
+      tv.setVisibility(label != null ? View.VISIBLE : View.GONE);
+   }
+
    static void bindOrderNote(TextView tv, String rawCatatan) {
       if (tv != null) {
          String note = ReceiptActivity.customerNote(rawCatatan);
@@ -9023,7 +9031,8 @@ public class DeliveryQueueActivity extends AppCompatActivity {
 
    private OtherQueueRow rowFromTransaction(Transaction t) {
       String badgeName = (t.isOpenDispatch() ? "🎲 " : "") + (t.isCustomerPriority() ? "⭐ " : "")
-            + (t.isCustomerDataIncomplete() ? "❗ " : "") + (t.isComplained() ? "😠 " : "") + safe(t.getCustomerName());
+            + (t.isCustomerDataIncomplete() ? "❗ " : "") + (t.isComplained() ? "😠 " : "")
+            + (t.getFailedCount() > 0 ? "[Gagal " + t.getFailedCount() + "x] " : "") + safe(t.getCustomerName());
       long elapsedMs = elapsedMillis(t.getDeliveryQueuedAt());
       // distKmFromMe (bukan distOrInf): tanpa fix GPS (myLat/myLng masih 0,0 — izin ditolak, belum
       // ada lastLocation) jarak = MAX_VALUE → formatJarak null → baris 📍 tanpa jarak, bukan
@@ -12079,6 +12088,16 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          tvVoided.setTextColor(-3790808);
          tvVoided.setPadding(0, Math.round(8.0F * this.getResources().getDisplayMetrics().density), 0, 0);
          body.addView(tvVoided);
+      }
+
+      if (t.getFailedCount() > 0) {
+         TextView tvFailed = new TextView(this);
+         tvFailed.setText(t.failedBadge() + " — sudah " + t.getFailedCount() + " hari \"sedang diantar\" tanpa selesai (lihat Jurnal)");
+         tvFailed.setTextSize(13.0F);
+         tvFailed.setTextColor(Color.parseColor("#B71C1C"));
+         tvFailed.setTypeface(null, android.graphics.Typeface.BOLD);
+         tvFailed.setPadding(0, Math.round(8.0F * this.getResources().getDisplayMetrics().density), 0, 0);
+         body.addView(tvFailed);
       }
 
       if (t.isComplained()) {
@@ -16839,6 +16858,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             h.tvDeadline.setVisibility(8);
             h.tvNoFoto.setVisibility(8);
             h.tvNoLokasi.setVisibility(8);
+            if (h.tvGagalKirim != null) h.tvGagalKirim.setVisibility(8);
             // Kartu VOID DIAJUKAN sengaja minimal (meta/umur juga disembunyikan) — dan holder daur
             // ulang tak boleh membawa baris 📍 milik kartu sebelumnya.
             h.tvAdminArea.setVisibility(8);
@@ -16886,6 +16906,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
                }
             }
             h.tvNoLokasi.setVisibility(t.isCustomerNoCoord() ? 0 : 8);
+            DeliveryQueueActivity.bindFailedBadge(h.tvGagalKirim, t);   // ❗ Gagal Kirim Nx
             StringBuilder meta = new StringBuilder();
             String jarak = DeliveryQueueActivity.this.myLat == (double)0.0F && DeliveryQueueActivity.this.myLng == (double)0.0F ? null : DeliveryQueueActivity.formatJarak(DeliveryQueueActivity.distOrInf(t, DeliveryQueueActivity.this.myLat, DeliveryQueueActivity.this.myLng));
             h.jarakLabel = jarak;
@@ -17034,6 +17055,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
          TextView tvNoFoto;
          TextView tvWajibFoto;
          TextView tvNoLokasi;
+         TextView tvGagalKirim;
          TextView tvOngkir;
          TextView tvPickupOnly;
          TextView tvVoidTotal;
@@ -17056,6 +17078,7 @@ public class DeliveryQueueActivity extends AppCompatActivity {
             this.tvNoFoto = (TextView)v.findViewById(id.tvNoFoto);
             this.tvWajibFoto = (TextView)v.findViewById(id.tvWajibFoto);
             this.tvNoLokasi = (TextView)v.findViewById(id.tvNoLokasi);
+            this.tvGagalKirim = (TextView)v.findViewById(id.tvGagalKirim);
             this.tvOngkir = (TextView)v.findViewById(id.tvOngkir);
             this.tvPickupOnly = (TextView)v.findViewById(id.tvPickupOnly);
             this.tvVoidTotal = (TextView)v.findViewById(id.tvVoidTotal);

@@ -881,6 +881,7 @@ public class TransactionDao {
                 t.setDeliverySeq((int) getLong(c, DatabaseHelper.COL_DELIVERY_SEQ));
                 t.setOrderPriorityAt(getStr(c, DatabaseHelper.COL_DELIVERY_PRIORITY_AT));
                 t.setPriorityLevel((int) getLong(c, DatabaseHelper.COL_DELIVERY_PRIORITY_LEVEL));
+                t.setFailedCount((int) getLong(c, DatabaseHelper.COL_DELIVERY_FAILED_COUNT));   // ❗ Gagal Kirim Nx
                 t.setOrderPriorityReason(getStr(c, DatabaseHelper.COL_DELIVERY_PRIORITY_REASON));
                 t.setOrderPriorityBy(getStr(c, DatabaseHelper.COL_DELIVERY_PRIORITY_BY));
                 // ⏰ Batas Antar + jam berangkat paling lambat (server-authoritative, apa adanya).
@@ -2457,6 +2458,8 @@ public class TransactionDao {
         // di sini, jadi daftar transaksi tak pernah tahu order mana yang dikomplain.
         int complainedIdx = cursor.getColumnIndex(DatabaseHelper.COL_COMPLAINED_AT);
         if (complainedIdx >= 0) t.setComplainedAt(cursor.getString(complainedIdx));
+        int failedIdx = cursor.getColumnIndex(DatabaseHelper.COL_DELIVERY_FAILED_COUNT);   // ❗ Gagal Kirim Nx
+        if (failedIdx >= 0 && !cursor.isNull(failedIdx)) t.setFailedCount(cursor.getInt(failedIdx));
         int chatSessIdx = cursor.getColumnIndex(DatabaseHelper.COL_CHAT_SESSION_AT);
         if (chatSessIdx >= 0) t.setChatSessionAt(cursor.getString(chatSessIdx));
         // Gerbang foto bukti Selesai (DeliveryQueueActivity.doComplete) membaca baris SEGAR lewat
