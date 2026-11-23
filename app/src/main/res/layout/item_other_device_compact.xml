@@ -100,6 +100,24 @@
                     android:textStyle="bold"
                     android:visibility="gone" />
 
+                <!-- ❗ Gagal Kirim Nx: sudah N hari "sedang diantar" tanpa selesai (cron server, lihat
+                     DatabaseHelper.COL_DELIVERY_FAILED_COUNT). Baris sendiri supaya baris jarak/galon tak tersempit. -->
+                <TextView
+                    android:id="@+id/tvGagalKirim"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:background="@drawable/bg_pending_badge"
+                    android:backgroundTint="#B71C1C"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:paddingTop="2dp"
+                    android:paddingBottom="2dp"
+                    android:textColor="@color/white"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
                 <!-- Baris 2: [✗ FOTO / ✗ LOKASI badge merah bila belum lengkap, khusus Tab 1] · jarak ·
                      N galon. Kontras lebih tinggi dari label sekunder biasa (bold + warna teks utama,
                      bukan grey_medium) supaya gampang dipindai sekilas. -->

@@ -199,7 +199,13 @@ public class Transaction {
 
     /** ⚡ Level prioritas ("PRIORITAS ×N" di web). 0 = tanpa level. */
     private int priorityLevel;
+    /** ❗ Gagal Kirim Nx (server, lihat DatabaseHelper.COL_DELIVERY_FAILED_COUNT). 0 = belum pernah gagal. */
+    private int failedCount;
     public int getPriorityLevel() { return priorityLevel; }
+    public int getFailedCount() { return failedCount; }
+    public void setFailedCount(int v) { this.failedCount = v; }
+    /** Label badge, atau null bila belum pernah gagal kirim. */
+    public String failedBadge() { return failedCount > 0 ? "❗ Gagal Kirim " + failedCount + "x" : null; }
     public void setPriorityLevel(int v) { this.priorityLevel = v; }
 
     /** ⏰ Batas Antar aktif order ini (delivery_due_at) & jam BERANGKAT paling lambat dari cabang

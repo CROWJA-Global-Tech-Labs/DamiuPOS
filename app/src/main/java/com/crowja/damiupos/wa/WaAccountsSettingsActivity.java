@@ -74,6 +74,8 @@ public class WaAccountsSettingsActivity extends AppCompatActivity {
     private final List<String> senderValues = new ArrayList<>();
     private Spinner spSender;
     private final String[] windowStart = {"08:00"}, windowEnd = {"20:00"};
+    /** Jam mulai "Tanya Gagal Kirim" — null = server lama tanpa setelan ini (kuncinya tak dikirim saat simpan). */
+    private final String[] gagalKirimAt = {null};
     private final String[] introSince = {null};
     private Button btSave;
 
@@ -188,6 +190,11 @@ public class WaAccountsSettingsActivity extends AppCompatActivity {
                 "Kirim WA ke pelanggan begitu pesanannya dijadwalkan ulang (Tunda), dari web maupun HP.");
         toggle(c1, s, "apology_enabled", "WA permintaan maaf otomatis",
                 "Order yang masih PENDING lewat ambang umur di bawah diberi tahu WA sekali.");
+        if (s.has("gagal_kirim_enabled")) {   // server lama tak mengenal setelan ini → kartunya tak tampil
+            toggle(c1, s, "gagal_kirim_enabled", "❗ Tanya Gagal Kirim",
+                    "Order di antrean / dijadwalkan hari ini yang kemarin sudah \"sedang diantar\" tapi belum selesai (badge Gagal "
+                            + "Kirim Nx): tanya pelanggan via WA apakah galonnya bisa dikirim hari ini — sekali per hari.");
+        }
         toggle(c1, s, "lid_reconcile_enabled", "Rekonsiliasi LID otomatis",
                 "Setelah struk/notifikasi/follow-up WA di atas terkirim (termasuk follow-up yang membawa link Pesan Cepat), "
                         + "cocokkan/tambahkan/koreksi otomatis pemetaan nomor HP ↔ LID WhatsApp pelanggan.");
@@ -209,6 +216,16 @@ public class WaAccountsSettingsActivity extends AppCompatActivity {
         c2.addView(etThr);
         c2.addView(WaAccountsUi.hint(this, "Dihitung sejak order masuk antrean aktif. Mis. 120 = order yang sudah 2 jam PENDING diberi tahu."));
         template(c2, s, defaults, placeholders, "apology_template", "Template pesan permintaan maaf", 3, null);
+        if (s.has("gagal_kirim_enabled")) {
+            c2.addView(WaAccountsUi.label(this, "❗ Tanya Gagal Kirim — kirim mulai jam"));
+            gagalKirimAt[0] = nz(str(s, "gagal_kirim_send_at")).isEmpty() ? "08:00" : str(s, "gagal_kirim_send_at");
+            final MaterialButton btGk = outlined("🕗 " + gagalKirimAt[0]);
+            btGk.setOnClickListener(v -> pickTime(gagalKirimAt, btGk));
+            c2.addView(btGk);
+            c2.addView(WaAccountsUi.hint(this, "Badge Gagal Kirim dipasang sejak pergantian hari; WA-nya baru keluar mulai jam ini "
+                    + "(tetap di dalam jam kerja proaktif). Memakai izin akun \"Permintaan maaf\"."));
+            template(c2, s, defaults, placeholders, "gagal_kirim_template", "Isi pesan \"bisa dikirim hari ini?\"", 3, null);
+        }
         template(c2, s, defaults, placeholders, "selesai_template",
                 "Isi pesan \"Kabari Pesanan Selesai + Foto\" (foto bukti dilampirkan, teks ini jadi keterangannya)", 2, null);
         template(c2, s, defaults, placeholders, "diantar_template", "Isi pesan \"Beritahu Sedang Diantar\"", 2,
@@ -405,6 +422,11 @@ public class WaAccountsSettingsActivity extends AppCompatActivity {
             for (String k : new String[]{"reschedule_template", "apology_template", "selesai_template", "diantar_template", "obstacle_template"}) {
                 EditText et = texts.get(k);
                 b.put(k, et != null ? et.getText().toString() : JSONObject.NULL);
+            }
+            if (gagalKirimAt[0] != null) {   // hanya bila server mengenal setelan ini (server men-skip bila kunci jam tak ada)
+                b.put("gagal_kirim_send_at", gagalKirimAt[0]);
+                EditText et = texts.get("gagal_kirim_template");
+                b.put("gagal_kirim_template", et != null ? et.getText().toString() : JSONObject.NULL);
             }
             for (String k : new String[]{"apology_threshold_minutes", "proaktif_daily_limit", "followup_gap_days", "send_delay_seconds"}) {
                 EditText et = texts.get(k);

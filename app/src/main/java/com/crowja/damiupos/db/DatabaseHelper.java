@@ -12,7 +12,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
 
     private static final String DATABASE_NAME = "damiu_pos.db";
-    private static final int DATABASE_VERSION = 108;
+    private static final int DATABASE_VERSION = 109;
 
     // ---- Online sync bookkeeping (v26) ----------------------------------------
     // Added to every syncable table; the server keys rows by sync_uuid, resolves
@@ -403,6 +403,9 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     /** ⚡ LEVEL prioritas order ("PRIORITAS ×N" di web; +1 tiap ⚡ dipicu ulang). Server-authoritative,
      *  pull-only — kunci urut antrean SAMA dengan web (Reports::deliveryList). */
     public static final String COL_DELIVERY_PRIORITY_LEVEL = "delivery_priority_level";
+    /** Badge "❗ Gagal Kirim Nx": berapa HARI berbeda order ini sudah "sedang diantar" tanpa selesai — dihitung cron
+     *  server dari jurnal (App\Support\FailedDelivery). Server-authoritative & pull-only (server men-skip-nya dari push). */
+    public static final String COL_DELIVERY_FAILED_COUNT = "delivery_failed_count";
     /** ⏰ BATAS ANTAR aktif order (hari ini / hari lain; NULL = tak ada, di-✕, atau sudah basi) dan jam
      *  BERANGKAT paling lambat dari cabang (batas − perjalanan − serah terima − cadangan). Dihitung &
      *  dipelihara server (DeliveryDeadlines), pull-only, di-skip server saat push — HP TIDAK PERNAH
@@ -700,6 +703,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COL_DELIVERY_PRIORITY_REASON + " TEXT, " +
                     COL_DELIVERY_PRIORITY_BY + " TEXT, " +
                     COL_DELIVERY_PRIORITY_LEVEL + " INTEGER DEFAULT 0, " +
+                    COL_DELIVERY_FAILED_COUNT + " INTEGER DEFAULT 0, " +
                     COL_DELIVERY_DUE_AT + " TEXT, " +
                     COL_DELIVERY_DEPART_BY + " TEXT, " +
                     COL_DELIVERY_OPEN_DISPATCH_AT + " TEXT, " +
@@ -1825,6 +1829,11 @@ public class DatabaseHelper extends SQLiteOpenHelper {
             // reseller yang sudah ada di HP tetap tergerbang lewat penanda [ORDER RESELLER] di catatan
             // sampai pull berikutnya membawa flag-nya.
             tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_PROOF_REQUIRED + " INTEGER DEFAULT 0");
+        }
+        if (oldVersion < 109) {
+            // ❗ Gagal Kirim Nx (lihat COL_DELIVERY_FAILED_COUNT). Aditif; server memajukan edited_at saat
+            // menandai, jadi baris yang ditandai ikut tertarik pull berikutnya tanpa tarik-ulang penuh.
+            tryExec(db, "ALTER TABLE " + TABLE_TRANSACTIONS + " ADD COLUMN " + COL_DELIVERY_FAILED_COUNT + " INTEGER DEFAULT 0");
         }
         if (oldVersion < 108) {
             // Diskon nominal per transaksi (lihat COL_DISKON). Aditif; baris lama = tanpa diskon.
