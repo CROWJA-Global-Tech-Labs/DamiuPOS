@@ -1612,6 +1612,10 @@ public class CustomerDao {
                 // (kurir, admin, HP baru diprovisioning) walau ada banyak pelanggan cabang yang
                 // sudah lama tak beli.
                 "WHERE c.name <> ? AND " + NOT_HANDED_OVER_HERE
+                // Afiliasi reseller tak di-follow up depot (resellernya yang mengurus). Cermin
+                // FollowUpList::base di server (halaman web, agen, WA Follow Up otomatis).
+                + " AND (c." + DatabaseHelper.COL_LINKED_RESELLER_UUID + " IS NULL OR c."
+                + DatabaseHelper.COL_LINKED_RESELLER_UUID + " = '')"
                 + (filterOrigin ? " AND c." + DatabaseHelper.COL_ORIGIN_LABEL + " IN ("
                         + placeholders(originLabels.size()) + ")" : "") + " " +
                 "GROUP BY c._id " +
