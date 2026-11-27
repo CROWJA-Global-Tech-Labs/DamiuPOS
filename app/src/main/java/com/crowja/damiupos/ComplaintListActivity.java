@@ -36,12 +36,15 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * 😠 Daftar komplain pesanan untuk perangkat ini, dihalaman PER HARI (hari komplain, waktu lokal). Komplain AKTIF =
- * pesanan dikomplain yang BELUM diselesaikan (PENDING/Tertunda); SELESAI = pesanannya sudah diselesaikan. Jumlah aktif
- * = badge menu Komplain ({@link TransactionDao#countActiveComplaints}).
+ * ⚠️ Menu MASALAH: semua masalah order untuk perangkat ini — komplain pelanggan, masalah dari Agen AI (eskalasi pada
+ * pesanan, masalah uang), dan laporan agen ke grup staf ("🤝 [DIJANJIKAN KE TIM]", koreksi galon, pembayaran, …).
+ * Komplain & masalah pesanan dihalaman PER HARI (hari komplain, waktu lokal); janji ke tim yang belum selesai selalu
+ * di atas. Komplain AKTIF = pesanan dikomplain yang BELUM diselesaikan (PENDING/Tertunda); SELESAI = pesanannya sudah
+ * diselesaikan. Jumlah aktif = badge menu Masalah ({@link TransactionDao#countActiveComplaints}).
  *
  * <p>Tiap kartu: 🧾 Preview pesanan, ➕ Tambah ke rit berjalan, 🛣️ Kirim Sejalur ke order ini, 💬 Chat WA (aplikasi
- * WhatsApp). Ketuk kartu → log komplain (bisa dibalas).</p>
+ * WhatsApp). Ketuk kartu → log komplain (bisa dibalas). Kartu janji ke tim: akun WA, pelanggan, alasan, pesanan terkait,
+ * ringkasan otomatis, ✅ Tandai Selesai.</p>
  */
 public class ComplaintListActivity extends AppCompatActivity {
 
@@ -90,7 +93,7 @@ public class ComplaintListActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setTitle("😠 Komplain & Masalah");
+        setTitle("⚠️ Masalah");
         if (getSupportActionBar() != null) getSupportActionBar().setDisplayHomeAsUpEnabled(true);
         dao = new TransactionDao(DatabaseHelper.getInstance(this));
 
@@ -133,14 +136,18 @@ public class ComplaintListActivity extends AppCompatActivity {
         LinearLayout kinds = new LinearLayout(this);
         kinds.setOrientation(LinearLayout.HORIZONTAL);
         kinds.setPadding(dp(12), dp(2), dp(12), dp(2));
-        final String[] kindNames = {"Semua", "😠 Komplain", "⚠️ Masalah"};
-        final MaterialButton[] kindBtns = new MaterialButton[3];
-        for (int i = 0; i < 3; i++) {
+        final String[] kindNames = {"Semua", "😠 Komplain", "⚠️ Masalah", "🤝 Janji Tim"};
+        final MaterialButton[] kindBtns = new MaterialButton[kindNames.length];
+        for (int i = 0; i < kindNames.length; i++) {
             final int k = i;
             kindBtns[i] = smallButton(kindNames[i]);
+            kindBtns[i].setTextSize(12f);
+            kindBtns[i].setPadding(dp(2), 0, dp(2), 0);
+            kindBtns[i].setMaxLines(1);
             kindBtns[i].setOnClickListener(v -> {
                 kindFilter = k;
-                for (int j = 0; j < 3; j++) kindBtns[j].setBackgroundTintList(android.content.res.ColorStateList.valueOf(j == k ? 0xFFBBDEFB : 0x00FFFFFF));
+                currentDay = null;
+                for (int j = 0; j < kindBtns.length; j++) kindBtns[j].setBackgroundTintList(android.content.res.ColorStateList.valueOf(j == k ? 0xFFBBDEFB : 0x00FFFFFF));
                 load();
                 render();
             });
@@ -243,8 +250,43 @@ public class ComplaintListActivity extends AppCompatActivity {
 
     // ------------------------------------------------------------------ data & halaman
 
-    /** Filter jenis: 0 semua · 1 komplain · 2 masalah (void menunggu, tertunda, data pelanggan bermasalah). */
+    /**
+     * Filter jenis: 0 semua · 1 komplain · 2 masalah (eskalasi AI pada pesanan, masalah uang) · 3 janji ke tim (laporan
+     * agen ke grup staf: 🤝 DIJANJIKAN KE TIM, koreksi galon, pembayaran, …; termasuk yang sudah selesai 7 hari terakhir).
+     */
     private int kindFilter = 0;
+    private static final int KIND_JANJI = 3;
+
+    /** Laporan agen ke grup staf yang tampil (sudah disaring cakupan perangkat, filter & pencarian); terbuka dulu. */
+    private final List<org.json.JSONObject> escShown = new ArrayList<>();
+    /** Janji ke tim SELESAI yang dibuka manual (kunci = uuid eskalasi). */
+    private final java.util.Set<String> escExpanded = new java.util.HashSet<>();
+
+    private void loadEscalations() {
+        escShown.clear();
+        if (kindFilter != 0 && kindFilter != KIND_JANJI) return;
+        List<org.json.JSONObject> open = new ArrayList<>();
+        List<org.json.JSONObject> done = new ArrayList<>();
+        for (org.json.JSONObject o : IssueReminder.staffEscalations(new SettingsDao(DatabaseHelper.getInstance(this)))) {
+            if (!remoteMode && !IssueReminder.isEscalationForThisDevice(o)) continue;
+            if (!query.isEmpty() && !escMatches(o)) continue;
+            if (IssueReminder.isEscalationOpen(o)) open.add(o);
+            else if (kindFilter == KIND_JANJI) done.add(o);   // riwayat hanya di filter Janji Tim
+        }
+        escShown.addAll(open);
+        escShown.addAll(done);
+    }
+
+    private static String js(org.json.JSONObject o, String k) {
+        String v = o.optString(k, "");
+        return v == null || "null".equals(v) ? "" : v.trim();
+    }
+
+    private boolean escMatches(org.json.JSONObject o) {
+        String s = (js(o, "customer_name") + ' ' + js(o, "customer_phone") + ' ' + js(o, "reason") + ' ' + js(o, "wa_account")
+                + ' ' + js(o, "kind") + ' ' + js(o, "receipt_no") + ' ' + js(o, "cycle_id")).toLowerCase(Locale.ROOT);
+        return s.contains(query);
+    }
 
     private static boolean isComplaintOrder(Transaction t) {
         return t.getComplainedAt() != null && !t.getComplainedAt().trim().isEmpty();
@@ -390,6 +432,7 @@ public class ComplaintListActivity extends AppCompatActivity {
 
     private List<Transaction> localSource() {
         List<Transaction> out = new ArrayList<>();
+        if (kindFilter == KIND_JANJI) return out;   // janji ke tim: kartu sendiri (escShown), bukan transaksi
         java.util.Map<Long, Transaction> byId = new java.util.HashMap<>();
         if (kindFilter != 2) {
             for (Transaction t : dao.getComplaintOrders(600)) {
@@ -418,7 +461,8 @@ public class ComplaintListActivity extends AppCompatActivity {
             loadQueuePositions();
             if (holderByTrx.isEmpty()) fetchHolders();
         }
-        List<Transaction> source = remoteMode ? remoteAll : localSource();
+        loadEscalations();
+        List<Transaction> source = remoteMode ? (kindFilter == KIND_JANJI ? new ArrayList<>() : remoteAll) : localSource();
         final String todayKey = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date());
         for (Transaction t : source) {
             if (!query.isEmpty() && !matches(t)) continue;
@@ -477,13 +521,20 @@ public class ComplaintListActivity extends AppCompatActivity {
                 if (isActive(t)) totalActive++;
             }
         }
+        int escOpen = 0;
+        for (org.json.JSONObject o : escShown) if (IssueReminder.isEscalationOpen(o)) escOpen++;
+        totalAll += escShown.size();
+        totalActive += escOpen;
         summary.setText((remoteMode ? "🌐 Semua perangkat · " : "") + totalActive + " aktif · " + (totalAll - totalActive)
-                + " selesai (semua hari)" + (query.isEmpty() ? "" : " · hasil pencarian"));
+                + " selesai" + (kindFilter == KIND_JANJI ? " (7 hari)" : " (semua hari)") + (query.isEmpty() ? "" : " · hasil pencarian"));
         summary.setTextColor(totalActive > 0 ? C_RED : C_GREEN);
         if (remoteMode && remoteError != null && !remoteLoading) {
             summary.setText("⚠️ Gagal memuat semua perangkat — " + remoteError);
             summary.setTextColor(C_RED);
         }
+
+        // Janji ke tim (laporan agen ke grup staf): yang belum selesai SELALU di atas, tak ikut pager hari.
+        renderEscalations();
 
         if (!query.isEmpty()) {
             // Pencarian: semua hari sekaligus (tanpa pager), dikelompokkan per tanggal.
@@ -493,7 +544,7 @@ public class ComplaintListActivity extends AppCompatActivity {
             otherDays.setVisibility(View.GONE);
             if (totalAll == 0) {
                 TextView none = new TextView(this);
-                none.setText(remoteLoading ? "Memuat…" : "Tidak ada komplain yang cocok.");
+                none.setText(remoteLoading ? "Memuat…" : "Tidak ada masalah yang cocok.");
                 none.setTextColor(C_MUTED);
                 none.setGravity(Gravity.CENTER);
                 none.setPadding(dp(24), dp(40), dp(24), dp(24));
@@ -508,14 +559,16 @@ public class ComplaintListActivity extends AppCompatActivity {
         }
 
         if (currentDay == null) {
-            dayLabel.setText("—");
+            dayLabel.setText(kindFilter == KIND_JANJI ? "🤝 Janji ke tim" : "—");
             btnOlder.setEnabled(false);
             btnNewer.setEnabled(false);
             otherDays.setVisibility(View.GONE);
+            if (!escShown.isEmpty()) return;   // hanya janji ke tim — kartunya sudah tampil di atas
             TextView empty = new TextView(this);
-            empty.setText(remoteLoading ? "Memuat komplain semua perangkat…"
-                    : (remoteMode && remoteError != null ? "⚠️ " + remoteError + "\n\nKetuk di sini untuk coba lagi."
-                    : (remoteMode ? "Belum ada komplain pesanan di cabang ini." : "Belum ada komplain pesanan di perangkat ini.")));
+            String none = kindFilter == KIND_JANJI ? "Belum ada janji ke tim dari Agen AI." : "Belum ada masalah pesanan";
+            empty.setText(remoteLoading && kindFilter != KIND_JANJI ? "Memuat masalah semua perangkat…"
+                    : (remoteMode && remoteError != null && kindFilter != KIND_JANJI ? "⚠️ " + remoteError + "\n\nKetuk di sini untuk coba lagi."
+                    : (kindFilter == KIND_JANJI ? none : (remoteMode ? none + " di cabang ini." : none + " di perangkat ini."))));
             if (remoteMode && remoteError != null && !remoteLoading) {
                 empty.setTextColor(C_RED);
                 empty.setOnClickListener(v -> loadRemote());
@@ -531,7 +584,7 @@ public class ComplaintListActivity extends AppCompatActivity {
         int dayActive = 0;
         for (Transaction t : list) if (isActive(t)) dayActive++;
         int idx = days.indexOf(currentDay);
-        dayLabel.setText(dayText(currentDay) + "\n" + list.size() + " komplain" + (dayActive > 0 ? " · " + dayActive + " aktif" : ""));
+        dayLabel.setText(dayText(currentDay) + "\n" + list.size() + " masalah" + (dayActive > 0 ? " · " + dayActive + " aktif" : ""));
         btnOlder.setEnabled(idx < days.size() - 1);
         btnNewer.setEnabled(idx > 0);
 
@@ -549,7 +602,7 @@ public class ComplaintListActivity extends AppCompatActivity {
         }
         if (jump != null) {
             final String target = jump;
-            otherDays.setText("⏳ " + otherActive + " komplain aktif di hari lain — ketuk untuk melihat");
+            otherDays.setText("⏳ " + otherActive + " masalah aktif di hari lain — ketuk untuk melihat");
             otherDays.setVisibility(View.VISIBLE);
             otherDays.setOnClickListener(v -> {
                 currentDay = target;
@@ -573,6 +626,304 @@ public class ComplaintListActivity extends AppCompatActivity {
             }
             box.addView(card(t, act));
         }
+    }
+
+    // ------------------------------------------------------------------ janji ke tim (laporan agen ke grup staf)
+
+    private void renderEscalations() {
+        boolean headedOpen = false;
+        boolean headedDone = false;
+        int open = 0;
+        for (org.json.JSONObject o : escShown) if (IssueReminder.isEscalationOpen(o)) open++;
+        for (org.json.JSONObject o : escShown) {
+            boolean isOpen = IssueReminder.isEscalationOpen(o);
+            if (isOpen && !headedOpen) {
+                box.addView(header("🤝 Dijanjikan ke tim — perlu ditangani (" + open + ")"));
+                headedOpen = true;
+            }
+            if (!isOpen && !headedDone) {
+                box.addView(header("✅ Janji ke tim selesai (7 hari terakhir)"));
+                headedDone = true;
+            }
+            box.addView(escalationCard(o));
+        }
+    }
+
+    private String escHeadline(org.json.JSONObject o) {
+        String icon = js(o, "icon");
+        String kind = js(o, "kind");
+        String acc = js(o, "wa_account");
+        String cyc = js(o, "cycle_id");
+        return (icon.isEmpty() ? "🤝" : icon) + " " + (kind.isEmpty() ? "DIJANJIKAN KE TIM" : kind)
+                + (acc.isEmpty() ? "" : " · " + acc) + (cyc.isEmpty() ? "" : " #" + cyc);
+    }
+
+    private static String escCustomer(org.json.JSONObject o) {
+        String n = js(o, "customer_name");
+        return n.isEmpty() ? "Pelanggan" : n;
+    }
+
+    private View escalationCard(final org.json.JSONObject o) {
+        final boolean open = IssueReminder.isEscalationOpen(o);
+        final String uuid = js(o, "uuid");
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setPadding(dp(14), dp(12), dp(14), dp(10));
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setColor(open ? 0xFFFFF8E1 : 0xFFF1F8E9);   // terbuka: kuning muda · selesai: hijau muda
+        bg.setCornerRadius(dp(12));
+        bg.setStroke(dp(open ? 2 : 1), open ? 0xFFEF6C00 : 0xFF81C784);
+        c.setBackground(bg);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, dp(4), 0, dp(4));
+        c.setLayoutParams(lp);
+
+        TextView head = new TextView(this);
+        boolean unseen = open && IssueReminder.isEscalationUnseen(this, uuid);
+        head.setText((unseen ? "🆕 " : "") + escHeadline(o));
+        head.setTextColor(open ? 0xFFE65100 : C_GREEN);
+        head.setTextSize(12f);
+        head.setTypeface(null, Typeface.BOLD);
+        c.addView(head);
+
+        final boolean collapsed = !open && !escExpanded.contains(uuid);
+        LinearLayout nameRow = new LinearLayout(this);
+        nameRow.setOrientation(LinearLayout.HORIZONTAL);
+        nameRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView name = new TextView(this);
+        name.setText(escCustomer(o));
+        name.setTextColor(C_BLUE);
+        name.setTextSize(16f);
+        name.setTypeface(null, Typeface.BOLD);
+        name.setPaintFlags(name.getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
+        name.setOnClickListener(v -> openCustomerUuid(o));
+        nameRow.addView(name, new LinearLayout.LayoutParams(0, -2, 1f));
+        if (!open) {
+            TextView chev = new TextView(this);
+            chev.setText(collapsed ? "▾" : "▴");
+            chev.setTextSize(20f);
+            chev.setTextColor(C_GREEN);
+            chev.setPadding(dp(12), 0, dp(4), 0);
+            chev.setOnClickListener(v -> toggleEscExpand(uuid));
+            nameRow.addView(chev);
+        }
+        c.addView(nameRow);
+
+        String phone = js(o, "customer_phone");
+        String when = Ts.local(js(o, "created_at"));
+        TextView meta = new TextView(this);
+        meta.setText((phone.isEmpty() ? "📞 no HP belum tercatat" : "📞 " + phone)
+                + (when.length() >= 16 ? "\n🕒 Dilaporkan " + com.crowja.damiupos.util.DeliveryNavLogic.dayMonth(when) + " jam " + when.substring(11, 16) : ""));
+        meta.setTextColor(C_MUTED);
+        meta.setTextSize(13f);
+        meta.setPadding(0, dp(2), 0, dp(2));
+        c.addView(meta);
+
+        if (!open) {
+            TextView done = new TextView(this);
+            String by = js(o, "resolved_by_name");
+            String at = Ts.local(js(o, "resolved_at"));
+            String note = js(o, "resolve_note");
+            done.setText("✅ Selesai" + (by.isEmpty() ? "" : " · " + by) + (at.length() >= 16 ? " · " + at.substring(11, 16) : "")
+                    + (note.isEmpty() ? "" : "\n📝 " + note));
+            done.setTextColor(0xFF2E7D32);
+            done.setTextSize(13f);
+            done.setTypeface(null, Typeface.BOLD);
+            c.addView(done);
+        }
+        if (collapsed) {
+            c.setOnClickListener(v -> toggleEscExpand(uuid));
+            return c;
+        }
+
+        String reason = js(o, "reason");
+        if (!reason.isEmpty()) {
+            TextView rv = new TextView(this);
+            rv.setText("📝 Alasan: " + reason);
+            rv.setTextColor(C_TEXT);
+            rv.setTextSize(13f);
+            rv.setPadding(0, dp(4), 0, dp(2));
+            c.addView(rv);
+        }
+        final String trx = js(o, "transaction_uuid");
+        if (!trx.isEmpty()) {
+            String rc = js(o, "receipt_no");
+            TextView ov = new TextView(this);
+            ov.setText("🧾 Pesanan " + (rc.isEmpty() ? "terkait" : rc) + " — ketuk untuk membuka");
+            ov.setTextColor(C_BLUE);
+            ov.setTextSize(13f);
+            ov.setPadding(0, dp(2), 0, dp(2));
+            ov.setOnClickListener(v -> openOrderUuid(o));
+            c.addView(ov);
+        }
+        if (!js(o, "brief").isEmpty()) {
+            TextView bv = new TextView(this);
+            bv.setText("📋 Ringkasan otomatis tersedia — ketuk 🔍 Detail");
+            bv.setTextColor(C_MUTED);
+            bv.setTextSize(12f);
+            c.addView(bv);
+        }
+
+        LinearLayout row1 = new LinearLayout(this);
+        row1.setOrientation(LinearLayout.HORIZONTAL);
+        row1.setPadding(0, dp(8), 0, 0);
+        row1.addView(actionButton("🔍 Detail", true, v -> showEscalationDetail(o)), weight());
+        row1.addView(actionButton("💬 Chat WA", !phone.isEmpty(), v -> {
+            IssueReminder.markEscalationSeen(this, uuid);
+            DeliveryQueueActivity.openWhatsApp(this, phone, "");
+        }), weight());
+        c.addView(row1);
+        LinearLayout row2 = new LinearLayout(this);
+        row2.setOrientation(LinearLayout.HORIZONTAL);
+        row2.addView(actionButton("🧾 Buka Pesanan", !trx.isEmpty(), v -> openOrderUuid(o)), weight());
+        if (open) row2.addView(actionButton("✅ Tandai Selesai", true, v -> resolveStaffEscalation(o)), weight());
+        c.addView(row2);
+
+        c.setOnClickListener(v -> showEscalationDetail(o));
+        return c;
+    }
+
+    private void toggleEscExpand(String uuid) {
+        if (!escExpanded.remove(uuid)) escExpanded.add(uuid);
+        render();
+    }
+
+    /** 🔍 Rincian janji ke tim: akun WA, pelanggan, alasan, ringkasan otomatis + saran untuk staf. */
+    private void showEscalationDetail(final org.json.JSONObject o) {
+        final String uuid = js(o, "uuid");
+        IssueReminder.markEscalationSeen(this, uuid);
+        StringBuilder sb = new StringBuilder();
+        sb.append(escHeadline(o)).append("\n\n");
+        sb.append("👤 ").append(escCustomer(o));
+        String phone = js(o, "customer_phone");
+        if (!phone.isEmpty()) sb.append(" — ").append(phone);
+        sb.append('\n');
+        String acc = js(o, "wa_account");
+        if (!acc.isEmpty()) sb.append("📱 Akun WA: ").append(acc).append('\n');
+        String rc = js(o, "receipt_no");
+        if (!js(o, "transaction_uuid").isEmpty()) sb.append("🧾 Pesanan: ").append(rc.isEmpty() ? "terkait" : rc).append('\n');
+        String when = Ts.local(js(o, "created_at"));
+        if (!when.isEmpty()) sb.append("🕒 Dilaporkan: ").append(when.length() >= 16 ? when.substring(0, 16) : when).append('\n');
+        String reason = js(o, "reason");
+        if (!reason.isEmpty()) sb.append("\n📝 Alasan:\n").append(reason).append('\n');
+        String brief = js(o, "brief");
+        if (!brief.isEmpty()) sb.append('\n').append(brief).append('\n');
+        if (IssueReminder.isEscalationOpen(o)) {
+            sb.append(staffSuggestions(reason + " " + brief));
+        } else {
+            String by = js(o, "resolved_by_name");
+            String note = js(o, "resolve_note");
+            sb.append("\n✅ Selesai").append(by.isEmpty() ? "" : " oleh " + by).append(note.isEmpty() ? "" : "\n📝 " + note);
+        }
+        AlertDialog.Builder b = new AlertDialog.Builder(this)
+                .setTitle("🤝 " + escCustomer(o))
+                .setMessage(sb.toString().trim())
+                .setNegativeButton("Tutup", null);
+        if (!js(o, "transaction_uuid").isEmpty()) b.setPositiveButton("🧾 Buka Pesanan", (d, w) -> openOrderUuid(o));
+        if (IssueReminder.isEscalationOpen(o)) b.setNeutralButton("✅ Selesai", (d, w) -> resolveStaffEscalation(o));
+        b.show();
+    }
+
+    /** Nama pelanggan janji ke tim → detail pelanggan (bila sudah ada di HP ini). */
+    private void openCustomerUuid(org.json.JSONObject o) {
+        IssueReminder.markEscalationSeen(this, js(o, "uuid"));
+        String cu = js(o, "customer_uuid");
+        com.crowja.damiupos.model.Customer c = cu.isEmpty() ? null
+                : new com.crowja.damiupos.db.CustomerDao(DatabaseHelper.getInstance(this)).getBySyncUuid(cu);
+        if (c == null) {
+            Toast.makeText(this, cu.isEmpty() ? "Pelanggan belum terdaftar — hubungi lewat 💬 Chat WA." : "Pelanggan ini belum ada di HP ini.",
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
+        startActivity(new Intent(this, CustomerDetailActivity.class).putExtra("customer_id", c.getId()));
+    }
+
+    /**
+     * Link pesanan (order.airfrez.com/pesanan/{uuid}) → pesanan di app, sama seperti {@link DeepLinkActivity}: masih
+     * berjalan di HP ini → Antrian Delivery; sudah selesai → struknya; bukan di HP ini → Chat Pesanan dari server.
+     */
+    private void openOrderUuid(org.json.JSONObject o) {
+        IssueReminder.markEscalationSeen(this, js(o, "uuid"));
+        String uuid = js(o, "transaction_uuid");
+        if (uuid.isEmpty()) return;
+        long id = dao.getIdBySyncUuid(uuid);
+        Transaction t = null;
+        if (id > 0) {
+            try { t = dao.getById(id); } catch (Throwable ignored) { }
+        }
+        boolean done = t != null && t.getDeliveryDoneAt() != null && !t.getDeliveryDoneAt().trim().isEmpty();
+        if (t != null && !done) {
+            startActivity(new Intent(this, DeliveryQueueActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    .putExtra(DeliveryQueueActivity.EXTRA_FOCUS_TRX_ID, id));
+        } else if (t != null) {
+            startActivity(new Intent(this, ReceiptActivity.class).putExtra(ReceiptActivity.EXTRA_TRANSACTION_ID, id));
+        } else {
+            startActivity(new Intent(this, ChatLogActivity.class)
+                    .putExtra(ChatLogActivity.EXTRA_MODE, ChatLogActivity.MODE_ORDER)
+                    .putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid)
+                    .putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, js(o, "customer_name")));
+        }
+    }
+
+    /** ✅ Janji ke tim sudah ditangani — catatan opsional (mis. "2 galon sisanya diantar sore"). */
+    private void resolveStaffEscalation(final org.json.JSONObject o) {
+        final String uuid = js(o, "uuid");
+        final EditText note = new EditText(this);
+        note.setHint("Catatan penanganan (opsional)");
+        note.setSingleLine(false);
+        note.setMaxLines(4);
+        LinearLayout wrap = new LinearLayout(this);
+        wrap.setPadding(dp(20), dp(4), dp(20), 0);
+        wrap.addView(note, new LinearLayout.LayoutParams(-1, -2));
+        new AlertDialog.Builder(this)
+                .setTitle("✅ Tandai selesai — " + escCustomer(o))
+                .setMessage(escHeadline(o))
+                .setView(wrap)
+                .setPositiveButton("Selesai", (d, w) -> sendEscalationResolve(uuid, note.getText().toString()))
+                .setNegativeButton("Batal", null)
+                .show();
+    }
+
+    private void sendEscalationResolve(final String uuid, final String note) {
+        final com.crowja.damiupos.sync.SyncSettings cfg = new com.crowja.damiupos.sync.SyncSettings(new SettingsDao(DatabaseHelper.getInstance(this)));
+        if (!cfg.isEnrolled()) {
+            Toast.makeText(this, "Perangkat belum terhubung ke server.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final String staffUuid = com.crowja.damiupos.sync.LocationReporter.currentStaffUuid(this);
+        final String me = new SettingsDao(DatabaseHelper.getInstance(this)).getCurrentUserName();
+        new Thread(() -> {
+            String err = null;
+            try {
+                new com.crowja.damiupos.sync.SyncApi(cfg).escalationResolve(uuid, note, staffUuid);
+            } catch (com.crowja.damiupos.sync.SyncApi.SyncException se) {
+                String m = se.serverMessage();
+                err = m != null && !m.isEmpty() ? m : "Gagal menandai (kode " + se.code + ").";
+            } catch (Exception e) {
+                err = "Gagal menandai — periksa koneksi internet.";
+            }
+            final String fErr = err;
+            if (fErr == null) {
+                IssueReminder.markEscalationSeen(getApplicationContext(), uuid);
+                IssueReminder.markEscalationResolved(getApplicationContext(), uuid, me);
+            }
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (fErr != null) {
+                    Toast.makeText(this, fErr, Toast.LENGTH_LONG).show();
+                    return;
+                }
+                Toast.makeText(this, "✅ Janji ke tim ditandai selesai", Toast.LENGTH_SHORT).show();
+                load();
+                render();
+                IssueReminder.refreshAsync(this, true, () -> runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    load();
+                    render();
+                }));
+            });
+        }).start();
     }
 
     // ------------------------------------------------------------------ admin: semua perangkat + pencarian

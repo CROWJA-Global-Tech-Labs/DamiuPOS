@@ -1230,7 +1230,7 @@
                         android:paddingEnd="6dp"
                         android:maxLines="1"
                         android:ellipsize="end"
-                        android:text="😠 Komplain &amp; Masalah"
+                        android:text="⚠️ Masalah"
                         android:textAllCaps="false"
                         android:textColor="#B71C1C"
                         android:textSize="13sp"

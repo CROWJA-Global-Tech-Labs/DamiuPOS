@@ -1123,9 +1123,12 @@ public class TransactionDao {
         return last > floor;
     }
 
-    /** Jumlah komplain aktif di perangkat ini (badge menu Komplain) — definisi SAMA dengan {@link #isComplaintActive}. */
+    /**
+     * Badge menu Masalah: komplain aktif + masalah terbuka di perangkat ini (definisi SAMA dengan {@link #isComplaintActive}),
+     * ditambah eskalasi grup staf (🤝 [DIJANJIKAN KE TIM] dkk.) yang belum ditandai selesai.
+     */
     public int countActiveComplaints() {
-        return getActiveIssues().size();
+        return getActiveIssues().size() + com.crowja.damiupos.IssueReminder.openStaffEscalationCount(new SettingsDao(dbHelper));
     }
 
     /** Komplain aktif + masalah terbuka (digabung per order; catatan masalah menempel di komplain yang sama). */

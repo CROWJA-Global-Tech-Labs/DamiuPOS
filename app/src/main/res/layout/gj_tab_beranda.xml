@@ -637,7 +637,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:maxLines="1"
-                        android:text="komplain aktif"
+                        android:text="masalah aktif"
                         android:textColor="@color/gj_text_tertiary"
                         android:textSize="11sp" />
 
