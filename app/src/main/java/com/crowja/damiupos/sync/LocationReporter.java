@@ -40,7 +40,19 @@ public final class LocationReporter {
         SettingsDao settings = new SettingsDao(db);
         java.util.LinkedHashSet<Long> running = settings.getDeliveryRunningTrxIds();
         if (running.isEmpty()) return "";
+        // Tanpa panel navigasi: perhentian pertama rit menurut nomor rute server TERBARU (delivery_seq), bukan urutan
+        // saat ▶ Jalankan ditekan.
         long id = running.iterator().next();
+        try {
+            com.crowja.damiupos.db.TransactionDao tdao = new com.crowja.damiupos.db.TransactionDao(db);
+            java.util.List<com.crowja.damiupos.model.Transaction> rows = new java.util.ArrayList<>();
+            for (Long rid : running) {
+                com.crowja.damiupos.model.Transaction t = tdao.getById(rid);
+                if (t != null && com.crowja.damiupos.db.TransactionDao.isQueuedForDelivery(t.getDeliveryStatus())) rows.add(t);
+            }
+            if (!rows.isEmpty()) id = com.crowja.damiupos.DeliveryPlanner.runRouteOrder(rows).get(0).getId();
+        } catch (Exception ignored) {
+        }
         try {
             long active = Long.parseLong(settings.get(KEY_NAV_ACTIVE, "-1"));
             if (running.contains(active)) id = active;

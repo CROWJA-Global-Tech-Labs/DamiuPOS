@@ -531,7 +531,13 @@ public class NavigationPipActivity extends AppCompatActivity {
     protected void onDestroy() {
         if (sLive != null && sLive.get() == this) sLive = null;
         PickupNearbyMonitor.clearUiListener(pickupListener);
-        if (sLive == null) sLiveIds = Collections.emptySet();
+        if (sLive == null) {
+            sLiveIds = Collections.emptySet();
+            // Panel ditutup → jangan terus melaporkan perhentian aktif lama sebagai "sedang dituju" (LocationReporter
+            // kembali ke perhentian pertama rit menurut urutan server).
+            new SettingsDao(DatabaseHelper.getInstance(getApplicationContext()))
+                    .set(com.crowja.damiupos.sync.LocationReporter.KEY_NAV_ACTIVE, "-1");
+        }
         PickupNearbyMonitor.recheck();   // navigasi selesai → monitor berhenti bila tak ada rit berjalan
         ui.removeCallbacksAndMessages(null);
         try {
@@ -846,6 +852,25 @@ public class NavigationPipActivity extends AppCompatActivity {
             for (Long id : running) {
                 Transaction t = queued.get(id);
                 if (!list.contains(id) && t != null && DeliveryPlanner.hasGeo(t)) list.add(id);
+            }
+            // Urutan perhentian yang BELUM diantar mengikuti nomor rute server TERBARU (delivery_seq), bukan urutan saat
+            // navigasi dimulai: server menyusun ulang rit tiap kurir bergerak / isi rit berubah. Dulu panel tetap menuju
+            // perhentian lama — kasus FAIQ 2026-11-27: berdiri di depan Soto Sawah, panel & peta masih menuju Ika Sulis
+            // (#1 jam 08:55, sudah #9 di urutan server). Yang sudah selesai/keluar tetap di depan (hitungan progres).
+            List<Transaction> runRows = new ArrayList<>();
+            for (Long id : list) {
+                Transaction t = queued.get(id);
+                if (t != null && running.contains(id) && DeliveryPlanner.hasGeo(t)) runRows.add(t);
+            }
+            boolean hasSeq = false;
+            for (Transaction t : runRows) if (t.getDeliverySeq() > 0) hasSeq = true;
+            if (hasSeq && runRows.size() > 1) {
+                Set<Long> runIds = new java.util.HashSet<>();
+                for (Transaction t : runRows) runIds.add(t.getId());
+                List<Long> reordered = new ArrayList<>();
+                for (Long id : list) if (!runIds.contains(id)) reordered.add(id);
+                for (Transaction t : DeliveryPlanner.runRouteOrder(runRows)) reordered.add(t.getId());
+                list = reordered;
             }
         }
 
