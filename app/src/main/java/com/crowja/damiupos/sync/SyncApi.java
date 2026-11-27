@@ -1207,6 +1207,22 @@ public class SyncApi {
         return get(cfg.getBaseUrl() + "/api/issues", cfg.getToken());
     }
 
+    /**
+     * Eskalasi Agen AI ke grup staf (🤝 [DIJANJIKAN KE TIM] dkk.) untuk menu Masalah: {ok, all, escalations:[{uuid, kind, icon,
+     * wa_account, cycle_id, customer_*, transaction_uuid, order_url, receipt_no, reason, brief, created_at, resolved_at, mine, shared}]}.
+     * all = semua HP cabang (hanya dihormati server untuk Admin/SPV/Marketing lewat X-Staff-Uuid).
+     */
+    public JSONObject escalations(boolean all, @Nullable String staffUuid) throws Exception {
+        return get(cfg.getBaseUrl() + "/api/escalations" + (all ? "?all=1" : ""), cfg.getToken(), staffUuid);
+    }
+
+    /** Tandai eskalasi grup staf selesai (nama staf dari X-Staff-Uuid). */
+    public JSONObject escalationResolve(String uuid, @Nullable String note, @Nullable String staffUuid) throws Exception {
+        JSONObject b = new JSONObject();
+        if (note != null && !note.trim().isEmpty()) b.put("note", note.trim());
+        return post(cfg.getBaseUrl() + "/api/escalations/" + android.net.Uri.encode(uuid) + "/resolve", b, cfg.getToken(), staffUuid);
+    }
+
     public JSONObject issueResolve(String transactionUuid, @Nullable String staffUuid) throws Exception {
         return post(cfg.getBaseUrl() + "/api/transactions/" + android.net.Uri.encode(transactionUuid) + "/issue-resolve",
                 new JSONObject(), cfg.getToken(), staffUuid);

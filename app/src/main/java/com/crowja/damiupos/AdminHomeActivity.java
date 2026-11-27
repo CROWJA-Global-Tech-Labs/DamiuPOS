@@ -512,7 +512,7 @@ public class AdminHomeActivity extends AppCompatActivity {
         // jadi lencana ubin/kartu Masalah juga dihitung dari server — bukan cuma transaksi HP ini.
         if (s.menu != null && s.menu.branchSales && cfg.isEnrolled()) {
             int remote = remoteActiveComplaints(app, cfg);
-            if (remote >= 0) s.complaints = remote;
+            if (remote >= 0) s.complaints = remote + IssueReminder.openStaffEscalationCount(settingsDao);   // + janji ke tim
         }
         s.followUp = qi("followup", () -> customerDao.countFollowUpCandidates(settingsDao.getFollowupDays()));
         s.visitUrgent = qi("visit", () -> customerDao.countVisitUrgent());
@@ -831,7 +831,8 @@ public class AdminHomeActivity extends AppCompatActivity {
         add("kunjungan", "Kunjungan Urgent", "Kunjungan", "🧭", R.color.gj_purple_tint, G_CUST,
                 m -> m.admin || (m.user != null && m.user.isMarketing()), () -> open(VisitListActivity.class))
                 .badge(s -> s.visitUrgent);
-        add("komplain", "Komplain & Masalah", "Komplain", "⚠️", R.color.gj_red_tint, G_CUST,
+        // Id "komplain" tetap (urutan/sembunyi menu tersimpan); isinya kini SEMUA masalah order: komplain, eskalasi AI, janji ke tim.
+        add("komplain", "Masalah", "Masalah", "⚠️", R.color.gj_red_tint, G_CUST,
                 m -> true, () -> open(ComplaintListActivity.class)).badge(s -> s.complaints).blink();
         add("promo", "Promo Galon", null, "🎁", R.color.gj_orange_tint, G_CUST,
                 m -> m.canPromosi, () -> startSafely(new Intent(this, CustomerFormActivity.class)
@@ -1815,8 +1816,8 @@ public class AdminHomeActivity extends AppCompatActivity {
                     () -> ai.showDownDialog(), false));
         }
         if (snap.complaints > 0) {
-            l.add(new AlertItem(SEV_DANGER, "⚠️", "Komplain aktif " + fmtCount(snap.complaints),
-                    "Ada komplain atau masalah pesanan yang belum selesai.", "Lihat",
+            l.add(new AlertItem(SEV_DANGER, "⚠️", "Masalah aktif " + fmtCount(snap.complaints),
+                    "Ada komplain, janji ke tim, atau masalah pesanan yang belum selesai.", "Lihat",
                     () -> open(ComplaintListActivity.class), false));
         }
         if (ms.admin && snap.stockKnown && snap.stok <= snap.stockAlert) {
@@ -2405,7 +2406,7 @@ public class AdminHomeActivity extends AppCompatActivity {
                         () -> open(WaInboxActivity.class));
                 n++;
             }
-            addCircle(actions, "⚠️", "Komplain", R.color.gj_red_tint, snap.complaints,
+            addCircle(actions, "⚠️", "Masalah", R.color.gj_red_tint, snap.complaints,
                     () -> open(ComplaintListActivity.class));
             n++;
             if (ms.admin && ms.enrolled) {
