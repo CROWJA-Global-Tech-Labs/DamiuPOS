@@ -1416,6 +1416,29 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
+    /** Layar utama sedang terbuka saat 00:00 → cek {@link SessionGuard} tepat di pergantian hari. */
+    private final android.os.Handler midnightHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable midnightCheck = () -> {
+        if (isFinishing()) return;
+        if (SessionGuard.closeIfEnded(this)) {
+            startActivity(new Intent(this, LoginActivity.class));
+            finish();
+        } else {
+            scheduleMidnightLogout();
+        }
+    };
+
+    private void scheduleMidnightLogout() {
+        midnightHandler.removeCallbacks(midnightCheck);
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        c.add(java.util.Calendar.DAY_OF_YEAR, 1);
+        c.set(java.util.Calendar.HOUR_OF_DAY, 0);
+        c.set(java.util.Calendar.MINUTE, 0);
+        c.set(java.util.Calendar.SECOND, 5);
+        c.set(java.util.Calendar.MILLISECOND, 0);
+        midnightHandler.postDelayed(midnightCheck, Math.max(1000, c.getTimeInMillis() - System.currentTimeMillis()));
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
@@ -1426,6 +1449,9 @@ public class MainActivity extends AppCompatActivity {
         // Di jalur onCreate tak ada content view, jadi sisa onResume (refreshDashboard dst) juga
         // tak boleh jalan.
         if (pendingLogoutUid > 0) return;
+        // Shift lewat tengah malam / sudah dipulangkan tapi HP belum sync → tutup sesi sekarang (tanpa jaringan).
+        try { SessionGuard.closeIfEnded(this); } catch (Throwable ignored) {}
+        scheduleMidnightLogout();
         // Multi-user login may have just been turned on from the dashboard (synced via
         // app_settings) — enforce the login/clock-in gate now, without needing a cold restart.
         // Guard isFinishing() so we don't double-launch when onCreate already gated + finished.
@@ -1514,6 +1540,7 @@ public class MainActivity extends AppCompatActivity {
         try { unregisterReceiver(syncedReceiver); } catch (Exception ignored) {}
         try { unregisterReceiver(adminMsgReceiver); } catch (Exception ignored) {}
         salesCardsHandler.removeCallbacks(salesCardsTicker);
+        midnightHandler.removeCallbacks(midnightCheck);
     }
 
     /**

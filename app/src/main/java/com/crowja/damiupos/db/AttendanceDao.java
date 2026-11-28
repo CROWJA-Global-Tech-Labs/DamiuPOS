@@ -124,6 +124,25 @@ public class AttendanceDao {
     }
 
     /**
+     * Event TERAKHIR user + tanggal LOKAL-nya ("yyyy-MM-dd"), urutan sama dengan {@link #isLastEventOut}.
+     * Null bila belum ada event. Dipakai {@link com.crowja.damiupos.SessionGuard} (logout otomatis 00:00).
+     */
+    public String[] lastEventAndLocalDate(long userId) {
+        if (userId <= 0) return null;
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        String ts = DatabaseHelper.COL_ATT_TS;
+        String localTs = "(CASE WHEN " + ts + " LIKE '%Z' THEN datetime(" + ts
+                + ",'localtime') ELSE " + ts + " END)";
+        try (Cursor c = db.rawQuery(
+                "SELECT " + DatabaseHelper.COL_ATT_EVENT + ", date(" + localTs + ") FROM " + DatabaseHelper.TABLE_ATTENDANCE
+                        + " WHERE " + DatabaseHelper.COL_ATT_USER_ID + "=?"
+                        + " ORDER BY " + localTs + " DESC, " + DatabaseHelper.COL_ATT_ID + " DESC LIMIT 1",
+                new String[]{String.valueOf(userId)})) {
+            return c.moveToFirst() ? new String[]{c.getString(0), c.getString(1)} : null;
+        }
+    }
+
+    /**
      * Timestamp awal shift berjalan: event IN pertama SETELAH OUT terakhir.
      * Kalau belum pernah OUT → IN pertama. Null kalau tidak ada IN.
      */
