@@ -679,36 +679,7 @@ public class SyncEngine {
      * Juga membersihkan user "istirahat" yang dipulangkan (tombol Lanjut Kerja ikut hilang).
      */
     private void enforceRemoteClockOut() {
-        if (!settingsDao.isMultiUserEnabled()) return;
-        com.crowja.damiupos.db.AttendanceDao attDao = new com.crowja.damiupos.db.AttendanceDao(dbHelper);
-        com.crowja.damiupos.db.UserDao userDao = new com.crowja.damiupos.db.UserDao(dbHelper);
-
-        // User yang sedang istirahat lalu dipulangkan dari web → hapus resume "Lanjut Kerja".
-        long breakUid = settingsDao.getBreakUserId();
-        if (breakUid > 0 && attDao.isLastEventOut(breakUid)) {
-            settingsDao.clearBreakUser();
-        }
-
-        long uid = settingsDao.getCurrentUserId();
-        if (uid <= 0) return;
-        com.crowja.damiupos.model.User u = userDao.getById(uid);
-        if (u == null || !u.tracksAttendance()) return;   // admin/viewer tanpa absensi
-        if (!attDao.isLastEventOut(uid)) return;
-
-        String name = settingsDao.getCurrentUserName();
-        // Tutup sesi — urutan sama dengan alur Pulang lokal (MainActivity.finishClockOut).
-        try { com.crowja.damiupos.WorkHoursReminder.cancel(appCtx, uid); } catch (Throwable ignored) {}
-        settingsDao.setShiftActive(false);
-        try { com.crowja.damiupos.LocationService.pollOnly(appCtx); } catch (Throwable ignored) {}
-        settingsDao.clearCurrentUser();
-        settingsDao.clearBreakUser();
-
-        try {
-            OnlineNotifier.deliverAdminMessage(appCtx, "Shift Ditutup",
-                    (name != null && !name.isEmpty() ? name + " " : "")
-                            + "telah dipulangkan dari dashboard — sesi di perangkat ini ditutup.", 7920);
-        } catch (Throwable ignored) {}
-
+        if (!com.crowja.damiupos.SessionGuard.closeIfEnded(appCtx)) return;
         // Kembalikan UI ke halaman login. Berhasil saat app di depan; kalau app di background
         // (launch dibatasi OS), sesi sudah bersih — gate MainActivity mengarahkan ke login
         // begitu app dibuka lagi.
