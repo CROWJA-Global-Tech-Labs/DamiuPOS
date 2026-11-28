@@ -768,9 +768,9 @@ public class ComplaintListActivity extends AppCompatActivity {
         row1.setOrientation(LinearLayout.HORIZONTAL);
         row1.setPadding(0, dp(8), 0, 0);
         row1.addView(actionButton("🔍 Detail", true, v -> showEscalationDetail(o)), weight());
-        row1.addView(actionButton("💬 Chat WA", !phone.isEmpty(), v -> {
+        row1.addView(actionButton("💬 Chat", !phone.isEmpty() || !trx.isEmpty(), v -> {
             IssueReminder.markEscalationSeen(this, uuid);
-            DeliveryQueueActivity.openWhatsApp(this, phone, "");
+            showChatChooser(js(o, "customer_name"), false, trx, phone);
         }), weight());
         c.addView(row1);
         LinearLayout row2 = new LinearLayout(this);
@@ -1586,15 +1586,26 @@ public class ComplaintListActivity extends AppCompatActivity {
     /** 💬 Chat: pilih Chat Pesanan (chat WA order lewat server, bisa dibalas) atau Chat WA (aplikasi WhatsApp). */
     private void chooseChat(final Transaction t) {
         IssueReminder.markSeen(this, t);
-        // Baris pilihan: "Chat WA" memakai ikon resmi WhatsApp.
-        // 0 = chat yang mengandung komplain saja, 1 = chat pesanan real-time (bisa dibalas), 2 = WhatsApp.
-        final String[] labels = {"Chat Komplain", "Chat Pesanan", "Chat WA"};
+        showChatChooser(t.getCustomerName(), isComplaintOrder(t), chatUuidOf(t), t.getCustomerPhone());
+    }
+
+    /**
+     * Pilihan chat: [😠 Chat Komplain — hanya untuk komplain] · 💬 Chat Pesanan (real-time, bisa dibalas) · Chat WA
+     * (ikon resmi WhatsApp). Jenis non-komplain (Masalah, Janji Tim) tanpa pilihan Chat Komplain.
+     */
+    private void showChatChooser(String name, boolean complaint, final String orderUuid, final String phone) {
+        final String custName = name != null ? name : "";
+        // Kode pilihan: 0 = komplain, 1 = real-time, 2 = WhatsApp.
+        final int[] codes = complaint ? new int[]{0, 1, 2} : new int[]{1, 2};
+        final String[] labels = new String[codes.length];
+        for (int i = 0; i < codes.length; i++) labels[i] = codes[i] == 2 ? "Chat WA" : "chat";
         android.widget.ArrayAdapter<String> ad = new android.widget.ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, labels) {
             @Override
-            public View getView(int position, View convertView, android.view.ViewGroup parent) {
-                TextView tv = (TextView) super.getView(position, convertView, parent);
+            public View getView(int pos, View convertView, android.view.ViewGroup parent) {
+                TextView tv = (TextView) super.getView(pos, convertView, parent);
                 tv.setTextSize(16f);
                 tv.setCompoundDrawablePadding(dp(12));
+                int position = codes[pos];
                 if (position == 2) {
                     android.graphics.drawable.Drawable ic = androidx.core.content.ContextCompat.getDrawable(ComplaintListActivity.this, R.drawable.ic_whatsapp);
                     if (ic != null) {
@@ -1611,20 +1622,24 @@ public class ComplaintListActivity extends AppCompatActivity {
             }
         };
         new AlertDialog.Builder(this)
-                .setTitle("💬 Chat — " + (t.getCustomerName() != null ? t.getCustomerName() : "Pelanggan"))
-                .setAdapter(ad, (d, which) -> {
+                .setTitle("💬 Chat — " + (custName.isEmpty() ? "Pelanggan" : custName))
+                .setAdapter(ad, (d, pos) -> {
+                    int which = codes[pos];
                     if (which == 0 || which == 1) {
-                        String uuid = chatUuidOf(t);
-                        if (uuid == null || uuid.isEmpty()) {
-                            Toast.makeText(this, "Transaksi ini belum tersinkron ke server", Toast.LENGTH_SHORT).show();
+                        if (orderUuid == null || orderUuid.isEmpty()) {
+                            Toast.makeText(this, "Belum ada pesanan tersinkron untuk chat ini — pakai Chat WA.", Toast.LENGTH_SHORT).show();
                             return;
                         }
                         startActivity(new Intent(this, ChatLogActivity.class)
                                 .putExtra(ChatLogActivity.EXTRA_MODE, which == 0 ? ChatLogActivity.MODE_COMPLAINT : ChatLogActivity.MODE_ORDER)
-                                .putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, uuid)
-                                .putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, t.getCustomerName() != null ? t.getCustomerName() : ""));
+                                .putExtra(ChatLogActivity.EXTRA_TRANSACTION_UUID, orderUuid)
+                                .putExtra(ChatLogActivity.EXTRA_CUSTOMER_NAME, custName));
                     } else {
-                        DeliveryQueueActivity.openWhatsApp(this, t.getCustomerPhone(), "");
+                        if (phone == null || phone.isEmpty()) {
+                            Toast.makeText(this, "Nomor WA pelanggan tidak ada.", Toast.LENGTH_SHORT).show();
+                            return;
+                        }
+                        DeliveryQueueActivity.openWhatsApp(this, phone, "");
                     }
                 })
                 .setNegativeButton("Batal", null)
